@@ -154,6 +154,62 @@ NONLIVE_PHASE_MAX_ROWS = 200
 #: wait behind. Production's ~0.5 s per game phase puts eight at a few seconds.
 NONLIVE_PHASE_MAX_GAMES = 8
 
+#: #10090 class f — ``KALSHI_WS_MERGE_LIVE_PHASES=1`` writes consecutive live
+#: games in ONE transaction. Production 2026-10-30 19:33-19:42Z: the longest
+#: Kalshi flush ran 30-46 transactions, mostly one live game each, and each
+#: paid 50-91 ms of checkout plus 15-33 ms of BEGIN+SET before its first write
+#: on a loop at 0.93 CPU, so the loop fell to 7-12 flushes a minute. Merged,
+#: the games share one checkout, one SET, one pipelined UPDATE run, one re-rank
+#: and one COMMIT. Only when the phase's SKIP LOCKED pre-pass is engaged (a
+#: held price row holds back only its own game, #11797); a lock timeout the
+#: pre-pass cannot skip (a re-rank sibling) splits the merged phase back into
+#: today's per-game phases in the same flush. Unset or ``0`` is today's plan.
+KALSHI_MERGE_LIVE_PHASES_ENV = "KALSHI_WS_MERGE_LIVE_PHASES"
+
+#: #10090 class f — the most rows one merged live phase packs. The same bound
+#: as a non-live phase: it caps how much one rolled-back attempt re-does.
+LIVE_MERGE_MAX_ROWS = 200
+
+
+def kalshi_merge_live_phases_enabled() -> bool:
+    """#10090 class f — True only when ``KALSHI_WS_MERGE_LIVE_PHASES`` is ``1``."""
+    return os.getenv(KALSHI_MERGE_LIVE_PHASES_ENV, "0").strip() == "1"
+
+
+def absorb_live_phases(phases, index, key, eligible, max_rows=LIVE_MERGE_MAX_ROWS):
+    """#10090 class f — merge the phases after ``phases[index]`` into it.
+
+    Takes the phases that follow while ``key`` matches the head's (a non-None
+    key: one live class), in order, skipping any ``eligible`` refuses (it stays
+    where it is, for its own turn) and stopping before the one that would pass
+    ``max_rows``. Absorbed phases leave ``phases``; ``phases[index]`` becomes
+    the merged phase. Returns the parts, head first, for a split back; ``[]``
+    (and ``phases`` untouched) when nothing joined the head.
+    """
+    head = phases[index]
+    head_key = key(head)
+    if head_key is None:
+        return []
+    parts, rows = [head], len(head)
+    position = index + 1
+    while position < len(phases):
+        part = phases[position]
+        if key(part) != head_key or rows + len(part) > max_rows:
+            break
+        if not eligible(part):
+            position += 1
+            continue
+        parts.append(part)
+        rows += len(part)
+        del phases[position]
+    if len(parts) == 1:
+        return []
+    merged = {}
+    for part in parts:
+        merged.update(part)
+    phases[index] = merged
+    return parts
+
 
 def flush_budget_spent(
     flush_started, phase, event_id_by_outcome, live_events, budget_seconds=None,
@@ -391,6 +447,13 @@ class _FlushTimings:
     connect, the pre-ping), `set` the rest (BEGIN and the SET). `full_at_start`
     is K of the flush's P set_lock spans that began with every pool slot out;
     `connects` and `connect` are the connects inside them, part of `checkout`.
+
+    CPU OR DATABASE (#10090 class f, `tail`): `cpu` is the loop thread's CPU
+    (`time.thread_time`) over the minute's longest flush, as `timed_flush`
+    reads it at that flush's start and end (`flush_cpu`). It counts every coroutine the loop
+    ran meanwhile, not only the flush's own: near that flush's `max`, the loop
+    was busy throughout and its awaits were partly resume delay. `checkout_total`
+    is `checkout` summed over every flush of the minute, not only the longest.
     """
 
     BUCKETS = ("save", "publish", "stamp")
@@ -405,6 +468,9 @@ class _FlushTimings:
         self.waiting_phase = None
         self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
         self.waiting_lock = dict.fromkeys(self.LOCK_SPLIT, 0)
+        # #10090 class f: the ending flush's loop CPU, set by `timed_flush`
+        # just before `flushed` (which takes it), so the call keeps its shape.
+        self.flush_cpu = None
         self.reset()
 
     def reset(self):
@@ -417,6 +483,8 @@ class _FlushTimings:
         self.slowest = None
         self.slowest_db = None
         self.slowest_lock = None
+        self.slowest_cpu = None
+        self.checkout_total = 0.0
 
     def add(self, bucket, seconds, *, phase=False):
         self.in_flight[bucket] += seconds
@@ -476,10 +544,13 @@ class _FlushTimings:
         self.waiting_db[bucket] += seconds
 
     def flushed(self, seconds):
+        cpu, self.flush_cpu = self.flush_cpu, None
         if self.slowest is None or seconds > self.longest:
             self.slowest = (self.waiting, self.waiting_phase)
             self.slowest_db = self.waiting_db
             self.slowest_lock = self.waiting_lock
+            self.slowest_cpu = cpu
+        self.checkout_total += self.waiting_lock["checkout"]
         self.waiting = dict.fromkeys(self.WAITS, 0.0)
         self.waiting_phase = None
         self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
@@ -515,6 +586,12 @@ class _FlushTimings:
             f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s"
             f" slowest {self._slowest()}"
         )
+
+    def tail(self):
+        """#10090 class f — the fields the minute line carries at its END, so
+        every parser of the fields before them reads them where it did."""
+        cpu = "-" if self.slowest_cpu is None else f"{self.slowest_cpu:.2f}s"
+        return f"cpu={cpu} checkout_total={self.checkout_total:.2f}s"
 
     def _slowest(self):
         if self.slowest is None:
@@ -590,6 +667,11 @@ class _KalshiPriceOwner:
         self.beside_written: set[int] = set()
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
+        # #10090 class f: the run's `KALSHI_WS_MERGE_LIVE_PHASES`, and whether
+        # a phase session has shown the SKIP LOCKED pre-pass is available (a
+        # PostgreSQL bind). Both must hold before live phases merge.
+        self.merge_live_phases = False
+        self.skip_locked_engaged = False
         # #10090: the run's one blend refresh. It may outlive the flush that
         # started it, so the next flush's committed cohort joins it
         # (`admit_fresh`) instead of that flush waiting for it to return. With
@@ -1473,6 +1555,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     quote_priority_due: list[float | None] = [None]
     flush_timings = _FlushTimings()
     prices.timings = flush_timings
+    # #10090 class f: read once per run, like the cadence; named in the log so
+    # a capture binds its window to the setting.
+    prices.merge_live_phases = kalshi_merge_live_phases_enabled()
+    if prices.merge_live_phases:
+        logger.info("Kalshi WS: live phases merge (%s=1)", KALSHI_MERGE_LIVE_PHASES_ENV)
     blend_refresher = LiveBlendRefresher(
         "kalshi", session_factory=get_task_session,  # #2471
         min_refresh_interval_s=blend_floor,
@@ -1660,6 +1747,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         whole event starts.
         """
         from app.tasks.kalshi_ws import SHORT_PROBE_LOCK_TIMEOUT_MS, _KalshiHeadlineEvents
+        from app.tasks.kalshi_ws import LIVE_MERGE_MAX_ROWS, absorb_live_phases
 
         # Winner/source questions commit together. Known props still write and
         # publish, but cannot hold their event's headline stamp or live priority.
@@ -1971,6 +2059,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         beside_task = None
         beside_stop = False
         beside_failed = False
+        # #10090 class f: outcomes of a merged phase a lock timeout split back.
+        # They never merge again in this flush (`absorb_live_phases`).
+        merge_refused: set[int] = set()
 
         async def serve_live_beside():
             prices.writing_beside()
@@ -2306,6 +2397,51 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # returned writes now and is admitted again.
                         stats["stamp_fenced"] += len(phase)
                         continue
+                # #10090 class f — ONE TRANSACTION FOR CONSECUTIVE LIVE GAMES
+                # (`KALSHI_WS_MERGE_LIVE_PHASES`). Only where a phase session
+                # has shown the SKIP LOCKED pre-pass (`skip_locked_engaged`),
+                # never beside a flush or on the final drain. Whole phases of
+                # this one's class (headline or live-aux) that no cooldown,
+                # ambiguity episode, refused probe or held stamp keeps apart
+                # join it, so no event is written half and every headline
+                # still goes before every live-aux phase. A lock timeout splits
+                # it back below.
+                merged_parts = []
+                if (
+                    phase_live and beside is None and not final_drain
+                    and getattr(prices, "merge_live_phases", False)
+                    and getattr(prices, "skip_locked_engaged", False)
+                ):
+                    def merge_key(candidate):
+                        if (
+                            not merge_refused.isdisjoint(candidate)
+                            or not any(cohort_event_ids.get(oid) in live_event_ids
+                                    for oid in candidate)
+                            or any(oid in prices.ambiguous_retry_since for oid in candidate)
+                            or not prices.short_probe_refused.isdisjoint(candidate)
+                        ):
+                            return None
+                        return aux_phase(candidate)
+
+                    def mergeable(candidate):
+                        if any(
+                            prices.lock_retry_until.get(oid, 0) > _mono()
+                            for oid in candidate
+                        ):
+                            return False
+                        events = event_ids_for_outcomes(cohort_event_ids, candidate.keys())
+                        return prices.stamping_events.isdisjoint(events) or (
+                            prices.held_events(blend_refresher).isdisjoint(events)
+                        )
+
+                    merged_parts = absorb_live_phases(
+                        phases, index, merge_key, mergeable, LIVE_MERGE_MAX_ROWS,
+                    )
+                    if merged_parts:
+                        phase = phases[index]
+                        stats["live_phases_merged"] = (
+                            stats.get("live_phases_merged", 0) + len(merged_parts) - 1
+                        )
                 if beside is None and prices.beside_written:
                     # #10090 (Argon Rank 1) — ORDERING. A live write beside an
                     # earlier phase committed these outcomes' newest buffered
@@ -2494,6 +2630,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         skip_locked = getattr(prices, "skip_locked", None)
                         # Row locks (and SKIP LOCKED) are PostgreSQL's.
                         bind = getattr(session, "bind", None)
+                        if (getattr(prices, "merge_live_phases", False)
+                                and callable(skip_locked)
+                                and getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"):
+                            # #10090 class f: later live phases may merge.
+                            prices.skip_locked_engaged = True
                         if (not final_drain and callable(skip_locked)
                                 and getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
                                 and len({write_unit(oid) for oid in phase}) > 1):
@@ -2626,6 +2767,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     # #10661: a lock timeout retains this component but permits later
                     # independent components. Other errors still stop the unpaid tail.
                     lock_timed_out = is_lock_timeout(exc)
+                    if merged_parts and lock_timed_out:
+                        # #10090 class f: a lock the SKIP LOCKED pre-pass could
+                        # not skip (a re-rank sibling, a row that turned
+                        # writable after it). Nothing of it landed; its games
+                        # take today's per-game phases next, in this flush,
+                        # each with its own probe, budget, overlay and cooldown.
+                        stats["live_merge_split"] = stats.get("live_merge_split", 0) + 1
+                        for part in merged_parts:
+                            merge_refused.update(part)
+                        phases[index + 1:index + 1] = merged_parts
+                        continue
                     unpaid = (
                         len(phase) if lock_timed_out
                         else sum(len(p) for p in phases[index:])
@@ -3768,9 +3920,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     async def timed_flush(flush_started):
         async with flush_gate:
             started = time.monotonic()
+            # #10090 class f: the loop thread's CPU over this flush (`tail`).
+            cpu_started = time.thread_time()
             try:
                 return await observation_drain.run_with(lambda: flush_prices(flush_started))
             finally:
+                flush_timings.flush_cpu = time.thread_time() - cpu_started
                 flush_timings.flushed(time.monotonic() - started)
 
     async def flush_loop():
@@ -3804,7 +3959,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
                 "resnapshots=%d quote_priority=%d probe_refused=%d "
-                "bundled_refused=%d parked=%d skipped_locked=%d",
+                "bundled_refused=%d parked=%d skipped_locked=%d "
+                "%s merged=%d merge_split=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -3832,6 +3988,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090: price rows a row lock elsewhere held back (with their
                 # unit) while the rest of their phase committed.
                 stats.get("price_rows_skipped_locked", 0),
+                # #10090 class f, at the END so earlier fields keep their
+                # place: the longest flush's loop CPU and the minute's
+                # checkout; then live phases absorbed into a merged phase and
+                # merged phases split back after a lock timeout (cumulative).
+                flush_timings.tail(),
+                stats.get("live_phases_merged", 0),
+                stats.get("live_merge_split", 0),
             )
             flush_timings.reset()
             _report_liveness(

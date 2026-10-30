@@ -23,6 +23,13 @@ does in production. A second connection holds game A's PRICE row.
   writes A and stamps it.
 * ``test_a_lone_held_game_keeps_its_waiting_refusal``: a phase of ONE game is
   unchanged — it still waits its lock budget and is retained, as before.
+
+#10090 class f (`KALSHI_WS_MERGE_LIVE_PHASES`): consecutive live games share
+ONE transaction once a phase session has shown the pre-pass, with the same
+price and re-rank statements (#10693); a held price row still holds back only
+its game; a lock the pre-pass cannot skip splits the merged phase back into
+today's per-game phases in the same flush; a cooling game, or a live-aux
+board beside a headline, is never merged.
 """
 
 from __future__ import annotations
@@ -285,3 +292,219 @@ async def test_the_kalshi_pre_pass_never_makes_a_snapshot_insert_wait(pg):
             )
             await other_tx.rollback()
         await tx.rollback()
+
+
+# ── #10090 class f: consecutive live games in ONE transaction ─────────────────
+#
+# `KALSHI_WS_MERGE_LIVE_PHASES` (here `prices.merge_live_phases`). Production
+# 2026-10-30 19:33-19:42Z: the longest Kalshi flush ran 30-46 transactions,
+# mostly one live game each, and each paid its checkout and BEGIN+SET before its
+# first write. Merged, games A and B (both live) share one transaction once a
+# phase session has shown the SKIP LOCKED pre-pass. A held price row still holds
+# back only its game; a lock the pre-pass cannot skip (game A's re-rank sibling)
+# splits the merged phase back into today's per-game phases in the same flush.
+
+
+def _live(ns, ids, *, merge):
+    """Games A and B live, at production's 0.25 s period, merging or not."""
+    ns["live_event_ids"] = set(ids["events"].values())
+    ns["flush_period"] = 0.25
+    ns["prices"].merge_live_phases = merge
+    return ns
+
+
+@contextlib.contextmanager
+def _transactions(engine):
+    """COMMITs and statements on the flush's engine while the block runs."""
+    from sqlalchemy import event
+
+    seen = {"commits": 0, "sql": []}
+
+    def commit(_conn):
+        seen["commits"] += 1
+
+    def statement(_conn, _cursor, sql, *_args):
+        seen["sql"].append(" ".join(sql.split()))
+
+    sync = engine.sync_engine
+    event.listen(sync, "commit", commit)
+    event.listen(sync, "before_cursor_execute", statement)
+    try:
+        yield seen
+    finally:
+        event.remove(sync, "commit", commit)
+        event.remove(sync, "before_cursor_execute", statement)
+
+
+def _updates(sql):
+    """The price and re-rank UPDATE templates; a re-rank's market list is one
+    bind per market, so its length is not part of the template."""
+    import re
+
+    return {
+        re.sub(r"IN \((\$\d+::INTEGER(, )?)+\)", "IN (<markets>)", s)
+        for s in sql if s.startswith("UPDATE futures_outcomes")
+    }
+
+
+def _skip_locks(sql):
+    return [s for s in sql if "SKIP LOCKED" in s]
+
+
+async def test_merged_live_games_share_one_transaction_and_the_pipeline_sql(pg):
+    engine, side, ids = pg
+    legs = ids["legs"]
+
+    # Off (today): one transaction per live game, no pre-pass on a lone game,
+    # on every flush (the second is where an engaged run would merge).
+    batch = {legs["a1"]: (0.7, None, None), legs["b1"]: (0.6, None, None)}
+    off, _trace, off_stats = _rig(engine, ids, batch)
+    _live(off, ids, merge=False)
+    with _transactions(engine) as before:
+        assert await asyncio.wait_for(off["flush_prices"](), 5) is True
+    batch.update({legs["a1"]: (0.75, None, None), legs["b1"]: (0.62, None, None)})
+    with _transactions(engine) as again:
+        assert await asyncio.wait_for(off["flush_prices"](), 5) is True
+    for seen in (before, again):
+        assert seen["commits"] == 2 and not _skip_locks(seen["sql"])
+    assert not off_stats.get("live_phases_merged") and not batch
+    assert not off["prices"].skip_locked_engaged
+
+    # On: the first phase session shows the pre-pass; until then, today's plan.
+    batch.update({legs["a1"]: (0.8, None, None), legs["b1"]: (0.65, None, None)})
+    on, trace, stats = _rig(engine, ids, batch)
+    _live(on, ids, merge=True)
+    with _transactions(engine) as warm:
+        assert await asyncio.wait_for(on["flush_prices"](), 5) is True
+    assert warm["commits"] == 2 and on["prices"].skip_locked_engaged
+    assert not stats.get("live_phases_merged")
+
+    batch.update({legs["a1"]: (0.9, None, None), legs["b1"]: (0.55, None, None)})
+    with _transactions(engine) as merged:
+        assert await asyncio.wait_for(on["flush_prices"](), 5) is True
+    assert merged["commits"] == 1  # both games, one transaction
+    assert stats["live_phases_merged"] == 1 and stats["errors"] == 0
+    assert len(_skip_locks(merged["sql"])) == 1  # the merged phase's pre-pass
+    # #10693: the same price and re-rank statements, only fewer transactions.
+    assert _updates(merged["sql"]) == _updates(before["sql"]) == _updates(warm["sql"])
+    stored = await _prices(side, ids)
+    assert stored["a1"][0] == 0.9 and stored["b1"][0] == 0.55 and not batch
+    refreshed = {e for t in trace if t[0] == "refresh" for e in t[1]}
+    assert set(ids["events"].values()) <= refreshed, trace
+
+
+async def test_a_held_price_row_in_a_merged_phase_holds_back_only_its_game(pg):
+    engine, side, ids = pg
+    legs, events = ids["legs"], ids["events"]
+    batch = {legs["a1"]: (0.7, None, None), legs["b1"]: (0.6, None, None)}
+    ns, trace, stats = _rig(engine, ids, batch)
+    _live(ns, ids, merge=True)
+    ns["prices"].skip_locked_engaged = True  # an earlier phase session showed it
+    seen = _packed(ns)
+    ns["live_event_ids"] = set(events.values())  # `_packed` empties it
+
+    async with _holding(side, legs["a1"]) as held:
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+        assert held.is_active
+        stored = await _prices(side, ids)
+        assert stored["b1"][0] == 0.6 and stored["a1"] == (0.3, 2)
+        assert stats["live_phases_merged"] == 1
+        assert stats["errors"] == 0 and stats["requeued"] == 0  # no lock wait
+        assert seen == [(frozenset({legs["a1"], legs["b1"]}), frozenset({legs["a1"]}))]
+        assert stats["price_rows_skipped_locked"] == 1
+        assert batch == {legs["a1"]: (0.7, None, None)}  # Q491: still buffered
+        refreshed = {e for t in trace if t[0] == "refresh" for e in t[1]}
+        assert events["b"] in refreshed and events["a"] not in refreshed, trace
+
+    assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+    assert (await _prices(side, ids))["a1"] == (0.7, 1) and not batch
+
+
+async def test_a_rerank_lock_timeout_splits_the_merged_phase_back_into_games(pg):
+    """Game A's re-rank sibling A2 is held: the pre-pass cannot skip it (A2 is
+    not one of the phase's writes), so the merged transaction times out. Its
+    games then take today's per-game phases in the same flush: A times out on
+    its own exactly as before, B commits."""
+    engine, side, ids = pg
+    legs, events = ids["legs"], ids["events"]
+    batch = {legs["a1"]: (0.7, None, None), legs["b1"]: (0.6, None, None)}
+    ns, trace, stats = _rig(engine, ids, batch)
+    _live(ns, ids, merge=True)
+    ns["prices"].skip_locked_engaged = True
+
+    async with _holding(side, legs["a2"]) as held:
+        with _transactions(engine) as seen:
+            assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+        assert held.is_active
+        stored = await _prices(side, ids)
+        assert stored["b1"][0] == 0.6  # B committed in this same flush
+        assert stored["a1"] == (0.3, 2) and stored["a2"] == (0.5, 1)
+        assert stats["live_merge_split"] == 1 and stats["live_phases_merged"] == 1
+        # Today's per-game result for A: one lock-timeout error, its one row kept.
+        assert stats["errors"] == 1 and stats["requeued"] == 1
+        assert batch == {legs["a1"]: (0.7, None, None)}
+        assert seen["commits"] == 1  # only B's own phase committed
+        assert legs["a1"] in ns["prices"].lock_retry_until  # A's ordinary cooldown
+        assert legs["b1"] not in ns["prices"].lock_retry_until
+        refreshed = {e for t in trace if t[0] == "refresh" for e in t[1]}
+        assert events["b"] in refreshed and events["a"] not in refreshed, trace
+
+
+async def test_a_cooling_game_or_another_class_is_never_merged(pg):
+    """A game in its lock-retry cooldown keeps its own turn (today's skip);
+    the fresh game is not merged with it and still commits. Nor is a live-aux
+    phase merged into a headline phase: every headline still goes first."""
+    engine, side, ids = pg
+    legs = ids["legs"]
+    batch = {legs["a1"]: (0.7, None, None), legs["b1"]: (0.6, None, None)}
+    ns, _trace, stats = _rig(engine, ids, batch)
+    _live(ns, ids, merge=True)
+    ns["prices"].skip_locked_engaged = True
+    from app.tasks.live_blend_refresh import _mono
+
+    ns["prices"].lock_retry_until[legs["b1"]] = _mono() + 60
+    with _transactions(engine) as seen:
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+    assert not stats.get("live_phases_merged") and seen["commits"] == 1
+    assert not _skip_locks(seen["sql"])  # A alone: today's lone-game phase
+    stored = await _prices(side, ids)
+    assert stored["a1"][0] == 0.7 and stored["b1"][0] == 0.5
+    assert batch == {legs["b1"]: (0.6, None, None)}
+
+    # Another class: B's leg is its game's live-aux board, A's a headline.
+    ns["prices"].lock_retry_until.clear()
+    ns["prices"].headline_aux_outcome_ids = {legs["b1"]}
+    batch[legs["a1"]] = (0.72, None, None)
+    with _transactions(engine) as seen:
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+    assert not stats.get("live_phases_merged") and seen["commits"] == 2
+    stored = await _prices(side, ids)
+    assert stored["a1"][0] == 0.72 and stored["b1"][0] == 0.6 and not batch
+
+
+async def test_a_game_whose_stamp_still_runs_is_never_merged(pg):
+    """B's previous stamp is still running (the same-event fence): today B
+    stays buffered at the head of the next flush; merged, it must not ride
+    A's transaction instead."""
+    engine, side, ids = pg
+    legs, events = ids["legs"], ids["events"]
+    batch = {legs["a1"]: (0.7, None, None), legs["b1"]: (0.6, None, None)}
+    ns, _trace, stats = _rig(engine, ids, batch)
+    _live(ns, ids, merge=True)
+    prices = ns["prices"]
+    prices.skip_locked_engaged = True
+    release = asyncio.Event()
+    prices.stamping = asyncio.create_task(release.wait())
+    prices.stamping_events = {events["b"]}
+
+    flush = asyncio.create_task(ns["flush_prices"]())
+    try:
+        async with asyncio.timeout(5):
+            while (await _prices(side, ids))["a1"][0] != 0.7:
+                await asyncio.sleep(0.01)
+        assert (await _prices(side, ids))["b1"][0] == 0.5  # fenced, not merged
+    finally:
+        release.set()
+        assert await asyncio.wait_for(flush, 5) is True
+    assert not stats.get("live_phases_merged") and stats["stamp_fenced"] >= 1
+    assert batch == {legs["b1"]: (0.6, None, None)} and stats["errors"] == 0
