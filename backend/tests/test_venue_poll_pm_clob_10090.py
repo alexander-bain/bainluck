@@ -17,6 +17,7 @@ that two Gamma-path refusals can never fire on a price this rule accepts (the
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import datetime, timezone
@@ -420,6 +421,88 @@ async def test_no_clob_read_starts_past_the_time_budget(monkeypatch):
                                 offset=0.0, stats=stats)
     assert service.reads == [] and written == [] and stats["clob_stopped"] == "budget"
     assert [u.key for u in rest] == ["100"]
+
+
+class _FailingService(_Service):
+    """The CLOB answers every token but ``fail``, whose read raises ``exc()``."""
+
+    def __init__(self, fail, exc):
+        super().__init__({f"t-0x{k}": (0.42, 0.50) for k in "1234"})
+        self.fail, self.exc = fail, exc
+
+    async def get_book_tops(self, tokens):
+        self.reads.append(list(tokens))
+        if self.fail in tokens:
+            raise self.exc()
+        return {t: self.tops[t] for t in tokens if t in self.tops}
+
+
+def _wire_clob_rotation(monkeypatch):
+    """One group per unit, read one at a time, on a real cursor store."""
+    _wire(monkeypatch)
+    store = {"cursor": None}
+    monkeypatch.setattr(clob, "read_cursor", lambda _venue: store["cursor"])
+    monkeypatch.setattr(
+        clob, "write_cursor",
+        lambda _venue, key: store.__setitem__("cursor", key) if key is not None else None,
+    )
+    monkeypatch.setattr(clob, "CLOB_TOKENS_PER_REQUEST", 1)
+    monkeypatch.setattr(clob, "CLOB_CONCURRENCY", 1)
+    clob.store_tokens({f"0x{k}": f"t-0x{k}" for k in "1234"}, now=time.time())
+    return store, [v.Unit(k, {int(k): [(int(k) * 10, f"0x{k}")]}) for k in "1234"]
+
+
+def _clob_unprocessable():
+    request = httpx.Request("GET", "https://clob.polymarket.com/books")
+    return httpx.HTTPStatusError("422", request=request, response=httpx.Response(422, request=request))
+
+
+@pytest.mark.parametrize("exc", [_clob_unprocessable, asyncio.TimeoutError], ids=["422", "timeout"])
+async def test_a_clob_group_that_keeps_failing_never_wedges_the_clob_rotation(monkeypatch, exc):
+    # lane1's R2 on #11789, carried to the CLOB rotation: the cursor passes a
+    # group that failed with its full wall, so the next pass reads past it.
+    store, units = _wire_clob_rotation(monkeypatch)
+    service = _FailingService("t-0x2", exc)
+    first = {"errors": []}
+    await clob.clob_pass(None, service, units, deadline=time.monotonic() + 20, offset=0.0, stats=first)
+    assert first["clob_groups_failed"] == 1 and store["cursor"] == "2"
+    await clob.clob_pass(None, service, units, deadline=time.monotonic() + 20, offset=0.0,
+                         stats={"errors": []})
+    assert service.reads == [["t-0x1"], ["t-0x2"], ["t-0x3"], ["t-0x4"], ["t-0x1"], ["t-0x2"]]
+
+
+async def test_a_first_clob_group_the_pass_clock_always_clips_never_wedges(monkeypatch):
+    # lane1's R5 probe on #11789, carried: under a 9 s pass every wall is clipped,
+    # and the first group had all the time there was, so it fails and moves on.
+    store, units = _wire_clob_rotation(monkeypatch)
+    service = _FailingService("t-0x1", asyncio.TimeoutError)
+    first = {"errors": []}
+    await clob.clob_pass(None, service, units, deadline=time.monotonic() + 9, offset=0.0, stats=first)
+    assert first["clob_stopped"] == "timeout" and first["clob_groups_failed"] == 1
+    assert store["cursor"] == "1"
+    await clob.clob_pass(None, service, units, deadline=time.monotonic() + 9, offset=0.0,
+                         stats={"errors": []})
+    assert service.reads[:3] == [["t-0x1"], ["t-0x2"], ["t-0x3"]]
+
+
+async def test_a_later_clob_group_the_pass_clock_clips_keeps_its_place(monkeypatch):
+    store, units = _wire_clob_rotation(monkeypatch)
+    service = _FailingService("t-0x2", asyncio.TimeoutError)
+    first = {"errors": []}
+    await clob.clob_pass(None, service, units, deadline=time.monotonic() + 9, offset=0.0, stats=first)
+    assert first["clob_stopped"] == "budget" and "clob_groups_failed" not in first
+    assert store["cursor"] == "1"
+    await clob.clob_pass(None, service, units, deadline=time.monotonic() + 20, offset=0.0,
+                         stats={"errors": []})
+    assert service.reads[2] == ["t-0x2"]  # first next pass
+
+
+def test_a_unit_too_big_for_the_clob_budget_is_counted_and_left_to_gamma():
+    unit = v.Unit("big", {1: [(1, "0xa"), (2, "0xb"), (3, "0xc")]})
+    stats: dict = {}
+    groups = v.pack_requests([unit], lambda u: ["ta", "tb", "tc"], 1, 2, stats,
+                             oversize_key="clob_units_oversize")
+    assert groups == [] and stats == {"clob_units_oversize": 1}
 
 
 async def _no_write(*_a, **_k):

@@ -66,7 +66,11 @@ those legs, and the first build's Gamma rotation prices them on its own cursor
 Gamma, so the two instruments never alternate on one row. On the 3,545 resolved
 tokens of the sample, 76% read a usable book; 14% had no bid and 10% were wider
 than the untradeable bar — the long tails of fields, which the socket also
-declines today.
+declines today. The CLOB rotation (``polymarket_clob``) keeps the Gamma
+rotation's cursor rules: a 429 keeps its place, a group that failed with its
+full wall (or the pass's first group, which had all the time there was) is
+passed and counted (``clob_groups_failed``), and a unit too big for the whole
+budget is counted (``clob_units_oversize``) and left to Gamma.
 
 COST, at the measured sizes (2026-10-30)
 ----------------------------------------
@@ -391,7 +395,11 @@ async def clob_pass(session, service, units: list[Unit], *, deadline: float, off
         ))
 
     ordered = rotate(units, read_cursor("polymarket_clob"))
-    groups = pack_requests(ordered, tokens_of, CLOB_TOKENS_PER_REQUEST, CLOB_REQUESTS_PER_PASS)
+    # A unit too big for the whole budget falls back to Gamma like any unread unit.
+    groups = pack_requests(
+        ordered, tokens_of, CLOB_TOKENS_PER_REQUEST, CLOB_REQUESTS_PER_PASS,
+        stats, oversize_key="clob_units_oversize",
+    )
     gate = asyncio.Semaphore(CLOB_CONCURRENCY)
 
     async def read(chunks):
@@ -402,14 +410,18 @@ async def clob_pass(session, service, units: list[Unit], *, deadline: float, off
             async with gate:
                 left = deadline - time.monotonic()
                 if left < _MIN_REQUEST_S:
-                    raise _OutOfTime()
+                    raise _OutOfTime(started=fetched_at is not None)
                 sent = datetime.fromtimestamp(time.time() - offset, timezone.utc)
                 fetched_at = fetched_at or sent
-                tops.update(
-                    await asyncio.wait_for(
-                        service.get_book_tops(chunk), timeout=min(REQUEST_TIMEOUT_S, left)
+                wall = min(REQUEST_TIMEOUT_S, left)
+                try:
+                    tops.update(
+                        await asyncio.wait_for(service.get_book_tops(chunk), timeout=wall)
                     )
-                )
+                except asyncio.TimeoutError:
+                    if wall < REQUEST_TIMEOUT_S:
+                        raise _OutOfTime(started=True) from None
+                    raise
                 stats["clob_requests"] = stats.get("clob_requests", 0) + 1
         return tops, fetched_at
 
@@ -421,9 +433,17 @@ async def clob_pass(session, service, units: list[Unit], *, deadline: float, off
             stop = "budget"
             break
         results = await asyncio.gather(*(read(c) for _u, c in window), return_exceptions=True)
-        for (group_units, chunks), result in zip(window, results):
+        for gi, ((group_units, chunks), result) in enumerate(zip(window, results), start):
             if isinstance(result, BaseException):
-                stop = stop or _stop_reason(result, stats)
+                if stop is None:
+                    stop = _stop_reason(result, stats, first=gi == 0)
+                    if stop in ("timeout", "fetch_error"):
+                        # The same rule as the Gamma rotation (lane1 R2/R5 on
+                        # #11789): a group that failed with all the time it
+                        # could have is passed, so it costs one read per
+                        # rotation and never stops the rotation there.
+                        stats["clob_groups_failed"] = stats.get("clob_groups_failed", 0) + 1
+                        last_key = group_units[-1].key
                 continue
             if stop:
                 # Groups are written in order so the cursor names a contiguous
@@ -448,12 +468,21 @@ async def clob_pass(session, service, units: list[Unit], *, deadline: float, off
 
 
 class _OutOfTime(Exception):
-    pass
+    """The pass's clock, not the CLOB: no time left to start a read, or a read
+    cut short under a wall below ``REQUEST_TIMEOUT_S``. ``started``: the group
+    had already sent a read."""
+
+    def __init__(self, *, started: bool):
+        super().__init__("pass budget")
+        self.started = started
 
 
-def _stop_reason(exc: BaseException, stats: dict) -> str:
+def _stop_reason(exc: BaseException, stats: dict, *, first: bool = False) -> str:
     if isinstance(exc, _OutOfTime):
-        return "budget"
+        # The pass's first group had all the time the pass could give it: a
+        # clipped read there is its own timeout, or that group wedges the
+        # rotation whenever the pass budget is under one full wall.
+        return "timeout" if first and exc.started else "budget"
     if isinstance(exc, asyncio.TimeoutError):
         return "timeout"
     if is_rate_limited(exc):
