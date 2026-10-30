@@ -3293,6 +3293,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         open_contract_event_candidates_cooperatively,
         open_contract_markets_stmt, open_contract_outcome_stmts,
         open_contract_prices_enabled, plan_flush_chunks, tokens_by_contract,
+        OPEN_SCOPE_SLATE, open_contract_scope,
+        open_contract_scope_markets_stmt,
+        scope_open_contract_admission_cooperatively,
+        OPEN_SCOPE_EARLY_REFRESH_MIN_S, OPEN_SCOPE_PRESENCE_CHECK_S,
+        OPEN_SCOPE_QUIET_S, game_mirror_market_ids,
+        open_contract_held_markets_stmt, open_scope_memory,
+    )
+    from app.utils.reader_presence import (  # #10090: held + served seeds
+        PresenceUnreadable, read_reader_presence, served_market_ids,
     )
     from app.tasks.ws_open_contracts import (  # #10091: the Kalshi arm's twin
         open_contract_bridge_event_stmt, open_contract_event_bridge,
@@ -3387,6 +3396,98 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 "streaming the linked slate only this run"
             )
             return None, True, {}, False
+        # #10090: `POLYMARKET_WS_OPEN_SCOPE=slate` keeps only what a live or
+        # near-start market depends on, cut from the full pairing above. A
+        # failed seed read is a failed admission read: the installed catalog
+        # stays. A successful empty scope is an admission with nothing in it.
+        # Seeds: the slate's markets, the markets and events a reader holds
+        # (`reader_presence`), the served markets, and the open legs mirroring
+        # a game token; each stays a seed until OPEN_SCOPE_QUIET_S after it
+        # was last one (`OpenScopeMemory`). An unreadable held set narrows
+        # nothing: the last readable one stands in and nothing ages out, and
+        # with none read yet the full admission is installed.
+        if open_contract_scope() == OPEN_SCOPE_SLATE:
+            memory = open_scope_memory()
+            now = time.monotonic()
+            try:
+                presence = await asyncio.to_thread(read_reader_presence)
+            except PresenceUnreadable as exc:
+                presence = None
+                admission.counts["scope_presence_unreadable"] = 1
+                if memory.presence is None:
+                    logger.warning(
+                        "Polymarket WS open scope slate: reader presence "
+                        "unreadable (%s) and none read yet; keeping every open "
+                        "contract this refresh", exc,
+                    )
+                else:
+                    logger.warning(
+                        "Polymarket WS open scope slate: reader presence "
+                        "unreadable (%s); keeping the last held set and "
+                        "ageing nothing out", exc,
+                    )
+            if presence is not None or memory.presence is not None:
+                if presence is not None:
+                    memory.presence = presence
+                held = memory.presence
+                served = await asyncio.to_thread(served_market_ids)
+                try:
+                    async with get_task_session() as session:
+                        eligible = [
+                            row[0] for row in (
+                                await session.execute(
+                                    open_contract_scope_markets_stmt()
+                                )
+                            ).all()
+                        ]
+                        seed_markets, seed_events = memory.seeds(
+                            set(eligible) | set(served) | held.market_ids
+                            | game_mirror_market_ids(admission, taken_assets),
+                            held.event_ids,
+                            now=now,
+                            quiet_s=OPEN_SCOPE_QUIET_S,
+                            expire=presence is not None,
+                        )
+                        if seed_events:
+                            seed_markets.update(
+                                row[0] for row in (
+                                    await session.execute(
+                                        open_contract_held_markets_stmt(
+                                            (), seed_events
+                                        )
+                                    )
+                                ).all()
+                            )
+                    full = len(admission.asset_to_outcome)
+                    admission = await scope_open_contract_admission_cooperatively(
+                        admission, seed_markets, taken_assets
+                    )
+                except Exception:
+                    logger.exception(
+                        "Polymarket WS: open-contract slate scope read failed; "
+                        "keeping the installed open catalog"
+                    )
+                    return None, True, {}, False
+                counts = admission.counts
+                counts.update(
+                    scope_held_markets=len(held.market_ids),
+                    scope_held_events=len(held.event_ids),
+                    scope_served_markets=len(served),
+                    scope_seed_markets=len(seed_markets),
+                    scope_presence_unreadable=int(presence is None),
+                )
+                logger.info(
+                    "Polymarket WS open scope slate: kept %d of %d open assets "
+                    "(%d seed tokens, %d seed markets: %d slate, %d held, %d "
+                    "held events, %d served, quiet %ds); mirrored legs kept=%d "
+                    "dropped=%d; presence %s",
+                    counts["scope_assets_kept"], full, counts["scope_seed_tokens"],
+                    len(seed_markets), len(eligible), len(held.market_ids),
+                    len(held.event_ids), len(served), int(OPEN_SCOPE_QUIET_S),
+                    counts["scope_mirrored_legs_kept"],
+                    counts["scope_mirrored_legs_dropped"],
+                    "read" if presence is not None else "UNREADABLE (last held set kept)",
+                )
         candidates = await open_contract_event_candidates_cooperatively(
             market_rows, admission
         )
@@ -3701,7 +3802,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     preread = None
     if not asset_ids:
         preread = await read_open_contracts(set(), market_ids)
-        if preread[0] is None or not preread[0].asset_to_outcome:
+        # #10090: an empty SLATE scope that read successfully is a run, not an
+        # exit: the setup below adopts the previous run's owed stamps, history
+        # and withdrawals, and the flushes settle them with nothing subscribed.
+        if preread[0] is None or (
+            not preread[0].asset_to_outcome
+            and preread[0].scope != OPEN_SCOPE_SLATE
+        ):
             logger.info("Polymarket WS: no game or open-contract asset IDs")
             _report_liveness("polymarket", "no_asset_ids", legs=0)
             return {"status": "no_asset_ids" if market_ids else "no_markets"}
@@ -3909,6 +4016,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     open_sockets: list = []
     open_run_task = None
     routing_generation = 0
+    # #10090: the installed open catalog is a successful `slate` scope, which
+    # keeps the catalog-refresh loop even when the scope holds nothing.
+    open_scope_installed = False
     # #9913: token → (latest, previous) distinct top of book, wide or not, so
     # a trade can be read against the book it hit. One entry per subscribed
     # token; rebuilt from the subscribe snapshot on every recycle.
@@ -6576,7 +6686,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # changed subscriptions reconnect; unchanged open-contract shards keep
     # their books and receive queues instead of rebuilding the whole fleet.
     async def refresh_catalog(slate, open_read, timing):
-        nonlocal open_run_task, routing_generation
+        nonlocal open_run_task, routing_generation, open_scope_installed
         admission, failed, bridge, bridge_failed = open_read
         stats["open_contract_admission_error"] = failed
         stats["open_contract_bridge_error"] = bridge_failed
@@ -6670,6 +6780,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     del open_complement_of[oid]
                 if admission is not None:
                     open_complement_of.update(admission.complement_of)
+                open_scope_installed = (
+                    admission is not None and admission.scope == OPEN_SCOPE_SLATE
+                )
                 live_assets = (
                     asset_to_outcome.keys()
                     | open_asset_to_outcome.keys()
@@ -6817,6 +6930,66 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
             return unadmitted_live_events(result.all(), legged_market_ids)
 
+    # #10090: under an installed `slate` scope (checked each pass, so the
+    # startup admission is waited for), a market a reader opens that
+    # the scope has not seen brings the catalog refresh forward, at most once
+    # per OPEN_SCOPE_EARLY_REFRESH_MIN_S (each handover blocks the flushes).
+    # Re-reads the held set every OPEN_SCOPE_PRESENCE_CHECK_S; asks the
+    # database only about ids it has not seen, and about each id once (a
+    # Kalshi market or a game the socket carries never brings a refresh).
+    # An unreadable presence or database read waits for the next check.
+    # Returns the held Polymarket markets waiting, once a refresh is allowed.
+    async def watch_held_presence():
+        memory = open_scope_memory()
+        try:
+            while True:
+                await asyncio.sleep(OPEN_SCOPE_PRESENCE_CHECK_S)
+                if not open_scope_installed:
+                    continue  # the startup catalog is still being admitted
+                try:
+                    presence = await asyncio.to_thread(read_reader_presence)
+                except PresenceUnreadable:
+                    continue
+                markets, events = memory.unseen(
+                    presence, legged_market_ids, event_id_by_market.values()
+                )
+                if not markets and not events:
+                    continue
+                try:
+                    async with get_task_session() as session:
+                        rows = (
+                            await session.execute(
+                                open_contract_held_markets_stmt(markets, events)
+                            )
+                        ).all()
+                except Exception:
+                    logger.warning(
+                        "Polymarket WS: held-market read failed; asking again "
+                        "at the next presence check", exc_info=True,
+                    )
+                    continue
+                waiting = {
+                    mid for mid, _eid in rows
+                    if mid not in memory.market_seen and mid not in legged_market_ids
+                }
+                memory.note(markets, events, time.monotonic())
+                if not waiting:
+                    continue
+                wait = memory.early_refresh_wait(
+                    time.monotonic(), OPEN_SCOPE_EARLY_REFRESH_MIN_S
+                )
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                memory.early_refresh_at = time.monotonic()
+                return frozenset(waiting)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Polymarket WS: held-presence check failed; the timer refreshes"
+            )
+            await asyncio.Event().wait()
+
     def start_game_socket():
         # Reuse the open arm's per-shard owner for game quotes/resolutions.
         # Empty means no subscriptions here, never the legacy all-market run.
@@ -6827,7 +7000,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
     game_run_task = start_game_socket()
     stop_task = asyncio.create_task(stop.wait()) if stop is not None else None
-    watch_task = None
+    watch_task = held_task = None
     exit_reason = "consumer_exit"
     try:
         while True:
@@ -6840,8 +7013,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     started_at=run_started_at,
                 ),
             )
+            held_task = (
+                asyncio.create_task(watch_held_presence())
+                if open_contract_scope() == OPEN_SCOPE_SLATE
+                else None
+            )
             done, _ = await asyncio.wait(
                 {game_run_task, watch_task}
+                | ({held_task} if held_task is not None else set())
                 | ({stop_task} if stop_task is not None else set()),
                 timeout=SUBSCRIPTION_REFRESH_SECONDS,
                 return_when=asyncio.FIRST_COMPLETED,
@@ -6880,6 +7059,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if finished:
                         game_run_task.result()
                         break
+            held = None
+            if held_task is not None:
+                if held_task in done and held_task.exception() is None:
+                    held = held_task.result()
+                held_task.cancel()
+                await asyncio.gather(held_task, return_exceptions=True)
+                held_task = None
             watch_task.cancel()
             await asyncio.gather(watch_task, return_exceptions=True)
             watch_task = None
@@ -6889,9 +7075,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # #10663: the startup slate/pre-read were copied into the live maps;
             # bound here they outlived every refresh as a second catalog.
             game_slate = preread = None
-            if not open_asset_to_outcome and not open_asset_mirrors:
+            if (
+                not open_asset_to_outcome
+                and not open_asset_mirrors
+                and not open_scope_installed
+            ):
                 # No open fleet to retain: preserve the game-only runner's
-                # existing recycle/debt-handoff contract.
+                # existing recycle/debt-handoff contract. #10090: an installed
+                # `slate` scope is retained even when empty, so a quiet hour
+                # never turns every timer into a full game-socket recycle.
                 stats["status"] = "resubscribe"
                 if admitted:
                     stats["recycle_reason"] = "admission"
@@ -6927,7 +7119,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 fresh_slate,
                 fresh_open,
                 _PMCatalogHandoverTiming(
-                    "admission" if admitted else "timer",
+                    "held" if held else ("admission" if admitted else "timer"),
                     slate_read_s=slate_read_s,
                     open_read_s=open_read_s,
                 ),
@@ -6948,9 +7140,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             ws.update_asset_ids(asset_ids.copy())
             run_started_at = time.monotonic()
             stats["catalog_refreshes"] = stats.get("catalog_refreshes", 0) + 1
-            stats["recycle_reason"] = "admission" if admitted else "timer"
+            stats["recycle_reason"] = (
+                "held" if held else ("admission" if admitted else "timer")
+            )
             if admitted:
                 stats["admitted_event_ids"] = sorted(admitted)[:20]
+            if held:
+                stats["held_refreshes"] = stats.get("held_refreshes", 0) + 1
+                stats["held_market_ids"] = sorted(held)[:20]
             logger.info(
                 "Polymarket WS refreshed game slate (%s); open catalog retained: %d assets",
                 stats["recycle_reason"], len(open_asset_to_outcome),
@@ -6976,6 +7173,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         game_run_task.cancel()
         if watch_task is not None:
             watch_task.cancel()
+        if held_task is not None:
+            held_task.cancel()
         if stop_task is not None:
             stop_task.cancel()
         if open_run_task is not None:
@@ -7002,6 +7201,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             await asyncio.gather(
                 admission_task, game_run_task,
                 *([watch_task] if watch_task is not None else []),
+                *([held_task] if held_task is not None else []),
                 *([stop_task] if stop_task is not None else []),
                 *([open_run_task] if open_run_task is not None else []),
                 return_exceptions=True,
