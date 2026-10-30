@@ -325,11 +325,30 @@ describe("#10090 J C1 live's catching sequence", () => {
     await page.unmount();
   });
 
-  test("a row leaving the committed fold takes its floor with it", async () => {
+  test("a row leaving the committed fold no longer holds the confirmation", async () => {
     const page = await confirmedPage();
     await page.emit(["fold_preview_floor", floorPacket({ "2": 23 })]);
     expectUnconfirmed(page.last());
     await page.load(held({ "1": 12 }));
+    await page.emit(["open"]);
+    expect(page.last()).toMatchObject({ confirmedAt: T, label: "Connected" });
+    await page.unmount();
+  });
+
+  // R1 (lane1 Q1): the reader parks a departing row's floor and restores it when
+  // detail adopts the row again. Detail is cached per worker, so a stale read can
+  // re-add the row below the floor the page already knows.
+  test("a row that leaves and rejoins below its known floor is owed again until a load covers it", async () => {
+    const page = await confirmedPage();
+    await page.emit(["fold_preview_floor", floorPacket({ "2": 24 })]);
+    expectUnconfirmed(page.last());
+    await page.load(held({ "1": 12 }));
+    await page.emit(["open"]);
+    expect(page.last()).toMatchObject({ confirmedAt: T, label: "Connected" });
+    await page.load(held({ "1": 12, "2": 22 }));
+    await page.emit(["open"]);
+    expectUnconfirmed(page.last());
+    await page.load(held({ "1": 12, "2": 24 }));
     await page.emit(["open"]);
     expect(page.last()).toMatchObject({ confirmedAt: T, label: "Connected" });
     await page.unmount();
