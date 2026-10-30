@@ -132,8 +132,10 @@ class _PMCatalogFlushBoundary:
         # #10090: the linked props' own loop (`flush_props`).
         self.prop_wake = asyncio.Event()
         self.prop_work = 0
-        # #10090: `PM_BRIDGED_SIDE_FIRST` off keeps today's FIFO lock.
-        self.side_writer = _PMSideWriter() if PM_BRIDGED_SIDE_FIRST else asyncio.Lock()
+        # #10090: arrival order for every side loop; a live bridged cohort
+        # (and, with `PM_BRIDGED_SIDE_FIRST`, every bridged one) takes the
+        # first turn (`_PMBridgeWriter`).
+        self.side_writer = _PMSideWriter()
         #: #10090: bridged open cohorts written beside the game flush.
         self.bridges = _PMBridgeWriter(wake=self.flush_wake)
 
@@ -556,12 +558,15 @@ def _bridged_side_first_env() -> bool:
 #: that read the buffer after 35.2 s, while live games' prices committed and
 #: stamped 0.3-2.2 s after arrival. On, the bridged writer takes the side
 #: connection ahead of any side loop waiting for it: it waits for the one side
-#: transaction in flight, never for the queue behind it. Off is today.
+#: transaction in flight, never for the queue behind it. Off, only a cohort of
+#: live events does (Argon rank 4: switch unset, live bridged writes waited up
+#: to 3.73 s for that connection behind standalone and prop chunks).
 PM_BRIDGED_SIDE_FIRST = _bridged_side_first_env()
 
 _PM_BRIDGE_TIMING_KEYS = (
     "bridged_cohorts", "bridged_side_wait_s", "bridged_side_wait_max_s",
     "bridged_write_s", "bridged_write_max_s",
+    "bridged_live_cohorts", "bridged_live_wait_s", "bridged_live_wait_max_s",
 )
 
 
@@ -570,28 +575,33 @@ class _PMSideWriter:
 
     `async with writer:` waits in arrival order, as `asyncio.Lock`;
     `async with writer.first():` goes ahead of every waiter that is not itself
-    first, behind the transaction in flight (never pre-empted). Release is
-    synchronous (a hand-over to the next waiter), so a cancellation can never
-    leave the connection marked held.
+    first, behind the transaction in flight (never pre-empted). A plain waiter
+    holding a ``ticket`` can be moved into the first turn while it waits
+    (`promote`). Release is synchronous (a hand-over to the next waiter), so a
+    cancellation can never leave the connection marked held.
     """
 
     def __init__(self) -> None:
         self._held = False
-        self._waiters: list[tuple[bool, asyncio.Future]] = []
+        #: [first, future, ticket], first turns ahead, each in arrival order.
+        self._waiters: list[list] = []
 
     def locked(self) -> bool:
         return self._held
 
-    async def acquire(self, first: bool = False) -> bool:
-        if not self._held and not self._waiters:
-            self._held = True
-            return True
-        waiter = (first, asyncio.get_running_loop().create_future())
-        if first:
-            ahead = sum(1 for is_first, _ in self._waiters if is_first)
+    def _insert(self, waiter: list) -> None:
+        if waiter[0]:
+            ahead = sum(1 for other in self._waiters if other[0])
             self._waiters.insert(ahead, waiter)
         else:
             self._waiters.append(waiter)
+
+    async def acquire(self, first: bool = False, ticket: object = None) -> bool:
+        if not self._held and not self._waiters:
+            self._held = True
+            return True
+        waiter = [first, asyncio.get_running_loop().create_future(), ticket]
+        self._insert(waiter)
         try:
             await waiter[1]
         except asyncio.CancelledError:
@@ -603,9 +613,21 @@ class _PMSideWriter:
             raise
         return True
 
+    def promote(self, ticket: object) -> bool:
+        """Move the plain waiter holding ``ticket`` to the back of the first
+        turn; False when no such waiter is still waiting."""
+        for waiter in self._waiters:
+            if waiter[2] is ticket and ticket is not None:
+                if not waiter[0] and not waiter[1].done():
+                    self._waiters.remove(waiter)
+                    waiter[0] = True
+                    self._insert(waiter)
+                return not waiter[1].done()
+        return False
+
     def release(self) -> None:
         while self._waiters:
-            _first, future = self._waiters.pop(0)
+            _first, future, _ticket = self._waiters.pop(0)
             if not future.done():
                 future.set_result(True)  # handed over; stays held
                 return
@@ -618,12 +640,15 @@ class _PMSideWriter:
         self.release()
 
     @contextlib.asynccontextmanager
-    async def first(self):
-        await self.acquire(first=True)
+    async def turn(self, first: bool = False, ticket: object = None):
+        await self.acquire(first=first, ticket=ticket)
         try:
             yield
         finally:
             self.release()
+
+    def first(self):
+        return self.turn(first=True)
 
 
 def _pm_pure_bridged_legs(
@@ -690,7 +715,11 @@ class _PMBridgeWriter:
     competes, and never stamps: each committed cohort is handed back as owed
     work (`take_completed`) that the next game flush stamps through the one
     existing stamp owner, before this writer waits for the cohort's market
-    notification.
+    notification. A cohort of live events (``live``) leads the queue and takes
+    the side connection's first turn; it is still this one serial writer, and
+    each cohort reads its prices from the buffer only once it holds the turn,
+    so no outcome is ever written by two writers or with an older value after
+    a newer one.
 
     ``reserved`` — events a queued or running cohort may still write or
     notify: game writes and withdrawals skip them, and no newer cohort of the
@@ -707,8 +736,12 @@ class _PMBridgeWriter:
         self.task: Optional[asyncio.Task] = None
         self.reserved: set[int] = set()
         self.unstamped: set[int] = set()
+        #: (ids, events, live, offered_at); live cohorts first, each part in
+        #: arrival order.
         self.queue: list[tuple] = []
         self.completed: list[tuple[list, dict, set]] = []
+        #: The side-connection ticket of a turn this writer is waiting for.
+        self._asking: Optional[object] = None
         #: A failed (non-lock) write leaves later cohorts buffered until this
         #: clock, as the game flush's own failure would: no retry storm.
         self.hold_until = 0.0
@@ -725,6 +758,7 @@ class _PMBridgeWriter:
         timing = dict(self.timing)
         self.timing["bridged_side_wait_max_s"] = 0.0
         self.timing["bridged_write_max_s"] = 0.0
+        self.timing["bridged_live_wait_max_s"] = 0.0
         return timing
 
     def _note_timing(self, name: str, seconds: float) -> None:
@@ -735,21 +769,34 @@ class _PMBridgeWriter:
     def busy(self) -> bool:
         return self.task is not None and not self.task.done()
 
-    def accepting(self) -> bool:
-        return (
-            time.monotonic() >= self.hold_until
-            and len(self.queue) + (self._entry is not None) < PM_BRIDGE_QUEUE_LIMIT
-        )
+    def accepting(self, live: bool = False) -> bool:
+        """Room for one more cohort. A live cohort counts only the live ones
+        outstanding against the bound, so pre-game cohorts never keep it out."""
+        if time.monotonic() < self.hold_until:
+            return False
+        outstanding = [queued[2] for queued in self.queue]
+        if self._entry is not None:
+            outstanding.append(self._entry["live"])
+        return (sum(outstanding) if live else len(outstanding)) < PM_BRIDGE_QUEUE_LIMIT
 
     def offer(
         self, ids, events, *, write, publish,
-        side_writer, buffer_lock, price_buffer, input_marks,
+        side_writer, buffer_lock, price_buffer, input_marks, live=False,
     ) -> None:
-        """Queue one bridged cohort; reserves ``events`` before returning."""
+        """Queue one bridged cohort; reserves ``events`` before returning.
+        ``live``: it goes ahead of every queued pre-game cohort, and a plain
+        side-connection wait already under way moves to the first turn."""
         events = set(events)
         self.reserved.update(events)
         self.unstamped.update(events)
-        self.queue.append((list(ids), events))
+        queued = (list(ids), events, bool(live), time.monotonic())
+        if live:
+            self.queue.insert(sum(1 for other in self.queue if other[2]), queued)
+            promote = getattr(side_writer, "promote", None)
+            if self._asking is not None and promote is not None:
+                promote(self._asking)
+        else:
+            self.queue.append(queued)
         if not self.busy():
             self.task = asyncio.create_task(
                 self._run(write, publish, side_writer, buffer_lock, price_buffer, input_marks),
@@ -806,20 +853,32 @@ class _PMBridgeWriter:
             self.wake.set()
 
     async def _run(self, write, publish, side_writer, buffer_lock, price_buffer, input_marks):
+        turn = getattr(side_writer, "turn", None)
         while self.queue:
-            ids, events = self.queue.pop(0)
-            entry = self._entry = {
-                "events": events, "committed": None, "marks": {}, "exposed": False,
-            }
+            # #10090: the turn is taken BEFORE the cohort is chosen, so a live
+            # cohort offered during the wait is the one written next, and its
+            # offer moves a plain wait to the first turn. A live cohort leads
+            # the queue, so its head says whether one is waiting.
+            go_first = PM_BRIDGED_SIDE_FIRST or self.queue[0][2]
+            entry = None
             publishing = None
-            # #10090: bridged-first when the side connection offers the turn.
-            first = getattr(side_writer, "first", None)
             asked = time.monotonic()
+            ticket = self._asking = object()
             try:
-                async with first() if first is not None else side_writer:
+                async with turn(go_first, ticket) if turn is not None else side_writer:
+                    self._asking = None
                     took = time.monotonic()
+                    ids, events, live, offered = self.queue.pop(0)
+                    entry = self._entry = {
+                        "events": events, "committed": None, "marks": {},
+                        "exposed": False, "live": live,
+                    }
                     self.timing["bridged_cohorts"] += 1
-                    self._note_timing("side_wait", took - asked)
+                    self._note_timing("side_wait", took - max(asked, offered))
+                    if live:
+                        # From hand-off to the turn: the bridged queue included.
+                        self.timing["bridged_live_cohorts"] += 1
+                        self._note_timing("live_wait", took - offered)
                     async with buffer_lock:
                         chunk = {oid: price_buffer[oid] for oid in ids if oid in price_buffer}
                         entry["marks"] = {
@@ -851,17 +910,20 @@ class _PMBridgeWriter:
                     # a held notification no longer holds the event frame.
                     self._expose(entry)
             finally:
-                try:
-                    if publishing is not None:
-                        # Committed but interrupted before `_expose` above (a
-                        # cancellation in write_chunk's buffer cleanup, after
-                        # its commit callback): the stamp is owed now, from
-                        # every chunk id, not after a held notification.
-                        self._expose(entry)
-                        await _join_publication(publishing)
-                finally:
-                    self._entry = None
-                    self._settle_entry(entry)
+                self._asking = None
+                if entry is not None:
+                    try:
+                        if publishing is not None:
+                            # Committed but interrupted before `_expose` above
+                            # (a cancellation in write_chunk's buffer cleanup,
+                            # after its commit callback): the stamp is owed
+                            # now, from every chunk id, not after a held
+                            # notification.
+                            self._expose(entry)
+                            await _join_publication(publishing)
+                    finally:
+                        self._entry = None
+                        self._settle_entry(entry)
 
     def _on_done(self, task: asyncio.Task) -> None:
         if self.task is not task:
@@ -2928,13 +2990,15 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
     blend (0/0 with no `bridge_error` = no such contract this run).
     `bridged_writes` (#10090) is the bridged writer's cohorts since start, then
     the seconds they waited for the shared side connection and spent in their
-    own write: sum since start / the minute's longest, each.
+    own write: sum since start / the minute's longest, each. `live_writes` is
+    the cohorts of live events among them, then their wait from hand-off to
+    the side connection's turn (the bridged queue included), the same way.
     """
     logger.info(
         "Polymarket WS open contracts: assets=%d shards=%d/%d served=%d/%d "
         "msgs=%d snapshot_quotes=%d written=%d deferred=%d "
         "bridged=%d/%d bridged_writes=%d side_wait=%.1f/%.2fs "
-        "write=%.1f/%.2fs%s",
+        "write=%.1f/%.2fs live_writes=%d live_wait=%.1f/%.2fs%s",
         stats.get("open_contract_assets", 0),
         open_stats.get("shards_connected", 0), open_stats.get("shards", 0),
         open_stats.get("assets_served", 0),
@@ -2950,6 +3014,9 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
         stats.get("bridged_side_wait_max_s", 0.0),
         stats.get("bridged_write_s", 0.0),
         stats.get("bridged_write_max_s", 0.0),
+        int(stats.get("bridged_live_cohorts", 0)),
+        stats.get("bridged_live_wait_s", 0.0),
+        stats.get("bridged_live_wait_max_s", 0.0),
         " bridge_error" if stats.get("open_contract_bridge_error") else "",
     )
 
@@ -4535,6 +4602,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             now = _mono()
             cohort: list[int] = []
             cohort_events: set[int] = set()
+            # #10090 (Argon rank 4): events whose latest stamp read said live.
+            # Their cohorts are offered first and never share a cohort with a
+            # pre-game event, so the bridged writer takes the side connection's
+            # first turn for them (`_PMBridgeWriter.offer`).
+            live_events = getattr(blend_refresher, "_live_event_ids", None) or set()
+            cohort_live = False
 
             def offer_cohort():
                 for eid in cohort_events.intersection(lock_retry_events):
@@ -4544,6 +4617,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     write=write_chunk, publish=blend_refresher.publish_market_changes,
                     side_writer=catalog_boundary.side_writer, buffer_lock=buffer_lock,
                     price_buffer=price_buffer, input_marks=input_marks,
+                    live=cohort_live,
                 )
                 stats["bridged_handed_off"] = (
                     stats.get("bridged_handed_off", 0) + len(cohort)
@@ -4566,6 +4640,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 (eid for eid in bridged if eid in lock_retry_events),
                 key=lambda eid: bridges.retry_offered.get(eid, 0.0),
             )
+            order = [eid for eid in order if eid in live_events] + [
+                eid for eid in order if eid not in live_events
+            ]
             for eid in order:
                 legs = bridged[eid]
                 if (
@@ -4579,16 +4656,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     len(cohort) + len(legs) > FLUSH_CHUNK_ROWS
                     or eid in lock_retry_events
                     or not cohort_events.isdisjoint(lock_retry_events)
+                    or (eid in live_events) != cohort_live
                 ):
-                    if bridges.accepting():
+                    if bridges.accepting(live=cohort_live):
                         offer_cohort()
                     else:
                         bridge_waiting.update(cohort_events)
                     cohort, cohort_events = [], set()
+                cohort_live = eid in live_events
                 cohort.extend(legs)
                 cohort_events.add(eid)
             if cohort:
-                if bridges.accepting():
+                if bridges.accepting(live=cohort_live):
                     offer_cohort()
                 else:
                     bridge_waiting.update(cohort_events)
