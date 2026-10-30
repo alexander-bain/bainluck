@@ -3687,16 +3687,47 @@ OPENING_BOOK_SLICES = 12
 
 #: How long one lock acquisition in the movement core may WAIT (#10090).
 #:
-#: A1-A6 and their actually affected market maxima commit together; A7 then
-#: commits its delta and affected maxima in its own transaction. Outcome
-#: targets use SKIP LOCKED; other waits in that transaction stay bounded so
-#: maintenance cannot queue indefinitely while holding quote rows. A full
-#: B/C recompute follows in its own transaction with the same wait bound and
-#: no outcome locks held. This bounds acquisition, not scan/lock-held duration:
-#: A1-A6 still share the prefix retirement transaction.
+#: Each retirement transaction (one chunk of A1-A7, see
+#: `MOVEMENT_RETIRE_CHUNK`) commits its outcome rows with its own markets'
+#: maxima. Outcome targets use SKIP LOCKED; the maxima's market waits stay
+#: bounded so maintenance cannot queue indefinitely while holding quote rows. A
+#: full B/C recompute follows in its own transaction with the same wait bound
+#: and no outcome locks held. This bounds acquisition; the chunk bounds how long
+#: a retired row stays locked.
 #: Half a second is under the server's 1 s deadlock_timeout. A timeout raises
 #: 55P03 and rolls back that transaction, never a partial outcome/max pair.
 MOVEMENT_CORE_LOCK_TIMEOUT_MS = 500
+
+#: Outcome rows one retirement transaction may lock (#10090 part 2).
+#:
+#: Statement A's 100 k-row UPDATE ran 68-93 s on production (2026-10-30
+#: 16:11-16:38Z), and every row it took stayed locked until A1-A6 committed
+#: together. A poller's `INSERT INTO futures_outcomes` waited 15 -> 47 s behind
+#: it (`pg_blocking_pids` named the sweep). So A, A2, A5 and A6 read their
+#: targets first without locks (same predicate, order and LIMIT), and then
+#: retire them this many at a time. Each chunk commits with its markets' maxima,
+#: so a retired row stays locked for about one chunk. At that run's rate,
+#: 100 k rows in ~80 s, a chunk takes under a second. A4 and A7 chunk their
+#: prepared ids the same way. A3 (a 47-row population) stays one statement.
+#:
+#: A row a writer holds is skipped and is NOT replaced by the next candidate in
+#: this run. It is retired by the next run, as a skipped row already was.
+MOVEMENT_RETIRE_CHUNK = 1_000
+
+#: How long one retirement transaction may sit idle between its own statements
+#: before Postgres ends the session (#10090 part 2).
+#:
+#: A worker restart on 2026-10-30 orphaned statement A's backend, which held its
+#: rows for 15 minutes until it was killed by hand. A chunk returns at most
+#: `MOVEMENT_RETIRE_CHUNK` market ids, so it no longer stalls in ClientWrite.
+#: But a worker that dies between a chunk's UPDATE and its COMMIT leaves the
+#: backend idle in transaction, holding the chunk's rows until the server
+#: notices the dead peer. Between its own statements a healthy chunk is idle
+#: for milliseconds. Applied with `SET LOCAL`, so it ends with the
+#: transaction; no server or role setting changes
+#: (`calibration_paired_publication.IDLE_IN_TRANSACTION_TIMEOUT_MS` is the
+#: precedent).
+MOVEMENT_CHUNK_IDLE_TIMEOUT_MS = 5_000
 
 #: A4's and A7's eligibility, ONE text each, shared by the lock-free prepare
 #: read and the locking write (#10090). Their `futures_odds_snapshots` LATERAL
@@ -3704,9 +3735,9 @@ MOVEMENT_CORE_LOCK_TIMEOUT_MS = 500
 #: kept every outcome A1-A3 had already taken locked for its whole duration.
 #: So it runs FIRST, before any outcome lock, and returns at most `:batch` ids;
 #: the core then re-evaluates this SAME predicate restricted to those ids
-#: (`fo.id = ANY(:prepared_ids)`) under `FOR UPDATE OF fo SKIP LOCKED`. The
-#: re-check is the version check: a row a writer rewrote, or that A1-A3 cleared
-#: in this transaction, or whose window moved, simply no longer qualifies and is
+#: (`fo.id = ANY(:prepared_ids)`) under `FOR NO KEY UPDATE OF fo SKIP LOCKED`. The
+#: re-check is the version check: a row a writer rewrote, or that A1-A3 already
+#: cleared, or whose window moved, simply no longer qualifies and is
 #: left as it is — nothing is retired on the prepare read's word alone. A row
 #: that newly qualifies after the prepare waits for the next run, as a skipped
 #: locked row already does. Comments inside stay with the shared text.
@@ -4095,21 +4126,34 @@ def update_max_movement(self):
                 },
             )).scalars().all())
 
-            # A7 will commit separately, but judges the same window as its
-            # preparation and the first six retirements, never a later day.
+            # A1-A7 commit in many transactions (#10090 part 2) but judge one
+            # instant: the prepare reads' own, never a later one per chunk.
             retirement_asof = (await session.execute(
                 text("SELECT transaction_timestamp()"),
             )).scalar_one()
 
-            # The core yields to quotes (#10090). After the lock-free
-            # prepare/clock reads, `is_local` scopes this budget to A1-A6
-            # and their affected maxima; the A1-A7 target selections below lock with
-            # `SKIP LOCKED` and never wait at all. See
-            # MOVEMENT_CORE_LOCK_TIMEOUT_MS.
-            await session.execute(
-                SET_LOCK_TIMEOUT_SQL,
-                {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
-            )
+            core_updated = core_cleared = 0
+            # Set once a retirement commits; the cache is then owed a refresh
+            # even if a later retirement fails. From A7 on (`in_tail`), the
+            # bank's `finally` owns that refresh.
+            movement_committed = False
+            in_tail = False
+            warm = None
+
+            async def warm_committed():
+                # Reported, not swallowed: a warm that never ran must be visible in
+                # the task result rather than inferred from a latency graph
+                # (gotcha #53 — "it returned" is not "it worked").
+                nonlocal warm
+                if warm is not None:
+                    return
+                try:
+                    from app.tasks.futures_movers_warm import warm_futures_movers
+
+                    warm = await warm_futures_movers(session)
+                except Exception as exc:  # noqa: BLE001 — never fail the column update
+                    logger.warning("update_max_movement: warm failed: %s", exc, exc_info=True)
+                    warm = {"terminal": "failed", "completed": 0, "reason": "error"}
 
             async def recompute_maxima(market_ids=None):
                 # Restrict the aggregate's INPUT, not only the UPDATE target:
@@ -4150,6 +4194,70 @@ def update_max_movement(self):
                 """), params)
                 return recomputed.rowcount, emptied.rowcount
 
+            async def retire(statement, params):
+                # One retirement transaction: its outcome rows and the maxima of
+                # exactly the markets those rows belong to commit together, so
+                # no reader sees a partial outcome/max pair. The budget is
+                # transaction-local, so every transaction arms its own. Outcome
+                # targets take SKIP LOCKED and never wait; the maxima's market
+                # waits are bounded (MOVEMENT_CORE_LOCK_TIMEOUT_MS).
+                nonlocal core_updated, core_cleared, movement_committed
+                try:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                    )
+                    await session.execute(
+                        text(
+                            "SELECT set_config('idle_in_transaction_session_timeout',"
+                            " CAST(:ms AS text), true)"
+                        ),
+                        {"ms": f"{MOVEMENT_CHUNK_IDLE_TIMEOUT_MS}ms"},
+                    )
+                    retired = await session.execute(text(statement), params)
+                    market_ids = sorted({
+                        market_id for market_id in retired.scalars().all()
+                        if market_id is not None
+                    })
+                    updated = cleared = 0
+                    if market_ids:
+                        updated, cleared = await recompute_maxima(market_ids)
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    # Earlier chunks are committed; the 30-minute movers payload
+                    # must not keep claiming a movement they retired.
+                    if movement_committed and not in_tail:
+                        await warm_committed()
+                    raise
+                core_updated += updated
+                core_cleared += cleared
+                movement_committed = True
+                return retired.rowcount
+
+            async def retire_prepared(statement, params, prepared_ids):
+                # The statement re-checks its own predicate on `:prepared_ids`,
+                # so a row a writer changed since the prepare read is re-judged,
+                # never retired on that read's word. See MOVEMENT_RETIRE_CHUNK.
+                retired_rows = 0
+                for start in range(0, len(prepared_ids), MOVEMENT_RETIRE_CHUNK):
+                    retired_rows += await retire(statement, {
+                        **params,
+                        "prepared_ids": prepared_ids[start:start + MOVEMENT_RETIRE_CHUNK],
+                    })
+                return retired_rows
+
+            async def prepare(label, predicate, order, params):
+                # Lock-free target read for a chunked retirement: the SAME
+                # predicate, order and LIMIT the locking write re-checks. Read
+                # after the previous retirement committed, so it never selects
+                # a row that retirement already cleared.
+                return list((await session.execute(
+                    text(f"/* movement prepare: {label} */ SELECT id"
+                         + predicate + order + " LIMIT :batch"),
+                    params,
+                )).scalars().all())
+
             # A. Retire deltas whose row has not been written inside the window.
             #    `last_updated` is the right stamp and `price_changed_at` is the
             #    wrong one: this asks "has any writer touched this row", not "did
@@ -4157,22 +4265,39 @@ def update_max_movement(self):
             #    and its ~0 delta is honest; the rows here are ones NOTHING has
             #    written, whose delta therefore predates the window by
             #    construction. (#2024 records that reading as POLLER ALIVE.)
-            expired = await session.execute(
-                text("""
+            #
+            #    Prepared, then retired in chunks (#10090 part 2): this is the
+            #    100 k-row UPDATE that held quote rows for 68-93 s. See
+            #    MOVEMENT_RETIRE_CHUNK.
+            a_predicate = """
+                        FROM futures_outcomes
+                        WHERE probability_change_24h IS NOT NULL
+                          AND last_updated < CAST(:retirement_asof AS timestamptz)
+                              - (:window_hours * interval '1 hour')
+            """
+            a_order = """
+                        ORDER BY abs(probability_change_24h) DESC
+            """
+            a_params = {
+                "retirement_asof": retirement_asof,
+                "window_hours": MOVEMENT_WINDOW_HOURS,
+                "batch": STALE_DELTA_BATCH,
+            }
+            a_prepared_ids = await prepare("A", a_predicate, a_order, a_params)
+            expired_rows = await retire_prepared(
+                """
                     UPDATE futures_outcomes
                     SET probability_change_24h = NULL
                     WHERE id IN (
-                        SELECT id
-                        FROM futures_outcomes
-                        WHERE probability_change_24h IS NOT NULL
-                          AND last_updated < now() - (:window_hours * interval '1 hour')
-                        ORDER BY abs(probability_change_24h) DESC
+                        SELECT id""" + a_predicate + """
+                          AND id = ANY(:prepared_ids)""" + a_order + """
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
-                """),
-                {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_DELTA_BATCH},
+                """,
+                a_params,
+                a_prepared_ids,
             )
 
             # A2. Retire deltas on GRADED outcomes, whatever their stamp says.
@@ -4217,22 +4342,29 @@ def update_max_movement(self):
             #     `push_notifications`, `precompute_interestingness`), so a
             #     settled market also stops generating big-move pushes and
             #     digest rows — the same bug on two quieter surfaces.
-            graded = await session.execute(
-                text("""
-                    UPDATE futures_outcomes
-                    SET probability_change_24h = NULL
-                    WHERE id IN (
-                        SELECT id
+            #
+            #     Prepared and chunked like A, for A's 100 k-row reason.
+            a2_predicate = """
                         FROM futures_outcomes
                         WHERE probability_change_24h IS NOT NULL
                           AND resolution_source IS NOT NULL
-                        ORDER BY abs(probability_change_24h) DESC
+            """
+            a2_params = {"batch": GRADED_DELTA_BATCH}
+            a2_prepared_ids = await prepare("A2", a2_predicate, a_order, a2_params)
+            graded_rows = await retire_prepared(
+                """
+                    UPDATE futures_outcomes
+                    SET probability_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id""" + a2_predicate + """
+                          AND id = ANY(:prepared_ids)""" + a_order + """
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
-                """),
-                {"batch": GRADED_DELTA_BATCH},
+                """,
+                a2_params,
+                a2_prepared_ids,
             )
 
             # A3. Retire deltas that REFUTE THEMSELVES — the row's own two
@@ -4301,8 +4433,12 @@ def update_max_movement(self):
             #     ungraded and freshly stamped, which is the entire reason A3
             #     exists — so if the pair is not retired together it is not
             #     retired at all.
-            impossible = await session.execute(
-                text("""
+            #
+            #     One statement in its own transaction, not prepared: its
+            #     population is tens of rows, and a prepare read would add a
+            #     second scan for nothing.
+            impossible_rows = await retire(
+                """
                     UPDATE futures_outcomes
                     SET probability_change_24h = NULL,
                         rank_change_24h = NULL
@@ -4315,10 +4451,10 @@ def update_max_movement(self):
                                OR current_probability - probability_change_24h > 1)
                         ORDER BY abs(probability_change_24h) DESC
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
-                """),
+                """,
                 {"batch": IMPOSSIBLE_PRIOR_BATCH},
             )
 
@@ -4427,25 +4563,30 @@ def update_max_movement(self):
             #     A5 and A6 are blind to these rows by construction — `fm.status
             #     = 'open'`, freshly stamped, ungraded — so this is the only
             #     statement that can retire the pair.
-            unobserved = await session.execute(
-                text("""
+            #
+            #     Its own transaction(s) now (#10090 part 2), so `now()` is
+            #     pinned to the prepare read's instant, as A7's already was.
+            unobserved_rows = await retire_prepared(
+                """
                     UPDATE futures_outcomes
                     SET probability_change_24h = NULL,
                         rank_change_24h = NULL
                     WHERE id IN (
                         SELECT fo.id
-                """ + A4_UNOBSERVED_PREDICATE + """
+                """ + A4_UNOBSERVED_PREDICATE.replace(
+                    "now()", "CAST(:retirement_asof AS timestamptz)",
+                ) + """
                           AND fo.id = ANY(:prepared_ids)
                         ORDER BY abs(fo.probability_change_24h) DESC
                         LIMIT :batch
-                        FOR UPDATE OF fo SKIP LOCKED
+                        FOR NO KEY UPDATE OF fo SKIP LOCKED
                     )
                     RETURNING market_id
-                """),
+                """,
                 {
+                    "retirement_asof": retirement_asof,
                     "window_hours": MOVEMENT_WINDOW_HOURS,
                     "tolerance": tolerance,
-                    "prepared_ids": a4_prepared_ids,
                     # MODERATE_MOVEMENT_THRESHOLD: below it no card names a mover
                     # and no chip is drawn, so a sub-2-point delta cannot reach a
                     # reader to lie to them. Bounding the statement there is what
@@ -4458,6 +4599,7 @@ def update_max_movement(self):
                     # Postgres array, which is what `<> ALL(...)` needs.
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                 },
+                a4_prepared_ids,
             )
 
             # A5. Retire the RANK claim on rows nothing has written inside the
@@ -4479,22 +4621,35 @@ def update_max_movement(self):
             #     Self-healing exactly as A is: the next poll writes a fresh
             #     pair, and a NULL rank change is what every consumer already
             #     treats as "no change" (no arrow, no "New favorite", no +15).
-            rank_expired = await session.execute(
-                text("""
-                    UPDATE futures_outcomes
-                    SET rank_change_24h = NULL
-                    WHERE id IN (
-                        SELECT id
+            #
+            #     Prepared and chunked like A (#10090 part 2); still unordered.
+            a5_predicate = """
                         FROM futures_outcomes
                         WHERE rank_change_24h IS NOT NULL
                           AND rank_change_24h != 0
-                          AND last_updated < now() - (:window_hours * interval '1 hour')
+                          AND last_updated < CAST(:retirement_asof AS timestamptz)
+                              - (:window_hours * interval '1 hour')
+            """
+            a5_params = {
+                "retirement_asof": retirement_asof,
+                "window_hours": MOVEMENT_WINDOW_HOURS,
+                "batch": STALE_RANK_BATCH,
+            }
+            a5_prepared_ids = await prepare("A5", a5_predicate, "", a5_params)
+            rank_expired_rows = await retire_prepared(
+                """
+                    UPDATE futures_outcomes
+                    SET rank_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id""" + a5_predicate + """
+                          AND id = ANY(:prepared_ids)
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
-                """),
-                {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_RANK_BATCH},
+                """,
+                a5_params,
+                a5_prepared_ids,
             )
 
             # A6. Retire the RANK claim on GRADED outcomes — A2's predicate,
@@ -4517,22 +4672,28 @@ def update_max_movement(self):
             #     column without asking whether the market is over:
             #     `futures_highlights`' leader_change and top-5 churn signals,
             #     `snippet_angles`, and the two feed payload sites.
-            rank_graded = await session.execute(
-                text("""
-                    UPDATE futures_outcomes
-                    SET rank_change_24h = NULL
-                    WHERE id IN (
-                        SELECT id
+            a6_predicate = """
                         FROM futures_outcomes
                         WHERE rank_change_24h IS NOT NULL
                           AND rank_change_24h != 0
                           AND resolution_source IS NOT NULL
+            """
+            a6_params = {"batch": GRADED_RANK_BATCH}
+            a6_prepared_ids = await prepare("A6", a6_predicate, "", a6_params)
+            rank_graded_rows = await retire_prepared(
+                """
+                    UPDATE futures_outcomes
+                    SET rank_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id""" + a6_predicate + """
+                          AND id = ANY(:prepared_ids)
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
-                """),
-                {"batch": GRADED_RANK_BATCH},
+                """,
+                a6_params,
+                a6_prepared_ids,
             )
 
             # A7. Retire deltas whose DIRECTION a dated comparison contradicts
@@ -4625,42 +4786,18 @@ def update_max_movement(self):
             #     existing scan of `futures_odds_snapshots` rather than opening
             #     a second one; the run's total stays far inside the 120 s
             #     `soft_time_limit`.
-            # Actual mutations name the only markets whose maxima retirement
-            # can invalidate. Include rank sweeps too, without broadening any
-            # retirement predicate, batch, ordering or SKIP LOCKED admission.
-            retired_market_ids = sorted({
-                market_id
-                for retirement in (
-                    expired, graded, impossible, unobserved,
-                    rank_expired, rank_graded,
-                )
-                for market_id in retirement.scalars().all()
-                if market_id is not None
-            })
-            core_updated = core_cleared = 0
-            if retired_market_ids:
-                core_updated, core_cleared = await recompute_maxima(retired_market_ids)
-
-            # Keep A1–A6 and their affected maxima atomic. Their outcome rows
-            # release before A7 rechecks its prepared snapshot candidates; A7
-            # does not mutate rank, so the prefix's rank work is complete.
-            await session.commit()
-
-            # The prefix has committed coherent deltas/ranks and maxima. A7,
-            # the full recompute and dated-bank work follow without
+            # A1-A6 have committed chunk by chunk, each with its own markets'
+            # maxima. A7, the full recompute and dated-bank work follow without
             # holding outcome quote locks. A cleared claim stays silent
             # even while its old bank remains: the reader gates on NULL
             # before it reads metadata, including the DataGolf arm.
             bank_transaction_closed = False
+            in_tail = True
             try:
-                # A7 is last in the original sweep order. Its own transaction
-                # must restore the local acquisition bound after prefix commit.
-                await session.execute(
-                    SET_LOCK_TIMEOUT_SQL,
-                    {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
-                )
-                contradicted = await session.execute(
-                    text("""
+                # A7 is last in the original sweep order, chunked over its
+                # prepared ids like A4.
+                contradicted_rows = await retire_prepared(
+                    """
                         UPDATE futures_outcomes
                         SET probability_change_24h = NULL
                         WHERE id IN (
@@ -4671,15 +4808,14 @@ def update_max_movement(self):
                               AND fo.id = ANY(:prepared_ids)
                             ORDER BY abs(fo.probability_change_24h) DESC
                             LIMIT :batch
-                            FOR UPDATE OF fo SKIP LOCKED
+                            FOR NO KEY UPDATE OF fo SKIP LOCKED
                         )
                         RETURNING market_id
-                    """),
+                    """,
                     {
                         "retirement_asof": retirement_asof,
                         "window_hours": MOVEMENT_WINDOW_HOURS,
                         "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
-                        "prepared_ids": a7_prepared_ids,
                         # Decimal, never the float — A4's note above explains why a
                         # `float` here makes a delta sitting exactly on the floor
                         # fail its own floor test.
@@ -4687,17 +4823,8 @@ def update_max_movement(self):
                         "batch": CONTRADICTED_DIRECTION_BATCH,
                         "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                     },
+                    a7_prepared_ids,
                 )
-
-                contradicted_market_ids = sorted({
-                    market_id for market_id in contradicted.scalars().all()
-                    if market_id is not None
-                })
-                if contradicted_market_ids:
-                    a7_updated, a7_cleared = await recompute_maxima(contradicted_market_ids)
-                    core_updated += a7_updated
-                    core_cleared += a7_cleared
-                await session.commit()
 
                 # Preserve the original full B/C maintenance for markets whose
                 # prices changed independently of retirement. Its new transaction
@@ -5146,29 +5273,13 @@ def update_max_movement(self):
                 # 30-minute warm payload claiming a retired movement.
                 # Cancellation still propagates without starting a warm.
                 if bank_transaction_closed:
-                    # Reported, not swallowed: a warm that never ran must be visible in
-                    # the task result rather than inferred from a latency graph
-                    # (gotcha #53 — "it returned" is not "it worked").
-                    try:
-                        from app.tasks.futures_movers_warm import warm_futures_movers
+                    await warm_committed()
 
-                        warm = await warm_futures_movers(session)
-                    except Exception as exc:  # noqa: BLE001 — never fail the column update
-                        logger.warning("update_max_movement: warm failed: %s", exc, exc_info=True)
-                        warm = {"terminal": "failed", "completed": 0, "reason": "error"}
-
-            expired_rows = expired.rowcount
-            graded_rows = graded.rowcount
-            impossible_rows = impossible.rowcount
-            unobserved_rows = unobserved.rowcount
-            contradicted_rows = contradicted.rowcount
             banked_markets = banked.rowcount
             unbanked_markets = unbanked.rowcount
             banked_dg_markets = banked_dg.rowcount
             unbanked_dg_markets = unbanked_dg.rowcount
             opening_markets = openings.rowcount
-            rank_expired_rows = rank_expired.rowcount
-            rank_graded_rows = rank_graded.rowcount
 
             # `expired` and `backlog_drained` are reported so the drain is
             # observable while it runs: a run that retires exactly
