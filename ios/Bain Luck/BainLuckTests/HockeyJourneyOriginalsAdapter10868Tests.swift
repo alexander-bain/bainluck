@@ -39,9 +39,10 @@ import XCTest
 /// CONSTRUCTED here, and only here: the reader's calendar (Pacific, en_US),
 /// `now`, the tint, the held selection, and — named in each test that does it —
 /// a decoded event `status` changed (no live NHL body is retained; a pregame
-/// body read as final shows served null settlements) or one decoded
-/// settlement field on a player-prop row cleared or flipped. Expected clock
-/// words come from part one's own formatter.
+/// body read as final shows served null settlements), one decoded
+/// settlement field on a player-prop row cleared or flipped, the served
+/// listed start moved, or one decoded quote clock moved. Expected clock words
+/// come from part one's own formatter.
 @MainActor
 final class HockeyJourneyOriginalsAdapter10868Tests: XCTestCase {
     private typealias A = HockeyJourneyOriginalsAdapter10868
@@ -294,34 +295,62 @@ final class HockeyJourneyOriginalsAdapter10868Tests: XCTestCase {
 
     // MARK: During play
 
-    func testDuringPlayACurrentPriceIsCurrentAStaleOneIsRecordedAndASettledOneIsNoChance() throws {
-        // CONSTRUCTED: the pregame body with its decoded status set to `live`, read at 20:30Z.
-        var event = try detail(Self.devilsKnightsDetail)
+    func testDuringPlayACurrentPriceIsCurrentAStaleOneIsHistoricalAndASettledOneIsNoChance() throws {
+        // CONSTRUCTED: the pregame body with its decoded status set to `live` and its listed start
+        // moved from 22:00Z to 15:30Z, read at 20:30Z — so its 20:12Z quotes and its 15:44Z
+        // spread are all observed during play. Every served quote byte is unchanged.
+        let listed = #""commence_time":"2026-10-30T22:00:00+00:00""#
+        let moved = Self.devilsKnightsDetail.replacingOccurrences(
+            of: listed, with: #""commence_time":"2026-10-30T15:30:00+00:00""#)
+        XCTAssertNotEqual(moved, Self.devilsKnightsDetail)
+        var event = try detail(moved)
+        XCTAssertEqual(event.commenceTime, "2026-10-30T15:30:00+00:00")
         event.status = "live"
         let served = try markets(Self.devilsKnightsMarkets)
         let host = host("2026-10-30T20:30:00Z")
         let page = A.originals(event, markets: served, host: host, tint: .blue)
         XCTAssertEqual(page.catalogue?.scope, "nhl:15338496:live:originals")
 
+        // Observed at 20:12Z, after the start and 18 minutes before this read: the current chance.
         let eichel = try XCTUnwrap(served.playerProps?.first { $0.outcomeName == "Jack Eichel: 1+" })
         let first = try original(page, outcome: "Jack Eichel: 1+")
         XCTAssertEqual(first.mode, .comparison(.current))
         XCTAssertEqual(first.later, .value(formatProbability(try XCTUnwrap(eichel.overProbability)), placement: eichel.overProbability,
                                            provenance: "Recorded \(clock(eichel.observedAt, host)) · Kalshi"))
+        XCTAssertNil(first.about.historicalQuote, "a current chance is not also a historical quote")
         let mark = try XCTUnwrap(eichel.pregameMark)
         XCTAssertEqual(first.pregame, .value(formatProbability(mark), placement: mark, provenance: "Saved before the start · Kalshi"))
         XCTAssertEqual(content(page, first.identity)?.readings.map(\.label), ["Pregame chance", "Current chance"])
 
-        // Observed at 15:44Z — stale for the catalogue, so a dated recorded chance, never a current one.
+        // Observed at 15:44Z — stale for the catalogue: no headline figure, the quote only in Details.
         let spreadRow = try XCTUnwrap(served.spreads?.first)
+        let price = try XCTUnwrap(spreadRow.probability)
         let devils = try XCTUnwrap(page.catalogue?.originals.first { $0.title == spreadRow.marketName && $0.outcome == "Devils" })
         XCTAssertEqual(QuestionCatalog9483.build(served, status: "live", now: host.now)
                            .first { $0.question == spreadRow.marketName }?.outcomes.first?.absence, .stale)
-        XCTAssertEqual(devils.mode, .comparison(.recorded))
-        XCTAssertEqual(devils.later, .value(formatProbability(try XCTUnwrap(spreadRow.probability)), placement: spreadRow.probability,
-                                            provenance: "Recorded \(clock(spreadRow.observedAt, host)) · Polymarket"))
+        XCTAssertEqual(devils.mode, .comparison(.current))
+        XCTAssertEqual(devils.later, .missing(AllMarketsCatalogView9483.noRecentPrice))
         XCTAssertEqual(devils.pregame, .missing("No pregame chance"))
-        XCTAssertEqual(content(page, devils.identity)?.readings.map(\.label), ["Pregame chance", "Recorded chance"])
+        let recorded = "\(clock(spreadRow.observedAt, host)) · Polymarket"
+        XCTAssertEqual(devils.about.historicalQuote, Originals.HistoricalQuote(text: formatProbability(price), recorded: recorded))
+
+        let card = try XCTUnwrap(OriginalMarketCatalogue9483.cards(catalogue: page.catalogue, selection: page.selection,
+                                                                   labels: page.labels, unavailableChoice: page.unavailableChoice)
+            .first { $0.choice.selection?.identity == devils.identity })
+        let face = try XCTUnwrap(card.content)
+        XCTAssertEqual(face.readings.map(\.label), ["Pregame chance", "Current chance"])
+        XCTAssertEqual(face.readings.map(\.text), ["No pregame chance", "No recent probability update"])
+        XCTAssertFalse(face.readings.contains { $0.isValue }, "the catalogue card draws no figure for the stale quote")
+        XCTAssertTrue(face.marks.isEmpty)
+        XCTAssertEqual(face.about, [
+            Originals.Row(label: "Market", value: "Spread: Golden Knights (-1.5)"),
+            Originals.Row(label: "Outcome", value: "Devils"),
+            Originals.Row(label: "Source", value: "Polymarket"),
+            Originals.Row(label: "Market ID", value: "68189231"),
+            Originals.Row(label: "Outcome ID", value: "255929341"),
+            Originals.Row(label: "Last recorded probability (historical)",
+                          value: "\(formatProbability(price)), recorded \(recorded)"),
+        ], "the quote, its own clock and its own venue, in Details only")
 
         // CONSTRUCTED: the 15169793 final body with its decoded status set to `live`. Every row is settled.
         var settledEvent = try detail(Self.wildBruinsDetail)
@@ -336,7 +365,65 @@ final class HockeyJourneyOriginalsAdapter10868Tests: XCTestCase {
                        .missing(AllMarketsCatalogView9483.unavailablePrice))
         for o in try XCTUnwrap(settled.catalogue?.originals) {
             if case .value? = o.later?.figure { XCTFail("no settled row shows a chance: \(o.outcome)") }
+            XCTAssertNil(o.about.historicalQuote, "a settled 1.0 / 0.0 is never saved as a price: \(o.outcome)")
             XCTAssertNil(o.grade, "no grade before the final")
+        }
+    }
+
+    func testDuringPlayAStillRecentQuoteFromBeforeTheStartIsNotTheCurrentChanceAndStaysHistorical() throws {
+        // CONSTRUCTED: the pregame body with its decoded status set to `live`, read at 22:05Z, five
+        // minutes after its served 22:00Z start, and one decoded quote clock — Jack Eichel 1+ —
+        // moved from 20:12Z to 21:50Z: fifteen minutes old, but observed before the start.
+        var event = try detail(Self.devilsKnightsDetail)
+        event.status = "live"
+        var served = try markets(Self.devilsKnightsMarkets)
+        let i = try XCTUnwrap(served.playerProps?.firstIndex { $0.outcomeName == "Jack Eichel: 1+" })
+        served.playerProps![i].observedAt = "2026-10-30T21:50:00+00:00"
+        let eichel = served.playerProps![i]
+        let host = host("2026-10-30T22:05:00Z")
+        XCTAssertEqual(event.commenceTime, "2026-10-30T22:00:00+00:00", "the served listed start, unchanged")
+        XCTAssertTrue(NFLMilestoneCard9483.isRecent(eichel.observedAt, now: host.now))
+        XCTAssertEqual(QuestionCatalog9483.build(served, status: event.status, now: host.now)
+                           .flatMap(\.outcomes).first { $0.label == "Jack Eichel: 1+" }?.probability,
+                       eichel.overProbability, "the catalogue still admits the quote")
+        let page = A.originals(event, markets: served, host: host, tint: .blue)
+        XCTAssertEqual(page.catalogue?.scope, "nhl:15338496:live:originals")
+
+        let identity = Originals.Identity(source: "kalshi", market: "68282128", side: "256284771")
+        let first = try original(page, identity)
+        XCTAssertEqual(first.outcome, "Jack Eichel: 1+")
+        XCTAssertEqual(first.mode, .comparison(.current))
+        XCTAssertEqual(first.later, .missing("No in-game reading"), "a pregame quote is not the current chance")
+        let price = try XCTUnwrap(eichel.overProbability)
+        let recorded = "\(clock(eichel.observedAt, host)) · Kalshi"
+        XCTAssertEqual(first.about.historicalQuote, Originals.HistoricalQuote(text: formatProbability(price), recorded: recorded))
+        let mark = try XCTUnwrap(eichel.pregameMark)
+        XCTAssertEqual(first.pregame, .value(formatProbability(mark), placement: mark, provenance: "Saved before the start · Kalshi"),
+                       "the served baseline, unchanged")
+
+        let shown = try XCTUnwrap(content(page, identity))
+        XCTAssertEqual(shown.readings.map(\.label), ["Pregame chance", "Current chance"])
+        XCTAssertEqual(shown.readings.map(\.text), [formatProbability(mark), "No in-game reading"])
+        XCTAssertEqual(shown.readings.map(\.isValue), [true, false], "no later chance is borrowed")
+        XCTAssertEqual(shown.marks.compactMap(\.placement), [mark])
+        XCTAssertEqual(shown.about.last, Originals.Row(label: "Last recorded probability (historical)",
+                                                       value: "\(formatProbability(price)), recorded \(recorded)"))
+
+        // Part three refuses the same row for the same reason.
+        let h3 = HockeyJourneyContributionAdapter10868.Host(boxScore: nil, now: host.now, calendar: Self.pacific,
+                                                            locale: Locale(identifier: "en_US"))
+        XCTAssertEqual(HockeyJourneyContributionAdapter10868.inGameReading(eichel, reachedSoFar: false, event: event, host: h3),
+                       .unavailable("No in-game reading"))
+
+        // Every quote in this body was observed before the start: none is a current chance,
+        // and each keeps its own quote — the 2+ never the 1+'s.
+        let second = try original(page, outcome: "Jack Eichel: 2+")
+        let secondRow = try XCTUnwrap(served.playerProps?.first { $0.outcomeName == "Jack Eichel: 2+" })
+        XCTAssertEqual(second.about.historicalQuote,
+                       Originals.HistoricalQuote(text: formatProbability(try XCTUnwrap(secondRow.overProbability)),
+                                                 recorded: "\(clock(secondRow.observedAt, host)) · Kalshi"))
+        for o in try XCTUnwrap(page.catalogue?.originals) {
+            if case .value? = o.later?.figure { XCTFail("no pregame quote is a current chance: \(o.outcome)") }
         }
     }
 

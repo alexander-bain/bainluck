@@ -44,14 +44,21 @@ import SwiftUI
 ///                        for every other row type "No pregame chance" — no
 ///                        other row type is decoded with a mark, and a current
 ///                        or settled price is never relabelled pregame.
-///   - later reading      during play only. The catalogue's admitted price is
-///                        `.comparison(.current)`. A price the catalogue calls
-///                        stale, with its own date, is `.comparison(.recorded)`
-///                        — the catalogue's own price rule read at the row's
-///                        own observation instant. Otherwise
-///                        `.comparison(.current)` with the catalogue's absence
-///                        words. A row the venue already settled shows no
-///                        chance ("No current chance"), whatever its price.
+///   - later reading      during play only, `.comparison(.current)`. The slot
+///                        holds the catalogue's admitted price only as part
+///                        three admits an in-game reading
+///                        (`HockeyJourneyContributionAdapter10868.inGameReading`,
+///                        in its order, on any row type): dated, observed at or
+///                        after the listed start, and recent
+///                        (`NFLMilestoneCard9483.isRecent`). Undated or stale is
+///                        "No recent probability update"; from before the start,
+///                        part three's "No in-game reading". The quote it refuses
+///                        — a stale one read by the catalogue's own price rule at
+///                        its own observation instant — is never a headline
+///                        figure: it is the Details' historical quote, with its
+///                        own clock and venue. No quote is the catalogue's
+///                        absence words. A row the venue already settled shows
+///                        no chance ("No current chance") and keeps no quote.
 ///   - grade              after the final only, `.result`. A player prop is
 ///                        graded by `HockeyJourneyContributionAdapter10868.contractResult`
 ///                        (settlement, refused when the served `hit`
@@ -63,7 +70,8 @@ import SwiftUI
 ///                        is "Not yet confirmed".
 ///   - about              the venue through `SourceLabels.label`; no rule text
 ///                        is served on `/game-markets`, so rules are
-///                        "Rules unavailable"; the served market and outcome ids.
+///                        "Rules unavailable"; the served market and outcome ids;
+///                        during play, the refused quote above.
 ///   - labels             a player prop "Subject: N+" reads "Kirill Kaprizov 2+
 ///                        points" through part three's words (`PropSubject`,
 ///                        `PlayerPropsStatLabel`, `PlayerPropsFamily`); every
@@ -105,6 +113,8 @@ enum HockeyJourneyOriginalsAdapter10868 {
         static let savedBeforeStart = "Saved before the start"
         static let recorded = "Recorded"
         static let noCurrentChance = "No current chance"
+        /// Part three's words for a quote observed before the start.
+        static let noInGameReading = HockeyJourneyContributionAdapter10868.Words.noInGameReading
         static let notYetConfirmed = "Not yet confirmed"
         static let noSettlement = "No settlement served"
         static let disputed = "Served settlement and grade disagree"
@@ -272,25 +282,29 @@ enum HockeyJourneyOriginalsAdapter10868 {
         let mode: Details.Mode
         let later: Details.Reading?
         let grade: Details.Grade?
+        let quote: Details.HistoricalQuote?
         switch phase {
         case .before:
             mode = .pregame
             later = nil
             grade = nil
+            quote = nil
         case .live:
             let reading = laterReading(match, event: event, host: host)
             mode = reading.mode
             later = reading.later
             grade = nil
+            quote = reading.quote
         case .final:
             mode = .result
             later = nil
             grade = contractGrade(match.source)
+            quote = nil
         }
         return Details.Original(
             identity: identity(of: match.source), title: match.group.question, outcome: match.outcome.label,
             mode: mode, pregame: pregameReading(match, started: started, event: event, host: host),
-            later: later, grade: grade, about: aboutSection(match.source))
+            later: later, grade: grade, about: aboutSection(match.source, historicalQuote: quote))
     }
 
     static func identity(of source: Source) -> Details.Identity {
@@ -321,27 +335,42 @@ enum HockeyJourneyOriginalsAdapter10868 {
         return .value(formatProbability(price), placement: price, provenance: joined([clock(at, host), venue]))
     }
 
-    /// During play: the catalogue's current price, else a dated stale price as
-    /// a recorded one, else the catalogue's words. A settled row shows no chance.
+    /// During play: the catalogue's price as the current chance only when part
+    /// three's `inGameReading` would admit it — dated, at or after the listed
+    /// start, recent — in its order. A refused quote leaves that rule's words
+    /// and is the historical quote. No quote is the catalogue's words; a
+    /// settled row shows no chance and keeps no quote.
     static func laterReading(_ match: Match, event: EventDetail, host: Host)
-        -> (mode: Details.Mode, later: Details.Reading) {
+        -> (mode: Details.Mode, later: Details.Reading, quote: Details.HistoricalQuote?) {
         let venue = SourceLabels.label(for: match.source.row.source)
-        let settled = settlement(isWinner: match.source.isWinner, resolutionSource: match.source.resolutionSource) != nil
-        if let price = admissible(match.outcome.probability) {
-            if settled { return (.comparison(.current), .missing(Words.noCurrentChance)) }
-            let when = match.outcome.observedAt?.asDate.map { "\(Words.recorded) \(clock($0, host))" }
-                ?? Details.timeUnknown
-            return (.comparison(.current),
-                    .value(formatProbability(price), placement: price, provenance: joined([when, venue])))
+        let observed = match.outcome.observedAt
+        let date = observed?.asDate
+        // The catalogue's admitted price, else a stale one's at its own observation instant.
+        var quoted = admissible(match.outcome.probability)
+        if quoted == nil, match.outcome.absence == .stale, let date {
+            quoted = admissible(QuestionCatalog9483.reading(match.source.row, status: event.status, now: date).probability)
         }
-        if match.outcome.absence == .stale, let at = match.source.row.observedAt?.asDate,
-           let price = admissible(QuestionCatalog9483.reading(match.source.row, status: event.status, now: at).probability) {
-            if settled { return (.comparison(.current), .missing(Words.noCurrentChance)) }
-            return (.comparison(.recorded),
-                    .value(formatProbability(price), placement: price,
-                           provenance: joined(["\(Words.recorded) \(clock(at, host))", venue])))
+        guard let price = quoted else {
+            return (.comparison(.current), .missing(absenceWords(match.outcome, status: event.status)), nil)
         }
-        return (.comparison(.current), .missing(absenceWords(match.outcome, status: event.status)))
+        // A settled 1.0 / 0.0 is a result: never a chance, never a saved price.
+        if settlement(isWinner: match.source.isWinner, resolutionSource: match.source.resolutionSource) != nil {
+            return (.comparison(.current), .missing(Words.noCurrentChance), nil)
+        }
+        let quote = Details.HistoricalQuote(text: formatProbability(price),
+                                            recorded: date.flatMap { joined([clock($0, host), venue]) })
+        guard let at = date else {
+            return (.comparison(.current), .missing(AllMarketsCatalogView9483.noRecentPrice), quote)
+        }
+        if let start = event.commenceTime?.asDate, at < start {
+            return (.comparison(.current), .missing(Words.noInGameReading), quote)
+        }
+        guard match.outcome.absence != .stale, NFLMilestoneCard9483.isRecent(observed, now: host.now) else {
+            return (.comparison(.current), .missing(AllMarketsCatalogView9483.noRecentPrice), quote)
+        }
+        return (.comparison(.current),
+                .value(formatProbability(price), placement: price,
+                       provenance: joined(["\(Words.recorded) \(clock(at, host))", venue])), nil)
     }
 
     /// `AllMarketsCatalogView9483.priceText`'s words for an outcome with no price.
@@ -380,7 +409,7 @@ enum HockeyJourneyOriginalsAdapter10868 {
         return Details.Grade(words: verdict.label, provenance: venue.map { "Settled by \($0)" } ?? "Venue settlement")
     }
 
-    static func aboutSection(_ source: Source) -> Details.About {
+    static func aboutSection(_ source: Source, historicalQuote: Details.HistoricalQuote?) -> Details.About {
         var rows: [Details.Row] = []
         if let market = source.marketID.map(String.init) ?? ids(source.marketIDs, separator: ", ") {
             rows.append(Details.Row(label: Words.marketID, value: market))
@@ -389,7 +418,8 @@ enum HockeyJourneyOriginalsAdapter10868 {
             rows.append(Details.Row(label: Words.outcomeID, value: outcomes))
         }
         return Details.About(source: SourceLabels.label(for: source.row.source),
-                             rules: .unavailable(Words.rulesUnavailable), provenance: rows, historicalQuote: nil)
+                             rules: .unavailable(Words.rulesUnavailable), provenance: rows,
+                             historicalQuote: historicalQuote)
     }
 
     /// "Kirill Kaprizov 2+ points" for a player prop whose outcome is exactly
