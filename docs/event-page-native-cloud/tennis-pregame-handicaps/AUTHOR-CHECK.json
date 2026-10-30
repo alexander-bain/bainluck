@@ -1,0 +1,64 @@
+{
+  "status": "PREPARED_RETURN",
+  "at": "2026-10-30T00:59:11.221200+00:00",
+  "source_parent": "c80beaa7115ff89c85656f0e98ffa1bd850b4fe5",
+  "source_head": "d7dce508bd8f2e056ff245724255dd079e9763f3",
+  "source_tree": "dd3f58a2a63fe1b4fbdf5c3b881691e34eb06675",
+  "first_source": "7d3c449c686561660310ac21d93e6f90e332fbe3",
+  "accepted_original_parent": "2f55cc13e912765dc2b099f78b896278cf85247c",
+  "branch": "codex/dot-event-design-source",
+  "changed_paths": [
+    "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift",
+    "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift"
+  ],
+  "sha256": {
+    "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift": "9361102ea68e8f667a1e7f55e49c194b1f60db8a9a2edcb3c468091d4ba9b5cf",
+    "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift": "f6f97b49f353be76c8e40bdfb4b6a51f8b59d886f917c99b78639b53a9f38956"
+  },
+  "prepared_tests": {
+    "preserved": 72,
+    "added": 9,
+    "total": 81,
+    "execution": "NOT_RUN"
+  },
+  "checks": [
+    {
+      "name": "immutable 43673-byte core",
+      "exit_code": 0
+    },
+    {
+      "name": "immutable 122173-byte first-return test prefix",
+      "exit_code": 0
+    },
+    {
+      "name": "exact two-file scope",
+      "exit_code": 0
+    },
+    {
+      "name": "unique prepared test names",
+      "exit_code": 0
+    },
+    {
+      "name": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "source_review": {
+    "kind": "independent manual source review",
+    "result": "no blocking defect found",
+    "native_qualification": false
+  },
+  "native_checks": {
+    "Swift syntax": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "SwiftUI compile": "NOT_RUN",
+    "XCTest": "NOT_RUN",
+    "render": "NOT_RUN",
+    "VoiceOver": "NOT_RUN",
+    "device": "NOT_RUN",
+    "TestFlight": "NOT_RUN"
+  },
+  "design_acceptance": "PENDING",
+  "remote_publication": "PENDING; exact historical seed not on remote and local authenticated executor disconnected",
+  "next_action": "Send both immutable returns to Design for intake and automatically request next pinned contribution. Do not start third until intake/capacity permits."
+}
