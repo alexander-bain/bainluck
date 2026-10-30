@@ -1,9 +1,9 @@
 """#10090 rig: CPU per 10k venue messages in the real Polymarket consumer.
 
-    python3 tests/_pm_cpu_rig_10090.py arm SECONDS [--warm S] [--profile OUT]
+    python3 tools/pm_cpu_rig_10090.py arm SECONDS [--warm S] [--profile OUT]
         [--gc MODE] [--refresh S] [--game-fps N] [--open-fps N] [--game-flush S]
-    python3 tests/_pm_cpu_rig_10090.py server PORT CERT KEY GAME_FPS OPEN_FPS  (spawned)
-    python3 tests/_pm_cpu_rig_10090.py redis PORT                              (spawned)
+    python3 tools/pm_cpu_rig_10090.py server PORT CERT KEY GAME_FPS OPEN_FPS  (spawned)
+    python3 tools/pm_cpu_rig_10090.py redis PORT                              (spawned)
     RIG_PM_CPU_CHILD=1 ... (the open receiver child, spawned by the consumer)
 
 A measurement instrument, not a CI test: one arm takes minutes, and it needs
@@ -58,7 +58,9 @@ import subprocess
 import sys
 import time
 
-BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# tools/ beside backend/: the instrument lives outside the collected test tree
+# (it needs fakeredis, lupa, psutil and cryptography, which CI does not install).
+BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend")
 HERE = os.path.abspath(__file__)
 
 SEED = 10090

@@ -19,7 +19,7 @@ everything (what the old freeze held included), then freeze the survivors.
 Cyclic garbage is therefore held for at most one handover period, and the
 handover pays one full collection where every few seconds paid one before.
 
-Local lab (``tests/_pm_cpu_rig_10090.py``, production message rates, 120 s
+Local lab (``tools/pm_cpu_rig_10090.py``, production message rates, 120 s
 after warm-up, one freeze): generation-2 pauses max 58 -> 5 ms, worst late wake
 39 -> 8 ms, CPU per 10k messages 0.83 -> 0.75 s, RSS flat.
 

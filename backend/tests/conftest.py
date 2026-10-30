@@ -141,13 +141,17 @@ def _llm_budget_ledger_in_memory():
 
 
 @pytest.fixture(autouse=True)
-def _thaw_gc_freeze():
+def _thaw_gc_freeze(monkeypatch):
     """#10090: a real Polymarket consumer run freezes the process's heap at its
-    catalog installs (`app/utils/ws_gc.py`). In a test worker that process is
-    every later test's too, so a cycle one test left frozen would outlive its
-    `gc.collect()`. Each test starts and ends with nothing frozen."""
+    catalog installs (`app/utils/ws_gc.py`), after one full collection on the
+    event loop. In a test worker that heap is every earlier test's too: on a CI
+    runner the collection blocked the loop long enough that q491's flush never
+    got its turn (reproduced by a 2 s refreeze: the same 4 tests fail). So the
+    freeze is OFF in tests unless a test turns it on (`delenv`), and each test
+    starts and ends with nothing frozen."""
     import gc
 
+    monkeypatch.setenv("PM_WS_GC_FREEZE", "0")
     gc.unfreeze()
     yield
     gc.unfreeze()
