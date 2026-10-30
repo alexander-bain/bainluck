@@ -1,22 +1,25 @@
 'use client';
 
 /**
- * #10090 — ONE-DECIMAL HEADLINES, OFF FOR EVERYONE BUT A READER WHO ASKS.
+ * #10090 — ONE-DECIMAL HEADLINES ON THE EVENT PAGE, ON BY DEFAULT.
  *
- * Alex chose "let me try it first" (Speed, 2026-10-28): he lives with tenths on
- * real live games before deciding, and nobody else sees a change. So this is a
- * runtime opt-in, not a build flag:
+ * Alex lived with the `?tenths=fit` opt-in on real live games (Speed,
+ * 2026-10-28) and chose tenths for everyone (ALEX-DECISIONS item 39, Speed
+ * 2026-10-29): "it might help to make the page feel alive". It stays a runtime
+ * choice a reader can turn off:
  *
- *   * `?tenths=fit` turns it on and remembers it in localStorage, so it
+ *   * `?tenths=off` turns it off and remembers that in localStorage, so it
  *     survives navigation and reloads;
- *   * `?tenths=off` turns it off and forgets it;
- *   * anything else reads the remembered choice, and with none it is OFF.
+ *   * `?tenths=fit` turns it back on and forgets the opt-out;
+ *   * anything else reads the remembered choice, and with none it is ON.
  *
- * OFF IS TODAY, BYTE FOR BYTE. The hook starts `false` (so the server render and
- * first paint are today's) and only ever sets state to `true`, so a reader who
- * never opted in gets no extra render, no request and no analytics event.
- * `tenthsOptInOffIsMaster10090.test.tsx` pins the hero and chart markup against
- * master's own.
+ * ON FROM THE FIRST PAINT. The hook starts `true`, so the server render and a
+ * fresh browser with an empty store print tenths on the plain event URL (the
+ * A6 recorder refuses query strings). Only a reader who opted out re-renders,
+ * once, to today's whole numbers. The components' own `tenths` default stays
+ * `false`, so cards, feed and Discover are unchanged, and
+ * `tenthsOptInOffIsMaster10090.test.tsx` still pins the opted-out hero and
+ * chart markup against master's own.
  *
  * Rules for the digits:
  *   * tenths come from the adopted probability (6 decimals on the wire); no
@@ -31,11 +34,12 @@ import { probabilityParts, type ProbabilityParts } from './probabilityDisplay';
 
 export const TENTHS_STORAGE_KEY = 'bl:tenths';
 const ON = 'fit';
+const OFF = 'off';
 
 /**
- * Pure: what the opt-in is for this URL query and store, applying the URL's
+ * Pure: whether tenths print for this URL query and store, applying the URL's
  * instruction to the store. A store that throws (Safari private mode, a
- * blocked cookie policy) reads as no remembered choice.
+ * blocked cookie policy) reads as no remembered choice, so ON.
  */
 export function resolveTenthsOptIn(
   search: string,
@@ -43,22 +47,22 @@ export function resolveTenthsOptIn(
 ): boolean {
   const asked = new URLSearchParams(search).get('tenths');
   try {
-    if (asked === ON) {
-      storage?.setItem(TENTHS_STORAGE_KEY, ON);
-      return true;
-    }
-    if (asked === 'off') {
-      storage?.removeItem(TENTHS_STORAGE_KEY);
+    if (asked === OFF) {
+      storage?.setItem(TENTHS_STORAGE_KEY, OFF);
       return false;
     }
-    return storage?.getItem(TENTHS_STORAGE_KEY) === ON;
+    if (asked === ON) {
+      storage?.removeItem(TENTHS_STORAGE_KEY);
+      return true;
+    }
+    return storage?.getItem(TENTHS_STORAGE_KEY) !== OFF;
   } catch {
-    return asked === ON;
+    return asked !== OFF;
   }
 }
 
 export function useTenthsOptIn(): boolean {
-  const [on, setOn] = useState(false);
+  const [on, setOn] = useState(true);
   useEffect(() => {
     let storage: Storage | null = null;
     try {
@@ -66,7 +70,7 @@ export function useTenthsOptIn(): boolean {
     } catch {
       storage = null;
     }
-    if (resolveTenthsOptIn(window.location.search, storage)) setOn(true);
+    if (!resolveTenthsOptIn(window.location.search, storage)) setOn(false);
   }, []);
   return on;
 }

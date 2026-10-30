@@ -1,17 +1,18 @@
 /**
- * #10090 — WITHOUT THE OPT-IN, THE HERO AND THE CHART ARE MASTER'S, BYTE FOR BYTE.
+ * #10090 — A READER WHO TURNED TENTHS OFF SEES MASTER'S HERO AND CHART, BYTE FOR BYTE.
  *
- * Alex chose to live with one-decimal headlines before deciding (Speed,
- * 2026-10-28), so the change ships switched off for everyone who has not opened
- * `?tenths=fit` (`lib/tenthsOptIn.ts`). "Off" has to mean today's page, not a
- * page that looks like it: same markup, same classes, same inline styles.
+ * Tenths are on by default on the event page (`lib/tenthsOptIn.ts`, ALEX-DECISIONS
+ * item 39). `?tenths=off` turns them off and is remembered, and "off" has to mean
+ * the page before tenths existed, not a page that looks like it: same markup,
+ * same classes, same inline styles. The components' own `tenths` default stays
+ * false, so every other caller (cards, feed, Discover) is pinned here too.
  *
  * The digests below were taken by running THIS FILE, unchanged, on origin/master
  * `2cd03b0354` (before the opt-in existed) with `TENTHS_PRINT_DIGESTS=1`. On
  * master the `tenths` prop does not exist and is ignored, so the same cases
- * render there. Here every case renders twice, with the prop absent (every
- * reader who never opted in) and with `tenths={false}` (the page's hook before
- * and without an opt-in), and both must hash to master's markup.
+ * render there. Here every case renders three times: with the prop absent (every
+ * caller but the event page), with `tenths={false}`, and with the decision the
+ * page's hook makes for `?tenths=off`; all three must hash to master's markup.
  *
  * Snapshotted once, while master was the BEFORE (notice 50): do not refresh the
  * digests from a tree that has the opt-in. If a later, unrelated change to the
@@ -42,6 +43,18 @@ jest.mock("recharts", () => ({
 
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import OddsChart from "@/components/OddsChart";
+import { resolveTenthsOptIn } from "@/lib/tenthsOptIn";
+
+/** The event page's decision for a reader who opened `?tenths=off`. */
+function optedOut(): boolean {
+  const m = new Map<string, string>();
+  const store = {
+    getItem: (k: string) => m.get(k) ?? null,
+    setItem: (k: string, v: string) => void m.set(k, v),
+    removeItem: (k: string) => void m.delete(k),
+  };
+  return resolveTenthsOptIn("?tenths=off", store);
+}
 
 /** Fixed anchor — never `Date.now()` (gotcha #44). */
 const START = Date.UTC(2026, 9, 25, 18, 0, 0);
@@ -153,17 +166,26 @@ describe("#10090 the opt-in's OFF render is master's markup", () => {
     expect(hero(HERO_CASES.live)).toContain("data-hero-digits");
   });
 
+  it("is not vacuous: the default is on, and on is not master's markup", () => {
+    expect(optedOut()).toBe(false);
+    expect(resolveTenthsOptIn("", null)).toBe(true);
+    expect(digest(hero(HERO_CASES.live, { tenths: true }))).not.toBe(MASTER["hero:live"]);
+    expect(digest(chart(CHART_CASES.live, { tenths: true }))).not.toBe(MASTER["chart:live"]);
+  });
+
   for (const [k, p] of Object.entries(HERO_CASES)) {
-    it(`hero ${k}: no prop and tenths={false} both equal master`, () => {
+    it(`hero ${k}: no prop, tenths={false} and ?tenths=off all equal master`, () => {
       expect(digest(hero(p))).toBe(MASTER[`hero:${k}`]);
       expect(digest(hero(p, { tenths: false }))).toBe(MASTER[`hero:${k}`]);
+      expect(digest(hero(p, { tenths: optedOut() }))).toBe(MASTER[`hero:${k}`]);
     });
   }
 
   for (const [k, p] of Object.entries(CHART_CASES)) {
-    it(`chart ${k}: no prop and tenths={false} both equal master`, () => {
+    it(`chart ${k}: no prop, tenths={false} and ?tenths=off all equal master`, () => {
       expect(digest(chart(p))).toBe(MASTER[`chart:${k}`]);
       expect(digest(chart(p, { tenths: false }))).toBe(MASTER[`chart:${k}`]);
+      expect(digest(chart(p, { tenths: optedOut() }))).toBe(MASTER[`chart:${k}`]);
     });
   }
 });
