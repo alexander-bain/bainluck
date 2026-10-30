@@ -201,6 +201,11 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         XCTAssertNil(leftOver,
             "#11703: the first game's freshness details (\(leftOver.map { String(describing: type(of: $0)) } ?? "-")) "
             + "are still up over the second game's page after the link")
+        // #11703 hosted base control (DO NOT MERGE): characterizes "closes late"
+        // vs "never closes" without touching the assertion or its 1.5 s deadline.
+        print("CONTROL11703 t=1.5s presented=\(leftOver.map { String(describing: type(of: $0)) } ?? "nil") path=\(router.path.count)")
+        await settle(host, timeout: 3.5) { host.presentedViewController == nil }
+        print("CONTROL11703 t=5s presented=\(host.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil") path=\(router.path.count)")
 
         // The reader's own reveal still works on the page they are now on.
         var secondControl: NSObject?
