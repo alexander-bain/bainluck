@@ -312,14 +312,20 @@ LOCK_RETRY_PAST_WITHDRAWAL_SWITCH = "lock_retry_past_withdrawal"
 #: on, a live event's preview is composed from those rows patched into the
 #: refresher's last read graph and proposed at once, with that read's ticket,
 #: revision and base, before the stamp's own session, ticket and SELECT. Redis
-#: refuses a stale ticket or older context; the ordinary refresh runs behind it
-#: either way, so a refusal costs only the head start. Production 2026-10-29
+#: refuses an open on a stale ticket (`read_required`) and an older context
+#: that would change the event's class (`stale_context`; a same-class one
+#: passes, `keep_class`); a continue is guarded by its chain, which every
+#: retire/terminal removes. The ordinary refresh runs behind it either way, so
+#: a refusal costs only the head start. Production 2026-10-29
 #: 23:28-23:52Z (discover): live recv->stamped_at p50 187 ms Kalshi / 279 ms PM,
 #: about half of it after the price commit.
 PREVIEW_FROM_COMMIT_SWITCH = "preview_from_commit"
 #: How old a cached read graph may be when a commit is composed onto it. The
-#: rows this process commits are patched in; a write by another process (the
-#: poll, a settlement) is unseen until the next read, so this bounds that.
+#: rows this process commits are patched in; a write by another process (a
+#: REST-poll price, a backfill or sweep settlement, an event status change) is
+#: unseen until the next read. This is a TRUTH window, not just a speed knob:
+#: for up to this long a preview may be composed over such a change, until the
+#: ordinary refresh behind it corrects it. Raising it needs a fresh review.
 PREVIEW_GRAPH_MAX_AGE_S = 3.0
 #: How long a committed row is noted for a read already in flight to patch in:
 #: past the graph age, so no graph young enough to compose can predate it.
@@ -6509,8 +6515,10 @@ class LiveBlendRefresher:
         holds no held quote (the re-read would overlay it), is not held back
         from refreshing, still holds exactly the rows this process committed
         and resolves with a proven home orientation. Then the re-read path's
-        own gates: a reading that records no new observation against the
-        stored entry, or that `_should_write` would not write, is left to it.
+        own no-new-observation gate (#5661) against the stored entry. A value
+        equal to the last written one is always left to the re-read path, even
+        when `_should_write` would re-stamp it as due: stricter than
+        `_should_write`, never looser.
         """
         from app.utils.aggregation import oldest_observation_time
         from app.utils.live_blend import (
@@ -6565,9 +6573,10 @@ class LiveBlendRefresher:
 
         The proposal is the re-read path's (`_preview_before_stamp`) for the
         plan `_commit_preview_plan` admits, carrying the cached read's ticket,
-        revision and base, so Redis refuses it (`read_required`, an older
-        context) whenever that read is no longer current, and the refused open
-        is forgotten locally. The ordinary refresh of the same commit runs
+        revision and base, so Redis refuses an open whose ticket is no longer
+        current (`read_required`) or an older context that would change the
+        event's class (`stale_context`), and the refused open is forgotten
+        locally. The ordinary refresh of the same commit runs
         behind it whatever happens here.
         """
         from app.utils.aggregation import observation_basis
