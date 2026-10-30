@@ -494,11 +494,20 @@ ADMITTED_LIVE_RUN = 3
 # a running call's door outside its debt slots, at most this many at a time.
 # Production 2026-10-30 00:18Z (Kalshi 15338515, origin=throttle,
 # lock_retries=0): the one debt slot is shared with pre-game debt, so a live
-# game's throttled price waited its turn behind it. One stamp worker always
-# stays for a later fresh cohort. A row-lock retry keeps the shared slot's turn
-# order: it may wait out a whole lock budget, and Root's fairness case (a
-# locked event due again at once) must not take a worker every admission.
-ADMITTED_LIVE_DEBT_SLOTS = FRESH_STAMP_WORKERS - 1
+# game's throttled price waited its turn behind it. Owed stamps riding the door
+# (debt slots plus this allowance) hold at most FRESH_STAMP_WORKERS - 1
+# admitted workers, so one always stays for a later fresh cohort: the
+# allowance is what the debt slots leave of that (`_admitted_live_debt_slots`;
+# 1 with today's one slot, none once a trial runs 2 or 3). A row-lock retry
+# keeps the shared slot's turn order: it may wait out a whole lock budget, and
+# Root's fairness case (a locked event due again at once) must not take a
+# worker every admission.
+ADMITTED_LIVE_DEBT_SLOTS = max(0, FRESH_STAMP_WORKERS - 1 - ADMITTED_DEBT_SLOTS)
+
+
+def _admitted_live_debt_slots(slots: int) -> int:
+    """The live allowance beside ``slots`` debt slots (this admission's)."""
+    return max(0, FRESH_STAMP_WORKERS - 1 - slots)
 
 # Includes the point currently writing and reservations before quote COMMIT.
 # The writer's ordinary backlog. Past it a newly due stamp does not wait
@@ -2425,6 +2434,10 @@ class LiveBlendRefresher:
         #: #10090 — the newest clock a caller has handed `_due`, and `_mono`
         #: when it was handed: the floor's "now", whatever the caller's clock.
         self._clock_high: Optional[tuple[float, float]] = None
+        #: #10090 — per event, that current clock when it was last stamped
+        #: (`_last_refresh_at` is the caller's clock, which may be a long
+        #: flush's start). Read only while `_last_refresh_at` holds the event.
+        self._last_refresh_current: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
         self._failed_hold_until: dict[int, float] = {}
@@ -2580,22 +2593,44 @@ class LiveBlendRefresher:
                 return False
             del self._failed_hold_until[event_id]
         last = self._last_refresh_at.get(event_id)
-        # #10090 (Argon flush-loop Rank 2): the floor reads the current clock,
-        # not only the caller's. A Kalshi main flush hands its own start to
-        # every admission for its whole 3-7 s, so an event a LATER clock had
+        current = self._current_clock(now)
+        if last is None:
+            return True
+        floor = self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
+        if now - last >= floor:  # the caller's clock on both sides, as before
+            return True
+        # #10090 (Argon flush-loop Rank 2): or a floor after the stamp on the
+        # current clock, on both sides. A Kalshi main flush hands its own start
+        # to every admission for its whole 3-7 s, so an event a LATER clock had
         # stamped (a write beside it, a later flush's cohort) read as under the
-        # floor all that time and waited for the next flush. "Current" is the
-        # newest clock any caller has handed this refresher, advanced by the
-        # time since: every caller's clock is a `_mono` reading, so whatever
-        # was due on the caller's clock is still due.
+        # floor all that time and waited for the next flush. Never the current
+        # clock against `last` alone (lane1's R1 on 0b2a452d): a stamp taken on
+        # that flush's start is recorded at the start, and every admission past
+        # start + floor would stamp it again inside the floor.
+        stamped = self._last_refresh_current.get(event_id, last)
+        return current - max(stamped, last) >= floor
+
+    def _record_stamp_clock(self, event_ids: Iterable[int], now: float) -> None:
+        """#10090 — the current clock as these events' stamp starts (`_due`'s
+        second rule), never back in time. Every `_refresh_batch` caller calls
+        it first, beside the caller's clock that `_refresh_batch` records."""
+        current = self._current_clock(now)
+        for event_id in event_ids:
+            stamped = self._last_refresh_current.get(event_id)
+            if event_id not in self._last_refresh_at or stamped is None:
+                self._last_refresh_current[event_id] = current
+            else:
+                self._last_refresh_current[event_id] = max(stamped, current)
+
+    def _current_clock(self, now: float) -> float:
+        """#10090 — the newest clock any caller has handed this refresher,
+        advanced by the time since. Every caller's clock is a `_mono` reading,
+        so it never runs ahead of real time."""
         mono = _mono()
         high = self._clock_high
         if high is None or now > high[0]:  # a repeated clock is not newer
             self._clock_high = high = (now, mono)
-        current = max(now, high[0] + max(0.0, mono - high[1]))
-        return last is None or (
-            (current - last) >= self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
-        )
+        return max(now, high[0] + max(0.0, mono - high[1]))
 
     # ── inversion orientation, cached ────────────────────────────────────────
 
@@ -2898,6 +2933,7 @@ class LiveBlendRefresher:
                     eid for eid in self._pending_continuation if eid not in due
                 ]
                 try:
+                    self._record_stamp_clock(due, clock)
                     await self._refresh_batch(due, clock)
                 except CancelledError as exc:
                     # #10090 review: a recycle can cancel this stamp after its
@@ -3118,6 +3154,7 @@ class LiveBlendRefresher:
                     if read_current:
                         reread_events.add(event_id)
                     try:
+                        self._record_stamp_clock(group_ids, clock)
                         await self._refresh_batch(
                             group_ids,
                             clock,
@@ -3816,43 +3853,44 @@ class LiveBlendRefresher:
         # Live throttle debt only; a row-lock retry is never "live" here.
         live = self._live_event_ids
         live_owed = (live & self._throttle_deferred) - self._lock_retry
-        live_free = ADMITTED_LIVE_DEBT_SLOTS - len(window.live_debts)
+        live_free = _admitted_live_debt_slots(slots) - len(window.live_debts)
         if free > 0 or (live_free > 0 and live_owed):
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed events
             # ride along — at most this admission's `slots` at a time, behind
-            # the cohort, never fenced. Live games first (Argon Rank 2), and on
-            # their own allowance: pre-game debt never holds a live turn.
+            # the cohort, never fenced. Live games first, on their own allowance
+            # (Argon Rank 2): pre-game debt never holds a live turn. The shared
+            # slots keep turn order, where a live game takes only its own turn:
+            # sorted live-first there, a live game owed again at every admission
+            # took every shared turn from lock retries and pre-game debt
+            # (lane1's R3 on 0b2a452d).
             self._wake_book_refused(_mono())
             owed = self._lock_retry | self._throttle_deferred
             rotation = [eid for eid in self._debt_rotation if eid in owed]
             rotation += sorted(owed.difference(rotation))
             order = [eid for eid in self._pending_continuation if eid in owed]
             order += [eid for eid in rotation if eid not in order]
-            order.sort(key=lambda eid: eid not in live_owed)  # stable: turn order kept
             # #10090 `owed_past_withdrawal`: debt deferred only by a buffered
             # withdrawal may ride; the cohort itself is excluded as before.
             debt_excluded = excluded.difference(
                 self._past_withdrawal(withdrawing_event_ids, event_ids)
             )
-            for eid in order:
-                is_live = eid in live_owed
-                if free <= 0 and not is_live:
-                    break  # every live one is ahead
-                if is_live and live_free <= 0 and free <= 0:
-                    continue
-                if eid in taken or eid in debt_excluded or eid in window.holding:
-                    continue
-                if self._due(eid, flush_started):
-                    taken.add(eid)
-                    if is_live and live_free > 0:
-                        window.live_debts.add(eid)
-                        live_free -= 1
-                    else:
-                        window.debts.add(eid)
-                        free -= 1
-                    rotation.remove(eid)
-                    rotation.append(eid)
+            passes = (
+                (window.live_debts, live_free, [eid for eid in order if eid in live_owed]),
+                (window.debts, free, order),
+            )
+            for riding, room, candidates in passes:
+                for eid in candidates:
+                    if room <= 0:
+                        break
+                    if eid in taken or eid in debt_excluded or eid in window.holding:
+                        continue
+                    if self._due(eid, flush_started):
+                        taken.add(eid)
+                        riding.add(eid)
+                        room -= 1
+                        rotation.remove(eid)
+                        rotation.append(eid)
             self._debt_rotation = rotation
         if not taken:
             return frozenset()
@@ -4016,6 +4054,7 @@ class LiveBlendRefresher:
                 )
 
         try:
+            self._record_stamp_clock(group_ids, clock)
             await self._refresh_batch(
                 group_ids, clock,
                 on_committed=committed, publish_committed=window.publish,
@@ -4635,7 +4674,8 @@ class LiveBlendRefresher:
         # discover the same nothing.
         for event_id in event_ids:
             # Never back in time: an older flush clock than the stamp already
-            # recorded would let the floor (it reads the current clock) pass early.
+            # recorded would let the caller-clock floor pass early (the current
+            # clock's record is `_record_stamp_clock`, by every caller).
             last = self._last_refresh_at.get(event_id)
             self._last_refresh_at[event_id] = now if last is None else max(last, now)
 

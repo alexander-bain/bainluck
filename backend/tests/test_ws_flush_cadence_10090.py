@@ -220,6 +220,13 @@ class TestTheFloorReadsTheFlushStart:
         await r.refresh([1], flush_started=1000.0)
         assert [b[0] for b in r.batches] == [[1], [1]]
         assert r._throttle_deferred == set()
+        # lane1's R1 on 0b2a452d: that stamp is recorded on the flush's start
+        # (1000.0), but the floor runs from the stamp, so a quarter-second
+        # later, still in the same flush, it waits.
+        clock["t"] = 1002.75
+        await r.refresh([1], flush_started=1000.0)
+        assert [b[0] for b in r.batches] == [[1], [1]]
+        assert r._throttle_deferred == {1}
 
     async def test_starts_a_period_apart_at_uptime_magnitude_are_due(
         self, clock,
