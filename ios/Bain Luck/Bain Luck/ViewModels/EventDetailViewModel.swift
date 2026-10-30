@@ -154,6 +154,13 @@ final class EventDetailViewModel: ObservableObject {
     /// has to push again before the page says it is being pushed to.
     @Published private(set) var streamHasPushedPrice = false
 
+    /// #10090 decision J (ALEX item 38) — the newest `confirmed_at` the
+    /// stream has handed on (`LiveStreamController.onConfirmedAt`): the last
+    /// instant a venue agreed with every price the stream published. Read only
+    /// through `confirmedAtCoveringShown`, which decides whether it is about
+    /// the number on screen. Cleared with the connection that carried it.
+    @Published private(set) var streamConfirmedAt: Date?
+
     /// #10090 — the held provisional blend (`BlendPreview`), or nil. Never part
     /// of `event` or `liveBlend`: the page overlays it on the hero
     /// (`headline(_:)`) and projects it onto the chart's end (`chartFrames(_:)`)
@@ -251,8 +258,11 @@ final class EventDetailViewModel: ObservableObject {
 
     var liveUpdateStatus: LiveUpdateStatus {
         if pricePairRefreshFailed && EventPriceStreaming.isEligible(event?.status) { return .interrupted }
+        // #10090 decision J — a confirmation of the number on screen ends
+        // "Waiting for update" on a page that opened already holding it.
         return LiveUpdateStatus.decide(status: event?.status, delivering: streamDelivering,
-                                acceptedUpdate: streamHasPushedPrice,
+                                acceptedUpdate: streamHasPushedPrice
+                                    || event.flatMap { confirmedAtCoveringShown($0) } != nil,
                                 refreshFailed: error != nil)
     }
 
@@ -710,8 +720,8 @@ final class EventDetailViewModel: ObservableObject {
         let before = LivePriceActivity.displayedPercents(in: prior)
         let after = LivePriceActivity.displayedPercents(in: current)
         guard after.home != nil || after.away != nil else { return }
-        let beforeLabels = LivePriceActivity.displayedLabels(in: prior)
-        let afterLabels = LivePriceActivity.displayedLabels(in: current)
+        let beforeLabels = LivePriceActivity.wholeLabels(in: prior)
+        let afterLabels = LivePriceActivity.wholeLabels(in: current)
         priceActivity = LivePriceActivity(
             sequence: (priceActivity?.sequence ?? 0) + 1,
             receivedAt: Date(timeIntervalSince1970: now()),
@@ -1279,6 +1289,7 @@ final class EventDetailViewModel: ObservableObject {
                 // just earned it.
                 if !delivering {
                     self.streamHasPushedPrice = false
+                    self.streamConfirmedAt = nil
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
                     self.pendingResyncGeneration = nil
@@ -1320,6 +1331,10 @@ final class EventDetailViewModel: ObservableObject {
             onPreviewOpenV3: { [weak self] raw in self?.receivePreviewOpenV3(raw) },
             onPreviewV3: { [weak self] raw, receivedAt in self?.receivePreviewV3(raw, receivedAt: receivedAt) },
             onPreviewReset: { [weak self] in self?.clearPreview() },
+            onConfirmedAt: { [weak self] confirmed in
+                guard let self else { return }
+                if self.streamConfirmedAt.map({ confirmed > $0 }) ?? true { self.streamConfirmedAt = confirmed }
+            },
             deliversFoldedQuotes: true
         )
         stream = controller
@@ -1363,6 +1378,7 @@ final class EventDetailViewModel: ObservableObject {
         owedInvalidationRetriedAt = nil
         awaitingFoldedResult = false
         streamHasPushedPrice = false
+        streamConfirmedAt = nil
         streamTickTask?.cancel()
         streamTickTask = nil
         stoppingStream = true
@@ -1392,6 +1408,54 @@ final class EventDetailViewModel: ObservableObject {
     func displayedProbabilityObservedAt(_ event: EventDetail) -> Date? {
         BlendPreview.displayedObservedAt(blendPreview, held: event, now: previewNow(),
                                          committed: event.heroProbabilityObservedAt?.asDate)
+    }
+
+    /// #10090 decision J — the stream's `confirmed_at`, when it is about the
+    /// number this page shows; else nil, which is exactly today's page.
+    ///
+    /// The server's promise covers every price it PUBLISHED, so it holds for
+    /// the reader only while the page shows the newest of those. The stream
+    /// sends its connect replay before the first confirmation (live R3), so a
+    /// replayed raw price is already adopted when one arrives. What remains is
+    /// checked here:
+    ///   * no newer price is owed — a folded result, a re-read, a trailing
+    ///     frame, a withdrawal or a reconcile floor still outstanding means the
+    ///     confirmed price is not yet the one on screen;
+    ///   * no preview is showing: previews carry no confirmation and keep
+    ///     their own clock (live's contract, "previews are not covered").
+    /// Never moved back (a 20 s beat may repeat an older value); cleared with
+    /// the delivery that carried it.
+    @MainActor
+    func confirmedAtCoveringShown(_ event: EventDetail) -> Date? {
+        guard let streamConfirmedAt, !owesNewerPrice,
+              BlendPreview.displayed(blendPreview, held: event, now: previewNow()) == nil
+        else { return nil }
+        return streamConfirmedAt
+    }
+
+    /// The clock the page ages its number by: max(the displayed observation,
+    /// a confirmation of it). Without one, `displayedProbabilityObservedAt`.
+    @MainActor
+    func displayedProbabilityAgeClock(_ event: EventDetail) -> Date? {
+        let observed = displayedProbabilityObservedAt(event)
+        guard let confirmed = confirmedAtCoveringShown(event) else { return observed }
+        return observed.map { max($0, confirmed) } ?? confirmed
+    }
+
+    /// The confirmation the details say aloud: only when it is newer than the
+    /// observation, so it never repeats or contradicts that clock.
+    @MainActor
+    func displayedConfirmation(_ event: EventDetail) -> Date? {
+        guard let confirmed = confirmedAtCoveringShown(event) else { return nil }
+        if let observed = displayedProbabilityObservedAt(event), observed >= confirmed { return nil }
+        return confirmed
+    }
+
+    /// #10090 decision J — a newer price than the one shown is still on its way.
+    private var owesNewerPrice: Bool {
+        awaitingFoldedResult || revisionRefetchTask != nil || revisionRefetchPending
+            || provenanceRefetchFrame != nil || trailingProvenanceFrame != nil
+            || owedInvalidation != nil || reconcileFloor != nil
     }
 
     /// `liveBlend` with the displayed preview projected onto its end, for the

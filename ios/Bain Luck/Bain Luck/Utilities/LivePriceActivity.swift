@@ -29,7 +29,8 @@ nonisolated struct LivePriceActivity: Equatable {
         return awayPercent - previousAwayPercent
     }
 
-    /// Exactly the hero's printed pair, including withheld draw-sport away sides.
+    /// The hero's pair in whole percents, including withheld draw-sport away
+    /// sides: the receipt's arithmetic (#10090 prints the hero in tenths).
     static func displayedPercents(in event: EventDetail) -> (home: Int?, away: Int?) {
         guard let odds = event.currentOdds,
               let pair = DrawPricedWinner.printablePair(
@@ -42,7 +43,23 @@ nonisolated struct LivePriceActivity: Equatable {
         return (percents[1], percents[0])
     }
 
+    /// Exactly the hero's printed strings — in tenths since #10090 (ALEX item
+    /// 39, `EventHeadlineTenths10090`) — for what must read the hero's own
+    /// number: its whole-string change and the chart's live-edge label.
     static func displayedLabels(in event: EventDetail) -> (home: String?, away: String?) {
+        guard let odds = event.currentOdds,
+              let pair = DrawPricedWinner.printablePair(
+                away: odds.awayProbability, home: odds.homeProbability, sport: event.sport
+              ) else { return (nil, nil) }
+        let printed = EventHeadlineTenths10090.pair(home: pair.home, away: pair.away)
+        return (printed.home, printed.away)
+    }
+
+    /// The pair in whole percents, as the hero printed it before #10090. The
+    /// receipt's labels keep this: the flash, the arrow and the "↑2 pts"
+    /// caption speak whole points, and `homeDelta`/`awayDelta` are only
+    /// defined over an unbanded whole label.
+    static func wholeLabels(in event: EventDetail) -> (home: String?, away: String?) {
         guard let odds = event.currentOdds,
               let pair = DrawPricedWinner.printablePair(
                 away: odds.awayProbability, home: odds.homeProbability, sport: event.sport
