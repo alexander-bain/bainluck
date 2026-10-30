@@ -113,23 +113,30 @@ when an earlier group in the same pass used up the time; the pass's FIRST group
 had all the time there was, so its timeout counts as a failure and moves on. A
 Kalshi market with more legs than a whole pass's budget can read is skipped and
 counted (``units_oversize``), never left at the head. The population
-is re-read at most every ``POPULATION_TTL_S`` per worker process. A population
-read that fails (its 20 s statement timeout, a lost connection) is not retried
-by the next tick: it starts a backoff shared by every worker process
+is read at most once per ``POPULATION_TTL_S`` for the whole fleet: the read is
+published to Redis (``…:<venue>:population``, zlib JSON, kept
+``POPULATION_SHARED_TTL_S``) and every worker process takes it while it is
+fresh, because worker-realtime replaces a child after about every pass and a
+per-process cache re-ran the statement on all 19 passes of the first switch-on.
+A population read that fails (its 20 s statement timeout, a lost connection) is
+not retried by the next tick: it starts a backoff shared by every worker process
 (``…:<venue>_population:backoff``, 30 s doubling to ``BACKOFF_MAX_S``), during
-which the process's last population read stands in (``population_stale``) or,
-with none read yet, the venue sits the pass out (``population_backoff``); both
-read ``partial``. Single-flight in the task wrapper means a slow pass declines
+which the newest population this process or the fleet read stands in
+(``population_stale``) or, with none, the venue sits the pass out
+(``population_backoff``); both read ``partial``. Single-flight in the task wrapper means a slow pass declines
 the next tick rather than overlapping it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import re
 import time
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -186,6 +193,10 @@ HISTORY_MIN_INTERVAL_S = _env_float("VENUE_POLL_30S_HISTORY_MIN_INTERVAL_S", 120
 HISTORY_BIG_MOVE = _env_float("VENUE_POLL_30S_HISTORY_BIG_MOVE", 0.03)
 
 POPULATION_TTL_S = 300.0
+#: How long a population read stays in Redis for every worker process. Fresh is
+#: still ``POPULATION_TTL_S``; past that it is only the stand-in a failed read's
+#: backoff reuses (``population_stale``).
+POPULATION_SHARED_TTL_S = 3600
 HANDOFF_SLACK_S = 60
 BACKOFF_BASE_S = 30
 BACKOFF_MAX_S = 600
@@ -479,33 +490,118 @@ def _population_backoff_name(venue: str) -> str:
     return f"{venue}_population"
 
 
+def _population_tag(sql: str) -> str:
+    """Which statement a shared population answers: a copy read under another
+    socket scope (open arm, window hours) is never taken for this one."""
+    return hashlib.sha1(sql.encode("utf-8")).hexdigest()[:16]
+
+
+def _population_key(venue: str) -> str:
+    return f"{_KEY_PREFIX}:{venue}:population"
+
+
+def _dumps(payload) -> bytes:
+    """orjson when available (gotcha 38: a big ``json.loads`` holds the GIL)."""
+    try:
+        import orjson
+
+        return orjson.dumps(payload)
+    except Exception:  # noqa: BLE001 — the stdlib encodes the same document
+        return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
+def _loads(raw: bytes):
+    try:
+        import orjson
+
+        return orjson.loads(raw)
+    except Exception:  # noqa: BLE001
+        return json.loads(raw)
+
+
+def read_shared_population(venue: str, tag: str) -> Optional[tuple[float, list]]:
+    """``(read_at, rows)`` of the fleet's last population read, or ``None``.
+
+    Fails open: an unreadable or malformed copy reads as no copy, and the
+    caller reads the database (or, inside a backoff, falls back further).
+    """
+    try:
+        raw = _redis().get(_population_key(venue))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("venue_poll_30s: shared population unreadable for %s: %s", venue, exc)
+        return None
+    if not isinstance(raw, (bytes, bytearray)):
+        return None
+    try:
+        doc = _loads(zlib.decompress(bytes(raw)))
+        if doc.get("tag") != tag:
+            return None
+        return float(doc["read_at"]), list(doc["rows"])
+    except Exception:  # noqa: BLE001 — a malformed copy is no copy
+        return None
+
+
+def write_shared_population(venue: str, tag: str, read_at: float, rows) -> None:
+    """Publish a population read for every worker process (best-effort)."""
+    try:
+        doc = {"tag": tag, "read_at": read_at, "rows": [list(r) for r in rows]}
+        _redis().set(
+            _population_key(venue), zlib.compress(_dumps(doc), 1), ex=POPULATION_SHARED_TTL_S
+        )
+    except Exception as exc:  # noqa: BLE001 — this process still has its own copy
+        logger.warning("venue_poll_30s: shared population unwritable for %s: %s", venue, exc)
+
+
 async def load_population(
     session, venue: str, *, now_mono: float, stats: Optional[dict] = None
 ) -> list[Unit]:
-    """The venue's population, cached ``POPULATION_TTL_S`` per process.
+    """The venue's population: one read per ``POPULATION_TTL_S`` for the fleet.
+
+    A read is published to Redis, and any worker process takes it while it is
+    fresh (``population_shared``, ``population_age_s``). A per-process cache
+    alone re-ran the statement on every pass: on 2026-10-30 21:29–21:41Z the
+    19 passes ran on 19 different worker-realtime children (``--max-memory-per-
+    child`` replaces them), and pg_stat_statements counted 19 reads, mean
+    4.2 s, max 19.9 s against the 20 s statement timeout.
 
     A failed read never makes the next tick re-run the statement: it starts the
-    shared population backoff; until it lapses the last population this process
-    read is reused, or :class:`PopulationBackoff` is raised when there is none.
+    shared population backoff; until it lapses the newest population this
+    process or the fleet holds is reused (``population_stale``), or
+    :class:`PopulationBackoff` is raised when there is none.
     """
     stats = stats if stats is not None else {}
     cached = _POPULATION.get(venue)
     if cached is not None and now_mono - cached[0] < POPULATION_TTL_S:
         stats["population_cached"] = True
         return cached[1]
-    name = _population_backoff_name(venue)
-    wait = max(backoff_remaining(name), _POPULATION_RETRY_AT.get(venue, 0.0) - now_mono)
-    if wait > 0:
-        stats["population_backoff_s"] = round(wait, 1)
-        if cached is None:
-            raise PopulationBackoff(venue)
-        stats["population_stale"] = True
-        return cached[1]
     if venue == "kalshi":
         sql = kalshi_population_sql(_kalshi_open_arm())
     else:
         sql = polymarket_population_sql(_polymarket_open_arm())
+    tag = _population_tag(sql)
+    shared = read_shared_population(venue, tag)
+    shared_age = max(0.0, time.time() - shared[0]) if shared is not None else None
+    if shared is not None and shared_age < POPULATION_TTL_S:
+        units = build_units(venue, shared[1])
+        # Expires with the shared copy, never later.
+        _POPULATION[venue] = (now_mono - shared_age, units)
+        stats["population_shared"] = True
+        stats["population_age_s"] = round(shared_age, 1)
+        return units
+    name = _population_backoff_name(venue)
+    wait = max(backoff_remaining(name), _POPULATION_RETRY_AT.get(venue, 0.0) - now_mono)
+    if wait > 0:
+        stats["population_backoff_s"] = round(wait, 1)
+        if cached is not None and (shared is None or now_mono - cached[0] <= shared_age):
+            stale = cached[1]
+        elif shared is not None:
+            stale = build_units(venue, shared[1])
+        else:
+            raise PopulationBackoff(venue)
+        stats["population_stale"] = True
+        return stale
     started = time.monotonic()
+    read_at = time.time()
     try:
         rows = (
             await session.execute(
@@ -526,6 +622,7 @@ async def load_population(
     clear_backoff(name)
     _POPULATION_RETRY_AT.pop(venue, None)
     _POPULATION_FAILS.pop(venue, None)
+    write_shared_population(venue, tag, read_at, rows)
     units = build_units(venue, rows)
     _POPULATION[venue] = (now_mono, units)
     return units
@@ -1075,7 +1172,11 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
             if venue == "polymarket":
                 from app.tasks.venue_poll_pm_clob import GAMMA_RESERVE_S, clob_pass, pm_source
 
-                if pm_source() == "clob":
+                # Which instrument ran is on every pass: the first switch-on set
+                # only VENUE_POLL_30S_ENABLED, so the CLOB arm stayed dark and no
+                # field said why (2026-10-30, 19 passes with no `clob_*` key).
+                stats["pm_source"] = pm_source()
+                if stats["pm_source"] == "clob":
                     units = await clob_pass(
                         session, service, units, deadline=deadline - GAMMA_RESERVE_S,
                         offset=offset, stats=stats,
