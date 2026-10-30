@@ -10,7 +10,13 @@ function installPassiveEventSourceHook(cfg) {
   const send = window[cfg.binding];
   const Native = window.EventSource;
   if (typeof send !== 'function' || typeof Native !== 'function') return;
-  const q = {outstanding: 0, high_water: 0, dropped: 0, emit_failures: 0, page_seq: 0};
+  // `acks` holds [page_seq, performance.now()] for each binding call that has
+  // resolved since the last send; they ride the next record (or the stop
+  // return), never a record of their own. The collector stamps its receipt
+  // between this record's send_mono and its ack, so each callback is one
+  // ordering exchange. A full ack buffer is counted, never silently trimmed.
+  const q = {outstanding: 0, high_water: 0, dropped: 0, emit_failures: 0, page_seq: 0, acks: [], acks_dropped: 0,
+    time_origin: performance.timeOrigin};
   window.__passiveRecorderQueue = q;
   function emit(rec) {
     rec.page_seq = ++q.page_seq;
@@ -18,8 +24,17 @@ function installPassiveEventSourceHook(cfg) {
     q.outstanding++;
     if (q.outstanding > q.high_water) q.high_water = q.outstanding;
     rec.queue_dropped = q.dropped;
+    rec.time_origin = q.time_origin;
+    if (q.acks.length) rec.acks = q.acks.splice(0);
+    if (q.acks_dropped) rec.acks_dropped = q.acks_dropped;
+    const seq = rec.page_seq;
+    rec.send_mono = performance.now();
     try {
-      Promise.resolve(send(rec)).then(() => { q.outstanding--; }, () => { q.outstanding--; q.emit_failures++; });
+      Promise.resolve(send(rec)).then(() => {
+        const at = performance.now();
+        q.outstanding--;
+        if (q.acks.length < cfg.maxAcks) q.acks.push([seq, at]); else q.acks_dropped++;
+      }, () => { q.outstanding--; q.emit_failures++; });
     } catch { q.outstanding--; q.emit_failures++; }
   }
   window.__passiveRecorderEmit = emit;
@@ -92,8 +107,13 @@ function startDisplaySampler(cfg) {
         for (const a of el.attributes) if (a.name.startsWith('data-')) attrs[a.name] = a.value;
         return {tag: el.tagName.toLowerCase(), attrs, rect: rect(el)};
       });
+      // read_bracket: document time immediately around the pinned read(); `mono`
+      // (taken before the DOM queries above) stays the sample's start.
+      const r0 = performance.now();
+      const displayIdentity = read();
+      const r1 = performance.now();
       emit({kind: 'sample', n: ++n, mono: started, wall: Date.now(), gap_ms: started - prev,
-        display_identity: read(),
+        read_bracket: [r0, r1], display_identity: displayIdentity,
         hero: hero ? {probability: hero.getAttribute('data-probability'), text: hero.innerText, rect: rect(hero)} : null,
         observed: clock ? {iso: clock.querySelector('time')?.getAttribute('datetime') ?? null, text: clock.innerText, visible: !!clock.getClientRects().length} : null,
         observed_labels: label.length,
@@ -116,7 +136,15 @@ function startDisplaySampler(cfg) {
 function stopDisplaySampler() {
   if (window.__passiveSampler) clearInterval(window.__passiveSampler);
   window.__passiveSampler = null;
-  return {stopped: performance.now(), queue: window.__passiveRecorderQueue || null};
+  const q = window.__passiveRecorderQueue || null;
+  return {stopped: performance.now(), queue: q && {...q, acks: q.acks.splice(0)}};
 }
 
-module.exports = {installPassiveEventSourceHook, startDisplaySampler, stopDisplaySampler};
+// One bounded sweep after the stop: acks that resolved after the stop return.
+function drainRecorderAcks() {
+  const q = window.__passiveRecorderQueue || null;
+  return q ? {at: performance.now(), time_origin: performance.timeOrigin, acks: q.acks.splice(0), acks_dropped: q.acks_dropped,
+    outstanding: q.outstanding, page_seq: q.page_seq} : null;
+}
+
+module.exports = {installPassiveEventSourceHook, startDisplaySampler, stopDisplaySampler, drainRecorderAcks};

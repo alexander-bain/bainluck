@@ -115,3 +115,9 @@ aeeb6fe11415997b649e57a6beee611d26d1f459:artifacts/web-event-quotes-9484/INDEPEN
 # credential: the generic API-key rule matches the identifier ending in "Key".
 # Exact fingerprint only; verified from gitleaks run 36959885230.
 4d9f365ba12b361534a91026fd2997788cc0d5a2:ios/Bain Luck/Bain Luck/Utilities/LaunchRig.swift:generic-api-key:439
+
+# #10090 PR #11778 (calibration recorder causal challenge): the roster token
+# '0123456789abcdef' in goodChallenge() is a synthetic test fixture, not a
+# credential. Exact fingerprints only; verified from gitleaks run 41018512060.
+5e4de45cd380df173799c66ce7163ed4c7f73267:tools/live-speed-lab/passive-recorder/test_receipt_units.cjs:generic-api-key:161
+0b0aadeb0377e5dd9d232bac40192b3b6c26e9f9:tools/live-speed-lab/passive-recorder/test_receipt_units.cjs:generic-api-key:161

@@ -19,8 +19,9 @@ const {createJournal, minimalForms} = require('./journal.cjs');
 const {createClock} = require('./clock.cjs');
 const hooks = require('./page_hooks.cjs');
 const {installVisibleObservationRecorder} = require('./primary_recorder.cjs');
+const {createChallengeDriver, inactiveSummary} = require('./challenge.cjs');
 
-const RECORDER_VERSION = 'passive-case-recorder/1';
+const RECORDER_VERSION = 'passive-case-recorder/2';
 const DISPLAY_SAMPLE = path.resolve(__dirname, '../compare/display_sample.cjs');
 const DISPLAY_SAMPLE_SHA256 = '587951bb9615190f21de1f5c9c25e3f27ad286a876d0a7ba69b47111446eb91d';
 const SAMPLE_INTERVAL_MS = 100;
@@ -28,7 +29,9 @@ const SAMPLE_GAP_HOLE_MS = 300;
 const CHECKPOINT_EVERY_MS = 15000;
 const TEARDOWN_BUDGET_MS = 20000;
 const RECORDER_FILES = ['passive_case_recorder.cjs', 'contract.cjs', 'transport.cjs', 'journal.cjs', 'clock.cjs',
-  'page_hooks.cjs', 'primary_recorder.cjs'];
+  'page_hooks.cjs', 'primary_recorder.cjs', 'challenge.cjs', 'clock_marker_10090_schema.json'];
+// Page acks awaiting the next record; the in-page buffer refuses (and counts) beyond this.
+const PAGE_ACK_PENDING_CAP = 512;
 const QUAL_ENV = 'PASSIVE_RECORDER_QUAL_FAULT';
 
 const HELP = `usage:
@@ -38,6 +41,7 @@ const HELP = `usage:
                                      --grant PATH --grant-sha256 HEX --out NEW_DIRECTORY
                                      --playwright-module DIR --browser-channel chrome|chromium
                                      --browser-mode multi-process|single-process
+                                     [--challenge-connection MODULE]   (local scope, only with grant.challenge)
 
 validate  offline: hashes, schemas, case edges, grant limits and timing. Opens no socket.
 record    one held page for the manifest's case, T0-5 s .. T0+185 s, then STOP.
@@ -50,6 +54,9 @@ record    one held page for the manifest's case, T0-5 s .. T0+185 s, then STOP.
           The grant's \`browser\` names the qualified channel, mode, Playwright package.json sha256 and browser
           version: a channel, mode or package it does not name refuses before launch; a version it does not
           name STOPs before navigation (refused:browser-version). All four are copied into SUMMARY.json.
+
+Clock challenge (DARK): only a grant that names \`challenge\` turns it on, and only under --scope local with
+--challenge-connection naming a module that exports connect(); production scope refuses such a grant.
 
 Every option is required; none has a default. Exit: 0 complete case, 1 recorded but
 STOPPED/UNRESOLVED (a result), 2 recorder failure, 3 refused before any network.`;
@@ -94,7 +101,7 @@ function streamQuery(url) {
 async function record(opts) {
   const required = ['scope', 'manifest', 'manifest-sha256', 'grant', 'grant-sha256', 'out', 'playwright-module', 'browser-channel', 'browser-mode'];
   const missing = required.filter(k => !opts[k]);
-  const unknown = Object.keys(opts).filter(k => !required.includes(k));
+  const unknown = Object.keys(opts).filter(k => !required.includes(k) && k !== 'challenge-connection');
   if (missing.length || unknown.length) return refuse([...missing.map(k => `--${k} required`), ...unknown.map(k => `--${k} unknown`)]);
   const scope = opts.scope;
   let qualFault = null;
@@ -110,6 +117,19 @@ async function record(opts) {
   const v = contract.validateBundle({manifest: opts.manifest, manifestSha256: opts['manifest-sha256'], grant: opts.grant,
     grantSha256: opts['grant-sha256'], scope, now: Date.now()});
   if (!v.ok) return refuse(v.refusals);
+  // The challenge is on only when the grant names it AND a local test connection is injected.
+  const challengeCfg = 'challenge' in v.grant ? v.grant.challenge : null;
+  let challengeModule = null;
+  if (challengeCfg && !opts['challenge-connection']) return refuse(['--challenge-connection required: grant.challenge is present']);
+  if (!challengeCfg && opts['challenge-connection']) return refuse(['--challenge-connection given but the grant names no challenge']);
+  if (challengeCfg && scope !== 'local') return refuse(['grant.challenge: no challenge transport is admitted for production scope']);
+  if (challengeCfg) {
+    try {
+      const file = require.resolve(path.resolve(opts['challenge-connection']));
+      challengeModule = {path: file, sha256: contract.sha256File(file), connect: require(file).connect};
+      if (typeof challengeModule.connect !== 'function') throw new Error('module exports no connect()');
+    } catch (e) { return refuse([`--challenge-connection unusable: ${e.message}`]); }
+  }
   const out = path.resolve(opts.out);
   if (fs.existsSync(out)) return refuse([`--out exists: ${out} (never reused)`]);
   if (!fs.existsSync(path.dirname(out))) return refuse([`--out parent missing: ${path.dirname(out)}`]);
@@ -161,10 +181,12 @@ async function record(opts) {
   if (!journal.writeSidecar('BINDINGS.json', {recorder: RECORDER_VERSION, scope, browser_mode: opts['browser-mode'], browser_channel: opts['browser-channel'], granted_browser: gb, pins, playwright: pwPackage, node: process.version,
     manifest: {path: path.resolve(opts.manifest), sha256: v.manifestSha256}, grant: {path: path.resolve(opts.grant), sha256: v.grantSha256},
     case_id: m.case_id, grant_id: g.grant_id, window: W, clock_anchor: clock.anchor, qualification_fault: qualFault,
+    challenge: challengeModule ? {connection_module: {path: challengeModule.path, sha256: challengeModule.sha256}, config: challengeCfg} : 'inactive',
     byte_boundary: {where: 'loopback proxy write to the browser socket', counted: 'encoded wire bytes (HTTP body as received incl. Content-Encoding; CONNECT = TLS records)',
       forwarded_overshoot_bytes: 0, received_overshoot_bound_bytes: contract.RECEIVED_OVERSHOOT_BOUND_BYTES, authorized_received_overshoot_bytes: L.received_overshoot_bytes,
       per_stream: 'not enforced (CDP, lagging): the case stream is charged to max_response_bytes; counters.cdp_stream_bytes is diagnostic only'},
-    constants: {SAMPLE_INTERVAL_MS, SAMPLE_GAP_HOLE_MS, CHECKPOINT_EVERY_MS, TEARDOWN_BUDGET_MS, ...clock.constants}})) {
+    receipt_bracket: 'collector C recv is stamped at the first line of onPageRecord; the page stamps send_mono before the binding call and an ack when it resolves; acks ride the next record and the stop return',
+    constants: {SAMPLE_INTERVAL_MS, SAMPLE_GAP_HOLE_MS, CHECKPOINT_EVERY_MS, TEARDOWN_BUDGET_MS, PAGE_ACK_PENDING_CAP, ...clock.constants}})) {
     fault('saved-budget-exhausted', {at: 'bindings'});
     stopping = {reason: 'cap:max_saved_bytes', since_t0_ms: sinceT0()};
   }
@@ -199,6 +221,27 @@ async function record(opts) {
   const samples = []; // compact copies for coverage only
   let samplerStarted = false, primaryInstalled = false, primaryCaptureId = null, setupReadyAt = null;
   const timers = [];
+  // Receipt brackets: which page records the collector received
+  // (time_origin:page_seq -> C recv), and which of them the page acked. A
+  // replaced document restarts page_seq, so a record is keyed by its document
+  // too: another document's ack never pays this one's. A record received
+  // before the stop request whose ack never arrives is a hole.
+  const receipts = {recvByKey: new Map(), acked: new Set(), acks_unknown: 0, acks_malformed: 0, acks_dropped: 0, last_time_origin: null,
+    stop_sent_mono: null, final_from_stop: 0, final_from_drain: 0};
+  const receiptKey = (timeOrigin, seq) => `${timeOrigin}:${seq}`;
+  const noteAcks = (acks, dropped, timeOrigin) => {
+    if (Number.isSafeInteger(dropped) && dropped > receipts.acks_dropped) receipts.acks_dropped = dropped;
+    if (!Array.isArray(acks)) return 0;
+    for (const a of acks) {
+      if (!Array.isArray(a) || a.length !== 2 || !Number.isSafeInteger(a[0]) || !Number.isFinite(a[1])) { receipts.acks_malformed++; continue; }
+      const key = receiptKey(timeOrigin, a[0]);
+      if (!receipts.recvByKey.has(key)) receipts.acks_unknown++;
+      receipts.acked.add(key);
+    }
+    return acks.length;
+  };
+  const challenge = challengeCfg ? createChallengeDriver({cfg: challengeCfg, connect: challengeModule.connect, clock, journal,
+    setTimer: (fn, ms) => { const t = setTimeout(fn, ms); timers.push(t); return t; }}) : null;
 
   function checkFrame(rec) {
     counters.frames++;
@@ -234,8 +277,17 @@ async function record(opts) {
   }
 
   function onPageRecord(rec) {
-    if (!rec || typeof rec !== 'object') { fault('page-record-invalid'); return; }
+    // Collector receipt first, before validation or journal work.
+    const recvMono = clock.mono(), recvWall = clock.wall();
+    const recv = {mono: recvMono, wall: recvWall, since_t0_ms: clock.sinceT0(recvMono)};
+    if (!rec || typeof rec !== 'object') { fault('page-record-invalid', {recv}); return; }
     const at = clock.docToT0(rec.mono);
+    if (Number.isSafeInteger(rec.page_seq)) receipts.recvByKey.set(receiptKey(rec.time_origin, rec.page_seq), {seq: rec.page_seq, mono: recvMono});
+    noteAcks(rec.acks, rec.acks_dropped, rec.time_origin);
+    if (rec.time_origin !== undefined) {
+      if (receipts.last_time_origin !== null && rec.time_origin !== receipts.last_time_origin) fault('document-replaced-record', {from: receipts.last_time_origin, to: rec.time_origin, page_seq: rec.page_seq});
+      receipts.last_time_origin = rec.time_origin;
+    }
     if (rec.kind === 'es-construct') {
       if (!isCaseStream(rec.url)) {
         counters.other_eventsource_constructions++;
@@ -270,7 +322,21 @@ async function record(opts) {
       samples.push({mono: rec.mono, di: rec.display_identity});
     } else if (rec.kind === 'sample-error') counters.sample_errors++;
     if (rec.queue_dropped) counters.page_queue_dropped = rec.queue_dropped;
-    journal.append(rec.kind === 'sample' ? 'sample' : 'page', {since_t0_ms: at, rec});
+    journal.append(rec.kind === 'sample' ? 'sample' : 'page', {since_t0_ms: at, recv, rec},
+      {since_t0_ms: at, recv, page_seq: rec.page_seq, send_mono: rec.send_mono, time_origin: rec.time_origin, acks: rec.acks});
+  }
+
+  function receiptBrackets() {
+    const missing = [];
+    let afterStop = 0;
+    for (const [key, {seq, mono: m}] of receipts.recvByKey) {
+      if (receipts.acked.has(key)) continue;
+      if (receipts.stop_sent_mono === null || m < receipts.stop_sent_mono) missing.push(seq); else afterStop++;
+    }
+    return {records_received: receipts.recvByKey.size, acked: receipts.acked.size, missing_before_stop: missing.length,
+      missing_first: missing.slice(0, 20), unacked_after_stop_request: afterStop, acks_dropped: receipts.acks_dropped,
+      acks_unknown: receipts.acks_unknown, acks_malformed: receipts.acks_malformed, final_acks_from_stop: receipts.final_from_stop,
+      final_acks_from_drain: receipts.final_from_drain, stop_sent_mono: receipts.stop_sent_mono};
   }
 
   async function detail(d, i) {
@@ -351,12 +417,17 @@ async function record(opts) {
       const bounded = async (label, fn, ms) => {
         let timer;
         try { await Promise.race([fn(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), ms); })]); steps.push({label, ok: true}); }
-        catch (e) { steps.push({label, ok: false, error: String(e)}); (label === 'browser-close' ? teardownFaults : faults).push({kind: 'teardown-step-failed', label, error: String(e)}); }
+        catch (e) { steps.push({label, ok: false, error: String(e)}); (label === 'browser-close' || label === 'challenge-stop' ? teardownFaults : faults).push({kind: 'teardown-step-failed', label, error: String(e)}); }
         finally { clearTimeout(timer); }
       };
+      // The challenge stops first: no request leaves after the stop.
+      if (challenge) await bounded('challenge-stop', () => challenge.stop(stopping.reason), 2000);
       let queue = null;
-      if (page && samplerStarted) await bounded('stop-sampler', async () => { queue = (await page.evaluate(hooks.stopDisplaySampler)).queue; }, 3000);
+      receipts.stop_sent_mono = clock.mono();
+      if (page && samplerStarted) await bounded('stop-sampler', async () => { queue = (await page.evaluate(hooks.stopDisplaySampler)).queue; receipts.final_from_stop = noteAcks(queue && queue.acks, queue && queue.acks_dropped, queue && queue.time_origin); }, 3000);
       if (page) await bounded('clock-end', () => clock.exchange(page, 'end'), 3000);
+      let drained = null;
+      if (page && samplerStarted) await bounded('drain-acks', async () => { drained = await page.evaluate(hooks.drainRecorderAcks); receipts.final_from_drain = noteAcks(drained && drained.acks, drained && drained.acks_dropped, drained && drained.time_origin); }, 3000);
       if (page && primaryInstalled) {
         await bounded('primary-export', async () => {
           const data = await page.evaluate(id => { const r = window.__visibleObservationRecorder11434; if (!r || r.captureId !== id) throw new Error('primary recorder missing or replaced'); return r.finish(); }, primaryCaptureId);
@@ -393,20 +464,26 @@ async function record(opts) {
       if (queue && (queue.dropped || queue.emit_failures)) holesFound.push('page-queue-loss');
       if (!queue && samplerStarted) holesFound.push('page-queue-unread');
       if (journal.stats.oversize) holesFound.push('oversize-records');
+      const brackets = receiptBrackets();
+      if (brackets.missing_before_stop) holesFound.push('page-ack-missing');
+      if (brackets.acks_dropped) holesFound.push('page-ack-dropped');
+      if (brackets.acks_malformed) holesFound.push('page-ack-malformed');
       holes.push(...holesFound);
       const allFaults = [...faults, ...clock.faults];
+      const challengeSummary = challenge ? challenge.summary() : inactiveSummary();
       const status = stopping.reason !== 'deadline' ? 'STOPPED' : (allFaults.length || holes.length) ? 'UNRESOLVED' : 'COMPLETE';
       const stop = {status, reason: stopping.reason, detail: stopping.detail || null, stopped_since_t0_ms: stopping.since_t0_ms,
-        counters: {...counters, transport: transport.counters, journal: journal.stats, page_queue: queue}, limits: L, steps,
+        counters: {...counters, transport: transport.counters, journal: journal.stats, page_queue: queue, page_acks_drained: drained}, limits: L, steps,
         custody: typeof custody === 'undefined' ? null : custody, teardown_faults: teardownFaults};
       const summary = {schema: 'bainluck.passive-case-summary/1', recorder: RECORDER_VERSION, scope, case_id: m.case_id, grant_id: g.grant_id,
-        status, reason: stopping.reason, coverage, holes, faults: allFaults.slice(0, 200), fault_count: allFaults.length,
+        status, reason: stopping.reason, coverage, receipt_brackets: brackets, holes, faults: allFaults.slice(0, 200), fault_count: allFaults.length,
+        challenge_status: challengeSummary.status, challenge: challengeSummary,
         fault_kinds: [...new Set(allFaults.map(f => f.kind))].sort(),
         clock: {anchor: clock.anchor, exchanges: clock.exchanges, final_offset_ms: clock.offset},
         browser: {browser_channel: opts['browser-channel'], browser_mode: opts['browser-mode'], playwright_package_sha256: pwPackage.sha256,
           browser_version: browserVersion, granted: gb},
         setup_ready_since_t0_ms: setupReadyAt, streams: Object.fromEntries(streamState), other_eventsources: [...otherStreams], stream_event_types_seen: [...seenTypes].sort(),
-        semantics: 'DOM observation, not physical paint. Collector/document mapping only; worker, Redis and DB clocks are not mapped by the page recorder. Unexecuted checks are absent, not passed.'};
+        semantics: 'DOM observation, not physical paint. Collector/document mapping only; worker, Redis and DB clocks are not mapped by the page recorder. A page record\'s collector recv is an upper bound on its observation in C; a prior record\'s recv whose page ack precedes this sample\'s read is a lower bound; nothing converts document time to C by a constant. status covers the page case only; challenge_status is the clock challenge\'s own. Unexecuted checks are absent, not passed.'};
       const minimal = minimalForms({status, reason: stopping.reason, holes, fault_kinds: summary.fault_kinds});
       // A STOP or SUMMARY that could not be written is a recorder failure (exit 2), never a result.
       const unwritten = [['STOP.json', stop, minimal.stop], ['SUMMARY.json', summary, minimal.summary]].filter(([name, value, min]) => {
@@ -519,7 +596,7 @@ async function record(opts) {
     });
     await cdp.send('Network.enable');
     await page.exposeFunction('__passiveRecord', onPageRecord);
-    await page.addInitScript(hooks.installPassiveEventSourceHook, {binding: '__passiveRecord', maxQueue: L.max_queue_records,
+    await page.addInitScript(hooks.installPassiveEventSourceHook, {binding: '__passiveRecord', maxQueue: L.max_queue_records, maxAcks: PAGE_ACK_PENDING_CAP,
       maxDataChars: L.max_record_bytes, streamEvents: [...new Set([...contract.KNOWN_STREAM_EVENTS, 'message'])]});
 
     // Drift refuses before network: every pin is re-read immediately before navigation.
@@ -558,6 +635,8 @@ async function record(opts) {
     await clock.exchange(page, 'setup-ready');
     setupReadyAt = sinceT0();
     journal.append('setup', {step: 'ready', since_t0_ms: setupReadyAt, sampler: started, cutoff_left_ms: cutoffMs()});
+    // Never awaited: a slow or failed connect is a challenge hole, never a setup failure.
+    if (challenge) challenge.start().catch(e => fault('challenge-start-error', {error: String(e).slice(0, 300)}));
     if (cutoffMs() < 0) throw Object.assign(new Error('setup completed after the cutoff'), {setup: true});
 
     // Checkpoints at the acquisition start, T0, every 15 s, and T0+180 s.

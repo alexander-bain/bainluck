@@ -260,8 +260,10 @@ function validateManifest(m, refuse) {
 }
 
 function validateGrant(g, m, manifestSha, refuse) {
+  // `challenge` is the only optional key: absent, the challenge driver is inactive.
   if (!exactKeys(g, ['schema', 'grant_id', 'issued_by', 'issued_at', 'expires_at', 'case_id', 'manifest_sha256',
-    'allowed_origins', 'allowed_routes', 'limits', 'detail_requests', 'browser'], 'grant', refuse)) return;
+    'allowed_origins', 'allowed_routes', 'limits', 'detail_requests', 'browser', ...(isObj(g) && 'challenge' in g ? ['challenge'] : [])], 'grant', refuse)) return;
+  if ('challenge' in g) require('./challenge.cjs').validateChallenge(g.challenge, refuse);
   if (g.schema !== GRANT_SCHEMA) refuse(`grant.schema: ${GRANT_SCHEMA} required`);
   if (!nonEmpty(g.grant_id) || !nonEmpty(g.issued_by)) refuse('grant: grant_id and issued_by required');
   if (g.manifest_sha256 !== manifestSha) refuse('grant.manifest_sha256: does not bind this manifest');
@@ -361,6 +363,9 @@ function validateBundle({manifest, manifestSha256, grant, grantSha256, scope, no
       if (Number.isFinite(now) && isoMs(G.value.issued_at) > now) refuse('grant.issued_at: in the future');
     }
   }
+  // DARK: no challenge transport is admitted for production. The proposed one
+  // (one pinned Node PG connection) needs its own grant first.
+  if (scope === 'production' && G && isObj(G.value) && 'challenge' in G.value) refuse('grant.challenge: no challenge transport is admitted for production scope');
   if (scope === 'local' && M && G) {
     // Local scope never touches a production host, even if a fixture names one.
     const urls = [];
