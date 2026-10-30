@@ -368,3 +368,156 @@ async def test_a_real_ledger_send_is_charged_to_its_committed_input(
         blend_preview.reset_registry_for_tests()
         for c in (listener, listener_client, client):
             await (c.aclose() if hasattr(c, "aclose") else c.close())
+
+
+# ── the ship's subsets (speed's 20261029T2359Z directive) ───────────────────
+
+
+def valued(event_id, p, status="live"):
+    return {"event_id": event_id, "source": "kalshi", "p": p, "status": status,
+            "preview": {"kind": "blend"}}
+
+
+def charge(r, clock, event_id, p, lag, status="live", seq=1):
+    r.committed({event_id: mark(event_id, clock.mono - lag, seq=seq)})
+    r.published(valued(event_id, p, status), None, ("published",))
+
+
+def close_minute(r, clock, caplog):
+    clock.advance(60)
+    r.roll()
+    return fields(lines(caplog)[-1])
+
+
+def test_live_percentiles_count_only_blends_whose_frame_said_live(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    clock = Clock()
+    r = receipt(clock, {})
+    charge(r, clock, 1, 0.50, 0.2, status="live")
+    charge(r, clock, 2, 0.50, 5.0, status="scheduled")
+    charge(r, clock, 3, 0.50, 7.0, status="suspended")
+    f = close_minute(r, clock, caplog)
+    assert (f["measured"], f["max_ms"]) == ("3", "7000")  # today's fields unchanged
+    assert (f["live_measured"], f["live_p50_ms"], f["live_max_ms"]) == ("1", "200", "200")
+
+
+def test_a_repeat_value_is_not_charged_as_moved_latency(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    clock = Clock()
+    r = receipt(clock, {})
+    charge(r, clock, 1, 0.61, 0.1)              # first blend of the event: first
+    charge(r, clock, 1, 0.61, 9.0, seq=2)       # same value again: a repeat
+    charge(r, clock, 1, 0.64, 0.3, seq=3)       # moved
+    charge(r, clock, 2, 0.40, 0.2, status="scheduled")  # first, pre-game
+    charge(r, clock, 2, 0.45, 0.8, status="scheduled", seq=2)  # moved, not live
+    f = close_minute(r, clock, caplog)
+    assert (f["measured"], f["first"], f["repeat"]) == ("5", "2", "1")
+    assert (f["moved_measured"], f["moved_p50_ms"], f["moved_max_ms"]) == ("2", "300", "800")
+    assert (f["live_moved_measured"], f["live_moved_max_ms"]) == ("1", "300")
+    assert f["live_moved_worst"] == "1:300"
+    assert f["max_ms"] == "9000"  # the repeat is still in today's fields
+
+
+def test_the_last_value_outlives_the_minute_and_uncharged_blends_update_it(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    clock = Clock()
+    r = receipt(clock, {})
+    charge(r, clock, 1, 0.50, 0.1)
+    close_minute(r, clock, caplog)
+    # A blend with nothing awaiting still moves the remembered value.
+    r.published(valued(1, 0.55), None, ("published",))
+    charge(r, clock, 1, 0.55, 0.4, seq=2)       # equal to that blend: repeat
+    charge(r, clock, 1, 0.58, 0.6, seq=3)       # moved across the minute line
+    # A refused send changes nothing.
+    r.committed({1: mark(1, clock.mono, seq=4)})
+    r.published(valued(1, 0.90), None, ("stale",))
+    f = close_minute(r, clock, caplog)
+    assert (f["first"], f["repeat"], f["moved_measured"], f["moved_max_ms"]) == ("0", "1", "1", "600")
+
+
+def test_a_mark_older_than_the_await_window_is_purged_when_charged(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    clock = Clock()
+    r = receipt(clock, {})
+    charge(r, clock, 5, 0.50, 0.1)  # first; opens the minute at +5 s
+    clock.advance(56)
+    r.roll()                         # +61: the first minute closes
+    r.committed({5: mark(5, clock.mono, seq=2)})  # just after the close
+    clock.advance(59)
+    r.roll()           # +120: this close keeps it (59 s old), as before
+    clock.advance(10)  # 69 s old: before this fix, charged as 69000 ms
+    r.published(valued(5, 0.70), None, ("published",))
+    f = close_minute(r, clock, caplog)
+    assert (f["measured"], f["unpreviewed"], f["max_ms"]) == ("0", "1", "-")
+    assert (f["moved_measured"], f["live_moved_max_ms"]) == ("0", "-")
+    # The blend still published: the next one compares against 0.70.
+    charge(r, clock, 5, 0.70, 0.1, seq=3)
+    f = close_minute(r, clock, caplog)
+    assert (f["measured"], f["repeat"], f["moved_measured"]) == ("1", "1", "0")
+
+
+def test_a_frame_without_a_value_is_never_moved(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    clock = Clock()
+    r = receipt(clock, {})
+    charge(r, clock, 1, None, 0.1)
+    charge(r, clock, 1, 0.5, 0.1, seq=2)
+    charge(r, clock, 1, None, 0.1, seq=3)
+    f = close_minute(r, clock, caplog)
+    assert (f["first"], f["repeat"], f["moved_measured"]) == ("1", "2", "0")
+
+
+def test_the_remembered_values_are_bounded(caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    monkeypatch.setattr(pr, "PREVIEW_RECEIPT_MAX_EVENTS", 2)
+    clock = Clock()
+    r = receipt(clock, {})
+    for eid in (1, 2, 3):  # the third clears the memory, then is remembered
+        r.published(valued(eid, 0.5), None, ("published",))
+    assert r._last_value == {3: 0.5}
+    charge(r, clock, 1, 0.6, 0.1)
+    f = close_minute(r, clock, caplog)
+    assert (f["first"], f["moved_measured"]) == ("1", "0")
+
+
+def test_observation_timeouts_and_read_required_phases_reach_the_line(caplog, clock, monkeypatch):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    reg = blend_preview.LedgerRegistry(sources=frozenset({"kalshi", "polymarket"}))
+    monkeypatch.setattr(blend_preview, "_REGISTRY", reg)
+    r = LiveBlendRefresher("kalshi")
+    r.preview_receipt.roll()
+    stats = {}
+    reg._refusal(stats, "read_required", "propose", "kalshi", 1)
+    reg._refusal(stats, "read_required", "propose", "kalshi", 2)
+    reg._refusal(stats, "read_required", "retire_missing", "kalshi", 3)
+    reg._refusal(stats, "read_required", "propose", "polymarket", 4)
+    reg._refusal(stats, "bucket_full", "propose", "kalshi", 5)
+    r.preview_stats["observation_timeouts"] = 4
+    clock.advance(60)
+    r.preview_receipt.roll()
+    f = fields(lines(caplog)[0])
+    assert f["refused"] == "bucket_full:1,read_required:3"  # unchanged field
+    assert f["read_required"] == "propose:2,retire_missing:1"  # this arm's only
+    assert (f["observation_timeouts"], f["publish_errors"]) == ("4", "0")
+    assert reg.read_required_phases == {("kalshi", "propose"): 2,
+                                        ("kalshi", "retire_missing"): 1,
+                                        ("polymarket", "propose"): 1}
+
+
+def test_the_line_format_is_pinned():
+    # Today's fields first, in today's order (earlier lines stay comparable);
+    # the ship's subsets appended after capacity_end.
+    keys = re.findall(r"(\w+)=", pr.PREVIEW_RECEIPT_FORMAT)
+    assert keys == [
+        "run", "window_start", "window_s", "published", "revoked", "recomposed",
+        "superseded", "withdrawn", "fenced", "authority_refused", "publish_errors",
+        "no_reading", "refused", "committed", "measured", "coalesced", "unpreviewed",
+        "latency_clock", "p50_ms", "p90_ms", "p99_ms", "max_ms", "latency_dropped", "worst",
+        "capacity_passes", "capacity_error", "capacity_end",
+        "observation_timeouts", "read_required", "first", "repeat",
+        "live_measured", "live_p50_ms", "live_p90_ms", "live_p99_ms", "live_max_ms",
+        "moved_measured", "moved_p50_ms", "moved_p90_ms", "moved_p99_ms", "moved_max_ms",
+        "live_moved_measured", "live_moved_p50_ms", "live_moved_p90_ms",
+        "live_moved_p99_ms", "live_moved_max_ms", "live_moved_worst",
+    ]
+    assert pr.PREVIEW_RECEIPT_FORMAT.startswith("blend_preview[%s]: preview-receipt run=%s ")

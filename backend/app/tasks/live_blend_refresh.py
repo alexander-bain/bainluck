@@ -710,6 +710,11 @@ class _ObservationReadAbandoned(Exception):
     """The preview caller stopped waiting: no statement or retirement follows."""
 
 
+class _ObservationReadTimeout(TimeoutError):
+    """The observation-preview read outlived its wait: counted as
+    ``observation_timeouts``, not as a publish error (#10090 receipt)."""
+
+
 class _ObservationRead:
     """One optional preview graph read, shared by its caller and its task."""
 
@@ -3687,10 +3692,14 @@ class LiveBlendRefresher:
             "published", "revoked", "ledger_recomposed", "ledger_superseded",
             "withdrawn", "fenced", "authority_refused", "publish_errors")}
         counts["no_reading"] = self.stats.get("no_reading", 0)
+        counts["observation_timeouts"] = self.preview_stats.get("observation_timeouts", 0)
         registry = blend_preview._REGISTRY
         for (source, status), n in getattr(registry, "refusal_counts", {}).items():
             if source == self.source:
                 counts[f"refused:{status}"] = n
+        for (source, phase), n in getattr(registry, "read_required_phases", {}).items():
+            if source == self.source:
+                counts[f"read_required:{phase}"] = n
         for end, n in self._capacity_ends.items():
             counts[f"capacity:{end}"] = n
         return counts
@@ -6268,7 +6277,7 @@ class LiveBlendRefresher:
                 # Kalshi's ORM session has not committed: it does not qualify.
                 # All input/freshness/send-boundary checks below remain.
                 if self._observation_read_factory is None or read.graph is None:
-                    raise TimeoutError("observation read exceeded its preview budget")
+                    raise _ObservationReadTimeout("observation read exceeded its preview budget")
                 grouped = read.graph
                 logger.warning(
                     "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget read_timing=%s",
@@ -6397,10 +6406,13 @@ class LiveBlendRefresher:
             await self._publish_previews([], prepare_frames=prepare_frames)
             if selections:
                 self._stage_trace("selections_closed", selections.values())
-        except Exception:
+        except Exception as exc:
             if selections:
                 self._stage_trace("selections_closed", selections.values())
-            self.preview_stats["publish_errors"] += 1
+            # The read's own budget is not a publish failure; nothing was sent.
+            key = ("observation_timeouts" if isinstance(exc, _ObservationReadTimeout)
+                   else "publish_errors")
+            self.preview_stats[key] = self.preview_stats.get(key, 0) + 1
             logger.warning(
                 "live_blend_refresh[%s]: optional observation preview unavailable read_timing=%s "
                 "detached_reads=%s",
