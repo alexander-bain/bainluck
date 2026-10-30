@@ -14,7 +14,19 @@ bare; a structured-JSON payload is unwrapped to its ``"message"``. Folds:
   interval ``[first_new_recv, stamped_at]`` per item carrying one;
 * its ``previews=`` items ``base_rev:seq@published_at@first_new_recv``:
   ``[first_new_recv, published_at]``;
-* ``writer-receipt`` ``stamps=`` items (another writer's revision), as stamps.
+* ``writer-receipt`` ``stamps=`` items (another writer's revision), as stamps;
+* its ``trail_retired=superseded:N,flushed:N,settled:N`` (the inputs the
+  trail let go uncredited, F2), summed as ``trail_retired`` over the
+  ``retired_lines`` that carry them, and ``trail_first_skipped=N`` (F1),
+  summed beside them as ``first_skipped_eligibility_unknown``: a first input
+  is not a retire reason, whether it moved what readers see is unknown. A
+  delivery line written before those fields existed (it ends at
+  ``outcomes_dropped=`` with no ``trail_retired=``) is counted as
+  ``unretired_lines``: a window spanning the release mixes both, and only the
+  former's intervals were judged under F1+F2. A line cut in transit before
+  ``outcomes_dropped=`` is ``retired_cut_lines`` (its counts are not summed),
+  and one whose fields do not parse ``retired_malformed_lines`` — neither
+  reads as predating the release.
 
 Items written before the receipt fields existed (five-part stamps) carry no
 claim and are counted as ``legacy_items``. A ``delivery-receipt`` line with no
@@ -127,6 +139,10 @@ def receipt_items(lines: Iterable[str]):
                 if len(parts) != 3:
                     continue
                 yield _item("preview", writer, event, parts[1], parts[2])
+            if "stamps_dropped" in kv:
+                yield {"kind": "retired", "writer": writer, "event": event,
+                       "published": _ts(kv.get("window_start")), "first": None,
+                       "legacy": False, "retired": _retired(kv)}
             continue
         match = _WRITER.search(message)
         if match:
@@ -137,6 +153,27 @@ def receipt_items(lines: Iterable[str]):
                     continue
                 yield _item("writer", kv.get("writer") or match.group(2), kv.get("event"),
                             parts[1], parts[5])
+
+
+def _retired(kv: dict) -> tuple[str, Optional[dict], int]:
+    """A line's ``(state, trail_retired counts, trail_first_skipped)``; state
+    is ``retired``; ``retired_cut`` when the final fixed field
+    ``outcomes_dropped`` was lost in transit (the counts may be partial or
+    gone); ``unretired`` when the line is whole but predates them; or
+    ``retired_malformed`` (a part this reader cannot parse)."""
+    if "outcomes_dropped" not in kv:
+        return "retired_cut", None, 0
+    if "trail_retired" not in kv:
+        return "unretired", None, 0
+    out = {}
+    try:
+        for part in kv["trail_retired"].split(","):
+            reason, _, count = part.partition(":")
+            out[reason] = int(count)
+        first_skipped = int(kv.get("trail_first_skipped", "0"))
+    except ValueError:
+        return "retired_malformed", None, 0
+    return "retired", out, first_skipped
 
 
 def _item(kind, writer, event, published, first):
@@ -163,7 +200,9 @@ def trailing(lines: Iterable[str], since: Optional[dt.datetime] = None,
     """Per-event and overall trailing total / worst / over-1 s (module doc)."""
     per: dict[str, dict] = {}
     counts = {"items": 0, "carrying_items": 0, "legacy_items": 0, "unknown_recv": 0,
-              "negative_clamped": 0, "truncated_lines": 0, "by_kind": {}}
+              "negative_clamped": 0, "truncated_lines": 0, "retired_lines": 0,
+              "unretired_lines": 0, "retired_cut_lines": 0, "retired_malformed_lines": 0,
+              "trail_retired": {}, "first_skipped_eligibility_unknown": 0, "by_kind": {}}
     for item in receipt_items(lines):
         published = item["published"]
         if published is not None and (
@@ -172,6 +211,15 @@ def trailing(lines: Iterable[str], since: Optional[dt.datetime] = None,
             continue
         if item["kind"] == "truncated":
             counts["truncated_lines"] += 1  # undated (cut that early): counted
+            continue
+        if item["kind"] == "retired":
+            state, retired, first_skipped = item["retired"]
+            counts[f"{state}_lines"] += 1
+            if retired is None:
+                continue
+            for reason, count in retired.items():
+                counts["trail_retired"][reason] = counts["trail_retired"].get(reason, 0) + count
+            counts["first_skipped_eligibility_unknown"] += first_skipped
             continue
         if published is None:
             continue

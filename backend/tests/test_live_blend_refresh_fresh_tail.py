@@ -158,7 +158,12 @@ async def test_queued_fresh_tail_reads_actual_quote_clock_without_claiming_old_m
     held = TAIL[0]
     # Existing hold for the first tail event, so both delivery and tail
     # closure are exercised.
+    # #10090 F1+F2: the held input has a prior this run and its own RETURNING
+    # row committed, so the trail may credit it (a first input, or one whose
+    # price was never stored, would not join or would retire uncredited).
+    r.receipts._last_p[held] = {held * 10: 0.5}
     mark = r.receipts.note_input(held, held * 10, 0.6, "price")
+    r.receipts.note_committed_rows([SimpleNamespace(id=held * 10, current_probability=0.6)])
     r.receipts.observe({held: mark}, OLD.timestamp(), set(), 100.0)
     r.receipts.stage([mark])
     trace_lines = []
