@@ -35,10 +35,16 @@ struct PageDetailsCloser: UIViewRepresentable {
 
         override func willMove(toWindow newWindow: UIWindow?) {
             super.willMove(toWindow: newWindow)
-            guard newWindow == nil, detailsOpen, let window else { return }
-            // One turn later: this runs inside the push, and a dismissal
-            // started there can be dropped.
-            DispatchQueue.main.async { PageDetailsCloser.close(in: window) }
+            guard newWindow == nil, detailsOpen, let window,
+                  let details = PageDetailsCloser.detailsPopover(in: window) else { return }
+            // At once: a turn later the main thread is building the page that
+            // covered this one, and the close waited 1.4 s on hosted iOS 27
+            // (#11791). If UIKit drops a dismissal started inside the push,
+            // the next turn tries again — the same popover, never another.
+            PageDetailsCloser.close(details)
+            DispatchQueue.main.async { [weak details] in
+                if let details { PageDetailsCloser.close(details) }
+            }
         }
     }
 
@@ -51,8 +57,8 @@ struct PageDetailsCloser: UIViewRepresentable {
         return top
     }
 
-    static func close(in window: UIWindow) {
-        guard let popover = detailsPopover(in: window) else { return }
+    static func close(_ popover: UIViewController) {
+        guard popover.presentingViewController != nil, !popover.isBeingDismissed else { return }
         let presentation = popover.presentationController
         popover.dismiss(animated: false) {
             if let presentation {
