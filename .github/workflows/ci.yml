@@ -5443,8 +5443,8 @@ jobs:
             echo "::error::#10661 price lock budget gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/pricelock10661.txt || {
-            echo "::error::#10661 price lock budget gate did not run all thirteen cases"
+          grep -qE "[^0-9]18 passed[,[:space:]]" /tmp/pricelock10661.txt || {
+            echo "::error::#10661 price lock budget gate did not run all 18 cases"
             exit 1
           }
 
