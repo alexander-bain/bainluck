@@ -151,6 +151,35 @@ async def test_a_live_games_board_only_input_queues_no_stamp(monkeypatch):
     assert _asks(built, bfile.LIVE_A) == []
 
 
+# ── 3b. the receipts (lane1's R1/R1b; probes in test_lane1_a1_review_probes_10090) ──
+
+
+@pytest.mark.asyncio
+async def test_board_inputs_leave_the_receipt_queue_and_the_headline_stamp_covers_only_its_own(
+    monkeypatch,
+):
+    """Interleaved headline and board ticks: the board's commit delivers its
+    inputs (nothing is owed for them), and the headline stamp still covers
+    every headline input, oldest first. An `unowed` that dropped every queued
+    input up to the board's newest mark would also drop the headline's and
+    leave `covered=0` — the queue empties either way, so only `covered` tells
+    the two apart."""
+    import tests.test_lane1_a1_review_probes_10090 as probes
+
+    monkeypatch.setattr(lbr, "_wall", lambda: 1_800_000_000.0)  # one minute, no roll
+    tr = probes._receipts()
+    built = probes._rig(monkeypatch, tr)
+    order = (bfile.HEAD_A[0], AUX_A20[0], bfile.HEAD_A[1], AUX_A20[1])
+    for oid in order:
+        probes._input(tr, built, oid)
+    assert await built.flush(0.0) is True
+    for asked, _d, _c in built.stamps:
+        probes._refresher_side(tr, asked, 1.0)
+    stamps = tr._window[bfile.LIVE_A]["stamps"]
+    assert [s.rsplit("@", 1)[1] for s in stamps] == [str(len(bfile.HEAD_A))], stamps
+    assert len(tr._uncovered.get(bfile.LIVE_A, ())) == 0
+
+
 # ── 4. the truth guard, on PostgreSQL ───────────────────────────────────────
 
 HEAD_TICKER = "KXNFLGAME-26OCT30SFLAR-SF"
