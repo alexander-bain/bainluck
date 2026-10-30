@@ -141,6 +141,19 @@ def _llm_budget_ledger_in_memory():
 
 
 @pytest.fixture(autouse=True)
+def _thaw_gc_freeze():
+    """#10090: a real Polymarket consumer run freezes the process's heap at its
+    catalog installs (`app/utils/ws_gc.py`). In a test worker that process is
+    every later test's too, so a cycle one test left frozen would outlive its
+    `gc.collect()`. Each test starts and ends with nothing frozen."""
+    import gc
+
+    gc.unfreeze()
+    yield
+    gc.unfreeze()
+
+
+@pytest.fixture(autouse=True)
 def _reset_live_blend_pending_handoff():
     """#9462 review: a WS consumer run leaves its owed blend stamps for the next
     run of its source in a process-global hand-off. In a suite the "next run"

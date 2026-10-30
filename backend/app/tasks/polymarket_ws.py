@@ -1019,6 +1019,17 @@ class _PMHeadlineEvents(Mapping[int, int]):
             raise KeyError(outcome_id)
         return self.events[outcome_id]
 
+    # #10090: `Mapping`'s own `get`/`in` go through `__getitem__` and catch its
+    # KeyError — one raised exception per open leg the flush reads (~8k a flush,
+    # four flushes a second). Same answers, no exception.
+    def get(self, outcome_id: int, default=None):
+        if outcome_id in self.non_speakers:
+            return default
+        return self.events.get(outcome_id, default)
+
+    def __contains__(self, outcome_id) -> bool:
+        return outcome_id not in self.non_speakers and outcome_id in self.events
+
     def __iter__(self) -> Iterator[int]:
         return (oid for oid in self.events if oid not in self.non_speakers)
 
@@ -3136,6 +3147,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.heap_trim import release_free_heap  # #11218
+    from app.utils.ws_gc import refreeze_long_lived  # #10090
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
@@ -6526,6 +6538,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             open_read,
             _PMCatalogHandoverTiming("initial", open_read_s=open_read_s),
         )
+        # #10090: the first full catalog is the long-lived heap; freeze it out
+        # of the full collections, as each later handover does.
+        from app.utils.ws_gc import refreeze_long_lived as refreeze
+
+        refreeze("polymarket")
 
     admission_task = asyncio.create_task(admit_open_contracts())
 
@@ -6673,6 +6690,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
             # Installed: the live maps own the catalog now.
             fresh_slate = fresh_open = None
+            # #10090: the new catalog is the long-lived heap now; collect once
+            # and freeze it out of the full collections (`app/utils/ws_gc.py`).
+            refreeze_long_lived("polymarket")
             # #11218: the reads' freed working set goes back to the OS now,
             # instead of staying counted until the dyno's memory line.
             release_free_heap("polymarket")
