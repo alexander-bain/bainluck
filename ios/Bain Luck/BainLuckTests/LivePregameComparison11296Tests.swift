@@ -702,8 +702,9 @@ final class LivePregameComparison11296Tests: XCTestCase {
             "FreshnessRevealView(status:vm.liveUpdateStatus,lastReceivedAt:vm.priceActivity?.receivedAt,confidenceTier:confidenceTier,forecast:revealForecast11296)"))
         XCTAssertEqual(occurrences("LiveForecastDetails11296(", in: page), 0, "only inside the popover")
         // #11703 adds two writes of the SAME state: it closes when its page is
-        // covered (a link pushed another game) or changes game.
-        XCTAssertEqual(occurrences("showProbabilityDetails", in: page), 5, "the one existing open/close state")
+        // covered (a link pushed another game) or changes game. It also hands
+        // that state, read-only, to the page's `PageDetailsCloser`.
+        XCTAssertEqual(occurrences("showProbabilityDetails", in: page), 6, "the one existing open/close state")
         // The same decision, on the same headline row, both hosts mount from.
         let reveal = try XCTUnwrap(page.range(of: "privatevarrevealForecast11296:LivePregameComparison11296.Headline?{"))
         XCTAssertTrue(page[reveal.upperBound...].hasPrefix(
