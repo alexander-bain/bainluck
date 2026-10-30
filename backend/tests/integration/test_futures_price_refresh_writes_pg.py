@@ -1964,7 +1964,11 @@ async def poll_db():
     await engine.dispose()
 
 
-_VP_NOW = datetime.now(timezone.utc)
+def _vp_now():
+    """Read at each use: a module-level anchor is stale by however long the run
+    has taken, and the hand-off band is only 660 s wide (a 12-minute run put
+    the 5 h 55 m event outside it)."""
+    return datetime.now(timezone.utc)
 
 
 async def _vp_event(session, *, status="scheduled", starts_in=timedelta(days=2)):
@@ -1984,7 +1988,7 @@ async def _vp_event(session, *, status="scheduled", starts_in=timedelta(days=2))
         sport_id=sport,
         home_team_name="Home",
         away_team_name="Away",
-        commence_time=_VP_NOW + starts_in,
+        commence_time=_vp_now() + starts_in,
         status=status,
     )
     session.add(event)
@@ -2016,7 +2020,7 @@ async def _vp_market(
         market_tier=tier,
         status=status,
         event_id=event_id,
-        resolution_date=_VP_NOW + timedelta(days=30),
+        resolution_date=_vp_now() + timedelta(days=30),
         market_metadata=metadata or {},
     )
     session.add(market)
@@ -2106,14 +2110,25 @@ async def test_polymarket_population_drops_tokened_markets_only_while_the_open_a
 async def _vp_poll(db, outcome_ids, *, fetched_at=None):
     from app.tasks.venue_poll_30s import PollWrite, load_state
 
-    stored, last_point = await load_state(db, list(outcome_ids))
+    stored = await load_state(db, list(outcome_ids))
     return PollWrite(
         fetched_at=fetched_at or datetime.now(timezone.utc),
         now=datetime.now(timezone.utc),
         stored=stored,
-        last_point=last_point,
         allowed=frozenset(outcome_ids),
     )
+
+
+@pytest.fixture
+def vp_deferred(monkeypatch):
+    """The deferred-point set on an in-memory Redis; ``read`` like each pass does."""
+    from app.tasks import venue_poll_30s as v
+    from tests.test_venue_poll_30s_10090 import _FakeRedis
+
+    fake = _FakeRedis()
+    monkeypatch.setattr(v, "_redis", lambda: fake)
+    _VP_PENDING.clear()
+    return fake
 
 
 async def _vp_row(db, outcome_id):
@@ -2128,12 +2143,31 @@ async def _vp_row(db, outcome_id):
     ).one()
 
 
+def _vp_points(ids=None):
+    """What a pass reads of the deferred set before it writes, then saves after."""
+    from app.tasks.venue_poll_30s import DeferredPoints
+
+    points = DeferredPoints.read(ids or _VP_ALL_IDS)
+    _VP_PENDING.append(points)
+    return points
+
+
+#: every outcome id a test may write; the fake set answers only for these
+_VP_ALL_IDS = list(range(1, 2000))
+_VP_PENDING: list = []
+
+
+def _vp_save_points():
+    while _VP_PENDING:
+        _VP_PENDING.pop().save()
+
+
 def _vp_item(ext, prob, bid, ask):
     return {"external_id": ext, "probability": prob, "yes_bid": bid, "yes_ask": ask,
             "last_price": prob}
 
 
-async def test_a_changed_leg_moves_and_gains_a_point_an_unchanged_one_writes_nothing(poll_db):
+async def test_a_changed_leg_moves_and_gains_a_point_an_unchanged_one_writes_nothing(poll_db, vp_deferred):
     db = poll_db
     from app.tasks.venue_poll_30s import write_market
 
@@ -2142,7 +2176,7 @@ async def test_a_changed_leg_moves_and_gains_a_point_an_unchanged_one_writes_not
     await db.commit()
     stats = {"unknown_outcomes": 0}
     poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
-    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
                        priced=[_vp_item("KXW-A", 0.55, 0.54, 0.56), _vp_item("KXW-B", 0.40, 0.39, 0.41)])
     assert float((await _vp_row(db, ids["KXW-A"]))[0]) == pytest.approx(0.55)
     assert (await _vp_row(db, ids["KXW-A"]))[1] == 1
@@ -2150,7 +2184,7 @@ async def test_a_changed_leg_moves_and_gains_a_point_an_unchanged_one_writes_not
     assert stats["rows_updated"] == 1 and stats["legs_unchanged"] == 1
 
 
-async def test_a_row_a_newer_writer_touched_is_left_alone_with_no_point(poll_db):
+async def test_a_row_a_newer_writer_touched_is_left_alone_with_no_point(poll_db, vp_deferred):
     db = poll_db
     from app.tasks.venue_poll_30s import write_market
 
@@ -2159,14 +2193,14 @@ async def test_a_row_a_newer_writer_touched_is_left_alone_with_no_point(poll_db)
     stats = {"unknown_outcomes": 0}
     # The venue read was sent an hour ago; the row was written since.
     poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) - timedelta(hours=1))
-    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
                        priced=[_vp_item("KXN-A", 0.70, 0.69, 0.71)])
     prob, points = await _vp_row(db, ids["KXN-A"])
     assert float(prob) == pytest.approx(0.40) and points == 0
     assert stats["legs_newer_writer"] == 1
 
 
-async def test_a_move_inside_the_interval_moves_the_row_and_gains_its_point_later(poll_db):
+async def test_a_move_inside_the_interval_moves_the_row_and_gains_its_point_later(poll_db, vp_deferred):
     db = poll_db
     from app.models.models import FuturesOddsSnapshot
     from app.tasks.venue_poll_30s import HISTORY_MIN_INTERVAL_S, write_market
@@ -2181,22 +2215,23 @@ async def test_a_move_inside_the_interval_moves_the_row_and_gains_its_point_late
     future = datetime.now(timezone.utc) + timedelta(seconds=5)
     stats = {"unknown_outcomes": 0}
     poll = await _vp_poll(db, [oid], fetched_at=future)
-    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
                        priced=[_vp_item("KXH-A", 0.41, 0.40, 0.42)])
     prob, points = await _vp_row(db, oid)
     assert float(prob) == pytest.approx(0.41) and points == 1  # row moved, no new point
     assert stats["history_deferred"] == 1
+    _vp_save_points()
 
     # The next pass after the interval reads the same price: a trailing point.
     later = await _vp_poll(db, [oid], fetched_at=future + timedelta(seconds=5))
     later.now = later.now + timedelta(seconds=HISTORY_MIN_INTERVAL_S + 1)
-    await write_market(db, venue="kalshi", market_id=mid, poll=later, stats=stats,
+    await write_market(db, venue="kalshi", market_id=mid, poll=later, stats=stats, deferred=_vp_points(),
                        priced=[_vp_item("KXH-A", 0.41, 0.40, 0.42)])
     assert (await _vp_row(db, oid))[1] == 2
     assert stats["history_trailing_points"] == 1
 
 
-async def test_a_settled_leg_is_never_written(poll_db):
+async def test_a_settled_leg_is_never_written(poll_db, vp_deferred):
     db = poll_db
     from app.tasks.venue_poll_30s import write_market
 
@@ -2205,7 +2240,7 @@ async def test_a_settled_leg_is_never_written(poll_db):
     await db.commit()
     stats = {"unknown_outcomes": 0}
     poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
-    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
                        priced=[_vp_item("KXS-A", 0.55, 0.54, 0.56), _vp_item("KXS-B", 0.55, 0.54, 0.56)])
     for oid in ids.values():
         prob, points = await _vp_row(db, oid)
@@ -2238,7 +2273,7 @@ async def _vp_timed(coro):
     return out, time.monotonic() - t0
 
 
-async def test_the_poll_skips_a_held_leg_and_never_holds_its_siblings_waiting(poll_db):
+async def test_the_poll_skips_a_held_leg_and_never_holds_its_siblings_waiting(poll_db, vp_deferred):
     import asyncio
 
     from sqlalchemy import text
@@ -2271,7 +2306,7 @@ async def test_the_poll_skips_a_held_leg_and_never_holds_its_siblings_waiting(po
 
     try:
         (_, poll_s), third_s = await asyncio.gather(
-            _vp_timed(write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+            _vp_timed(write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
                                    priced=[_vp_item("KXL-A", 0.55, 0.54, 0.56),
                                            _vp_item("KXL-B", 0.60, 0.59, 0.61)])),
             third_writer_of_a(),
@@ -2293,7 +2328,7 @@ async def test_the_poll_skips_a_held_leg_and_never_holds_its_siblings_waiting(po
     assert rank[ids["KXL-A"]] == 1 and rank[ids["KXL-B"]] is None
 
 
-async def test_the_rerank_skips_a_held_leg_the_price_write_never_touched(poll_db):
+async def test_the_rerank_skips_a_held_leg_the_price_write_never_touched(poll_db, vp_deferred):
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -2311,7 +2346,7 @@ async def test_the_rerank_skips_a_held_leg_the_price_write_never_touched(poll_db
     poll = await _vp_poll(db, [ids["KXR-A"]], fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
     try:
         _, poll_s = await _vp_timed(write_market(
-            db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
             priced=[_vp_item("KXR-A", 0.55, 0.54, 0.56)],
         ))
     finally:
@@ -2322,7 +2357,7 @@ async def test_the_rerank_skips_a_held_leg_the_price_write_never_touched(poll_db
     assert float((await _vp_row(db, ids["KXR-A"]))[0]) == pytest.approx(0.55)
 
 
-async def test_the_poll_never_restores_a_price_the_socket_withdrew_after_its_read(poll_db):
+async def test_the_poll_never_restores_a_price_the_socket_withdrew_after_its_read(poll_db, vp_deferred):
     import asyncio
 
     from sqlalchemy import text
@@ -2353,8 +2388,53 @@ async def test_the_poll_never_restores_a_price_the_socket_withdrew_after_its_rea
     # ... then the poll's write of its earlier read lands, and yields.
     stats = {"unknown_outcomes": 0}
     poll = await _vp_poll(db, [oid], fetched_at=fetched_at)
-    await write_market(db, venue="polymarket", market_id=mid, poll=poll, stats=stats,
+    await write_market(db, venue="polymarket", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
                        priced=[_vp_item("0xabc", 0.42, 0.41, 0.43)])
     prob, points = await _vp_row(db, oid)
     assert prob is None and points == 0
     assert stats["legs_newer_writer"] == 1 and "legs_held" not in stats
+
+
+async def test_clob_items_write_every_leg_convention_then_skip_unchanged_markets(poll_db, vp_deferred):
+    """The CLOB path's items through the first build's writer: a field's bare
+    legs, a ``_yes``/``_no`` pair and a bare + ``_side1`` pair each take the
+    side ``_write_prices`` gives them; a second identical pass writes nothing and
+    skips each market before the writer's own read."""
+    db = poll_db
+    from app.tasks import venue_poll_pm_clob as clob
+    from app.tasks.venue_poll_30s import Unit, _write_group
+
+    field_id, field = await _vp_market(db, source="polymarket", ext="7001",
+                                       legs=[("0xa", False, None), ("0xb", False, None)])
+    pair_id, pair = await _vp_market(db, source="polymarket", ext="7002",
+                                     legs=[("0xd_yes", False, None), ("0xd_no", False, None)])
+    side_id, side = await _vp_market(db, source="polymarket", ext="7003",
+                                     legs=[("0xe", False, None), ("0xe_side1", False, None)])
+    await db.commit()
+    units = [Unit("7001", {field_id: [(field["0xa"], "0xa"), (field["0xb"], "0xb")]}),
+             Unit("7002", {pair_id: [(pair["0xd_yes"], "0xd_yes"), (pair["0xd_no"], "0xd_no")]}),
+             Unit("7003", {side_id: [(side["0xe"], "0xe"), (side["0xe_side1"], "0xe_side1")]})]
+    token_of = {"0xa": "ta", "0xb": "tb", "0xd": "td", "0xe": "te"}
+    tops = {"ta": (0.42, 0.50), "tb": (None, 0.03), "td": (0.60, 0.62), "te": (0.20, 0.24)}
+
+    async def one_pass():
+        stats = {"errors": [], "unknown_outcomes": 0}
+        priced: set = set()
+        found = clob._price_group(units, token_of, tops, priced, stats)
+        await _write_group(db, "polymarket", units, found,
+                           datetime.now(timezone.utc) + timedelta(seconds=5), stats)
+        return stats
+
+    stats = await one_pass()
+    expect = {field["0xa"]: 0.46, field["0xb"]: 0.40,  # 0xb: no bid → untouched
+              pair["0xd_yes"]: 0.61, pair["0xd_no"]: 0.39,
+              side["0xe"]: 0.22, side["0xe_side1"]: 0.78}
+    for oid, prob in expect.items():
+        assert float((await _vp_row(db, oid))[0]) == pytest.approx(prob), oid
+    assert stats["rows_updated"] == 5 and stats["history_points"] == 5
+    assert stats["clob_refused_no_book"] == 1 and stats["errors"] == []
+
+    again = await one_pass()
+    assert again.get("rows_updated", 0) == 0 and again["markets_unchanged"] == 3
+    for oid in expect:
+        assert (await _vp_row(db, oid))[1] == (0 if oid == field["0xb"] else 1)

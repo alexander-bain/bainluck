@@ -1500,7 +1500,8 @@ async def _write_prices(
     *,
     poll=None,
 ) -> int:
-    """Write price columns + one snapshot per outcome. Returns snapshots written.
+    """Write price columns + one snapshot per outcome. Returns snapshots written
+    (rows moved, when ``poll`` is given).
 
     ``poll`` (#10090, the 30-second venue poll) is
     :class:`app.tasks.venue_poll_30s.PollWrite` or ``None``. ``None`` is this
@@ -1517,8 +1518,12 @@ async def _write_prices(
     * the UPDATE skips a row another transaction holds rather than waiting on
       it (``legs_held``), so the poll never holds a market's earlier legs while
       it waits on a later one;
-    * the snapshot is written only when ``poll.history`` admits it (the
-      history bound), so a price row can move without a chart point.
+    * no snapshot is written here: the leg is appended to ``poll.moved`` and
+      counted in the return, and the poll decides the chart point afterwards
+      on its own read of only the moved legs' last points (the history bound).
+      Reading every polled leg's last point before the write measured 3.0 s per
+      1,000 legs on production (2026-10-30, cold), which a 30 s pass over
+      ~68,000 Polymarket legs cannot afford.
 
     ``priced`` items: ``external_id``, ``probability``, ``yes_bid``, ``yes_ask``,
     ``last_price``, and optionally a ``no`` sub-dict of the same shape.
@@ -1929,9 +1934,9 @@ async def _write_prices(
                     key = "legs_held" if passed and all(passed) else "legs_newer_writer"
                     stats[key] = stats.get(key, 0) + 1
                     continue
-                poll.rows_updated += 1
-                if not poll.history(outcome_id, side_prob, stats):
-                    continue
+                poll.moved.append((outcome_id, side))
+                written += 1
+                continue
             await session.execute(
                 pg_insert(FuturesOddsSnapshot).values(
                     outcome_id=outcome_id,
