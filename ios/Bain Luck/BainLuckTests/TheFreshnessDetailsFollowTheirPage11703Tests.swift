@@ -147,6 +147,115 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         return stack(controller)?.topViewController?.view ?? controller.view
     }
 
+    /// H PROBE (#11703, DO NOT MERGE): what holds every dismissal after the
+    /// push until ~+5.2 s? Against CACurrentMediaTime (the clock of G's DIAG
+    /// lines) it records the host's and the navigation controller's
+    /// transitionCoordinator, the popover's isBeingPresented/isBeingDismissed
+    /// and its own coordinator, and the completion time of every coordinator
+    /// it sees. A run-loop observer prints on every change; a timer prints
+    /// every 0.25 s until the popover is gone (+1 s), capped at 10 s.
+    @MainActor private final class HProbe {
+        let host: UIViewController
+        weak var popover: UIViewController?
+        let popoverId: String
+        var timer: Timer?
+        var observer: CFRunLoopObserver?
+        var last = ""
+        var hooked: [ObjectIdentifier] = []
+        var goneAt: CFTimeInterval?
+        var startedAt: CFTimeInterval = 0
+
+        init(host: UIViewController) {
+            self.host = host
+            popover = host.presentedViewController
+            popoverId = host.presentedViewController.map { String(describing: ObjectIdentifier($0)) } ?? "nil"
+        }
+
+        static func nav(_ c: UIViewController) -> UINavigationController? {
+            if let nav = c as? UINavigationController { return nav }
+            return c.children.lazy.compactMap { Self.nav($0) }.first
+        }
+
+        static func id(_ o: AnyObject?) -> String { o.map { String(describing: ObjectIdentifier($0)) } ?? "nil" }
+
+        static func coord(_ c: UIViewControllerTransitionCoordinator?) -> String {
+            guard let c else { return "nil" }
+            return "set(\(id(c as AnyObject)) animated=\(c.isAnimated) interactive=\(c.isInteractive) "
+                + "duration=\(c.transitionDuration) style=\(c.presentationStyle.rawValue) "
+                + "from=\(id(c.viewController(forKey: .from))) to=\(id(c.viewController(forKey: .to))))"
+        }
+
+        func state() -> String {
+            let nav = Self.nav(host)
+            return "hostCoord=\(Self.coord(host.transitionCoordinator)) navCoord=\(Self.coord(nav?.transitionCoordinator)) "
+                + "nav=\(Self.id(nav)) navCount=\(nav?.viewControllers.count ?? -1) top=\(Self.id(nav?.topViewController)) "
+                + "presented=\(Self.id(host.presentedViewController)) pop=\(popoverId) popAlive=\(popover != nil) "
+                + "popPresenter=\(popover?.presentingViewController != nil) popInWindow=\(popover?.viewIfLoaded?.window != nil) "
+                + "popBeingPresented=\(popover?.isBeingPresented ?? false) popBeingDismissed=\(popover?.isBeingDismissed ?? false) "
+                + "popCoord=\(Self.coord(popover?.transitionCoordinator))"
+        }
+
+        /// Hooks the completion of each coordinator once.
+        func hook(_ c: UIViewControllerTransitionCoordinator?, _ which: String) {
+            guard let c else { return }
+            let key = ObjectIdentifier(c as AnyObject)
+            guard !hooked.contains(key) else { return }
+            hooked.append(key)
+            let label = Self.id(c as AnyObject)
+            let queued = c.animate(alongsideTransition: nil) { context in
+                print("H11703 coordinatorDone t=\(CACurrentMediaTime()) which=\(which) coord=\(label) cancelled=\(context.isCancelled)")
+            }
+            print("H11703 coordinatorHooked t=\(CACurrentMediaTime()) which=\(which) coord=\(label) queued=\(queued)")
+        }
+
+        func sample(_ why: String, onlyOnChange: Bool) {
+            let now = CACurrentMediaTime()
+            hook(host.transitionCoordinator, "host")
+            hook(Self.nav(host)?.transitionCoordinator, "nav")
+            hook(popover?.transitionCoordinator, "popover")
+            let s = state()
+            if onlyOnChange && s == last { return }
+            last = s
+            print("H11703 \(why) t=\(now) dt=\(startedAt == 0 ? 0 : now - startedAt) \(s)")
+            if goneAt == nil, popover?.presentingViewController == nil {
+                goneAt = now
+                print("H11703 popoverGone t=\(now) dt=\(now - startedAt)")
+            }
+            if let goneAt, now - goneAt > 1 { stop("gone+1s") } else if startedAt > 0, now - startedAt > 10 { stop("cap10s") }
+        }
+
+        func mark(_ why: String) {
+            if why == "push" { startedAt = CACurrentMediaTime() }
+            sample(why, onlyOnChange: false)
+        }
+
+        func start() {
+            let observer = CFRunLoopObserverCreateWithHandler(
+                kCFAllocatorDefault,
+                CFRunLoopActivity.beforeSources.rawValue | CFRunLoopActivity.beforeWaiting.rawValue
+                    | CFRunLoopActivity.afterWaiting.rawValue,
+                true, 0
+            ) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.sample("change", onlyOnChange: true) }
+            }
+            CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+            self.observer = observer
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sample("tick", onlyOnChange: false) }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+        }
+
+        func stop(_ why: String) {
+            guard timer != nil || observer != nil else { return }
+            timer?.invalidate(); timer = nil
+            if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+            observer = nil
+            print("H11703 stop t=\(CACurrentMediaTime()) why=\(why)")
+        }
+    }
+
     /// The page's details control, found the way VoiceOver finds it.
     private func detailsControl(in root: NSObject) -> NSObject? {
         if let label = root.accessibilityLabel,
@@ -194,7 +303,12 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         XCTAssertTrue(opened, "control: a reader who opens the details sees them")
         _ = try onScreenText(window, "first-page-details-open")
 
+        let probe = HProbe(host: host)
+        probe.mark("prePush")
+        probe.start()
+        defer { probe.stop("testEnd") }
         router.path.append(Self.second)
+        probe.mark("push")
         print("DIAG11703S push t=\(CACurrentMediaTime()) presented=\(host.presentedViewController.map { String(describing: ObjectIdentifier($0)) } ?? "nil")")
         var seen = host.presentedViewController.map(ObjectIdentifier.init)
         await settle(host, timeout: 1.5) {
