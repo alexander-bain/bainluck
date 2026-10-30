@@ -2,16 +2,17 @@
 import SwiftUI
 import UIKit
 
-/// #11703 — closes a page's popover from UIKit, where the page's own state
-/// cannot reach it in time.
+/// #11703 — closes a page's popover from UIKit, the moment the page leaves
+/// its window.
 ///
-/// A link that pushes another game covers the page before its `onDisappear`
-/// runs. By then the page is off its window, and SwiftUI does not apply that
-/// page's `isPresented = false` to the popover until something redraws it.
-/// Hosted iOS 27 (draft PR #11784, master 12c0237e): the page was off its
-/// window at 0.18 s and the details were still up over the next game at
-/// 1.5 s. The popover's own content is still on screen, so it records the
-/// controller that presents it, and the page dismisses exactly that one.
+/// A link that pushes another game covers the page, but the page's popover is
+/// presented above the whole stack. SwiftUI hears about the cover late: on
+/// hosted iOS 27 (draft PR #11784, master 12c0237e) the page was off its
+/// window at 0.32 s, its `onDisappear` ran at 5.02 s, and the details stayed
+/// up over the next game until 6.31 s. So the popover's content records the
+/// controller that presents it (`PresentedDetailsAnchor`), and a view at the
+/// page's root dismisses exactly that one when UIKit takes the page off its
+/// window (`PageWindowAnchor`).
 final class PresentedDetailsCloser {
     private weak var presented: UIViewController?
 
@@ -19,7 +20,7 @@ final class PresentedDetailsCloser {
 
     /// Dismisses the recorded popover if it is still up. It never touches
     /// any other presentation.
-    func close() {
+    fileprivate func close() {
         guard let presented, presented.presentingViewController != nil,
               !presented.isBeingDismissed else { return }
         presented.dismiss(animated: false)
@@ -58,6 +59,30 @@ struct PresentedDetailsAnchor: UIViewRepresentable {
                 }
                 responder = current.next
             }
+        }
+    }
+}
+
+/// Placed at the page's root, outside any lazy stack. When UIKit takes the
+/// page off its window, it closes the page's recorded popover.
+struct PageWindowAnchor: UIViewRepresentable {
+    let closer: PresentedDetailsCloser
+
+    func makeUIView(context: Context) -> Probe {
+        let probe = Probe()
+        probe.closer = closer
+        probe.isUserInteractionEnabled = false
+        return probe
+    }
+
+    func updateUIView(_ probe: Probe, context: Context) { probe.closer = closer }
+
+    final class Probe: UIView {
+        var closer: PresentedDetailsCloser?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil { closer?.close() }
         }
     }
 }

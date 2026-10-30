@@ -402,19 +402,18 @@ struct EventDetailView: View {
                 nflCards.resetNBAStream()
                 showProbabilityDetails = false
             }
+            #if os(iOS)
+            .background(PageWindowAnchor(closer: detailsCloser))
+            #endif
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
                 // popover is presented above the whole stack, so a link that
                 // pushes another game would otherwise leave it up over that
                 // page, reading this one's stopped model (build 89: "Update
                 // interrupted … 34 minutes ago" over a healthy live game).
-                // The page is already off its window here, so the state
-                // alone reaches the popover only on a later redraw; the
-                // closer dismisses it now.
+                // This runs seconds after the push on iOS 27, so the
+                // `PageWindowAnchor` above dismisses the popover first.
                 showProbabilityDetails = false
-                #if os(iOS)
-                detailsCloser.close()
-                #endif
                 duringPageAnchor.cancel()
                 afterPageAnchor.cancel()
                 marketPageVisible = false
