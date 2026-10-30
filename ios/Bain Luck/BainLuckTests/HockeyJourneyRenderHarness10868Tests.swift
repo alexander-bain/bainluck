@@ -62,8 +62,9 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
         return try decoder.decode(type, from: Data(contentsOf: url))
     }
 
-    /// The page input exactly as a host would build it from these bodies.
-    private func input(_ c: Case, fixtures: URL) throws -> HockeyJourneyPageInput10868 {
+    /// The page input and originals exactly as `HockeyJourneyEventPageHost10868`
+    /// builds them from these bodies.
+    private func input(_ c: Case, fixtures: URL) throws -> (HockeyJourneyPageInput10868, HockeyJourneyPageOriginals10868) {
         let event = try decode(EventDetail.self, fixtures.appendingPathComponent("\(c.name)-detail.json"))
         let history = try decode(EventHistoryResponse.self, fixtures.appendingPathComponent("\(c.name)-history.json"))
         let markets = try decode(GameMarketsResponse.self, fixtures.appendingPathComponent("\(c.name)-game-markets.json"))
@@ -77,12 +78,19 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
             host: HockeyJourneyHistoryAdapter10868.Host(now: now, calendar: Self.pacific, locale: Self.locale))
         let contributions = HockeyJourneyContributionAdapter10868.Host(
             boxScore: nil, now: now, calendar: Self.pacific, locale: Self.locale)
-        return HockeyJourneyPageInputAdapter10868.input(
+        let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
+                                                homeHex: event.homeTeamData?.primaryColor)
+        let originals = HockeyJourneyOriginalsAdapter10868.originals(
+            event, markets: markets,
+            host: HockeyJourneyOriginalsAdapter10868.Host(now: now, calendar: Self.pacific, locale: Self.locale),
+            tint: tints.home)
+        let input = HockeyJourneyPageInputAdapter10868.input(
             event, history: historyInput,
             points: HockeyJourneyContributionAdapter10868.points(event, markets: markets, host: contributions),
             assists: HockeyJourneyContributionAdapter10868.assists(event, markets: markets, host: contributions),
-            originalsCount: QuestionCatalog9483.sourceOutcomeCount(markets),
+            originalsCount: originals.catalogue?.originals.count,
             stream: .init(), host: host)
+        return (input, originals)
     }
 
     /// Tab bar + navigation chrome around the page, as a phone shows an event.
@@ -110,10 +118,10 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
         let points = "\(Int(screen.width))x\(Int(screen.height))"
         var manifest: [[String: String]] = []
         for c in Self.cases {
-            let input = try input(c, fixtures: dirs.fixtures)
+            let (input, originals) = try input(c, fixtures: dirs.fixtures)
             for (sizeName, size) in [("default", DynamicTypeSize.large), ("ax3", DynamicTypeSize.accessibility3)] {
                 for (styleName, style) in [("light", UIUserInterfaceStyle.light), ("dark", UIUserInterfaceStyle.dark)] {
-                    let page = HockeyJourneyEventPagePresentation10868(input: input)
+                    let page = HockeyJourneyEventPagePresentation10868(input: input, originals: originals)
                     let name = "\(c.name)-\(input.phase)-\(points)-\(sizeName)-\(styleName)"
 
                     // First screen inside real chrome.
