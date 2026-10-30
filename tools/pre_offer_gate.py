@@ -33,12 +33,15 @@ WORKFLOW = ".github/workflows/ci.yml"
 # with a concrete specimen; do not infer arbitrary shell/pytest semantics.
 COUNT_FILE = "tests/integration/test_pm_stamp_release_wake_10090_pg.py"
 COUNT_LOG = "/tmp/release-wake10090.txt"
+# Specimen 2 (#10090 PR #11797): the same step also names whole PM skip-locked
+# files after COUNT_FILE, and its pin counts every case of every named file.
+EXTRA_FILE = re.compile(r"tests/integration/[A-Za-z0-9_]+\.py")
 COLLECT = """
 import json, sys, pytest
 class Receipt:
     def pytest_collection_finish(self, session):
         print('PREFLIGHT_NODE_IDS=' + json.dumps([item.nodeid for item in session.items]))
-raise SystemExit(pytest.main([sys.argv[1], '--collect-only', '-q', '-p', 'no:cacheprovider'], plugins=[Receipt()]))
+raise SystemExit(pytest.main([*sys.argv[1:], '--collect-only', '-q', '-p', 'no:cacheprovider'], plugins=[Receipt()]))
 """
 
 
@@ -106,6 +109,11 @@ def execute(command: list[str], cwd: Path, timeout: float = 600) -> str:
 
 def release_wake_pin(workflow: dict) -> int:
     """Read this known step's literal pin; never maintain a second numeric pin."""
+    return release_wake_selection(workflow)[0]
+
+
+def release_wake_selection(workflow: dict) -> tuple[int, list[str]]:
+    """The step's literal pin and the whole test files its one pytest names."""
     steps = workflow["jobs"]["database-integration"]["steps"]
     matches = [s for s in steps if COUNT_FILE in s.get("run", "")]
     if len(matches) != 1:
@@ -115,10 +123,16 @@ def release_wake_pin(workflow: dict) -> int:
     if len(commands) != 1:
         raise Refusal(f"{COUNT_FILE}: unsupported pytest invocation; no count proof")
     args = shlex.split(commands[0])
-    if args[:5] != [COUNT_FILE, "-v", "-rs", ">", COUNT_LOG]:
+    files = args[:args.index("-v")] if "-v" in args else args
+    rest = args[len(files):]
+    # COUNT_FILE first, then only distinct whole files: a node id, -k, -m or
+    # any other selector narrows the count and is not qualified.
+    if (files[:1] != [COUNT_FILE] or len(set(files)) != len(files)
+            or not all(EXTRA_FILE.fullmatch(f) for f in files[1:])
+            or rest[:4] != ["-v", "-rs", ">", COUNT_LOG]):
         raise Refusal(f"{COUNT_FILE}: selection changed; qualify the invocation first")
     # Reject an additional selector after redirection rather than truncating it.
-    if args[5:] != ["2>&1;", "then"]:
+    if rest[4:] != ["2>&1;", "then"]:
         raise Refusal(f"{COUNT_FILE}: unsupported shell tail; no count proof")
     pins = re.findall(r'grep -qE "([^"]+)" ' + re.escape(COUNT_LOG), run)
     prefix, suffix = "[^0-9]", " passed[,[:space:]]"
@@ -127,22 +141,28 @@ def release_wake_pin(workflow: dict) -> int:
     value = pins[0][len(prefix):-len(suffix)]
     if not value.isdecimal() or int(value) < 1:
         raise Refusal(f"{COUNT_FILE}: invalid count pin")
-    return int(value)
+    return int(value), files
 
 
 def check_release_wake(root: Path, paths: set[str]) -> None:
     config_names = {"pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "conftest.py"}
     collection_changed = any(Path(path).name in config_names for path in paths)
-    if not collection_changed and not ({WORKFLOW, "backend/" + COUNT_FILE} & paths):
-        print("Count binding: known #10090 input unchanged; no collection needed")
+    unchanged = "Count binding: known #10090 input unchanged; no collection needed"
+    if not collection_changed and not any(
+        path == WORKFLOW or path.startswith("backend/tests/integration/") for path in paths
+    ):
+        print(unchanged)
         return
     try:
         import yaml
-        pin = release_wake_pin(yaml.safe_load((root / WORKFLOW).read_text()))
+        pin, files = release_wake_selection(yaml.safe_load((root / WORKFLOW).read_text()))
     except (ImportError, OSError, KeyError, TypeError, ValueError) as exc:
         raise Refusal(f"{COUNT_FILE}: cannot read authoritative workflow: {exc}") from exc
+    if not collection_changed and not ({WORKFLOW, *("backend/" + f for f in files)} & paths):
+        print(unchanged)
+        return
     output = execute(
-        [sys.executable, "-c", COLLECT, COUNT_FILE], root / "backend",
+        [sys.executable, "-c", COLLECT, *files], root / "backend",
     )
     receipts = [line.removeprefix("PREFLIGHT_NODE_IDS=") for line in output.splitlines()
                 if line.startswith("PREFLIGHT_NODE_IDS=")]
@@ -152,11 +172,11 @@ def check_release_wake(root: Path, paths: set[str]) -> None:
         nodes = json.loads(receipts[0])
     except json.JSONDecodeError as exc:
         raise Refusal("invalid collection receipt") from exc
-    if not isinstance(nodes, list) or not all(isinstance(n, str) and n.startswith(COUNT_FILE + "::") for n in nodes):
+    if not isinstance(nodes, list) or not all(isinstance(n, str) and n.startswith(tuple(f + "::" for f in files)) for n in nodes):
         raise Refusal("collection returned unsupported node identities")
     if len(nodes) != pin:
         raise Refusal(f"{COUNT_FILE}: CI expects {pin} passed; actual collection selects {len(nodes)}")
-    print(f"Count binding: {COUNT_FILE} selects {pin}; matches actual CI pin")
+    print(f"Count binding: {' + '.join(files)} selects {pin}; matches actual CI pin")
 
 
 def main(argv: list[str] | None = None) -> int:

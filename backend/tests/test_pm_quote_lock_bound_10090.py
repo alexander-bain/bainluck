@@ -37,13 +37,16 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
     r = rig(**({"books": {1: (0.2, 0.8)}} | kwargs))
     r.release.set()
     state = SimpleNamespace(held=True, attempts=[], settings=[], commits=[], pending=set(),
-                            forced=[], ranks=[], values={}, nowait=[], budgets=[],
+                            forced=[], ranks=[], values={}, nowait=[], skip=[], budgets=[],
                             statement_budgets=[], rank_error=None,
                             refusal_delay=0.0, refusal_message=PRICE_ROW_LOCK_REFUSAL_MESSAGE)
 
     class Session:
         def __init__(self):
             self.info = {}  # no market frames staged by this lock-budget fake
+
+        # #10090: models PostgreSQL row locks, so the writer may SKIP LOCKED.
+        bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
 
         budget_s = None  # no SET: the final drain waits for its locks
 
@@ -61,30 +64,46 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
                     raise state.rank_error
                 state.ranks.append(tuple(values))
                 return SimpleNamespace(rowcount=len(values))
-            chunk, forced, nowait = values
+            chunk, forced, nowait, skip_units = values
             state.statement_budgets.append(("price", self.budget_s))
             state.forced.append(set(forced))
             state.nowait.append(nowait)
+            state.skip.append(skip_units is not None)
             state.attempts.append((clock.t, tuple(chunk)))
-            if 1 in chunk and state.held:
-                # A newer accepted quote survives the whole transaction rollback.
-                r.ns["price_buffer"][1] = 0.9
-                # NOWAIT is refused without waiting (its answer may still
-                # arrive late); otherwise the statement's lock budget is spent.
-                clock.t += state.refusal_delay if nowait else self.budget_s
-                raise error or (
-                    LockHeld(state.refusal_message) if nowait else LockHeld()
-                )
             written = {
                 oid: value for oid, value in chunk.items()
                 if database is None or oid in forced
                 or database.get(oid) != round(value, 6)
             }
+            skipped = {}
+            if 1 in chunk and state.held:
+                # A newer accepted quote survives the whole transaction rollback.
+                r.ns["price_buffer"][1] = 0.9
+                if skip_units is None or error is not None:
+                    # NOWAIT is refused without waiting (its answer may still
+                    # arrive late); otherwise the statement's lock budget is spent.
+                    clock.t += state.refusal_delay if nowait else self.budget_s
+                    raise error or (
+                        LockHeld(state.refusal_message) if nowait else LockHeld()
+                    )
+                # #10090 SKIP LOCKED, as `chunk_price_update_stmt` does it:
+                # row 1's unit (its event, else its market) and its market are held back,
+                # returned as skipped; every other unit writes, no wait.
+                def unit(oid):
+                    event = skip_units.get(oid)
+                    return ("event", event) if event is not None else (
+                        "market", r.ns["market_by_outcome"].get(oid, oid))
+                market = r.ns["market_by_outcome"].get
+                skipped = {oid: v for oid, v in written.items()
+                           if unit(oid) == unit(1) or market(oid, oid) == market(1, 1)}
+                written = {oid: v for oid, v in written.items() if oid not in skipped}
             state.pending.update(written)
             state.values.update(written)
             rows = [SimpleNamespace(ord=i, id=oid, market_id=oid,
                                     quote_moved=True, last_updated=1)
                     for i, oid in enumerate(written)]
+            rows += [SimpleNamespace(ord=len(rows) + i, id=oid, market_id=oid, skipped=True)
+                     for i, oid in enumerate(skipped)]
             return SimpleNamespace(all=lambda: rows)
 
     @asynccontextmanager
@@ -112,8 +131,8 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
         PRICE_FLUSH_SECONDS=PRICE_FLUSH_SECONDS, SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
         is_lock_timeout=is_lock_timeout, lock_timeout_value=lock_timeout_value,
         is_price_row_lock_refusal=is_price_row_lock_refusal,
-        chunk_price_update_stmt=lambda chunk, force_ids, nowait=False: (
-            "price", (chunk, force_ids, nowait)
+        chunk_price_update_stmt=lambda chunk, force_ids, nowait=False, skip_units=None: (
+            "price", (chunk, force_ids, nowait, skip_units)
         ),
         rerank_market_fields_stmt=lambda ids: ("rank", ids),
         market_by_outcome={oid: oid for oid in r.ns["price_buffer"]},
@@ -370,7 +389,11 @@ async def test_non_lock_error_retains_existing_global_failure_result(monkeypatch
     assert r.ns["price_buffer"][1] == 0.9 and 2 in r.ns["price_buffer"]
 
 
-async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fences(monkeypatch):
+async def test_mixed_lock_failure_holds_back_only_its_event_and_keeps_full_fences(monkeypatch):
+    """#10090: one held row (1) in a chunk shared with an unrelated event
+    pair. The held event (10) is held back whole, unwritten, unstamped and
+    retried; the neighbour (90) commits, withdraws and stamps in that same
+    first attempt. Before, the joint chunk rolled 90 back with 10."""
     clock = _FakeTime(monkeypatch, t=1000)
     r, state = writer_rig(
         clock,
@@ -402,49 +425,48 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
 
     r.ns["blend_refresher"] = Refresher()
     assert await r.ns["flush_prices"](flush_started=1000)
-    # First attempt keeps ordinary batching: two unrelated event pairs share
-    # one rollback. The later successful chunks must not release either stamp.
-    assert state.attempts == [(1000, (1, 2, 900, 901)), (1000.05, (3, 902))]
-    assert state.commits == [3, 902]
-    assert pending == {10, 90} and all(not due for due in admitted)
-    assert r.ns["lock_retry_events"] == {10, 90}
-    assert r.books.keys() == {1, 900}
+    # The joint chunk SKIPS the held event instead of waiting for it: 900/901
+    # commit in the first attempt, with no lock budget spent, so the second
+    # chunk follows at once. Event 10's third leg (3) is a later chunk's
+    # write; its stamp still waits for the held legs.
+    assert state.attempts == [(1000, (1, 2, 900, 901)), (1000, (3, 902))]
+    assert state.skip == [True, True]
+    assert state.commits == [900, 901, 3, 902]
+    assert r.ns["stats"]["price_rows_skipped_locked"] == 2
+    assert not r.ns["stats"].get("errors")
+    # 90 is stamped; 10 is offered only as deferred (its leg 3 committed),
+    # never due while its held legs are unwritten.
+    assert pending == {10}
+    assert any(90 in due for due in admitted)
+    assert all(10 not in due for due in admitted)
+    # Its withdrawal waits for its price; the neighbour's does not.
+    assert ("withdraw", [900]) in r.trace and ("withdraw", [1]) not in r.trace
+    assert r.books.keys() == {1}
+    # Q491: the held rows stay buffered (with the newer quote) and known-held,
+    # due at once (no cooldown), and only their event is retry-isolated.
+    assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4}
+    assert r.ns["lock_retry_events"] == {10}
+    assert r.ns["lock_retry_until"] == {1: 0, 2: 0}
 
     clock.t = 1001
     assert await r.ns["flush_prices"](flush_started=1001)
-    # #10090 fast retry: a price-statement lock timeout arms no cooldown.
-    # Each rolled-back event is its own retried cohort at the next flush,
-    # probed NOWAIT, so the healthy neighbour writes and the held one waits
-    # alone without spending a second lock budget.
-    assert state.attempts[-2:] == [(1001, (1, 2)), (1001, (900, 901))]
-    assert state.nowait[-2:] == [True, True]
-    assert state.commits == [3, 902, 900, 901]
-    assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4}
-    assert r.ns["lock_retry_events"] == {10}
-    assert set(r.ns["lock_retry_until"]) == {1, 2}
-    assert r.books.keys() == {1} and pending == {10}
-    assert ("refresh", [90]) in r.trace and ("refresh", [10]) not in r.trace
-    assert ("withdraw", [900]) in r.trace and ("withdraw", [1]) not in r.trace
+    # Alone, the held event is one unit: the existing NOWAIT probe, refused.
+    assert state.attempts[-1] == (1001, (1, 2))
+    assert state.nowait[-1] is True and state.skip[-1] is False
+    assert r.ns["stats"]["price_lock_probes_refused"] == 1
 
     clock.t = 1003
     # A new question for the held event is part of this admitted cohort too.
     r.ns["price_buffer"][3] = 0.85
+    r.ns["price_buffer"][900] = 0.75
     assert await r.ns["flush_prices"](flush_started=1003)
-    assert state.attempts[-1] == (1003, (1, 2, 3))
-    assert state.nowait[-1] is True
+    # The healthy event writes first; the held cohort is probed after it.
+    assert state.attempts[-2:] == [(1003, (900,)), (1003, (1, 2, 3))]
+    assert state.nowait[-2:] == [False, True]
     assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4, 3: 0.85}
     assert set(r.ns["lock_retry_until"]) == {1, 2, 3}
+    assert pending == {10}
 
-    clock.t = 1004
-    r.ns["price_buffer"][900] = 0.75
-    assert await r.ns["flush_prices"](flush_started=1004)
-    # A refused probe re-arms no cooldown: the held cohort is probed again
-    # (NOWAIT, no wait spent), after the healthy event, which keeps its
-    # ordinary eligibility.
-    assert state.attempts[-2:] == [(1004, (900,)), (1004, (1, 2, 3))]
-    assert state.nowait[-2:] == [False, True]
-    assert set(r.ns["lock_retry_until"]) == {1, 2, 3}
-    assert r.ns["stats"]["price_lock_probes_refused"] == 3
     state.held = False
     clock.t = 1006
     assert await r.ns["flush_prices"](flush_started=1006)

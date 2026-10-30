@@ -145,3 +145,32 @@ def test_malformed_selected_node_receipt_refuses(monkeypatch):
     monkeypatch.setattr(gate, "execute", lambda *args: "PREFLIGHT_NODE_IDS={broken\n")
     with pytest.raises(gate.Refusal, match="invalid collection receipt"):
         gate.check_release_wake(ROOT, {gate.WORKFLOW})
+
+
+def test_extra_whole_files_are_counted_and_any_other_selector_refuses(tmp_path):
+    # #10090 PR #11797: the step names the PM skip-locked file after COUNT_FILE;
+    # its pin is the cases of BOTH files, so collection must select both.
+    backend = tmp_path / "backend"
+    extra = "tests/integration/test_extra_10090_pg.py"
+    for name, body in ((gate.COUNT_FILE, "def test_one(): pass\n"),
+                       (extra, "def test_two(): pass\ndef test_three(): pass\n")):
+        (backend / name).parent.mkdir(parents=True, exist_ok=True)
+        (backend / name).write_text(body)
+    workflow = tmp_path / gate.WORKFLOW
+    workflow.parent.mkdir(parents=True)
+
+    def write(selection, pin):
+        run = (f"if python -m pytest {gate.COUNT_FILE} \\\n  {selection} \\\n"
+               f"  -v -rs > {gate.COUNT_LOG} 2>&1; then\n"
+               f'grep -qE "[^0-9]{pin} passed[,[:space:]]" {gate.COUNT_LOG}\n')
+        workflow.write_text(yaml.safe_dump({"jobs": {"database-integration": {"steps": [{"run": run}]}}}))
+
+    write(extra, 3)
+    gate.check_release_wake(tmp_path, {"backend/" + extra})
+    write(extra, 1)
+    with pytest.raises(gate.Refusal, match="actual collection selects 3"):
+        gate.check_release_wake(tmp_path, {"backend/" + extra})
+    for narrowing in (extra + "::test_two", f"{extra} -k two", gate.COUNT_FILE):
+        write(narrowing, 3)
+        with pytest.raises(gate.Refusal, match="selection changed"):
+            gate.check_release_wake(tmp_path, {gate.WORKFLOW})

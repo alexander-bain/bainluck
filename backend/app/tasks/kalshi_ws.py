@@ -701,6 +701,22 @@ class _KalshiPriceOwner:
                 if not _WRITING_BESIDE.get():
                     self.timings.within_db("save", seconds)
 
+    async def skip_locked(self, session, phase, *, forced_ids=()):
+        """#10090: the ids of `phase` whose row another transaction holds.
+
+        Locks, in phase order and SKIP LOCKED, every row the phase's UPDATEs
+        would write (`kalshi_skip_locked_stmt`, the same predicate and the
+        same first-observation forcing as `phase`), so they then find their
+        rows already held. Returns the skipped ids, explicitly.
+        """
+        from app.utils.kalshi_price_statement import kalshi_skip_locked_stmt
+
+        result = await session.execute(kalshi_skip_locked_stmt(
+            (oid, *values[:3], oid in forced_ids or oid not in self.committed_outcome_ids)
+            for oid, values in phase.items()
+        ))
+        return {row.id for row in result.all()}
+
     @staticmethod
     def writing_beside():
         """#10090 — the calling task's prices are written beside its flush's
@@ -1378,6 +1394,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # lock. Retried at the ordinary budget (`short_probe_refused`); not an
         # error and not in `requeued`, which count real failed writes.
         "short_probe_refused": 0,
+        # #10090: buffered price rows held back (with their event or market)
+        # because another transaction held one of their rows, while the rest
+        # of the phase committed. Retried by the next flush, never dropped.
+        "price_rows_skipped_locked": 0,
     }
 
     # -- Buffered price updates --
@@ -2324,6 +2344,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 )
                 declined = 0
                 phase_bounds = {}
+                # #10090: units a row lock elsewhere held back of this phase.
+                skipped_phase = {}
                 held_ambiguous = False
                 written_outcome_ids: list[int] = []
                 # #10090 `preview_from_commit`: the rows the UPDATE returned,
@@ -2453,6 +2475,47 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             () if held_quotes is None
                             else {oid for oid in phase if oid in held_quotes}
                         )
+                        # #10090 — ONE LOCKED ROW HOLDS ONLY ITS OWN UNIT. A row
+                        # another transaction held refused the whole phase (up
+                        # to 200 updates) until it let go (v5973: 3.3 min). The
+                        # rows are now locked SKIP LOCKED first: a skipped row
+                        # holds back its event (a speaking leg; no event is
+                        # written half) or its market, and the rest of the
+                        # phase writes and commits now. Held back is exactly
+                        # a refused phase: buffered, unfinished, offered to the
+                        # overlay below. One unit already holds back only
+                        # itself and keeps today's wait; the final drain waits.
+                        def write_unit(oid):
+                            event_id = cohort_event_ids.get(oid)
+                            if event_id is not None and oid not in non_blend_outcome_ids:
+                                return ("event", event_id)
+                            return ("market", market_id_by_outcome.get(oid, -oid))
+
+                        skip_locked = getattr(prices, "skip_locked", None)
+                        # Row locks (and SKIP LOCKED) are PostgreSQL's.
+                        bind = getattr(session, "bind", None)
+                        if (not final_drain and callable(skip_locked)
+                                and getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
+                                and len({write_unit(oid) for oid in phase}) > 1):
+                            locked_out = await skip_locked(
+                                session, phase,
+                                forced_ids=set(held_ids) | (set(phase) & primary_quote_custody.pending(batch_primary_inputs)),
+                            )
+                            if locked_out:
+                                # Its market too: no question is written half.
+                                held_units = {write_unit(oid) for oid in locked_out} | {
+                                    ("market", market_id_by_outcome.get(oid, -oid))
+                                    for oid in locked_out
+                                }
+                                skipped_phase = {
+                                    oid: entry for oid, entry in phase.items()
+                                    if write_unit(oid) in held_units
+                                    or ("market", market_id_by_outcome.get(oid, -oid)) in held_units
+                                }
+                                phase = {
+                                    oid: entry for oid, entry in phase.items()
+                                    if oid not in skipped_phase
+                                }
                         async with contextlib.aclosing(
                             prices.phase(
                                 session, phase, force_observation=final_drain,
@@ -2651,6 +2714,26 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         continue
                     return False
 
+                if skipped_phase:
+                    # #10090: counted, never logged per flush. Still buffered
+                    # and unfinished; no cooldown, so the next flush retries it
+                    # without holding the rest of its next phase.
+                    stats["price_rows_skipped_locked"] = (
+                        stats.get("price_rows_skipped_locked", 0) + len(skipped_phase)
+                    )
+                    if exact_trace is not None:
+                        with contextlib.suppress(Exception):
+                            exact_trace.write_failed(
+                                [batch_marks[oid] for oid in skipped_phase if oid in batch_marks],
+                                "LOCK_SKIPPED",
+                            )
+                    if not phase:
+                        # Nothing of it committed: exactly a refused phase.
+                        in_flight_ids.clear()
+                        await end_beside()
+                        if not final_drain and held_quotes is not None:
+                            await admit_held_phase(index, skipped_phase, phase_bounds)
+                        continue
                 if held_quotes is not None:
                     # Landed (or refused as settled/missing): the row is the truth.
                     held_quotes.release(phase)
@@ -2801,6 +2884,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         await stamp_start()
                 elif queued_refresh:
                     stamp_admit()
+                if skipped_phase and not final_drain and held_quotes is not None:
+                    # #10090: the held-back units' received quotes reach the
+                    # stamp now, as a refused phase's do (`admit_held_phase`).
+                    await admit_held_phase(index, skipped_phase, phase_bounds)
             if beside_failed:
                 return False
             # Lock retries are bounded on their cohorts above. A handled lock
@@ -3717,7 +3804,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
                 "resnapshots=%d quote_priority=%d probe_refused=%d "
-                "bundled_refused=%d parked=%d",
+                "bundled_refused=%d parked=%d skipped_locked=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -3742,6 +3829,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # then the refused pairs parked until an input changes.
                 blend.get("bundled_refused", 0),
                 len(getattr(blend_refresher, "_book_refused", ())),
+                # #10090: price rows a row lock elsewhere held back (with their
+                # unit) while the rest of their phase committed.
+                stats.get("price_rows_skipped_locked", 0),
             )
             flush_timings.reset()
             _report_liveness(

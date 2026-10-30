@@ -45,10 +45,19 @@ async def test_first_wait_matches_the_owning_loop(monkeypatch, period, kind, bud
         r.ns["event_id_by_outcome"].pop(1)
     if kind == "mixed":
         r.ns["non_blend_outcome_ids"].add(2)
-    assert await r.ns["write_chunk"]({1: 0.7, 2: 0.3}) is None
+    wrote = await r.ns["write_chunk"]({1: 0.7, 2: 0.3})
     assert state.budgets[0] == f"{budget}ms"
-    assert len(state.attempts) == 1 and not state.commits
-    assert r.ns["price_buffer"]
+    assert len(state.attempts) == 1
+    if kind in {"prop", "unknown", "mixed"}:
+        # #10090: two units (an event and a question): the held row keeps back
+        # only its own unit, and the other commits in the same attempt.
+        assert state.skip == [True]
+        assert wrote.written_ids == (2,) and wrote.skipped_ids == {1}
+        assert state.commits == [2]
+        assert r.ns["price_buffer"][1] == 0.9  # still buffered, never dropped
+    else:
+        assert wrote is None and not state.commits
+        assert r.ns["price_buffer"]
 
 
 def test_the_budgets_are_the_named_constants():

@@ -14,8 +14,23 @@ from collections.abc import Mapping
 from datetime import timedelta
 from types import MappingProxyType
 
-from sqlalchemy import Boolean, Float, Integer, bindparam, cast, func, or_, update
+from sqlalchemy import (
+    ARRAY,
+    Boolean,
+    Float,
+    Integer,
+    and_,
+    bindparam,
+    cast,
+    column,
+    exists,
+    func,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.sql.dml import Update
+from sqlalchemy.sql.selectable import Select
 
 from app.models.models import FuturesOutcome
 from app.utils.price_change_stamp import price_changed_at_value, quote_moved_column
@@ -27,34 +42,53 @@ KALSHI_REPEAT_REFRESH_SECONDS = 30
 
 def _needs_observation(has_book: bool):
     table = FuturesOutcome.__table__
-    changes = [
+    return _observation_needed(
         bindparam("kalshi_force_observation", type_=Boolean()),
-        table.c.current_probability.is_distinct_from(
-            cast(
-                bindparam(
-                    "kalshi_stored_probability", type_=table.c.current_probability.type
-                ),
-                table.c.current_probability.type,
+        bindparam("kalshi_stored_probability", type_=table.c.current_probability.type),
+        {
+            name: bindparam(parameter, type_=table.c[name].type)
+            for name, parameter in (
+                ("current_yes_bid", "kalshi_stored_bid"),
+                ("current_yes_ask", "kalshi_stored_ask"),
             )
+        } if has_book else None,
+    )
+
+
+def _observation_needed(force, probability, book, has_book=None):
+    """The repeat predicate over any value source (binds or an unnest row).
+
+    ``book`` maps each book column to its value; ``has_book`` (per-row, for
+    an unnest) gates it, else a present ``book`` always counts.
+    """
+    table = FuturesOutcome.__table__
+    changes = [
+        force,
+        table.c.current_probability.is_distinct_from(
+            cast(probability, table.c.current_probability.type)
         ),
         table.c.last_updated.is_(None),
         table.c.last_updated
         <= func.now() - timedelta(seconds=KALSHI_REPEAT_REFRESH_SECONDS),
     ]
-    if has_book:
-        changes.extend(
-            table.c[column].is_distinct_from(
-                cast(
-                    bindparam(parameter, type_=table.c[column].type),
-                    table.c[column].type,
-                )
-            )
-            for column, parameter in (
-                ("current_yes_bid", "kalshi_stored_bid"),
-                ("current_yes_ask", "kalshi_stored_ask"),
-            )
-        )
+    if book is not None:
+        moved = [
+            table.c[name].is_distinct_from(cast(value, table.c[name].type))
+            for name, value in book.items()
+        ]
+        if has_book is None:
+            changes.extend(moved)
+        else:
+            changes.append(and_(has_book, or_(*moved)))
     return or_(*changes)
+
+
+def _writable():
+    """#5411: a tier-3 settled row is never re-priced (see the statement)."""
+    return or_(
+        FuturesOutcome.resolution_source.is_(None),
+        FuturesOutcome.resolution_source.notin_(sorted(AUTHORITATIVE_SOURCES)),
+    )
 
 
 def _build_price_statement(has_book: bool) -> Update:
@@ -63,10 +97,7 @@ def _build_price_statement(has_book: bool) -> Update:
         update(table)
         .where(
             FuturesOutcome.id == bindparam("kalshi_outcome_id", type_=Integer()),
-            or_(
-                FuturesOutcome.resolution_source.is_(None),
-                FuturesOutcome.resolution_source.notin_(sorted(AUTHORITATIVE_SOURCES)),
-            ),
+            _writable(),
             _needs_observation(has_book),
         )
         .values(
@@ -142,3 +173,74 @@ def kalshi_price_parameters(
             kalshi_compared_ask=yes_ask,
         )
     return parameters
+
+
+def kalshi_skip_locked_stmt(rows) -> Select:
+    """#10090: lock a phase's rows the UPDATEs will write, SKIP LOCKED.
+
+    ``rows``: ``(outcome_id, probability, yes_bid, yes_ask, force)`` in phase
+    order. The row locks are taken in that order, and only on a row the
+    per-row statement would write: the same settled refusal and repeat
+    predicate, at the same stored precision, so an unchanged row still takes
+    no lock. Returns the ids such a row the lock SKIPPED (held by another
+    transaction): explicit, never inferred from a missing RETURNING row,
+    which an unchanged or settled row also is. Run in the phase's own
+    transaction before its UPDATEs, which then find their rows already held.
+    """
+    table = FuturesOutcome.__table__
+    rows = list(rows)
+    given = (
+        func.unnest(
+            bindparam("skip_ids", [r[0] for r in rows], type_=ARRAY(Integer)),
+            bindparam(
+                "skip_probabilities", [r[1] for r in rows],
+                type_=ARRAY(table.c.current_probability.type),
+            ),
+            bindparam(
+                "skip_bids", [r[2] for r in rows], type_=ARRAY(table.c.current_yes_bid.type)
+            ),
+            bindparam(
+                "skip_asks", [r[3] for r in rows], type_=ARRAY(table.c.current_yes_ask.type)
+            ),
+            bindparam(
+                "skip_books", [r[2] is not None and r[3] is not None for r in rows],
+                type_=ARRAY(Boolean),
+            ),
+            bindparam("skip_force", [bool(r[4]) for r in rows], type_=ARRAY(Boolean)),
+        )
+        .table_valued(
+            column("id", Integer),
+            column("probability", table.c.current_probability.type),
+            column("bid", table.c.current_yes_bid.type),
+            column("ask", table.c.current_yes_ask.type),
+            column("has_book", Boolean),
+            column("force", Boolean),
+            with_ordinality="ord",
+        )
+        .render_derived(name="given")
+    )
+    wanted_rows = and_(
+        _writable(),
+        _observation_needed(
+            given.c.force, given.c.probability,
+            {"current_yes_bid": given.c.bid, "current_yes_ask": given.c.ask},
+            has_book=given.c.has_book,
+        ),
+    )
+    wanted = (
+        select(table.c.id)
+        .join_from(given, table, table.c.id == given.c.id)
+        .where(wanted_rows)
+        .cte("wanted")
+        .prefix_with("MATERIALIZED")
+    )
+    locked = (
+        select(table.c.id)
+        .join_from(given, table, table.c.id == given.c.id)
+        .where(wanted_rows)
+        .order_by(given.c.ord)
+        .with_for_update(of=table, skip_locked=True, key_share=True)
+        .cte("locked")
+        .prefix_with("MATERIALIZED")
+    )
+    return select(wanted.c.id).where(~exists().where(locked.c.id == wanted.c.id))

@@ -5056,6 +5056,7 @@ jobs:
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_pm_stamp_release_wake_10090_pg.py \
+            tests/integration/test_pm_skip_locked_row_10090_pg.py \
             -v -rs > /tmp/release-wake10090.txt 2>&1; then
             gate_status=0
           else
@@ -5068,8 +5069,8 @@ jobs:
             echo "::error::#10090 PM release-wake gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]15 passed[,[:space:]]" /tmp/release-wake10090.txt || {
-            echo "::error::#10090 PM release-wake gate did not run all fifteen cases"
+          grep -qE "[^0-9]21 passed[,[:space:]]" /tmp/release-wake10090.txt || {
+            echo "::error::#10090 PM release-wake gate did not run all twenty-one cases"
             exit 1
           }
 
@@ -5436,13 +5437,14 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_price_lock_budget_pg_10661.py \
+            tests/integration/test_kalshi_skip_locked_row_10090_pg.py \
             -v -rs 2>&1 | tee /tmp/pricelock10661.txt
           if grep -qiE "[0-9]+ skipped" /tmp/pricelock10661.txt; then
             echo "::error::#10661 price lock budget gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/pricelock10661.txt || {
-            echo "::error::#10661 price lock budget gate did not run all seven cases"
+          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/pricelock10661.txt || {
+            echo "::error::#10661 price lock budget gate did not run all thirteen cases"
             exit 1
           }
 
