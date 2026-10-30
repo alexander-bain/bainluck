@@ -70,6 +70,8 @@ import { heroFreshness } from "@/lib/event/heroFreshness";
 import { newestServedScore } from "@/lib/event/newestServedScore";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
+import EkgHeartbeat from "@/components/event/EkgHeartbeat";
+import { EMPTY_EKG_TRACKER, stepEkgTracker, type EkgTracker } from "@/lib/event/ekgHeartbeat";
 import { useObservationCount } from "@/hooks/useObservationCount";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
@@ -216,6 +218,7 @@ import { PinIcon } from "@/components/PinButton";
 import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import { useTenthsOptIn } from "@/lib/tenthsOptIn";
+import { useEkgOptIn } from "@/lib/ekgOptIn";
 import SlashBreakableName from "@/components/SlashBreakableName";
 import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence";
@@ -286,6 +289,8 @@ export default function EventPage({ params }: EventPageProps) {
   // `?tenths=off` gets today's whole numbers. One decision for the hero and
   // both charts' end labels, so the three can never print different digits.
   const tenthsOptIn = useTenthsOptIn();
+  // #10090 — the heartbeat under the headline, `?ekg=1` only while Alex tries it.
+  const ekgOptIn = useEkgOptIn();
   const [countdown, setCountdown] = useState<number>(0);
   const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
@@ -339,6 +344,8 @@ export default function EventPage({ params }: EventPageProps) {
   // #10200: the chart status's memory of what this mount has ADOPTED — advanced
   // once per render from the held result, never from a raw frame.
   const connectionTrackerRef = useRef<ConnectionTracker>(EMPTY_CONNECTION_TRACKER);
+  // #10090: the heartbeat's memory of the clocks it has seen advance.
+  const ekgTrackerRef = useRef<EkgTracker>(EMPTY_EKG_TRACKER);
 
   // #7621 — ONE callback for the life of the mount, and that is the whole fix.
   //
@@ -2442,6 +2449,14 @@ export default function EventPage({ params }: EventPageProps) {
     },
     Date.now(),
   );
+  // #10090 — the heartbeat beats on the same accepted clock, or on the
+  // stream's `confirmed_at` advancing; nothing else (`lib/event/ekgHeartbeat`).
+  ekgTrackerRef.current = stepEkgTracker(
+    ekgTrackerRef.current,
+    { eventId, status: streamStatus, confirmedAt: streamConfirmedAt, priceObservedAt: acceptedPriceClock },
+    Date.now(),
+  );
+  const ekgVisible = ekgOptIn && quoteEligible && !connectionTerminalLabel;
   // The warnings are the header badge's own `stale` branch, asked where that
   // badge would have drawn — never a threshold of this status's own (#4469).
   const ageAdmissionIsStale =
@@ -3190,6 +3205,13 @@ export default function EventPage({ params }: EventPageProps) {
                 tenths={tenthsOptIn}
               />
               )}
+              {/* #10090 — the heartbeat, under the pair so it adds height, never
+                  width, to a block measured at −0.1px headroom (above). */}
+              {ekgVisible && !isFinished ? (
+                <div className="mt-1 flex justify-center" data-testid="ekg-row">
+                  <EkgHeartbeat tracker={ekgTrackerRef.current} status={streamStatus} />
+                </div>
+              ) : null}
 
               {/* Projected final score — derived from spread + total, no gambling jargon.
 
