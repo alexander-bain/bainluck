@@ -134,7 +134,11 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
         chunk_price_update_stmt=lambda chunk, force_ids, nowait=False, skip_units=None: (
             "price", (chunk, force_ids, nowait, skip_units)
         ),
-        rerank_market_fields_stmt=lambda ids: ("rank", ids),
+        chunk_price_update_execution=lambda chunk, force_ids, nowait=False: (
+            ("price", (chunk, force_ids, nowait, None)), {}
+        ),
+        pm_rerank_market_fields_execution=lambda ids: (("rank", ids), {}),
+        rerank_market_fields_stmt=lambda ids: ("rank", ids),  # withdrawals retain their builder
         market_by_outcome={oid: oid for oid in r.ns["price_buffer"]},
     )
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["write_chunk"], r.ns)
