@@ -1635,6 +1635,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         held_quotes = getattr(blend_refresher, "held_quotes", None)
         from app.tasks.live_blend_refresh import _mono
 
+        def owner_fence():
+            # #10090 (Argon Rank 1): beside a flush, that flush's stamp fence AS
+            # IT IS NOW. A bridge made since this pass began can split a live
+            # event across the owner's phases (lane1's R1 on 6f8a33da), and the
+            # copy frozen at the pass's start cannot see it. Without the
+            # owner's reader (a rig's tuple), the frozen copy.
+            return beside[4]() if len(beside) > 4 else beside[1]
+
         async with buffer_lock:
             if beside is None:
                 batch = dict(price_buffer)
@@ -1676,7 +1684,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 with contextlib.suppress(Exception):
                     exact_trace.snapshot(batch_marks.values())
         if not batch and beside is not None and not (
-            blend_refresher.pending_event_ids() & (set(live_event_ids) - beside[1])
+            blend_refresher.pending_event_ids() & (set(live_event_ids) - owner_fence())
         ):
             return True
         if not batch:
@@ -1702,16 +1710,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     admit = getattr(blend_refresher, "admit_fresh", None)
                     if admit is not None and not final_drain:
                         admit((), flush_started=flush_started,
-                              defer_event_ids=() if beside is None else beside[1])
+                              defer_event_ids=() if beside is None else owner_fence())
                 else:
                     owed = blend_refresher.pending_event_ids()
                     if owed and beside is None:
                         prices.flush_work += 1  # owed stamps are actual work
-                    if beside is not None:
-                        owed = owed - beside[1]
+                    fenced = None if beside is None else owner_fence()
+                    if fenced is not None:
+                        owed = owed - fenced
                     stamp = blend_refresher.refresh_pending(
                         flush_started=flush_started,
-                        **({} if beside is None else {"defer_event_ids": beside[1]}),
+                        **({} if fenced is None else {"defer_event_ids": fenced}),
                     )
                     if owed and not final_drain:
                         # #10090: the debt is the run's refresh, as a price
@@ -1822,27 +1831,36 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         def fence_events():
             if beside is not None:
                 # This pass's own unfinished cohorts, and the owner's fence.
-                return cohort_event_ids.events_of(unfinished_price_ids) | beside[1]
+                return cohort_event_ids.events_of(unfinished_price_ids) | owner_fence()
             live = live_event_ids or ()
             fence, waiting, committed = set(), set(), set()
             owner_map = cohort_event_ids.events
-            if len(unfinished_price_ids) + len(committed_price_ids) > len(owner_map):
+            # An outcome a write beside this flush committed is on the board:
+            # committed, never waiting. A newer tick of it is a new write, not
+            # part of this snapshot's split, so a live event bridged onto a
+            # later phase after beside wrote it is still fenced (R1).
+            done_beside = prices.beside_written
+            if (
+                len(unfinished_price_ids) + len(committed_price_ids)
+                + len(done_beside) > len(owner_map)
+            ):
                 # One pass over the map, as `events_of` takes a large set.
                 pairs = (
                     (oid, event) for oid, event in owner_map.items()
                     if oid in unfinished_price_ids or oid in committed_price_ids
+                    or oid in done_beside
                 )
             else:
                 pairs = (
                     (oid, owner_map.get(oid))
-                    for oid in (*unfinished_price_ids, *committed_price_ids)
+                    for oid in (*unfinished_price_ids, *committed_price_ids, *done_beside)
                 )
             non_speakers = cohort_event_ids.non_speakers
             unread = getattr(prices, "headline_aux_outcome_ids", ())
             for oid, event in pairs:
                 if event is None or oid in non_speakers:
                     continue
-                if oid in unfinished_price_ids:
+                if oid in unfinished_price_ids and oid not in done_beside:
                     if event not in live:
                         fence.add(event)
                     elif oid not in unread:
@@ -1919,6 +1937,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 frozenset(fence_events()),
                 frozenset(map(market_id_by_outcome.get, in_flight)) - {None},
                 beside_first(),
+                fence_events,  # the owner's fence as it is at each beside stamp
             )
             while not beside_stop:
                 prices.input_wake.clear()

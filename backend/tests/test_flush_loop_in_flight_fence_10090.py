@@ -18,6 +18,10 @@ WHAT THIS FILE PROVES, on the SHIPPED `flush_prices` (AST-exec'd):
 3. Kept: the phase inside its transaction is never written beside; a live
    event split across phases (a late bridge) stays deferred until its last
    part commits; a non-live game keeps today's fence.
+4. A late bridge through the beside writer (lane1's R1 on 6f8a33da, red on
+   it): once beside has written a live event whole, a futures outcome bridged
+   onto it from a later phase splits it again. Beside's own stamp, its owed-
+   debt stamp and the owner's stamp all defer it until that part commits.
 
 Production latency is not claimed here.
 """
@@ -363,3 +367,86 @@ async def test_split_fence_strawman_without_the_bridge_a_is_not_deferred():
     assert await r.flush(0.0) is True
     a_asks = [deferred for _k, ids, deferred, _c in r.asks if LIVE_A in ids]
     assert a_asks and all(LIVE_A not in deferred for deferred in a_asks)
+
+
+def _bridge_after_whole_beside_write(r):
+    # B is written whole beside A's open phase; then the subscription bridges
+    # a futures outcome (the owner's later phase, still unwritten) into live B.
+    r.events[FUTURES[0]] = LIVE_B
+
+
+def _asks_before_futures_commit(r, n, *, of_b=True):
+    futures_done = next(i for i, rows in enumerate(r.commits) if FUTURES[0] in rows) + 1
+    return [(k, deferred, c) for k, ids, deferred, c in r.asks[n:]
+            if (LIVE_B in ids or not of_b) and c < futures_done]
+
+
+async def test_a_late_bridge_defers_the_beside_writers_own_stamp():
+    # Beside's live set was frozen at the flush's first serve, so its second
+    # write of B carries no bridged leg, and its stamp read the frozen fence:
+    # on 6f8a33da `('refresh', {B}, {A}, commits=2)` read a partly written board.
+    r = rig(gate_oid=HEAD_A[0], aux=())
+    r.buffer.update({oid: quote(OLD) for oid in HEAD_A + HEAD_B + FUTURES})
+    flush = asyncio.create_task(r.flush(0.0))
+    try:
+        assert await _until(lambda: HEAD_B[0] not in r.buffer)  # first beside pass
+        await _until(lambda: False, turns=20)
+        n = len(r.asks)
+        _bridge_after_whole_beside_write(r)
+        r.buffer[HEAD_B[0]] = quote(NEW)
+        r.prices.input_wake.set()
+        assert await _until(lambda: (HEAD_B[0], NEW) in r.writes)
+        await _until(lambda: False, turns=20)
+    finally:
+        r.gate.set()
+    assert await asyncio.wait_for(flush, 5) is True
+    before = _asks_before_futures_commit(r, n)
+    assert before, "B's second beside write asked for its stamp"
+    assert all(LIVE_B in deferred for _k, deferred, _c in before), before
+
+
+async def test_a_late_bridge_defers_the_beside_writers_owed_debt_stamp():
+    # No new quote: beside wakes only for B's owed stamp. B is fenced, so it
+    # stamps nothing, or defers B; on 6f8a33da its frozen fence took B's debt.
+    r = rig(gate_oid=HEAD_A[0], aux=())
+
+    async def refresh_pending(*, defer_event_ids=(), **_kw):
+        r.asks.append(("pending", set(), set(defer_event_ids), len(r.commits)))
+
+    r.refresher.refresh_pending = refresh_pending
+    r.buffer.update({oid: quote(OLD) for oid in HEAD_A + HEAD_B + FUTURES})
+    flush = asyncio.create_task(r.flush(0.0))
+    try:
+        assert await _until(lambda: HEAD_B[0] not in r.buffer)
+        await _until(lambda: False, turns=20)
+        n = len(r.asks)
+        _bridge_after_whole_beside_write(r)
+        r.refresher.pending_event_ids = lambda: frozenset({LIVE_B})
+        r.prices.input_wake.set()
+        await _until(lambda: False, turns=40)
+    finally:
+        r.gate.set()
+    assert await asyncio.wait_for(flush, 5) is True
+    before = _asks_before_futures_commit(r, n, of_b=False)
+    assert all(LIVE_B in deferred for _k, deferred, _c in before), before
+
+
+async def test_a_late_bridge_defers_the_owners_stamp_of_a_beside_written_event():
+    # B's stamp is owed again while its bridged leg is unwritten: the owner's
+    # stamp at A's commit takes that debt unless B is deferred, as it would be
+    # had the owner written B itself.
+    r = rig(gate_oid=HEAD_A[0], aux=())
+    r.buffer.update({oid: quote(OLD) for oid in HEAD_A + HEAD_B + FUTURES})
+    flush = asyncio.create_task(r.flush(0.0))
+    try:
+        assert await _until(lambda: HEAD_B[0] not in r.buffer)
+        await _until(lambda: False, turns=20)
+        n = len(r.asks)
+        _bridge_after_whole_beside_write(r)
+        r.refresher.pending_event_ids = lambda: frozenset({LIVE_B})
+    finally:
+        r.gate.set()
+    assert await asyncio.wait_for(flush, 5) is True
+    before = _asks_before_futures_commit(r, n, of_b=False)
+    assert before, "the owner asked for a stamp before the futures commit"
+    assert all(LIVE_B in deferred for _k, deferred, _c in before), before
