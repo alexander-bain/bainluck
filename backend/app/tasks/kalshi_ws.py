@@ -199,6 +199,24 @@ def kalshi_non_speaking_ticker(external_id: str | None) -> bool:
     )
 
 
+def kalshi_headline_aux_ticker(external_id: str | None) -> bool:
+    """#10090 (Argon flush-loop Rank 3) — True when the refresher's Kalshi read
+    (`LiveBlendRefresher._read_groups`) leaves this market's outcomes out of
+    the headline: a ticker that does not feed the blend. A missing or empty
+    ticker IS read there (the resolver's name fallback), so it is not.
+
+    Wider than `kalshi_non_speaking_ticker`, which keeps unknown series in
+    their event's cohort rather than guess. This decides only a live game's
+    phase ORDER (`linked_first_phases`), never cohort membership or stamping.
+    """
+    from app.utils.prediction_market_matching import feeds_win_prob_blend
+
+    return (
+        isinstance(external_id, str) and bool(external_id)
+        and not feeds_win_prob_blend(external_id)
+    )
+
+
 class _KalshiHeadlineEvents(Mapping[int, int]):
     """Live view of existing event admission, omitting known non-speakers.
 
@@ -548,6 +566,12 @@ class _KalshiPriceOwner:
         # overlay again: the linked settlement writer leaves `last_updated`
         # alone, so no stored row would ever read as newer than the quote.
         self.settled_market_ids: set[int] = set()
+        # #10090 (Argon Rank 3): linked outcomes the refresher's headline read
+        # leaves out (`kalshi_headline_aux_ticker`), kept IN PLACE by the
+        # consumer with its maps. A live game writes them in its own phase
+        # after every live headline phase, ahead of the non-live tail. Empty
+        # (a rig, a direct call) keeps each live game one phase, as before.
+        self.headline_aux_outcome_ids: set[int] = set()
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
         # #10090: the run's one blend refresh. It may outlive the flush that
@@ -925,6 +949,7 @@ def _packed(groups, max_rows, max_groups=None, key=None):
 def linked_first_phases(
     batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
     live_events=None, pending_events_fenced=False, tail_event_by_outcome=None,
+    headline_aux=(),
 ):
     """Publish independent games separately, followed by unrelated contracts.
 
@@ -963,6 +988,16 @@ def linked_first_phases(
     timeouts held a live game's total-points lines ~78 s behind futures in
     the same 200-row phases). They stay non-live tail work: same budget,
     preemption and stamp cohort, at their batch-order position.
+
+    #10090 (Argon Rank 3) — ``headline_aux``: a live game's outcomes the
+    refresher's headline read leaves out (`kalshi_headline_aux_ticker`). Each
+    live game's other outcomes are its headline phase; these, whole markets,
+    are its live-aux phase. Every live headline phase comes first, then the
+    live-aux phases, then the non-live tail: one game's long prop board
+    (production 2026-10-30 00:20Z: `db_phase=1.64s/live/140`) no longer holds
+    another live game's headline. They stay live work — never budget-deferred
+    or preempted — and keep their event's cohort, so the event is not stamped
+    until both of its phases have committed.
     """
     if not batch or any(market_id_by_outcome.get(oid) is None for oid in batch):
         return [batch]
@@ -1006,6 +1041,17 @@ def linked_first_phases(
     for game in games.values():
         holds_live = any(event_id_by_outcome.get(oid) in live_events for oid in game)
         (live if holds_live else other).append(game)
+    if headline_aux and live:
+        headline, auxiliary = [], []
+        for game in live:
+            aux = {oid: entry for oid, entry in game.items() if oid in headline_aux}
+            if len(aux) < len(game):
+                headline.append(
+                    {oid: entry for oid, entry in game.items() if oid not in aux}
+                )
+            if aux:
+                auxiliary.append(aux)
+        live = headline + auxiliary
     markets = {}
     for oid, entry in rest.items():
         markets.setdefault(market_id_by_outcome[oid], {})[oid] = entry
@@ -1348,6 +1394,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         outcome_id for outcome_id, market_id in market_id_by_outcome.items()
         if kalshi_non_speaking_ticker(_ticker_by_market.get(market_id))
     }
+    # #10090 (Argon Rank 3): what the headline read leaves out, filled IN PLACE
+    # beside `non_blend_outcome_ids` (phase order only).
+    headline_aux_outcome_ids = prices.headline_aux_outcome_ids
+    headline_aux_outcome_ids.clear()
+    headline_aux_outcome_ids.update(
+        outcome_id for outcome_id, market_id in market_id_by_outcome.items()
+        if kalshi_headline_aux_ticker(_ticker_by_market.get(market_id))
+    )
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
     # the flush read through these same objects.
     open_contract_ids: dict[str, tuple[int, int]] = {}
@@ -1687,32 +1741,43 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # failure mode — exception, cancellation, or a hard kill between the two
         # — can lose a price the buffer was holding. Nothing needs to be
         # "put back", because it was never taken away.
+        # #10090 (Argon Rank 3): a live game's headline phase, then its
+        # live-aux phase. The final drain keeps its whole-game contract.
+        headline_aux = (
+            () if final_drain else getattr(prices, "headline_aux_outcome_ids", ())
+        )
+
+        def aux_phase(phase):
+            return bool(headline_aux) and all(oid in headline_aux for oid in phase)
+
         phases = linked_first_phases(
             batch, market_id_by_outcome, cohort_event_ids,
             pending_events=blend_refresher.pending_event_ids(),
             live_events=live_event_ids,
             pending_events_fenced=True,
             tail_event_by_outcome=event_id_by_outcome,
+            headline_aux=headline_aux,
         )
         if beside is not None:
             # The main writer keeps oldest-first progress. Its helper serves
             # the newest whole live event first, so a later quote does not
             # inherit the helper's older buffered tail before the owner joins.
+            # Every headline phase still goes before every live-aux phase.
             phases.sort(
-                key=lambda phase: max(
+                key=lambda phase: (aux_phase(phase), -max(
                     (getattr(batch_marks.get(oid), "seq", 0) for oid in phase),
                     default=0,
-                ),
-                reverse=True,
+                )),
             )
         if not final_drain and live_event_ids and held_quotes is not None:
             # Preserve whole phases and their intra-class order. Give live
             # groups not yet offered a short attempt their first chance before
             # retained normal-budget retries; those retries remain in this flush.
+            # Live-aux phases keep their place after every headline phase.
             def first_attempt_order(phase):
                 if not any(cohort_event_ids.get(oid) in live_event_ids for oid in phase):
-                    return 2
-                return int(
+                    return 4
+                return 2 * aux_phase(phase) + int(
                     not prices.short_probe_refused.isdisjoint(phase)
                     or any(oid in prices.ambiguous_retry_since for oid in phase)
                 )
@@ -3505,6 +3570,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # Bridge candidates passed canonical winner admission; keep this
             # new/refreshed map member speaking even if an old entry existed.
             non_blend_outcome_ids.discard(outcome_id)
+            headline_aux_outcome_ids.discard(outcome_id)
         stats["open_contract_bridged_outcomes"] = len(bridge)
         stats["open_contract_bridged_events"] = len(set(bridge.values()))
         # An open contract's field is re-ranked like a linked one's.
@@ -3558,9 +3624,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             oid for oid, mid in market_by_outcome.items()
             if kalshi_non_speaking_ticker(ticker_by_market.get(mid))
         }
+        aux = {
+            oid for oid, mid in market_by_outcome.items()
+            if kalshi_headline_aux_ticker(ticker_by_market.get(mid))
+        }
         for oid, event_id in bridge.items():
             by_outcome.setdefault(oid, event_id)
             non_blend.discard(oid)
+            aux.discard(oid)
         market_by_outcome.update((oid, mid) for mid, oid in ids.values())
         open_oids = {oid for _, oid in ids.values()}
         fresh = set(market_by_outcome) | set(by_outcome)
@@ -3571,6 +3642,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 market_by_outcome[oid] = market_id_by_outcome[oid]
             if oid in non_blend_outcome_ids:
                 non_blend.add(oid)
+            if oid in headline_aux_outcome_ids:
+                aux.add(oid)
             if oid in open_contract_outcome_ids:
                 open_oids.add(oid)
 
@@ -3583,6 +3656,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             target.update(value)
         for target, value in (
             (non_blend_outcome_ids, non_blend), (open_contract_outcome_ids, open_oids),
+            (headline_aux_outcome_ids, aux),
             (legged_market_ids, {mid for mid, _ in new_ids.values()}),
         ):
             target.clear()
