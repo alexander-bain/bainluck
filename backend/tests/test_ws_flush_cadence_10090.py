@@ -199,17 +199,27 @@ class TestTheFloorReadsTheFlushStart:
         assert [b[0] for b in r.batches] == [[1]]
         assert r._throttle_deferred == {1}
 
-    async def test_still_once_per_flush(self, clock):
+    async def test_once_per_floor_inside_one_flush(self, clock):
         """Two refreshes inside one flush (Polymarket's chunked path) share its
-        start, so the second waits for the next flush — even when the flush
-        itself ran past the floor, where the call-time clock would admit it."""
+        start: the second, still inside the floor, waits.
+
+        #10090 Argon Rank 2 changed the rest of this test's old contract
+        ("still once per flush, even when the flush ran past the floor"): a
+        Kalshi main flush runs 3-7 s, and a live game stamped once in it then
+        waited for the NEXT flush (15338515, held_s 4.300). Past the floor —
+        the newest clock this refresher was handed, advanced by the time since
+        — the second refresh of one flush stamps again."""
         r = _Recording()
         clock["t"] = 1000.4
         await r.refresh([1], flush_started=1000.0)
-        clock["t"] = 1002.5
+        clock["t"] = 1000.45
         await r.refresh([1], flush_started=1000.0)
         assert [b[0] for b in r.batches] == [[1]]
         assert r._throttle_deferred == {1}
+        clock["t"] = 1002.5
+        await r.refresh([1], flush_started=1000.0)
+        assert [b[0] for b in r.batches] == [[1], [1]]
+        assert r._throttle_deferred == set()
 
     async def test_starts_a_period_apart_at_uptime_magnitude_are_due(
         self, clock,
