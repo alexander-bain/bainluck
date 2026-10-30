@@ -1,0 +1,149 @@
+{
+  "packaged_run": "20261020T144514Z-5",
+  "node": "24.19.0",
+  "postgres": "17.11",
+  "pg": "8.23.1",
+  "synthetic_only": true,
+  "owned_cluster_stopped": true,
+  "browser_rerun": false,
+  "production_suites_run_locally": false,
+  "clean_online_dependency_install_verified": false,
+  "host_idle_or_exclusive": false,
+  "candidate_checks": 29,
+  "independent_checks": 5,
+  "sigkill_scenarios": 26,
+  "timing_offers": 720,
+  "real_owned_pg_outage_passed": true,
+  "timing_summary": [
+    {
+      "mode": "memory",
+      "delayMs": 0,
+      "publicationCallbackLatencyMs": {
+        "n": 120,
+        "min": 0.006849999999985812,
+        "p50": 0.0100750000000005,
+        "p95": 0.30622200000001953,
+        "p99": 0.5577010000000087,
+        "max": 0.6410419999999988
+      },
+      "offerReturnLatencyMs": {
+        "n": 120,
+        "min": 0.008874000000020033,
+        "p50": 0.011867999999992662,
+        "p95": 0.3101379999999949,
+        "p99": 0.71022099999999,
+        "max": 1.4333420000000103
+      },
+      "durableRows": 120
+    },
+    {
+      "mode": "wal-after",
+      "delayMs": 0,
+      "publicationCallbackLatencyMs": {
+        "n": 120,
+        "min": 0.034051000000090426,
+        "p50": 0.07058699999993223,
+        "p95": 0.6115629999999328,
+        "p99": 3.3413690000002134,
+        "max": 33.10025900000005
+      },
+      "offerReturnLatencyMs": {
+        "n": 120,
+        "min": 0.5151969999999437,
+        "p50": 1.4244180000000597,
+        "p95": 5.518399000000045,
+        "p99": 9.415189999999939,
+        "max": 41.95233999999982
+      },
+      "durableRows": 120
+    },
+    {
+      "mode": "wal-before",
+      "delayMs": 0,
+      "publicationCallbackLatencyMs": {
+        "n": 120,
+        "min": 0.4185109999998531,
+        "p50": 5.094723999999587,
+        "p95": 39.880589999999756,
+        "p99": 92.90175900000031,
+        "max": 119.7189959999996
+      },
+      "offerReturnLatencyMs": {
+        "n": 120,
+        "min": 0.42441000000053464,
+        "p50": 5.224188999999569,
+        "p95": 39.90464599999996,
+        "p99": 92.9280689999996,
+        "max": 119.73712400000022
+      },
+      "durableRows": 120
+    },
+    {
+      "mode": "memory",
+      "delayMs": 100,
+      "publicationCallbackLatencyMs": {
+        "n": 120,
+        "min": 0.0055889999985083705,
+        "p50": 0.011717999999746098,
+        "p95": 0.23869999999988067,
+        "p99": 2.7466330000006565,
+        "max": 4.444373000000269
+      },
+      "offerReturnLatencyMs": {
+        "n": 120,
+        "min": 0.0065699999995558755,
+        "p50": 0.013280000001032022,
+        "p95": 0.24291599999924074,
+        "p99": 2.7538629999999102,
+        "max": 5.270510000000286
+      },
+      "durableRows": 120
+    },
+    {
+      "mode": "wal-after",
+      "delayMs": 100,
+      "publicationCallbackLatencyMs": {
+        "n": 120,
+        "min": 0.028642999997828156,
+        "p50": 0.05123699999967357,
+        "p95": 0.36454999999841675,
+        "p99": 1.2863800000013725,
+        "max": 2.5757749999975204
+      },
+      "offerReturnLatencyMs": {
+        "n": 120,
+        "min": 0.3759570000001986,
+        "p50": 1.2854990000014368,
+        "p95": 4.922473999999056,
+        "p99": 10.688210000000254,
+        "max": 12.850547000001825
+      },
+      "durableRows": 120
+    },
+    {
+      "mode": "wal-before",
+      "delayMs": 100,
+      "publicationCallbackLatencyMs": {
+        "n": 120,
+        "min": 0.32979700000214507,
+        "p50": 1.5245090000025812,
+        "p95": 9.264377999999851,
+        "p99": 13.972854999999981,
+        "max": 22.75710799999797
+      },
+      "offerReturnLatencyMs": {
+        "n": 120,
+        "min": 0.33184000000255764,
+        "p50": 1.5703390000016952,
+        "p95": 9.278579000001628,
+        "p99": 14.028478000000177,
+        "max": 22.77144000000044
+      },
+      "durableRows": 120
+    }
+  ],
+  "source_manifest": "source-sha256.json",
+  "source_manifest_recorded_after_run": true,
+  "runnable_source_changed_after_run": false,
+  "source_receipt_limitation": "This manifest was generated after the run from unchanged staged runnable files. It is not a contemporaneously copied per-run source snapshot."
+}

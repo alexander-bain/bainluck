@@ -1,0 +1,29 @@
+waiting for server to start.... done
+server started
+✔ display first publishes pending while PG sleeps; commit first does not (376.602653ms)
+✔ permanent SQL failure remains visible and is never called durable (127.345138ms)
+✔ bounded capacity includes inflight; admission failure not silently lost (230.439328ms)
+✔ out of order commits never regress latest SQL row (232.789596ms)
+✔ uncertain commit acknowledgement retries idempotently (70.378302ms)
+✔ same identity and different payload is rejected in memory and PG (129.369034ms)
+✔ terminal rejects publication before any visible mutation (1.010886ms)
+✔ old commit ack does not alter current number or append chart (6.586892ms)
+✔ fresh epoch clears provisional history; old ack/frame cannot revive it (48.494052ms)
+✔ invalid source, unknown venue, terminal and invalid sequence never display (0.60933ms)
+✔ conflicting acknowledgments cannot claim durability (1.591277ms)
+✔ restart limitation explicit: fresh owner cannot recover uncommitted queue (195.068723ms)
+✔ actual SIGKILL loses pending memory only; PG rollback leaves no ghost durable row (1198.92713ms)
+✔ all commit ACKs lost still reconcile exact row as durable (256.786522ms)
+✔ delivery exception after commit never retries persistence or calls row failed (71.411892ms)
+✔ unreconciled ambiguous outcome is unknown, never falsely failed or durable (75.840286ms)
+✔ display-first publishes before an unresolved persistence promise (34.198054ms)
+✔ commit-first publishes nothing until persistence resolves (34.025379ms)
+✔ a current durability ACK is status-only, never a new chart point (4.415715ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4199.226311
