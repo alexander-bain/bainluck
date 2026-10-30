@@ -136,8 +136,8 @@ async def test_stored_live_startup_pair(monkeypatch, mode):
     original_market_topup = topup.topup_clob_tokens
     async def market_topup(session, markets, **kwargs):
         return await original_market_topup(session, markets, service=MarketGamma(), **kwargs)
-    async def outcome_topup(session, targets):
-        return await original_outcome_topup(session, targets, service=Gamma())
+    async def outcome_topup(session, targets, **kwargs):
+        return await original_outcome_topup(session, targets, service=Gamma(), **kwargs)
 
     class Client(service.PolymarketWebSocket):
         def __init__(self, *args, **kwargs):

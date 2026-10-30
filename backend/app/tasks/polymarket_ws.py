@@ -3703,7 +3703,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         oid: token
                         for oid, (_mid, token) in (
                             await topup_outcome_clob_tokens(
-                                session, outcome_topup_targets
+                                session,
+                                outcome_topup_targets,
+                                # #10090: live headline legs jump the window.
+                                priority_market_ids=live_win_topup_ids,
                             )
                         ).items()
                     }
