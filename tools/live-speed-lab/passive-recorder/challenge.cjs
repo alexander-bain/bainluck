@@ -26,6 +26,7 @@ const SCHEMA_SHA256 = 'dd5889b2d86d89ab41359b730770bb519fd8eb5e8b2de348efe8c706c
 const MAX_DOMAINS = 16;
 const MAX_SLOTS = SCHEMA.limits.markers_per_run; // 760
 const MIN_SLOT_MS = 250;
+const MAX_DEADLINE_MS = 150; // the contract's collector deadline: a grant may name less, never more
 const CEILINGS = {connect_timeout_ms: 2000, max_wire_bytes_per_incarnation: 2 * 1048576, max_wire_bytes_session: 1048576,
   max_read_overshoot_bytes: 65536, max_journal_bytes_per_incarnation: 2 * 1048576};
 const GAP_RANGES_KEPT = 64;
@@ -51,7 +52,7 @@ function createChallengeDriver({cfg, connect, clock, journal, setTimer}) {
   const {case: caseId, reply_channel: replyChannel, roster, slots, deadline_ms: deadlineMs, limits} = cfg;
   const domains = roster.map((r, i) => ({i, token: r.token, channel: r.channel, run: r.run, pid: r.pid, role: r.role,
     ex: new Array(slots.count).fill(null), outstanding: null, stopped: null,
-    sent: 0, timely: 0, late: 0, no_reply: 0, notify_failed: 0, skipped: 0, journal_bytes: 0, attributed_bytes: 0, gaps: [], gap_ranges_dropped: 0,
+    sent: 0, timely: 0, late: 0, no_reply: 0, notify_failed: 0, skipped: 0, journal_bytes: 0, journal_refused: 0, attributed_bytes: 0, gaps: [], gap_ranges_dropped: 0,
     binds: 0, producer_end: null, producer_faults: null}));
   const byToken = new Map(domains.map(d => [d.token, d]));
   const drops = {};
@@ -70,7 +71,10 @@ function createChallengeDriver({cfg, connect, clock, journal, setTimer}) {
     else d.gap_ranges_dropped++;
   };
   // A domain's journal spend is measured on the journal itself, not estimated.
+  // Past its cap an incarnation's lines (binds, ends, late replies, expiries)
+  // are counted, never written: the line that crosses is the only overshoot.
   const write = (d, kind, body) => {
+    if (d.journal_bytes > limits.max_journal_bytes_per_incarnation) { d.journal_refused++; return null; }
     const before = journal.stats.saved_bytes;
     const id = journal.append(kind, body);
     d.journal_bytes += journal.stats.saved_bytes - before;
@@ -237,7 +241,7 @@ function createChallengeDriver({cfg, connect, clock, journal, setTimer}) {
 
   function summary() {
     const perDomain = domains.map(d => ({i: d.i, token: d.token, role: d.role, run: d.run, pid: d.pid, sent: d.sent, timely: d.timely, late: d.late,
-      no_reply: d.no_reply, notify_failed: d.notify_failed, skipped: d.skipped, journal_bytes: d.journal_bytes, attributed_bytes: d.attributed_bytes,
+      no_reply: d.no_reply, notify_failed: d.notify_failed, skipped: d.skipped, journal_bytes: d.journal_bytes, journal_refused: d.journal_refused, attributed_bytes: d.attributed_bytes,
       stopped: d.stopped, gaps: d.gaps, gap_ranges_dropped: d.gap_ranges_dropped, binds: d.binds, producer_end: d.producer_end, producer_faults: d.producer_faults}));
     const complete = closeReason === null && holes.size === 0 && perDomain.every(d => d.timely === slots.count && !d.stopped) && Object.keys(drops).length === 0;
     return {schema: SCHEMA.schema, schema_sha256: SCHEMA_SHA256,
@@ -287,7 +291,9 @@ function validateChallenge(c, refuse) {
       if (f < -5000 || f + (n - 1) * s >= 185000) refuse('grant.challenge.slots: every slot inside the acquisition window -5000..185000');
     }
   }
-  if (!posInt(c.deadline_ms) || (isObj(c.slots) && posInt(c.slots.slot_ms) && c.deadline_ms >= c.slots.slot_ms)) refuse('grant.challenge.deadline_ms: positive and below slot_ms');
+  if (!posInt(c.deadline_ms) || c.deadline_ms > MAX_DEADLINE_MS || (isObj(c.slots) && posInt(c.slots.slot_ms) && c.deadline_ms >= c.slots.slot_ms)) {
+    refuse(`grant.challenge.deadline_ms: positive, at most ${MAX_DEADLINE_MS} and below slot_ms`);
+  }
   if (exact(c.limits, ['connect_timeout_ms', 'max_wire_bytes_per_incarnation', 'max_wire_bytes_session', 'max_read_overshoot_bytes', 'max_journal_bytes_per_incarnation'], 'grant.challenge.limits')) {
     for (const k of Object.keys(c.limits)) {
       if (!posInt(c.limits[k])) refuse(`grant.challenge.limits.${k}: finite positive integer required`);
@@ -296,4 +302,4 @@ function validateChallenge(c, refuse) {
   }
 }
 
-module.exports = {createChallengeDriver, validateChallenge, inactiveSummary, MAX_DOMAINS, MAX_SLOTS, MIN_SLOT_MS, CEILINGS, SCHEMA, SCHEMA_SHA256, compact};
+module.exports = {createChallengeDriver, validateChallenge, inactiveSummary, MAX_DOMAINS, MAX_SLOTS, MIN_SLOT_MS, MAX_DEADLINE_MS, CEILINGS, SCHEMA, SCHEMA_SHA256, compact};

@@ -221,18 +221,22 @@ async function record(opts) {
   const samples = []; // compact copies for coverage only
   let samplerStarted = false, primaryInstalled = false, primaryCaptureId = null, setupReadyAt = null;
   const timers = [];
-  // Receipt brackets: which page records the collector received (page_seq ->
-  // C recv), and which of them the page acked. A record received before the
-  // stop request whose ack never arrives is a hole.
-  const receipts = {recvBySeq: new Map(), acked: new Set(), acks_unknown: 0, acks_malformed: 0, acks_dropped: 0, last_time_origin: null,
+  // Receipt brackets: which page records the collector received
+  // (time_origin:page_seq -> C recv), and which of them the page acked. A
+  // replaced document restarts page_seq, so a record is keyed by its document
+  // too: another document's ack never pays this one's. A record received
+  // before the stop request whose ack never arrives is a hole.
+  const receipts = {recvByKey: new Map(), acked: new Set(), acks_unknown: 0, acks_malformed: 0, acks_dropped: 0, last_time_origin: null,
     stop_sent_mono: null, final_from_stop: 0, final_from_drain: 0};
-  const noteAcks = (acks, dropped) => {
+  const receiptKey = (timeOrigin, seq) => `${timeOrigin}:${seq}`;
+  const noteAcks = (acks, dropped, timeOrigin) => {
     if (Number.isSafeInteger(dropped) && dropped > receipts.acks_dropped) receipts.acks_dropped = dropped;
     if (!Array.isArray(acks)) return 0;
     for (const a of acks) {
       if (!Array.isArray(a) || a.length !== 2 || !Number.isSafeInteger(a[0]) || !Number.isFinite(a[1])) { receipts.acks_malformed++; continue; }
-      if (!receipts.recvBySeq.has(a[0])) receipts.acks_unknown++;
-      receipts.acked.add(a[0]);
+      const key = receiptKey(timeOrigin, a[0]);
+      if (!receipts.recvByKey.has(key)) receipts.acks_unknown++;
+      receipts.acked.add(key);
     }
     return acks.length;
   };
@@ -278,8 +282,8 @@ async function record(opts) {
     const recv = {mono: recvMono, wall: recvWall, since_t0_ms: clock.sinceT0(recvMono)};
     if (!rec || typeof rec !== 'object') { fault('page-record-invalid', {recv}); return; }
     const at = clock.docToT0(rec.mono);
-    if (Number.isSafeInteger(rec.page_seq)) receipts.recvBySeq.set(rec.page_seq, recvMono);
-    noteAcks(rec.acks, rec.acks_dropped);
+    if (Number.isSafeInteger(rec.page_seq)) receipts.recvByKey.set(receiptKey(rec.time_origin, rec.page_seq), {seq: rec.page_seq, mono: recvMono});
+    noteAcks(rec.acks, rec.acks_dropped, rec.time_origin);
     if (rec.time_origin !== undefined) {
       if (receipts.last_time_origin !== null && rec.time_origin !== receipts.last_time_origin) fault('document-replaced-record', {from: receipts.last_time_origin, to: rec.time_origin, page_seq: rec.page_seq});
       receipts.last_time_origin = rec.time_origin;
@@ -325,11 +329,11 @@ async function record(opts) {
   function receiptBrackets() {
     const missing = [];
     let afterStop = 0;
-    for (const [seq, m] of receipts.recvBySeq) {
-      if (receipts.acked.has(seq)) continue;
+    for (const [key, {seq, mono: m}] of receipts.recvByKey) {
+      if (receipts.acked.has(key)) continue;
       if (receipts.stop_sent_mono === null || m < receipts.stop_sent_mono) missing.push(seq); else afterStop++;
     }
-    return {records_received: receipts.recvBySeq.size, acked: receipts.acked.size, missing_before_stop: missing.length,
+    return {records_received: receipts.recvByKey.size, acked: receipts.acked.size, missing_before_stop: missing.length,
       missing_first: missing.slice(0, 20), unacked_after_stop_request: afterStop, acks_dropped: receipts.acks_dropped,
       acks_unknown: receipts.acks_unknown, acks_malformed: receipts.acks_malformed, final_acks_from_stop: receipts.final_from_stop,
       final_acks_from_drain: receipts.final_from_drain, stop_sent_mono: receipts.stop_sent_mono};
@@ -420,10 +424,10 @@ async function record(opts) {
       if (challenge) await bounded('challenge-stop', () => challenge.stop(stopping.reason), 2000);
       let queue = null;
       receipts.stop_sent_mono = clock.mono();
-      if (page && samplerStarted) await bounded('stop-sampler', async () => { queue = (await page.evaluate(hooks.stopDisplaySampler)).queue; receipts.final_from_stop = noteAcks(queue && queue.acks, queue && queue.acks_dropped); }, 3000);
+      if (page && samplerStarted) await bounded('stop-sampler', async () => { queue = (await page.evaluate(hooks.stopDisplaySampler)).queue; receipts.final_from_stop = noteAcks(queue && queue.acks, queue && queue.acks_dropped, queue && queue.time_origin); }, 3000);
       if (page) await bounded('clock-end', () => clock.exchange(page, 'end'), 3000);
       let drained = null;
-      if (page && samplerStarted) await bounded('drain-acks', async () => { drained = await page.evaluate(hooks.drainRecorderAcks); receipts.final_from_drain = noteAcks(drained && drained.acks, drained && drained.acks_dropped); }, 3000);
+      if (page && samplerStarted) await bounded('drain-acks', async () => { drained = await page.evaluate(hooks.drainRecorderAcks); receipts.final_from_drain = noteAcks(drained && drained.acks, drained && drained.acks_dropped, drained && drained.time_origin); }, 3000);
       if (page && primaryInstalled) {
         await bounded('primary-export', async () => {
           const data = await page.evaluate(id => { const r = window.__visibleObservationRecorder11434; if (!r || r.captureId !== id) throw new Error('primary recorder missing or replaced'); return r.finish(); }, primaryCaptureId);

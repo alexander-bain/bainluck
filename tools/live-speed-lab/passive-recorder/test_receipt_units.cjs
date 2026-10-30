@@ -249,3 +249,29 @@ test('reference: a record with no ack gives no lower bound to later samples; ack
   assert.deepStrictEqual(b.map(x => x.d_lo), [null, null, null]);
   assert.deepStrictEqual(b.map(x => x.d_hi), [10, 20, 30]);
 });
+
+// The recorder's receipt summary runs inside record(); this executes its OWN
+// source text (receipts state, noteAcks, the onPageRecord receipt lines, the
+// stop-return line and receiptBrackets) on a replaced document.
+test('recorder: a replaced document restarts page_seq; its lost ack is a hole, never paid by the new document', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'passive_case_recorder.cjs'), 'utf8');
+  const cut = (a, b) => { const i = src.indexOf(a), j = src.indexOf(b, i); assert.ok(i >= 0 && j > i, `anchor ${a}`); return src.slice(i, j); };
+  const lines = src.split('\n');
+  const L1 = lines.find(l => l.includes('receipts.recvByKey.set('));
+  const L2 = lines.find(l => /^\s*noteAcks\(rec\.acks, rec\.acks_dropped/.test(l));
+  const STOP = (src.match(/receipts\.final_from_stop = noteAcks\([^;]*\);/) || [])[0];
+  assert.ok(L1 && L2 && STOP, 'receipt lines present');
+  const r = new Function(`${cut('  const receipts = {', '  const challenge = challengeCfg')}
+${cut('  function receiptBrackets() {', '  async function detail(')}
+let mono = 0;
+return {onRec(rec) { const recvMono = ++mono; ${L1.trim()} ${L2.trim()} }, stop(queue) { receipts.stop_sent_mono = ++mono; ${STOP} }, receiptBrackets};`)();
+  const OLD = 1793344000000.1, NEW = 1793344090000.2;
+  for (let s = 1; s <= 5; s++) r.onRec({page_seq: s, time_origin: OLD, acks: s > 1 ? [[s - 1, s * 100]] : undefined});
+  for (let s = 1; s <= 8; s++) r.onRec({page_seq: s, time_origin: NEW, acks: s > 1 ? [[s - 1, s * 100]] : undefined});
+  r.stop({acks: [[8, 900]], acks_dropped: 0, time_origin: NEW});
+  const b = r.receiptBrackets();
+  assert.strictEqual(b.records_received, 13);
+  assert.strictEqual(b.missing_before_stop, 1, 'old document seq 5 was never acked');
+  assert.deepStrictEqual(b.missing_first, [5]);
+  assert.strictEqual(b.acks_unknown, 0);
+});

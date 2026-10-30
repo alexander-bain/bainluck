@@ -103,6 +103,7 @@ for (const [name, mut, re] of [
   ['761 slots', c => { c.slots.count = 761; }, /at most 760/],
   ['slot faster than 250 ms', c => { c.slots.slot_ms = 100; }, /at least 250/],
   ['deadline not below the slot', c => { c.deadline_ms = 250; }, /below slot_ms/],
+  ['deadline above the contract 150 ms', c => { c.deadline_ms = 151; }, /at most 150/],
   ['a slot after the acquisition end', c => { c.slots.first_offset_ms = 0; }, /inside the acquisition window/],
   ['a slot before the acquisition start', c => { c.slots.first_offset_ms = -5250; }, /inside the acquisition window/],
   ['wire per incarnation above the ceiling', c => { c.limits.max_wire_bytes_per_incarnation = CEILINGS.max_wire_bytes_per_incarnation + 1; }, /at most 2097152/],
@@ -352,4 +353,21 @@ test('driver: a rostered bind is journaled; an unrostered bind is a coverage hol
   assert.deepStrictEqual(s.domains[0].stopped.reason, 'producer-end:MARKER_CAP');
   assert.strictEqual(s.domains[0].sent, 4, 'no request after the producer said it ended');
   assert.strictEqual(fc.log.notifies.length, 4);
+});
+
+test('driver: past its journal cap an incarnation writes nothing more, however many binds it repeats', async () => {
+  const bind = r => ({v: 1, k: 'bind', case: CASE, tok: r.tok, run: r.run, pid: r.pid, ch: `cm_${CASE}_${r.tok}`, listen: 1, clock: 'time.monotonic', mono: 86400.5,
+    exp: 1.8e9, slots: 760, dyno: 'worker-ws.1', rel: 'v1', commit: 'c'.repeat(40), boot: 'b'});
+  const extra = Array.from({length: 200}, (_, j) => [1 + j, r => bind(r)]);
+  const {h, driver, lines} = setup(1, {count: 12, first: 0, limits: {max_journal_bytes_per_incarnation: 4000}}, {behave: req => (req.slot === 0 ? {delay: 5, extra} : {delay: 5})});
+  const started = driver.start();
+  await h.runUntil(T0_MONO + 3500);
+  await started;
+  await driver.stop('deadline');
+  const s = driver.summary();
+  const d = s.domains[0];
+  assert.strictEqual(d.stopped.reason, 'journal-cap');
+  assert.ok(d.journal_bytes <= 4000 + 1000, `journal_bytes ${d.journal_bytes}: at most one line past the cap`);
+  assert.ok(d.journal_refused > 0, 'the refused lines are counted');
+  assert.ok(lines().filter(l => l.kind === 'challenge-bind').length < 200, 'repeated binds past the cap are not journaled');
 });
