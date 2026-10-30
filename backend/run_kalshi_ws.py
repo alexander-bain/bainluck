@@ -319,6 +319,7 @@ async def run_venue(venue):
         raise ValueError(f"unknown venue: {venue}")
 
     stop = asyncio.Event()
+    _tune_gc_young_generation(venue)
     sampler = _start_cpu_sampler() if venue == "polymarket" else None
     with _stop_signals(stop):
         logger.info("Starting %s WebSocket process pid=%d", venue, os.getpid())
@@ -361,6 +362,49 @@ def _start_cpu_sampler():
     except Exception:
         logger.exception("PM CPU sampler did not start")
         return None
+
+
+#: #10090 — the young-generation threshold for a venue child. Production
+#: 2026-10-30 23:27Z: both venue loops are CPU-saturated (Polymarket 0.97,
+#: Kalshi 0.94); Polymarket ran 48 full collections in one heartbeat line and
+#: Kalshi paused 211 ms in one. At the interpreter's 700, a loop allocating
+#: ~60k containers a second collects ~80 times a second, and whatever is in
+#: flight at each collection is promoted, which re-arms the full collection.
+#: A larger young generation lets in-flight frame objects die by reference
+#: counting first, so every older collection runs ~70x less often. Reference
+#: counting is unchanged, so nothing is freed later than before except cyclic
+#: garbage, which waits for at most this many allocations.
+WS_GC_GEN0_ENV = "WS_GC_GEN0"
+WS_GC_GEN0_DEFAULT = 50_000
+
+
+def _tune_gc_young_generation(venue):
+    """Raise generation 0's threshold; the value set, or None if kept as is.
+
+    ``WS_GC_GEN0=0`` keeps the interpreter's thresholds (the undo); another
+    integer replaces the default. Older generations keep their thresholds.
+    Never stops the venue.
+    """
+    raw = os.getenv(WS_GC_GEN0_ENV, "").strip()
+    try:
+        gen0 = int(raw) if raw else WS_GC_GEN0_DEFAULT
+    except ValueError:
+        logger.warning("%s=%r is not an integer; using %d",
+                       WS_GC_GEN0_ENV, raw, WS_GC_GEN0_DEFAULT)
+        gen0 = WS_GC_GEN0_DEFAULT
+    try:
+        if gen0 <= 0:
+            logger.info("%s venue process: gc thresholds %s kept (%s=0)",
+                        venue, gc.get_threshold(), WS_GC_GEN0_ENV)
+            return None
+        _, gen1, gen2 = gc.get_threshold()
+        gc.set_threshold(gen0, gen1, gen2)
+    except Exception:
+        logger.exception("%s venue process: gc thresholds not changed", venue)
+        return None
+    logger.info("%s venue process: gc thresholds %s (%s)",
+                venue, gc.get_threshold(), WS_GC_GEN0_ENV)
+    return gen0
 
 
 async def _join_children(children, waiters):

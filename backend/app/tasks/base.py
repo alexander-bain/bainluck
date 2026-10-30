@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.services.database import DATABASE_URL, build_connect_args
+from app.utils import ws_json
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,13 @@ def _get_task_engine(
         lock_timeout_ms=lock_timeout_ms,
     )
 
+    # #10090: socket consumers decode JSONB rows on the saturated venue loops,
+    # so theirs use the fast parser (``app.utils.ws_json``; ``WS_FAST_JSON=0``
+    # undoes it). Every other engine is asked exactly what it was asked before.
+    fast_json = {}
+    if retain_full_pool and ws_json.fast_json_enabled():
+        fast_json["json_deserializer"] = ws_json.loads
+
     return create_async_engine(
         DATABASE_URL,
         pool_pre_ping=pool_pre_ping,
@@ -59,6 +67,7 @@ def _get_task_engine(
         max_overflow=0 if retain_full_pool else 2,
         pool_recycle=1800,
         connect_args=connect_args,
+        **fast_json,
     )
 
 

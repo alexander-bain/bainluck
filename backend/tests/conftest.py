@@ -152,6 +152,9 @@ def _thaw_gc_freeze(monkeypatch):
     import gc
 
     monkeypatch.setenv("PM_WS_GC_FREEZE", "0")
+    # Same reason: a venue child's young-generation threshold (run_kalshi_ws)
+    # stays the interpreter's in tests unless a test turns it on.
+    monkeypatch.setenv("WS_GC_GEN0", "0")
     gc.unfreeze()
     yield
     gc.unfreeze()
