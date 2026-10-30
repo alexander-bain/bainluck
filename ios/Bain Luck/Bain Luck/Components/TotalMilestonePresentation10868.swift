@@ -2991,6 +2991,16 @@ nonisolated struct TotalMilestoneThresholdPanel10868: Equatable {
     let selected: Bool
 }
 
+/// Explicit owner-admitted before-play copy. Supplying it opts the existing
+/// threshold composition into `.before`; nil preserves its live-only default.
+/// These words never fall back to the live title, eyebrow or note. Baseline
+/// clocks stay with their own observations; the legacy timing block is live-only.
+nonisolated struct TotalMilestoneThresholdBefore10868: Equatable {
+    let eyebrow: String?
+    let title: String
+    let note: String?
+}
+
 nonisolated struct TotalMilestoneThresholdLiveInput10868: Equatable {
     /// The existing profile: phase, copy, originals, held selection, count so
     /// far, domain, ticks and timing. Its milestone coordinates and projection
@@ -3003,13 +3013,35 @@ nonisolated struct TotalMilestoneThresholdLiveInput10868: Equatable {
     /// share one unit on one axis. Without it there is no shared axis.
     let quantitiesShareUnit: Bool
     let words: TotalMilestoneThresholdWords10868
+    /// Default off. Never changes the owner's actual phase or admits later data.
+    var beforePresentation: TotalMilestoneThresholdBefore10868? = nil
 
     static let resultTitle = "Original market result"
     static let spokenThresholds = "Hollow marks are the original market thresholds: quantities on the count scale, not chances and not projected final scores."
     static let spokenThresholdTitle = "Market threshold"
 
-    /// During play only.
-    var isPresented: Bool { profile.phase == .during }
+    /// Live by default; before play only with explicit phase-specific owner copy.
+    var isPresented: Bool {
+        profile.phase == .during || (profile.phase == .before && beforePresentation != nil)
+    }
+
+    private var admittedBeforeCopy: TotalMilestoneThresholdBefore10868? {
+        profile.phase == .before ? beforePresentation : nil
+    }
+
+    var displayedEyebrow: String? {
+        guard let before = admittedBeforeCopy else { return profile.eyebrow }
+        return before.eyebrow
+    }
+
+    var displayedTitle: String {
+        admittedBeforeCopy?.title ?? profile.title
+    }
+
+    var displayedNote: String? {
+        guard let before = admittedBeforeCopy else { return words.note }
+        return before.note
+    }
 
     // MARK: Identity
 
@@ -3033,7 +3065,7 @@ nonisolated struct TotalMilestoneThresholdLiveInput10868: Equatable {
 
     // MARK: Selection
 
-    /// The profile's exact-id selection, during play, with a blank held id
+    /// The profile's exact-id selection, when presented, with a blank held id
     /// refused. Never a neighbour or the first original.
     var selection: TotalMilestoneSelection10868 {
         guard isPresented, let id = profile.selectedMilestoneID else { return .none }
@@ -3052,15 +3084,15 @@ nonisolated struct TotalMilestoneThresholdLiveInput10868: Equatable {
 
     /// "Count so far" and the owner's count or words.
     var actualPresentation: TotalMilestoneActualPresentation10868? {
-        isPresented ? profile.actualPresentation : nil
+        isPresented && profile.phase == .during ? profile.actualPresentation : nil
     }
 
     var visibleSubtotals: [TotalMilestoneSubtotal10868] {
-        isPresented ? subtotals : []
+        isPresented && profile.phase == .during ? subtotals : []
     }
 
     var visibleActualQuantity: Double? {
-        guard isPresented, quantitiesShareUnit else { return nil }
+        guard isPresented, profile.phase == .during, quantitiesShareUnit else { return nil }
         return profile.visibleActualQuantity
     }
 
@@ -3143,6 +3175,9 @@ nonisolated struct TotalMilestoneThresholdLiveInput10868: Equatable {
         case .value(let observation): result = [.chance(title: words.beforeTitle, observation: observation)]
         case .missing(let text): result = [.status(title: words.beforeTitle, text: text)]
         }
+        // A contradictory later payload must not add a current/status clock
+        // channel to a before-play card. Keep the actual profile phase intact.
+        guard profile.phase == .during else { return result }
         switch profile.currentReading(milestone) {
         case .chance(let observation)?: result.append(.chance(title: words.currentTitle, observation: observation))
         case .chanceStatus(let text)?: result.append(.status(title: words.currentTitle, text: text))
@@ -3167,8 +3202,8 @@ nonisolated struct TotalMilestoneThresholdLiveInput10868: Equatable {
                 threshold: threshold,
                 mark: placed.contains(index) ? threshold?.mark : nil,
                 channels: resolved ? channels(milestone) : [],
-                movement: resolved ? profile.movement(milestone) : nil,
-                result: resolved ? milestone.result : nil,
+                movement: resolved && profile.phase == .during ? profile.movement(milestone) : nil,
+                result: resolved && profile.phase == .during ? milestone.result : nil,
                 selected: resolved && index == selectedIndex
             )
         }
@@ -3214,25 +3249,32 @@ nonisolated struct TotalMilestoneThresholdLiveInput10868: Equatable {
     }
 
     func timingPresentation(hasBinding: Bool) -> TotalMilestoneTimingPresentation10868? {
-        guard selection.milestone != nil else { return nil }
+        // The shared timing payload is identity-gated, not phase-gated, and
+        // may contain live clocks. Before readings already carry their own clock.
+        guard profile.phase == .during, selection.milestone != nil else { return nil }
         return profile.timingPresentation(hasBinding: hasBinding)
     }
 
     // MARK: VoiceOver
 
-    var accessibilityHeader: String { profile.accessibilityHeader }
+    var accessibilityHeader: String {
+        guard admittedBeforeCopy != nil else { return profile.accessibilityHeader }
+        return [displayedEyebrow, displayedTitle, TotalMilestoneInput10868.spokenBefore]
+            .compactMap { $0 }.joined(separator: ". ")
+    }
 
     var accessibilityActualValue: String? {
         actualPresentation.map { profile.accessibilityActual($0) }
     }
 
     var accessibilitySubtotals: String {
+        guard admittedBeforeCopy == nil else { return "" }
         let list = visibleSubtotals.map { "\($0.name) \($0.text)" }.joined(separator: ", ")
         return words.subtotalsTitle.map { "\($0): \(list)" } ?? list
     }
 
     var accessibilityPlotLabel: String {
-        var parts = [profile.quantityAxisTitle ?? profile.title]
+        var parts = [profile.quantityAxisTitle ?? displayedTitle]
         if drawsThresholds { parts.append(Self.spokenThresholds) }
         if showsPlot && visibleActualQuantity != nil { parts.append(TotalMilestoneInput10868.spokenRule) }
         return parts.joined(separator: " ")
@@ -3348,7 +3390,7 @@ struct TotalMilestoneThresholdLive10868: View {
                 if input.showsPlot {
                     plotSection
                 }
-                if let note = input.words.note {
+                if let note = input.displayedNote {
                     Text(note)
                         .font(.footnote)
                         .foregroundStyle(DS.textSecondary)
@@ -3385,10 +3427,10 @@ struct TotalMilestoneThresholdLive10868: View {
 
     @ViewBuilder private func headerParts(spaced: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let eyebrow = input.profile.eyebrow {
+            if let eyebrow = input.displayedEyebrow {
                 Text(eyebrow).font(.caption2).foregroundStyle(DS.textSecondary)
             }
-            Text(input.profile.title).font(.title2.bold()).foregroundStyle(DS.textPrimary)
+            Text(input.displayedTitle).font(.title2.bold()).foregroundStyle(DS.textPrimary)
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .ignore)

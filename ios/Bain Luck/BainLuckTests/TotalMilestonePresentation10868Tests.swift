@@ -3246,3 +3246,296 @@ final class TotalMilestoneThresholdLive10868Tests: XCTestCase {
                        "totalMilestoneThreshold10868.details.constructed:15327807:polymarket:65197800:245152786")
     }
 }
+
+// MARK: Pregame total-game threshold reuse — PREPARED, NOT_RUN
+// Retained baselines/thresholds reuse the exact two original Under histories
+// above. Copy, identity associations and contradictory later payloads are
+// constructed owner inputs, not production bindings or native frame evidence.
+extension TotalMilestoneThresholdLive10868Tests {
+    private static let pregameCopy = TotalMilestoneThresholdBefore10868(
+        eyebrow: "TOTAL GAMES · BEFORE PLAY", title: "Compare the original total-game chances",
+        note: "The marks are original total-game conditions, not a forecast.")
+
+    private static func beforeCard(
+        rows: [TotalMilestoneRow10868] = retainedRows,
+        selected: String? = nil,
+        actual: TotalMilestoneActual10868? = retainedActual,
+        domain: TotalMilestoneDomain10868? = retainedDomain,
+        timing: TotalMilestoneTiming10868? = nil,
+        thresholds: [TotalMilestoneThreshold10868] = retainedThresholds,
+        shareUnit: Bool = true,
+        copy: TotalMilestoneThresholdBefore10868? = pregameCopy
+    ) -> TotalMilestoneThresholdLiveInput10868 {
+        var input = live(.before, rows: rows, selected: selected, actual: actual, domain: domain,
+                         timing: timing, thresholds: thresholds, shareUnit: shareUnit)
+        input.beforePresentation = copy
+        return input
+    }
+
+    func testPregameRequiresExplicitAdmissionAndKeepsTheTruePhase() {
+        let legacy = Self.live(.before)
+        XCTAssertNil(legacy.beforePresentation)
+        XCTAssertFalse(legacy.isPresented)
+        XCTAssertEqual(legacy.panels, [])
+        XCTAssertEqual(legacy.placements, [])
+        XCTAssertNil(legacy.panelAction(index: 0, canSelect: true))
+        XCTAssertFalse(Self.beforeCard(copy: nil).isPresented)
+        let input = Self.beforeCard()
+        XCTAssertTrue(input.isPresented)
+        XCTAssertEqual(input.profile.phase, .before)
+        XCTAssertEqual(input.profile, legacy.profile, "the opt-in never rewrites phase or payload")
+    }
+
+    func testPregameRetainedOwnChancesAndClocksStayOnSeparateFixedRails() {
+        let input = Self.beforeCard()
+        XCTAssertEqual(input.panels.map(\.milestone.id), Self.retainedIDs)
+        XCTAssertEqual(input.panels.map(\.milestone.title), ["Under 22.5 games", "Under 23.5 games"])
+        XCTAssertEqual(input.panels.map(\.channels), [
+            [.chance(title: "Pre-match chance", observation: Self.baseline(0))],
+            [.chance(title: "Pre-match chance", observation: Self.baseline(1))],
+        ])
+        XCTAssertEqual(try! XCTUnwrap(Self.barWidth(0.55, track: 200)), 110, accuracy: 0.001)
+        XCTAssertEqual(try! XCTUnwrap(Self.barWidth(0.605, track: 200)), 121, accuracy: 0.001)
+        XCTAssertEqual(Self.barWidth(0, track: 200), 0)
+        XCTAssertEqual(Self.barWidth(1, track: 200), 200)
+        XCTAssertEqual(input.panels.map { input.accessibilityPanelValue($0) }, [
+            "Pre-match chance: 55%, \(Self.baselineDetail); Market threshold: 22.5",
+            "Pre-match chance: 60.5%, \(Self.baselineDetail); Market threshold: 23.5",
+        ])
+    }
+
+    func testPregameUsesLiteralThresholdsNotDiscreteOverCountsOrActual() {
+        let input = Self.beforeCard(domain: nil)
+        XCTAssertEqual(input.profile.milestones.map(\.quantity), [23, 24])
+        XCTAssertEqual(input.placements.map(\.quantity), [22.5, 23.5])
+        XCTAssertEqual(input.labels.map(\.text), ["22.5", "23.5"])
+        XCTAssertEqual(input.domain, TotalMilestoneDomain10868(lower: 22.5, upper: 23.5))
+        XCTAssertNil(input.visibleActualQuantity)
+        let plot = input.plotModel(size: Self.plotSize, inset: Self.inset)
+        XCTAssertNil(plot?.actualX)
+        XCTAssertEqual(plot?.marks.count, 2)
+        XCTAssertEqual(input.accessibilityPlotValue,
+                       "Under 22.5 games: Market threshold 22.5; Under 23.5 games: Market threshold 23.5")
+        XCTAssertFalse(input.accessibilityPlotLabel.contains("solid rule"))
+    }
+
+    func testPregameSuppressesContradictoryLaterPayloadsAndTheirSpeech() {
+        let current = TotalMilestoneCurrent10868.recorded(
+            Self.obs(0.73, "73%", "Later quote clock", "Later quote evidence"), movement: "Later movement")
+        let rows = [Self.retainedRow(0, current: current, result: .won("Later won result")),
+                    Self.retainedRow(1, current: .unavailable("Later unavailable"), result: .lost("Later lost result"))]
+        let timing = TotalMilestoneTiming10868(milestoneID: Self.retainedIDs[0], title: "Later timing",
+                                               lines: ["Later live capture clock"])
+        let input = Self.beforeCard(rows: rows, selected: Self.retainedIDs[0], timing: timing)
+        XCTAssertNil(input.actualPresentation)
+        XCTAssertNil(input.accessibilityActualValue)
+        XCTAssertEqual(input.visibleSubtotals, [])
+        XCTAssertEqual(input.accessibilitySubtotals, "")
+        XCTAssertTrue(input.panels.allSatisfy { $0.channels.count == 1 && $0.movement == nil && $0.result == nil })
+        XCTAssertNil(input.timingPresentation(hasBinding: false))
+        XCTAssertNil(input.timingPresentation(hasBinding: true))
+        let spoken = ([input.accessibilityHeader, input.accessibilityPlotLabel, input.accessibilityPlotValue,
+                       input.accessibilitySubtotals, input.accessibilityActualValue ?? ""]
+                      + input.panels.map { input.accessibilityPanelValue($0) }).joined(separator: " ")
+        for forbidden in ["Later", "73%", "18", "Fils 8", "Zandschulp 10", "Current chance", "Original market result",
+                          "Count so far", "Change since pregame", "STILL IN PLAY", "During play"] {
+            XCTAssertFalse(spoken.contains(forbidden), forbidden)
+        }
+        XCTAssertTrue(spoken.contains(Self.baselineDetail), "only each baseline's own clock remains")
+        XCTAssertEqual(input.profile.timing, timing, "retained payload is not mutated")
+    }
+
+    func testPregamePhaseSpecificCopyNeverFallsBackToLiveCopy() {
+        let input = Self.beforeCard()
+        XCTAssertEqual(input.displayedTitle, Self.pregameCopy.title)
+        XCTAssertEqual(input.displayedEyebrow, Self.pregameCopy.eyebrow)
+        XCTAssertEqual(input.displayedNote, Self.pregameCopy.note)
+        XCTAssertEqual(input.accessibilityHeader,
+                       "TOTAL GAMES · BEFORE PLAY. Compare the original total-game chances. Before play")
+        let minimal = Self.beforeCard(copy: TotalMilestoneThresholdBefore10868(eyebrow: nil, title: "Original conditions", note: nil))
+        XCTAssertNil(minimal.displayedEyebrow, "nil is not permission to reuse the live eyebrow")
+        XCTAssertNil(minimal.displayedNote, "nil is not permission to reuse the unfinished-match note")
+        XCTAssertEqual(minimal.accessibilityHeader, "Original conditions. Before play")
+        XCTAssertEqual(minimal.profile.title, "18 games played so far", "negative live copy remains in the fixture only")
+    }
+
+    func testPregameMissingAndZeroStayDistinctWithoutBorrowingLaterOrNeighborReadings() {
+        let rows = [Self.retainedRow(0, before: .some(nil),
+                                    current: .recorded(Self.obs(0.73, "73%", "Later", "Later"), movement: nil)),
+                    Self.retainedRow(1, before: Self.obs(0, "0%", nil, "Constructed zero before chance"))]
+        let input = Self.beforeCard(rows: rows)
+        XCTAssertEqual(input.panels[0].channels, [.status(title: "Pre-match chance", text: Self.missingWords)])
+        XCTAssertEqual(input.panels[1].channels,
+                       [.chance(title: "Pre-match chance", observation: try! XCTUnwrap(rows[1].before))])
+        XCTAssertEqual(Self.barWidth(0), 0)
+        XCTAssertFalse(input.accessibilityPanelValue(input.panels[0]).contains("0%"))
+        XCTAssertFalse(input.accessibilityPanelValue(input.panels[0]).contains("73%"))
+        XCTAssertEqual(input.panelAction(index: 0, canSelect: true), .select(Self.retainedIDs[0]))
+    }
+
+    func testPregameInvalidChanceGeometryDoesNotWithdrawAnExactOriginal() {
+        for value in [Double.nan, .infinity, -.infinity, -0.1, 1.1] {
+            let row = Self.retainedRow(0, before: Self.obs(value, "Owner figure", "Before clock", "Before detail"))
+            let input = Self.beforeCard(rows: [row, Self.retainedRow(1)], selected: row.id)
+            XCTAssertTrue(input.panels[0].isResolved)
+            XCTAssertTrue(input.panels[0].selected)
+            XCTAssertEqual(input.panels[0].channels.count, 1)
+            XCTAssertNil(Self.barWidth(value))
+            XCTAssertEqual(input.panelAction(index: 0, canSelect: true), .select(row.id))
+            XCTAssertEqual(input.detailsAction(canOpenDetails: true), .details(row.id))
+            XCTAssertEqual(input.placements.map(\.quantity), [22.5, 23.5])
+        }
+    }
+
+    func testPregameDuplicateBlankAndWithdrawnIdentityNeverSelectsANeighbor() {
+        let blank = Self.constructedRow(id: "  ", title: "Blank original", before: Self.baseline(0))
+        let rows = [Self.retainedRow(0), Self.retainedRow(0), blank, Self.retainedRow(1)]
+        let input = Self.beforeCard(rows: rows, selected: Self.retainedIDs[0])
+        XCTAssertEqual(input.panels.map(\.isResolved), [false, false, false, true])
+        XCTAssertEqual(input.panels.count, 4, "all originals remain named")
+        XCTAssertEqual(input.selection, .duplicate(Self.retainedIDs[0]))
+        XCTAssertEqual(input.placements.map(\.index), [3])
+        for index in [0, 1, 2] {
+            XCTAssertNil(input.panelAction(index: index, canSelect: true))
+            XCTAssertEqual(input.panels[index].channels, [])
+            XCTAssertEqual(input.accessibilityPanelValue(input.panels[index]), "Original contract unavailable")
+        }
+        for id in ["withdrawn", "", "  "] {
+            let held = Self.beforeCard(selected: id)
+            XCTAssertNil(held.selection.milestone)
+            XCTAssertTrue(held.panels.allSatisfy { !$0.selected })
+            XCTAssertNil(held.detailsAction(canOpenDetails: true))
+            XCTAssertEqual(held.selectionNotice, "Selected milestone unavailable.")
+            XCTAssertEqual(held.panelAction(index: 1, canSelect: true), .select(Self.retainedIDs[1]))
+        }
+    }
+
+    func testPregameForeignDuplicateAndInvalidThresholdsNeverAcquireOtherOriginals() {
+        let foreign = TotalMilestoneThreshold10868(originalID: "foreign", quantity: 40, label: "40", mark: Self.homeMark)
+        let duplicate = Self.beforeCard(thresholds: [Self.threshold(0), Self.threshold(0), foreign])
+        XCTAssertEqual(duplicate.placements, [])
+        XCTAssertTrue(duplicate.panels.allSatisfy { $0.threshold == nil && $0.mark == nil })
+        XCTAssertEqual(duplicate.panels.map(\.channels.count), [1, 1])
+        for value in [Double.nan, .infinity, -1] {
+            let invalid = Self.beforeCard(thresholds: [Self.threshold(0, quantity: value), Self.threshold(1)])
+            XCTAssertEqual(invalid.placements.map(\.index), [1])
+            XCTAssertNil(invalid.panels[0].mark)
+            XCTAssertEqual(invalid.panelAction(index: 0, canSelect: true), .select(Self.retainedIDs[0]))
+        }
+    }
+
+    func testPregameSameUnitGateAndSelectionCannotMoveTheQuantityAxis() {
+        let baseline = Self.beforeCard()
+        for id in Self.retainedIDs {
+            let selected = Self.beforeCard(selected: id)
+            XCTAssertEqual(selected.domain, baseline.domain)
+            XCTAssertEqual(selected.labels, baseline.labels)
+            XCTAssertEqual(selected.plotModel(size: Self.plotSize, inset: Self.inset)?.marks.map(\.x),
+                           baseline.plotModel(size: Self.plotSize, inset: Self.inset)?.marks.map(\.x))
+        }
+        let mismatch = Self.beforeCard(shareUnit: false)
+        XCTAssertNil(mismatch.domain)
+        XCTAssertFalse(mismatch.showsPlot)
+        XCTAssertEqual(mismatch.labels, [])
+        XCTAssertEqual(mismatch.panels.map(\.channels), baseline.panels.map(\.channels))
+        XCTAssertEqual(mismatch.panelAction(index: 1, canSelect: true), .select(Self.retainedIDs[1]))
+    }
+
+    func testPregameGenuineActionsStayOwnerDrivenAndCallbackFreeContentStaysStatic() {
+        let input = Self.beforeCard(selected: Self.retainedIDs[1])
+        XCTAssertNil(input.panelAction(index: 0, canSelect: false))
+        XCTAssertNil(input.detailsAction(canOpenDetails: false))
+        XCTAssertFalse(input.showsInvitation(canSelect: false, canOpenDetails: false))
+        XCTAssertTrue(input.showsInvitation(canSelect: true, canOpenDetails: false))
+        XCTAssertTrue(input.showsInvitation(canSelect: false, canOpenDetails: true))
+        var selected: [String] = []
+        var opened: [String] = []
+        input.panelAction(index: 0, canSelect: true)?.perform(onSelect: { selected.append($0) }, onDetails: nil)
+        input.detailsAction(canOpenDetails: true)?.perform(onSelect: nil, onDetails: { opened.append($0) })
+        XCTAssertEqual(selected, [Self.retainedIDs[0]])
+        XCTAssertEqual(opened, [Self.retainedIDs[1]])
+        XCTAssertEqual(input.selection.index, 1, "callbacks do not mutate the owner's held selection")
+    }
+
+    func testPregameLongLabelsAndExtraOriginalsKeepTheBoundedPanelLayout() {
+        let longTitle = "Under 22.5 games in the whole match, both players combined, every set counted"
+        let longClock = "Recorded Oct 12 at 12:54 AM PT before the verified 3:55 AM PT start"
+        let extra = Self.constructedRow(id: "extra", title: "Owner extra original", before: nil)
+        let rows = [Self.retainedRow(0, title: longTitle, before: Self.obs(0.55, "55%", longClock, Self.baselineDetail)),
+                    Self.retainedRow(1), extra]
+        let input = Self.beforeCard(rows: rows)
+        XCTAssertEqual(input.panels.count, 3)
+        XCTAssertEqual(input.panels[0].milestone.title, longTitle)
+        XCTAssertEqual(input.panels[0].channels,
+                       [.chance(title: "Pre-match chance", observation: try! XCTUnwrap(rows[0].before))])
+        XCTAssertEqual(input.panelAction(index: 2, canSelect: true), .select("extra"))
+        for (width, minimum, accessibility, expected) in [
+            (288.0, 132.0, false, 2), (327.0, 132.0, false, 2),
+            (260.0, 132.0, false, 1), (327.0, 178.0, false, 1),
+            (900.0, 132.0, true, 1), (900.0, 132.0, false, 3),
+        ] {
+            XCTAssertEqual(TotalMilestoneThresholdLiveInput10868.panelColumns(
+                count: input.panels.count, width: CGFloat(width), spacing: 8,
+                minimumCellWidth: CGFloat(minimum), accessibility: accessibility), expected)
+        }
+    }
+
+    func testPregameOptionDoesNotChangeLiveOrEnableFinalComposition() {
+        for phase in [TotalMilestonePhase10868.during, .final] {
+            let legacy = Self.live(phase, selected: Self.retainedIDs[0], timing: Self.timing(Self.retainedIDs[0]))
+            var opted = legacy
+            opted.beforePresentation = Self.pregameCopy
+            XCTAssertEqual(opted.isPresented, legacy.isPresented)
+            XCTAssertEqual(opted.panels, legacy.panels)
+            XCTAssertEqual(opted.actualPresentation, legacy.actualPresentation)
+            XCTAssertEqual(opted.visibleSubtotals, legacy.visibleSubtotals)
+            XCTAssertEqual(opted.domain, legacy.domain)
+            XCTAssertEqual(opted.displayedTitle, legacy.profile.title)
+            XCTAssertEqual(opted.displayedEyebrow, legacy.profile.eyebrow)
+            XCTAssertEqual(opted.displayedNote, legacy.words.note)
+            XCTAssertEqual(opted.accessibilityHeader, legacy.accessibilityHeader)
+            XCTAssertEqual(opted.timingPresentation(hasBinding: true), legacy.timingPresentation(hasBinding: true))
+        }
+        XCTAssertFalse(Self.live(.final).isPresented)
+    }
+}
+
+extension TotalMilestoneThresholdLive10868Tests {
+    func testPregameReachedWithheldPerformanceAndProjectionCannotLeakIntoPanelsOrGeometry() {
+        let projection = TotalMilestoneProjection10868(quantity: 100, title: "Later projection", text: "100 games",
+                                                       clock: "Later forecast clock", ruleLabel: "Later forecast",
+                                                       comparison: "Later comparison", accessibilityDetail: "Later forecast detail")
+        for current in [TotalMilestoneCurrent10868.reached("Later reached condition"), .withheld("Later withheld quote")] {
+            let row = TotalMilestoneRow10868(id: Self.retainedIDs[0], quantity: 23, quantityLabel: "constructed",
+                                             title: "Under 22.5 games", before: Self.baseline(0), beforeMissing: "Unavailable",
+                                             current: current, performance: "Later performance", result: .won("Later result"))
+            var input = Self.live(.before, rows: [row, Self.retainedRow(1)],
+                                  actual: Self.constructedCount(99, "99"), projection: projection, domain: nil)
+            input.beforePresentation = Self.pregameCopy
+            XCTAssertEqual(input.domain, TotalMilestoneDomain10868(lower: 22.5, upper: 23.5))
+            XCTAssertNil(input.plotModel(size: Self.plotSize, inset: Self.inset)?.actualX)
+            XCTAssertNil(input.actualPresentation)
+            XCTAssertNil(input.panels[0].movement)
+            XCTAssertNil(input.panels[0].result)
+            XCTAssertEqual(input.panels[0].channels, [.chance(title: "Pre-match chance", observation: Self.baseline(0))])
+            XCTAssertFalse(input.accessibilityPanelValue(input.panels[0]).contains("Later"))
+            XCTAssertFalse(input.accessibilityPlotValue.contains("99"))
+            XCTAssertFalse(input.accessibilityPlotValue.contains("100"))
+        }
+    }
+
+    func testPregameZeroThresholdIsDrawableAndUnknownBaselineClockStaysUnknown() {
+        let row = Self.retainedRow(0, before: Self.obs(0, "0%", nil, "Before observation time unavailable"))
+        let input = Self.beforeCard(rows: [row, Self.retainedRow(1)],
+                                    thresholds: [Self.threshold(0, quantity: 0, label: "0"), Self.threshold(1)])
+        XCTAssertEqual(input.placements.map(\.quantity), [0, 23.5])
+        XCTAssertEqual(input.labels.map(\.text), ["0", "23.5"])
+        guard case .chance(_, let observation)? = input.panels[0].channels.first else {
+            return XCTFail("zero remains a recorded before reading")
+        }
+        XCTAssertNil(observation.timeText)
+        XCTAssertEqual(Self.barWidth(observation.probability), 0)
+        XCTAssertTrue(input.accessibilityPanelValue(input.panels[0]).contains("time unavailable"))
+        XCTAssertFalse(input.accessibilityPanelValue(input.panels[0]).contains(Self.baselineClock))
+    }
+}
