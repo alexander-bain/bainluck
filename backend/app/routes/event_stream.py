@@ -88,11 +88,9 @@ MAX_CONNECTIONS = int(os.getenv("SSE_MAX_CONNECTIONS", "200"))
 #: Reconnect delay handed to the client via the SSE `retry:` field.
 RETRY_MS = int(os.getenv("SSE_RETRY_MS", "5000"))
 
-#: #10090 decision J: how long connect waits for the event's `confirmed_at`
-#: before its first heartbeat goes without it, and the least time between two
-#: heartbeats sent because it advanced. Its producer writes at most once a
-#: second per venue (`app.utils.confirmed_at`), so a faster beat says nothing.
-CONFIRMED_CONNECT_WAIT_S = 0.1
+#: #10090 decision J: the least time between two heartbeats sent because the
+#: event's `confirmed_at` advanced. Its producer writes an advance at most once
+#: a second per venue (`app.utils.confirmed_at`), so a faster beat says nothing.
 CONFIRMED_BEAT_MIN_S = 1.0
 
 #: How long one pass waits for a frame before rechecking the clock and the
@@ -509,6 +507,13 @@ async def _stream(
     folded_projection = None
     projection_frame = None
     pending_projection = None
+
+    def headline_owed() -> bool:
+        """#10090 decision J (lane1 R4): a fold or preview quote the reader's
+        headline still waits on — its number on screen is not yet the one a
+        `confirmed_at` would vouch for."""
+        return (folded_projection is not None or pending_projection is not None
+                or recovery_quote is not None or pending_quote_control is not None)
     preview_floors = {}
     active_preview_origin = None
     preview_session = None
@@ -581,16 +586,12 @@ async def _stream(
             "event_id": event_id,
             **({"fold_session": preview_session.session} if preview_session else {}),
         }), event="open")
-        # #10090 decision J: when the event has a `confirmed_at`, one
-        # heartbeat carries it at once, so a steady price has a clock before
-        # its next frame. Without one there is nothing to say yet.
-        confirmed_sent = None if confirmations is None else await _await_honouring_cancel(
-            confirmations.current(members, CONFIRMED_CONNECT_WAIT_S)
-        )
+        # #10090 decision J: the event's `confirmed_at` goes out in a heartbeat
+        # once the replay has been sent (lane1 R3: the replay paints the first
+        # live number and never waits for this read). Without one there is
+        # nothing to say yet.
+        confirmed_sent = None
         confirmed_beat = started
-        if confirmed_sent is not None:
-            yield _heartbeat(confirmed_sent)
-            confirmed_beat = asyncio.get_event_loop().time()
         recovery_ids = list(subscription.subscriptions)
         # One owned read may finish after replay or live prices. Reconciliation
         # is an obligation, not permission to hold already committed prices.
@@ -607,6 +608,11 @@ async def _stream(
         replay = deque(await _await_honouring_cancel(
             latest_frames([event_id, *(contributor_ids or [])])
         ))
+        if confirmations is not None:
+            # Starts the shared read, concurrent with sending the replay; the
+            # loop's next passes pick its value up (FRAME_WAIT_S apart when
+            # idle). Nothing waits for it.
+            confirmations.peek(members)
         last_beat = confirmed_beat
         recovery_generation = 0
         # Highest revision already sent per origin: a catch-up read that finds
@@ -635,12 +641,19 @@ async def _stream(
                 return
 
             # #10090 decision J: a newer `confirmed_at` goes out at once as a
-            # heartbeat (at most one per CONFIRMED_BEAT_MIN_S), so the page's
-            # clock follows the venues between frames. Cached: no wait here.
-            confirmed_now = None if confirmations is None else confirmations.peek(members)
+            # heartbeat — the first one as soon as the replay is out, later
+            # ones at most one per CONFIRMED_BEAT_MIN_S — so the page's clock
+            # follows the venues between frames. Cached: no wait here. Never
+            # while the reader's headline is still owed a fold or preview
+            # (lane1 R4): the number on screen is not yet the confirmed one.
+            confirmed_now = (
+                None if confirmations is None or replay or headline_owed()
+                else confirmations.peek(members)
+            )
             if (confirmed_now is not None
-                    and (confirmed_sent is None or confirmed_now > confirmed_sent)
-                    and loop_now - confirmed_beat >= CONFIRMED_BEAT_MIN_S):
+                    and (confirmed_sent is None
+                         or (confirmed_now > confirmed_sent
+                             and loop_now - confirmed_beat >= CONFIRMED_BEAT_MIN_S))):
                 yield _heartbeat(confirmed_now)
                 confirmed_sent, confirmed_beat, last_beat = confirmed_now, loop_now, loop_now
 
@@ -971,9 +984,9 @@ async def _stream(
                 # "is this market moving" instead of "is this server alive".
                 # On a quiet market those differ, and the watchdog would tear
                 # down a perfectly healthy stream. This is observable.
-                yield _heartbeat(
-                    None if confirmations is None else confirmations.peek(members)
-                )
+                # The newest value this stream has sent: an advance goes out
+                # only through the guarded beat above.
+                yield _heartbeat(confirmed_sent)
                 last_beat = loop_now
     except asyncio.CancelledError:
         raise

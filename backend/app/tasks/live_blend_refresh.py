@@ -3419,13 +3419,46 @@ class LiveBlendRefresher:
                 {eid for eid in due if eid in getattr(self, "preview_events", ())},
             )
 
-    def _note_confirm_basis(self, event_id: int, contributing) -> None:
+    def _note_confirm_basis(self, event_id: int, contributing, *, stored_row=None,
+                            value=None) -> None:
         """#10090 decision J: the rows an agreeing disposition blended, for
         `ConfirmedAt` to compare later inputs against (`TailReceipts.resolve`
-        hands it the disposition after the commit)."""
+        hands it the disposition after the commit).
+
+        ``stored_row`` (an `unchanged`/`unobserved` disposition, which writes
+        nothing): staged only when the row's STORED entry for this source is
+        ``value`` (lane1 S1). That comparison is against process memory; the
+        poll and the matcher write the same entry, so a reading that matches
+        memory may not be what readers were last sent — then nothing is
+        staged and the event is unknown until this source's next stamp."""
+        confirmed = getattr(self.receipts, "confirmed", None)
+        if confirmed is None:
+            return
+        if stored_row is not None:
+            entry = (getattr(stored_row, "win_probability_sources", None) or {})
+            entry = entry.get(self.source) if isinstance(entry, dict) else None
+            stored = entry.get("value") if isinstance(entry, dict) else None
+            try:
+                same = round(float(stored), 6) == round(float(value), 6)
+            except (TypeError, ValueError):
+                same = False
+            if not same:
+                return
+        self._receipt_call(confirmed.note_basis, event_id, contributing)
+
+    def _note_confirm_unpublishable(self, event_id: int) -> None:
+        """#10090 decision J (lane1 R2): this attempt's frame failed, so no
+        reader receives what it stamped."""
         confirmed = getattr(self.receipts, "confirmed", None)
         if confirmed is not None:
-            self._receipt_call(confirmed.note_basis, event_id, contributing)
+            self._receipt_call(confirmed.unpublishable, event_id)
+
+    def _note_confirm_published(self, acknowledged, unacknowledged) -> None:
+        """#10090 decision J (lane1 R2): the publisher's answer, per
+        (event, revision): only an acknowledged frame is on readers' screens."""
+        confirmed = getattr(self.receipts, "confirmed", None)
+        if confirmed is not None and (acknowledged or unacknowledged):
+            self._receipt_call(confirmed.published, acknowledged, unacknowledged)
 
     def _preview_receipt_counters(self) -> dict:
         """This arm's cumulative counts for the preview receipt. Reads the
@@ -4807,7 +4840,8 @@ class LiveBlendRefresher:
                         ):
                             self.stats["unobserved_skipped"] += 1
                             self._dispositions[event_id] = ("unobserved", value)
-                            self._note_confirm_basis(event_id, contributing)
+                            self._note_confirm_basis(
+                                event_id, contributing, stored_row=event, value=value)
                             if phase == "compute":
                                 # A periodic durable read can predate an already
                                 # accepted observation preview. Let its registry
@@ -4827,7 +4861,8 @@ class LiveBlendRefresher:
                         if not self._should_write(event_id, value, now):
                             self.stats["unchanged_skipped"] += 1
                             self._dispositions[event_id] = ("unchanged", value)
-                            self._note_confirm_basis(event_id, contributing)
+                            self._note_confirm_basis(
+                                event_id, contributing, stored_row=event, value=value)
                             # Persistence cadence does not own display admission.
                             # Only a complete contributing observation can try
                             # this route; the registry proves it newer than the
@@ -5111,6 +5146,7 @@ class LiveBlendRefresher:
                         preview_failed.add(event_id)
                     # A committed stamp whose frame failed is still stamped.
                     self._dispositions.setdefault(event_id, ("error",))
+                    self._note_confirm_unpublishable(event_id)
                     logger.exception(
                         "live_blend_refresh[%s]: event %s failed",
                         self.source, event_id,
@@ -5451,6 +5487,7 @@ class LiveBlendRefresher:
         except BaseException as exc:
             self._release_normal(expected)
             self._note_normal_debt()
+            self._note_confirm_published((), expected)
             if not isinstance(exc, Exception):
                 raise
             logger.exception("live_blend_refresh[%s]: normal publication retained", self.source)
@@ -5458,6 +5495,7 @@ class LiveBlendRefresher:
             return set()
         if expected - acknowledged:
             self._note_normal_debt()
+        self._note_confirm_published(expected & acknowledged, expected - acknowledged)
         # Resolved: acknowledged revisions are now in `_normal_acked`, the rest
         # are owed to the next opportunity.
         self._remember_normal_acks(acknowledged)

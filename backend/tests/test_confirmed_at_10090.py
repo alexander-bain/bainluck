@@ -47,14 +47,19 @@ def _rows(**prices):
     return [SimpleNamespace(id=int(k[1:]), current_probability=v) for k, v in prices.items()]
 
 
-def _publish(t, kind="stamped", status="live", **prices):
-    """One committed batch for E whose reading blended ``prices``."""
+def _publish(t, kind="stamped", status="live", acked=True, rev=9, **prices):
+    """One committed batch for E whose reading blended ``prices``. A stamp's
+    frame is then acknowledged by the publisher (``acked``), as
+    `LiveBlendRefresher._publish_prices` reports it (lane1 R2): only then is
+    it on readers' screens."""
     t.begin([E])
     if prices:
         t.note_basis(E, _rows(**prices))
-    disposition = (("stamped", 0.6, STAMPED_AT, None, 9, status) if kind == "stamped"
+    disposition = (("stamped", 0.6, STAMPED_AT, None, rev, status) if kind == "stamped"
                    else (kind, 0.6))
     t.resolved(E, disposition)
+    if kind == "stamped" and acked:
+        t.published({(E, rev)})
 
 
 def _state(t):
@@ -105,6 +110,9 @@ class TestAgreement:
         t.begin([E])
         t.note_basis(E, _rows(o70=0.62))
         t.resolved(E, ("stamped", 0.62, ca.iso(clock.wall), 0.6, 10, "live"))
+        # Committed, not yet acknowledged by the publisher: still held (R2).
+        assert _c(t) == before and _state(t).held_since is not None
+        t.published({(E, 10)})
         assert _state(t).held_since is None
         assert _c(t) == clock.wall > before  # the publication itself
         clock.tick(1)
@@ -460,12 +468,18 @@ def route_reads(monkeypatch):
 
 class TestRoute:
     @pytest.mark.asyncio
-    async def test_connect_sends_the_current_confirmed_at_at_once(self, route_reads, monkeypatch):
+    async def test_connect_sends_the_current_confirmed_at_once_the_replay_is_out(
+        self, route_reads, monkeypatch,
+    ):
+        # lane1 R3: nothing waits for this read before the replay; the next
+        # pass carries it (FRAME_WAIT_S apart when idle, shortened here).
+        from app.routes import event_stream as mod
         from tests.test_live_push import FakePubSub, _collect
 
         import time as _time
+        monkeypatch.setattr(mod, "FRAME_WAIT_S", 0.01)
         route_reads["c"] = _time.time() - 3
-        chunks = await _collect(5, FakePubSub(), monkeypatch, disconnect_after=1)
+        chunks = await _collect(5, FakePubSub(), monkeypatch, disconnect_after=3)
         names = [c.split("\n", 1)[0] for c in chunks if c.startswith("event: ")]
         assert names[:2] == ["event: open", "event: heartbeat"]
         (beat,) = _sse(chunks, "heartbeat")[:1]
@@ -571,7 +585,8 @@ class TestRefresherWiring:
         r = LiveBlendRefresher("kalshi")
 
         async def _capture(frames):
-            return None
+            # The publisher acknowledges every frame it is handed (R2).
+            return r._normal_revisions(frames)
 
         monkeypatch.setattr(r, "_publish", _capture)
         r.receipts = TailReceipts("kalshi")
@@ -643,6 +658,8 @@ class TestTheRealKalshiConsumer:
                     self._last_write_at[eid] = now
                 if on_committed is not None:
                     on_committed(event_ids)
+                # Its frames are acknowledged, as `_publish_prices` reports (R2).
+                self._note_confirm_published({(eid, self._rev) for eid in event_ids}, set())
 
         monkeypatch.setattr(ConfirmedAt, "_kick", lambda self: None)  # no Redis writer
         monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
@@ -716,6 +733,8 @@ class TestTheRealPolymarketConsumer:
                     self._last_write_at[eid] = now
                 if on_committed is not None:
                     on_committed(event_ids)
+                # Its frames are acknowledged, as `_publish_prices` reports (R2).
+                self._note_confirm_published({(eid, self._rev) for eid in event_ids}, set())
 
         real_note_withdrawal = ConfirmedAt.note_withdrawal
 
@@ -754,3 +773,433 @@ class TestTheRealPolymarketConsumer:
         _oid, refuted, held_since, confirmed = held[0]
         assert refuted is True
         assert held_since is not None and confirmed is not None and confirmed <= held_since
+
+
+# ── lane1's REVISE on 9dd290e2 (R1-R6, S1-S2) ───────────────────────────────
+
+
+def _real_refresher(monkeypatch, *, publish):
+    """The real `_refresh_batch` on a one-event session (as TestRefresherWiring),
+    with ``publish`` standing in for `_publish` (Redis)."""
+    from contextlib import asynccontextmanager
+    from datetime import datetime, timezone
+
+    from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
+    from tests.test_live_blend_refresh import _RecordingSession
+
+    fresh = datetime.now(timezone.utc).isoformat()
+    event = SimpleNamespace(id=E, home_team_name="Twins", away_team_name="Yankees",
+                            completed_at=None, status="live", espn_win_prob_home=None,
+                            opening_home_probability=None)
+    market = SimpleNamespace(id=10, event_id=E, name="Twins vs Yankees")
+    price = {"p": 0.6}
+    sessions = []
+
+    @asynccontextmanager
+    async def _fake_session():
+        session = _RecordingSession([(market, event)], [],
+                                    {"kalshi": {"value": price["p"], "updated_at": fresh}})
+        session.returned_rev = 3 + len(sessions)
+        sessions.append(session)
+        yield session
+
+    def _reading(group, home, away):
+        blended = SimpleNamespace(id=HOME, current_probability=price["p"])
+        return SimpleNamespace(
+            home_probability=price["p"], away_probability=None, draw_probability=None,
+            eligibility=None, market=market, outcome=blended,
+            contributing_outcomes=(blended,), yes_probability=price["p"],
+        )
+
+    async def _no_inversion(session, event_id, home_prob, source):
+        return home_prob
+
+    async def _no_snapshot(session, **kwargs):
+        return object(), False
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+    monkeypatch.setattr("app.utils.live_blend.compute_source_home_probability", _reading)
+    monkeypatch.setattr("app.tasks.prediction_market_matching._check_and_fix_inversion",
+                        _no_inversion)
+    monkeypatch.setattr("app.tasks.snapshots._create_or_update_win_prob_snapshot",
+                        _no_snapshot)
+    r = LiveBlendRefresher("kalshi", min_refresh_interval_s=0)
+    monkeypatch.setattr(r, "_publish", lambda frames: publish(r, frames))
+    monkeypatch.setattr(r, "_start_normal_recovery", lambda: None)
+    r.receipts = TailReceipts("kalshi")
+    tracker = r.receipts.confirmed = ConfirmedAt("kalshi", preview_ttl_s=60.0)
+    return r, tracker, price
+
+
+class TestR2ConfirmationWaitsForPublication:
+    """lane1 R2: `committed()` resolves at COMMIT, before the frame is
+    published. A stamp readers do not have yet is a newer, different price."""
+
+    @pytest.mark.asyncio
+    async def test_a_publication_that_raises_never_lets_agreeing_inputs_advance(
+        self, monkeypatch,
+    ):
+        async def broken(r, frames):
+            raise ConnectionError("redis down")
+
+        r, tracker, price = _real_refresher(monkeypatch, publish=broken)
+        tracker.note_mark(r.receipts.note_input(E, HOME, 0.6, "ticker"))
+        await r.refresh([E])
+        assert r._dispositions[E][0] == "stamped"
+        state = tracker._events[E]
+        assert state.pub is None, "its frame never reached readers"
+        before = state.confirmed
+        for _ in range(3):
+            await asyncio.sleep(0.002)
+            tracker.note_mark(r.receipts.note_input(E, HOME, 0.6, "ticker"))
+        assert state.confirmed == before
+        assert tracker.report(state, __import__("time").time())[1] is not None  # held
+        r.receipts.close_all("test")
+
+    @pytest.mark.asyncio
+    async def test_a_frame_that_failed_to_build_never_lets_agreeing_inputs_advance(
+        self, monkeypatch,
+    ):
+        async def acks(r, frames):
+            return r._normal_revisions(frames)
+
+        def broken_frame(**kwargs):
+            raise ValueError("frame build failed")
+
+        r, tracker, _price = _real_refresher(monkeypatch, publish=acks)
+        monkeypatch.setattr("app.utils.live_push.build_frame", broken_frame)
+        tracker.note_mark(r.receipts.note_input(E, HOME, 0.6, "ticker"))
+        await r.refresh([E])
+        assert r._dispositions[E][0] == "stamped", "the stamp itself committed"
+        state = tracker._events[E]
+        assert state.pub is None
+        before = state.confirmed
+        await asyncio.sleep(0.002)
+        tracker.note_mark(r.receipts.note_input(E, HOME, 0.6, "ticker"))
+        assert state.confirmed == before
+        r.receipts.close_all("test")
+
+    @pytest.mark.asyncio
+    async def test_after_the_acknowledgement_agreeing_inputs_advance(self, monkeypatch):
+        async def acks(r, frames):
+            return r._normal_revisions(frames)
+
+        r, tracker, _price = _real_refresher(monkeypatch, publish=acks)
+        tracker.note_mark(r.receipts.note_input(E, HOME, 0.6, "ticker"))
+        await r.refresh([E])
+        state = tracker._events[E]
+        assert state.pub == {HOME: 0.6} and state.awaiting is None
+        stamped = state.confirmed
+        assert stamped is not None
+        await asyncio.sleep(0.002)
+        tracker.note_mark(r.receipts.note_input(E, HOME, 0.6, "ticker"))
+        assert state.confirmed > stamped
+        r.receipts.close_all("test")
+
+    def test_committed_but_unacknowledged_holds_until_the_publisher_answers(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6, acked=False, rev=9)
+        clock.tick(1)
+        t.note_input(E, HOME, 0.6, clock.wall)
+        assert _c(t) is None and _state(t).held_since is not None
+        t.published({(E, 8)})  # an older frame's answer changes nothing
+        assert _c(t) is None
+        t.published({(E, 9)})
+        assert _c(t) == clock.wall and _state(t).held_since is None
+
+    def test_an_unacknowledged_revision_is_unknown_until_the_next_stamp(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6, acked=False, rev=9)
+        t.published((), {(E, 9)})
+        assert _state(t).pub is None
+        clock.tick(1)
+        t.note_input(E, HOME, 0.6, clock.wall)
+        assert _c(t) is None
+
+    def test_an_answer_before_its_batch_resolves_is_kept_for_it(self, clock):
+        # The singleton refresh publishes inline, then resolves.
+        t = _tracker(clock)
+        t.published({(E, 9)})
+        _publish(t, o70=0.6, acked=False, rev=9)
+        assert _state(t).awaiting is None and _c(t) == STAMP_WALL
+        t2 = _tracker(clock)
+        t2.published((), {(E, 9)})
+        _publish(t2, o70=0.6, acked=False, rev=9)
+        assert t2._events[E].pub is None
+
+    def test_a_lost_acknowledgement_gives_up_as_unknown(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6, acked=False, rev=9)
+        clock.tick(ca.AWAITING_MAX_S + 1)
+        t.note_input(E, HOME, 0.6, clock.wall)
+        assert _state(t).pub is None and _c(t) is None
+
+
+class TestR5TheUnknownHoldFollowsTheLastInput:
+    def test_inputs_every_5s_for_60s_keep_the_hold_then_it_lapses_30s_after(self, clock):
+        t = _tracker(clock)
+        _publish(t, kind="stale")  # nothing comparable: unknown
+        start = clock.wall
+        t.note_input(E, HOME, 0.5, clock.wall)
+        for _ in range(12):
+            clock.tick(5)
+            t.note_input(E, HOME, 0.5 + 0.01 * _, clock.wall)
+        assert clock.wall - start == 60
+        assert t.report(_state(t), clock.wall)[1] == int(start * 1000)
+        clock.tick(ca.UNKNOWN_HOLD_S - 1)
+        assert t.report(_state(t), clock.wall)[1] is not None
+        clock.tick(2)
+        assert t.report(_state(t), clock.wall)[1] is None
+
+    def test_speaking_again_after_a_lapse_starts_a_new_hold(self, clock):
+        t = _tracker(clock)
+        _publish(t, kind="stale")
+        t.note_input(E, HOME, 0.5, clock.wall)
+        clock.tick(ca.UNKNOWN_HOLD_S + 5)
+        assert t.report(_state(t), clock.wall)[1] is None
+        t.note_input(E, HOME, 0.55, clock.wall)
+        assert t.report(_state(t), clock.wall)[1] == int(clock.wall * 1000)
+
+
+class TestR6AHoldIsWrittenAtOnce:
+    @pytest.mark.asyncio
+    async def test_a_hold_reaches_redis_within_one_loop_turn(self, clock, monkeypatch):
+        monkeypatch.setattr(ca, "WRITE_INTERVAL_S", 30.0)  # no tick in this test
+        client = _Client()
+        t = _tracker(clock, client=lambda: client)
+        _publish(t, o70=0.6)
+        clock.tick(1)
+        t.note_input(E, HOME, 0.62, clock.wall)  # a different price: a hold
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert client.batches, "the hold waited for the advance throttle"
+        payload = json.loads(client.batches[-1][0][3])
+        assert payload["h"] == int(clock.wall * 1000)
+        t.close()
+
+    @pytest.mark.asyncio
+    async def test_a_stamps_publication_wait_keeps_the_throttle(self, clock, monkeypatch):
+        monkeypatch.setattr(ca, "WRITE_INTERVAL_S", 30.0)
+        client = _Client()
+        t = _tracker(clock, client=lambda: client)
+        _publish(t, o70=0.6, acked=False)  # committed, its frame in flight
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert client.batches == []
+        t.close()
+
+
+class TestS1S2:
+    def test_unchanged_stages_its_basis_only_when_the_row_stores_that_value(self):
+        from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
+
+        r = LiveBlendRefresher("kalshi")
+        r.receipts = TailReceipts("kalshi")
+        tracker = r.receipts.confirmed = ConfirmedAt("kalshi", preview_ttl_s=60.0)
+        rows = _rows(o70=0.6)
+        poll_wrote = SimpleNamespace(win_probability_sources={"kalshi": {"value": 0.58}})
+        r._note_confirm_basis(E, rows, stored_row=poll_wrote, value=0.6)
+        assert E not in tracker._basis
+        stored = SimpleNamespace(win_probability_sources={"kalshi": {"value": 0.6}})
+        r._note_confirm_basis(E, rows, stored_row=stored, value=0.6)
+        assert tracker._basis[E] == {HOME: 0.6}
+
+    @pytest.mark.asyncio
+    async def test_a_failed_read_is_an_attempt(self, clock):
+        calls = []
+
+        async def down(ids):
+            calls.append(ids)
+            return None
+
+        reads = ConfirmedReads(down, mono=lambda: clock.mono, wall=lambda: clock.wall)
+        await reads.current([E], 0.1)
+        await reads.current([E], 0.1)
+        assert len(calls) == 1
+        clock.tick(ca.READ_TTL_S)
+        await reads.current([E], 0.1)
+        assert len(calls) == 2
+
+
+def _fold_stream(monkeypatch, reads, order=None):
+    from app.routes import event_stream as route
+    from app.utils import live_fanout
+    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+
+    hub, release = Hub(), asyncio.Event()
+    hub.confirmed_reads = lambda: reads
+
+    async def project(event_id, frame):
+        await release.wait()
+        return {"event_id": E, "hero_probability": 0.4,
+                "blend_fold_revision": {"1": 11, "2": 22}}
+
+    async def replay(ids):
+        if order is not None:
+            order.append("replay")
+        return []
+
+    async def no_coverage(event_id, ids):
+        await asyncio.Event().wait()
+
+    hub.project_folded_quote = project
+    monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
+    monkeypatch.setattr(route, "latest_frames", replay)
+    monkeypatch.setattr(route, "_current_reconcile", no_coverage)
+    monkeypatch.setattr(route, "FRAME_WAIT_S", 0.01)
+    monkeypatch.setattr(route, "CONFIRMED_BEAT_MIN_S", 0.0)
+    return route._stream(1, Request(), [1, 2]), hub, release
+
+
+class TestR3R4TheStream:
+    @pytest.mark.asyncio
+    async def test_the_replay_is_read_before_the_confirmation_read_starts(self, monkeypatch):
+        order = []
+
+        async def fetch(ids):
+            order.append("confirmed")
+            return {eid: [] for eid in ids}
+
+        stream, _hub, _release = _fold_stream(monkeypatch, ConfirmedReads(fetch), order)
+        pending = None
+        try:
+            for _ in range(2):  # retry, open
+                await asyncio.wait_for(anext(stream), 1)
+            pending = asyncio.create_task(anext(stream))  # the loop turns
+            await asyncio.sleep(0.05)
+        finally:
+            if pending is not None:
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+            await stream.aclose()
+        # 9dd290e2 awaited this read (up to 100 ms) BEFORE the replay.
+        assert order[:2] == ["replay", "confirmed"]
+
+    @pytest.mark.asyncio
+    async def test_no_confirmed_at_advance_while_a_fold_projection_is_pending(self, monkeypatch):
+        """lane1 R4: a folded page's headline moves only on `folded_probability`."""
+        import time as _time
+
+        from tests.test_folded_live_quote_10090 import trigger
+
+        monkeypatch.setattr(ca, "READ_TTL_S", 0.0)
+        now = {"c": _time.time() - 20}
+
+        async def fetch(ids):
+            now["c"] += 1.0  # the venues keep confirming
+            ms = int(now["c"] * 1000)
+            return {eid: [_entry(c=ms, w=ms)] for eid in ids}
+
+        stream, hub, release = _fold_stream(monkeypatch, ConfirmedReads(fetch))
+
+        def data(chunk):
+            return json.loads(chunk.split("data: ")[1])
+
+        pending = None
+        try:
+            chunks = [await asyncio.wait_for(anext(stream), 1) for _ in range(3)]
+            first = [data(c) for c in chunks if c.startswith("event: heartbeat")]
+            assert first, chunks  # retry, open, then the first confirmed heartbeat
+            sent = max(b["confirmed_at"] for b in first)
+            hub.subscriptions["live:event:2"].offer(json.dumps(trigger()))
+            # Until the raw invalidation is handled no fold is owed: a beat
+            # may still go out. From it on, the headline waits on the fold.
+            while True:
+                chunk = await asyncio.wait_for(anext(stream), 1)
+                if chunk.startswith("event: heartbeat"):
+                    sent = max(sent, data(chunk)["confirmed_at"])
+                elif chunk.startswith("event: probability"):
+                    assert data(chunk)["folded_quote_pending"] is True
+                    break
+            # The projection is pending: the loop keeps turning (FRAME_WAIT_S
+            # 0.01) and the venues keep confirming, but nothing may go out.
+            pending = asyncio.create_task(anext(stream))
+            await asyncio.sleep(0.15)
+            assert not pending.done(), pending.result()
+            release.set()
+            folded = await asyncio.wait_for(pending, 1)
+            pending = None
+            assert folded.startswith("event: folded_probability"), folded
+            beat = await asyncio.wait_for(anext(stream), 1)
+            assert beat.startswith("event: heartbeat") and data(beat)["confirmed_at"] > sent
+        finally:
+            release.set()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
+            await stream.aclose()
+
+
+def _stamping_refresher(seen, basis):
+    """A refresher whose every stamp blends ``basis`` ({outcome: price}) and
+    whose frame the publisher acknowledges (as `_publish_prices` reports)."""
+    import time as _time
+
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+    class _Stamping(LiveBlendRefresher):
+        def __init__(self, source, **kw):
+            kw["min_refresh_interval_s"] = 0.01
+            super().__init__(source, **kw)
+            seen["refresher"] = self
+            self._rev = 900
+
+        async def _refresh_batch(self, event_ids, now, *, prepared=None,
+                                 on_committed=None, publish_committed=None):
+            for eid in event_ids:
+                self._last_refresh_at[eid] = now
+                self._rev += 1
+                self._dispositions[eid] = (
+                    "stamped", 0.5, ca.iso(_time.time()),
+                    self._last_written_value.get(eid), self._rev, "live",
+                )
+                self._note_confirm_basis(eid, [
+                    SimpleNamespace(id=oid, current_probability=p) for oid, p in basis.items()
+                ])
+                self._last_written_value[eid] = 0.5
+                self._last_write_at[eid] = now
+            if on_committed is not None:
+                on_committed(event_ids)
+            self._note_confirm_published({(eid, self._rev) for eid in event_ids}, set())
+
+        async def publish_market_changes(self, _session):
+            return 0
+
+    return _Stamping
+
+
+def _assert_bridged_leg_holds(tracker, event_id, leg, moved_to):
+    state = tracker._events[event_id]
+    # 9dd290e2: the bridged leg never reached the tracker (`latest` had no
+    # entry), so the slate leg's agreeing input confirmed the event while the
+    # bridged leg's newer, different price was held.
+    assert leg in state.latest and state.latest[leg][0] == moved_to
+    assert state.held_since is not None
+    assert state.confirmed is None or state.confirmed <= state.held_since
+
+
+class TestR1BridgedLegsReachTheTracker:
+    @pytest.mark.asyncio
+    async def test_kalshi_a_bridged_open_winner_on_a_mixed_event_holds(self, monkeypatch):
+        from tests import test_ws_open_contract_prices_9484 as k
+
+        joh_ticker, joh_market, joh_outcome = "KXATPMATCH-26SEP28ANGJOH-JOH", 8, 82
+        seen = {}
+        monkeypatch.setattr(ConfirmedAt, "_kick", lambda self: None)  # no Redis writer
+        await k._run(
+            monkeypatch,
+            frames_for={
+                k.LINKED_TICKER: [k._tick(k.LINKED_TICKER, "0.40", "0.42", "0.41")] * 3,
+                joh_ticker: [k._tick(joh_ticker, "0.64", "0.66", "0.65")],
+            },
+            open_rows=[(joh_ticker, joh_market, joh_outcome, 900, k.LINKED_EVENT_TICKER)],
+            events_admitted=[900],
+            refresher=_stamping_refresher(seen, {71: 0.41, joh_outcome: 0.59}),
+        )
+        tracker = seen["refresher"].receipts.confirmed
+        assert tracker._events[900].pub == {71: 0.41, joh_outcome: 0.59}
+        _assert_bridged_leg_holds(tracker, 900, joh_outcome, 0.65)
+
+    # The Polymarket twin needs the #10664 real-transaction rig, so it lives
+    # in tests/test_ws_polymarket_open_contract_prices_9484.py, the file CI's
+    # real-PostgreSQL gate runs (and fails on any skip):
+    # TestTheBridgedLegFeedsConfirmedAt.

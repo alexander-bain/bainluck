@@ -5846,13 +5846,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
         except Exception:
             return
-        # #10090 decision J: a game leg's input, judged for agreement with
-        # what this source published. Bookkeeping only.
+        # #10090 decision J: a blend leg's input — a slate leg or a BRIDGED
+        # open leg, mixed events included (lane1 R1) — judged for agreement
+        # with what this source published. A bridged leg the map names no
+        # event for travels with its binary partner's (`_pm_pure_bridged_legs`):
+        # the blend reads both legs of the market. Bookkeeping only.
         confirmed = getattr(tail_receipts, "confirmed", None)
-        if (confirmed is not None and outcome_id not in non_blend_outcome_ids
-                and outcome_id not in open_outcome_ids):
+        if confirmed is not None and outcome_id not in non_blend_outcome_ids:
             with contextlib.suppress(Exception):
-                confirmed.note_mark(mark)
+                if mark is not None:
+                    confirmed.note_mark(mark)
+                elif outcome_id in open_outcome_ids:
+                    from app.tasks.live_blend_refresh import _wall
+
+                    partner_event = event_id_by_outcome.get(open_complement_of.get(outcome_id))
+                    if partner_event is not None:
+                        confirmed.note_input(partner_event, outcome_id, prob, _wall())
         if mark is not None:
             if (event_id_by_outcome.get(outcome_id) in getattr(blend_refresher, "preview_events", ())
                     and outcome_id not in non_blend_outcome_ids and outcome_id not in open_outcome_ids):

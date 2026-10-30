@@ -20,18 +20,26 @@ only when ALL of these hold:
 * no refresh batch holding the event is open (a preview or stamp may be
   about to publish), and no preview a failed stamp left on readers can still
   be showing (``frozen_until``, the preview's own uncommitted lifetime);
+* the stamp's frame has been ACKNOWLEDGED by the publisher
+  (`LiveBlendRefresher._publish_prices` → `published`): a committed stamp
+  whose frame is still queued, failed to build, or failed to publish is a
+  newer, different price readers do not have yet (lane1 R2 on #11767);
 * on Polymarket, no buffered withdrawal's book prices a published leg out.
 
 A held or unknown state freezes ``c`` (the last agreement) and records ``h``,
-when the hold began. Each venue runs in its own worker-ws process, so the
+when the hold began. An unknown state (nothing this run published can be
+compared) holds until ``UNKNOWN_HOLD_S`` after the source's LAST input: a
+source that never stamps stops capping only once it also stops speaking. Each venue runs in its own worker-ws process, so the
 reader combines them: the newest ``c`` across venues and members, but never
 past the earliest live ``h`` — a hold on one venue is a newer, different
 price on the event.
 
 PRODUCER. Pure bookkeeping on the socket and refresher paths (nothing awaited,
-O(outcomes of one event)); a changed state is written by a separate task at
-most once per ``WRITE_INTERVAL_S`` per event per venue: one Redis hash per
-event, one field per venue, never on a buffer lock and never a DB write.
+O(outcomes of one event)); a changed state is written by a separate task: an
+advance at most once per ``WRITE_INTERVAL_S`` per event per venue, a
+transition INTO a hold at once (a reader keeps the newest value it has seen,
+so an over-claim it read before the hold landed would stick). One Redis hash
+per event, one field per venue, never on a buffer lock and never a DB write.
 
 READER. ``routes/event_stream.py`` reads through one process-wide cache, at
 most one Redis read per event per ``READ_TTL_S`` however many streams watch
@@ -61,10 +69,15 @@ HELD_REFRESH_S = 20.0
 HELD_FRESH_S = 60.0
 #: A batch that never resolved stops freezing its events after this long.
 BUSY_MAX_S = 60.0
-#: An event this run has not yet stamped reports a hold for at most this long:
-#: long enough to cover a restart's first flush, short enough that an event
-#: this source never stamps cannot cap the other venue for the whole game.
+#: An unknown event (this run has nothing published to compare) reports a hold
+#: until this long after its LATER of entering that state and its source's
+#: last input: it covers a restart's first flush, and a source still quoting
+#: something nobody has published keeps capping; one that never stamps and
+#: goes quiet cannot cap the other venue for the whole game.
 UNKNOWN_HOLD_S = 30.0
+#: A committed stamp whose publication was never acknowledged (a lost task)
+#: stops holding as "awaiting" after this long and becomes unknown.
+AWAITING_MAX_S = 60.0
 #: Events kept per venue process; the least recently touched go first.
 MAX_EVENTS = 2000
 #: Write and read deadlines (seconds).
@@ -124,7 +137,8 @@ def iso(epoch_s: Optional[float]) -> Optional[str]:
 class _Event:
     __slots__ = ("pub", "latest", "confirmed", "held_since", "unknown_since",
                  "busy_until", "previewing", "frozen_until", "touched",
-                 "written", "written_at")
+                 "written", "written_at", "awaiting", "awaiting_until",
+                 "awaiting_wall", "last_input")
 
     def __init__(self) -> None:
         #: None = this run has not published a reading; `_SILENT` = the last
@@ -141,6 +155,14 @@ class _Event:
         self.touched = 0.0
         self.written: Optional[tuple] = None
         self.written_at: Optional[float] = None
+        #: The revision of a committed stamp whose frame the publisher has not
+        #: yet acknowledged, and when that wait gives up (mono).
+        self.awaiting: Optional[int] = None
+        self.awaiting_until: Optional[float] = None
+        #: That stamp's write clock: its publication instant once acknowledged.
+        self.awaiting_wall: Optional[float] = None
+        #: The newest input's receipt (wall), whatever it agreed with.
+        self.last_input: Optional[float] = None
 
 
 class ConfirmedAt:
@@ -170,7 +192,14 @@ class ConfirmedAt:
         self._events: dict[int, _Event] = {}
         #: event -> {outcome: price} staged by `note_basis` for `resolved`.
         self._basis: dict[int, dict] = {}
+        #: event -> (revision, acknowledged): a publisher answer that came
+        #: BEFORE its batch resolved (the singleton refresh publishes inline,
+        #: then `TailReceipts.resolve` runs), kept for that `resolved`.
+        self._early: dict[int, tuple[int, bool]] = {}
         self._dirty: set[int] = set()
+        #: Events whose entry just went INTO a hold: written at once.
+        self._urgent: set[int] = set()
+        self._wake: Optional[asyncio.Event] = None
         self._task: Optional[asyncio.Task] = None
         self._closed = False
         self.stats = {"writes": 0, "write_errors": 0, "advanced": 0, "pruned": 0}
@@ -184,7 +213,15 @@ class ConfirmedAt:
         if event_id is None or p is None or self._closed:
             return
         state = self._state(event_id)
+        if (state.pub is None and state.unknown_since is not None
+                and recv_wall - max(state.unknown_since, state.last_input or 0.0)
+                > UNKNOWN_HOLD_S):
+            # The unknown hold had lapsed (the source went quiet); speaking
+            # again while still unknown starts a new one, here (R5).
+            state.unknown_since = recv_wall
         state.latest[outcome_id] = (p, recv_wall)
+        if state.last_input is None or recv_wall > state.last_input:
+            state.last_input = recv_wall
         agreed = (isinstance(state.pub, dict) and state.pub.get(outcome_id) == p)
         self._settle(event_id, state, recv_wall if agreed else None, recv_wall)
 
@@ -266,6 +303,21 @@ class ConfirmedAt:
                 if status is not None and status not in STREAMED_STATUSES:
                     self._drop(event_id)
                     return
+                rev = disposition[4] if len(disposition) > 4 else None
+                early = self._early.pop(event_id, None) if type(rev) is int else None
+                if early is not None and early[0] >= rev:
+                    if not early[1]:
+                        # Its frame already failed to publish: unknown.
+                        state.pub = None
+                        published = None
+                elif type(rev) is int:
+                    # Committed, not yet on readers' screens: held until the
+                    # publisher acknowledges this revision (`published`). A
+                    # revision-less frame owes no acknowledgement.
+                    state.awaiting = rev
+                    state.awaiting_until = now + AWAITING_MAX_S
+                    state.awaiting_wall = published
+                    published = None  # not on readers' screens yet
         elif kind in SILENT_DISPOSITIONS and not previewing:
             state.pub = _SILENT
         else:
@@ -282,6 +334,55 @@ class ConfirmedAt:
             candidate = max([*recvs, *([published] if published is not None else [])],
                             default=None)
         self._settle(event_id, state, candidate, wall)
+
+    def unpublishable(self, event_id: int) -> None:
+        """This attempt's frame could not be built: whatever it stamps, no
+        reader receives it, so its batch resolves as unknown (no basis)."""
+        self._basis.pop(event_id, None)
+
+    def published(self, acknowledged: Iterable[tuple[int, int]],
+                  unacknowledged: Iterable[tuple[int, int]] = ()) -> None:
+        """The publisher's answer for committed stamp frames, as
+        ``(event_id, revision)``: an acknowledged revision (or a newer one) is
+        on readers' screens; an unacknowledged one is owed to recovery, so
+        what readers show is unknown until this source's next stamp."""
+        if self._closed:
+            return
+        wall = self._wall()
+        if len(self._early) > 4 * MAX_EVENTS:
+            self._early.clear()  # bounded; a lost answer gives up at AWAITING_MAX_S
+        for event_id, rev in acknowledged:
+            state = self._events.get(event_id)
+            if state is None or state.awaiting is None:
+                held = self._early.get(event_id)
+                if held is None or rev >= held[0]:
+                    self._early[event_id] = (rev, True)
+                continue
+            if rev < state.awaiting:
+                continue
+            stamp_wall, state.awaiting_wall = state.awaiting_wall, None
+            state.awaiting = state.awaiting_until = None
+            agreeing = self._agreeing_recv(state)
+            candidates = [c for c in (agreeing, stamp_wall) if c is not None]
+            self._settle(event_id, state, max(candidates, default=None), wall)
+        for event_id, rev in unacknowledged:
+            state = self._events.get(event_id)
+            if state is None or state.awaiting is None:
+                held = self._early.get(event_id)
+                if held is None or rev > held[0]:
+                    self._early[event_id] = (rev, False)
+                continue
+            if rev < state.awaiting:
+                continue
+            state.awaiting = state.awaiting_until = state.awaiting_wall = None
+            state.pub = None
+            self._settle(event_id, state, None, wall)
+
+    def _agreeing_recv(self, state: _Event) -> Optional[float]:
+        if not isinstance(state.pub, dict):
+            return None
+        return max((state.latest[oid][1] for oid, p in state.pub.items()
+                    if oid in state.latest and state.latest[oid][0] == p), default=None)
 
     def failed(self, event_ids: Iterable[int]) -> None:
         """The batch did not commit: no stamp landed, a preview may have."""
@@ -322,6 +423,7 @@ class ConfirmedAt:
     def _drop(self, event_id: int) -> None:
         self._events.pop(event_id, None)
         self._basis.pop(event_id, None)
+        self._early.pop(event_id, None)
         self._dirty.discard(event_id)
 
     def agrees(self, state: _Event) -> bool:
@@ -337,6 +439,13 @@ class ConfirmedAt:
             if now < state.frozen_until:
                 return False
             state.frozen_until = None
+        if state.awaiting is not None:
+            if state.awaiting_until is not None and now < state.awaiting_until:
+                return False
+            # The acknowledgement never came: readers' copy is unknown.
+            state.awaiting = state.awaiting_until = state.awaiting_wall = None
+            state.pub = None
+            return False
         for oid, p in state.pub.items():
             seen = state.latest.get(oid)
             if seen is not None and seen[0] != p:
@@ -374,22 +483,70 @@ class ConfirmedAt:
             return (None, None)
         if state.pub is None:
             since = state.unknown_since
-            held = since if since is not None and wall - since <= UNKNOWN_HOLD_S else None
+            spoke = max(since, state.last_input or since) if since is not None else None
+            held = since if spoke is not None and wall - spoke <= UNKNOWN_HOLD_S else None
             return (_ms(state.confirmed), _ms(held))
         return (_ms(state.confirmed), _ms(state.held_since))
 
+    def _lasting_hold(self, state: _Event) -> bool:
+        """A hold that lasts until something else happens: a different input,
+        a refuting book, nothing comparable (unknown), a failed preview still
+        on screens. An open batch or an unacknowledged frame ends within the
+        batch's own commit and publication, so it keeps the advance throttle
+        (a stamp would otherwise cost an extra write every time)."""
+        if state.pub is None:
+            return True
+        if not isinstance(state.pub, dict):
+            return False
+        if state.frozen_until is not None and self._mono() < state.frozen_until:
+            return True
+        for oid, p in state.pub.items():
+            seen = state.latest.get(oid)
+            if seen is not None and seen[0] != p:
+                return True
+            if self.refutes is not None:
+                try:
+                    if self.refutes(oid, p):
+                        return True
+                except Exception:
+                    return True
+        return False
+
     def _mark(self, event_id: int, state: _Event) -> None:
-        if state.written != self.report(state, self._wall()):
+        report = self.report(state, self._wall())
+        if state.written != report:
             self._dirty.add(event_id)
+            if (report[1] is not None and (state.written is None or state.written[1] is None)
+                    and self._lasting_hold(state)):
+                # Into a hold: written now, not after the advance throttle.
+                self._urgent.add(event_id)
+                if self._wake is not None:
+                    self._wake.set()
             self._kick()
 
     # ── the writer ───────────────────────────────────────────────────────────
 
-    def take_due(self) -> Optional[list[tuple[int, str]]]:
+    def take_due(self, only: Optional[set] = None) -> Optional[list[tuple[int, str]]]:
         """Entries to write now: changed ones, and holds due a refresh. None
-        when nothing is dirty or held (the writer may stop)."""
+        when nothing is dirty or held (the writer may stop). ``only``: just
+        these events (a transition into a hold, written between ticks)."""
         wall = self._wall()
         due, live = [], False
+        if only is not None:
+            for event_id in only:
+                state = self._events.get(event_id)
+                if state is None:
+                    continue
+                report = self.report(state, wall)
+                if report[1] is not None and report != state.written:
+                    # Still held when the writer runs; otherwise it waits for
+                    # the tick like any advance.
+                    state.written, state.written_at = report, wall
+                    self._dirty.discard(event_id)
+                    due.append((event_id, json.dumps(
+                        {"c": report[0], "h": report[1], "w": _ms(wall)},
+                        separators=(",", ":"))))
+            return due
         for event_id, state in self._events.items():
             report = self.report(state, wall)
             held = report[1] is not None or state.written is not None and state.written[1] is not None
@@ -417,9 +574,29 @@ class ConfirmedAt:
         self._task = loop.create_task(self._writer(), name=f"confirmed-at-{self.source}")
 
     async def _writer(self) -> None:
+        clock = asyncio.get_running_loop().time
         try:
+            tick = clock() + WRITE_INTERVAL_S
             while not self._closed:
-                await asyncio.sleep(WRITE_INTERVAL_S)
+                if self._urgent:
+                    # A transition into a hold: written now, alone; the advance
+                    # throttle's tick keeps its own time.
+                    urgent, self._urgent = self._urgent, set()
+                    due = self.take_due(urgent)
+                    if due:
+                        await self._write(due)
+                    continue
+                wait = tick - clock()
+                if wait > 0:
+                    self._wake = asyncio.Event()
+                    try:
+                        await asyncio.wait_for(self._wake.wait(), timeout=wait)
+                        continue  # woken by a hold: write it first
+                    except asyncio.TimeoutError:
+                        pass
+                    finally:
+                        self._wake = None
+                tick = clock() + WRITE_INTERVAL_S
                 due = self.take_due()
                 if due is None:
                     return
@@ -565,13 +742,19 @@ class ConfirmedReads:
     async def _read(self, event_ids: list[int]) -> None:
         try:
             got = await self._fetch(event_ids)
-            if got is not None:
-                now = self._mono()
-                if len(self._entries) > self.MAX_EVENTS:
-                    self._entries = {eid: v for eid, v in self._entries.items()
-                                     if now - v[0] < 60.0}
-                for eid in event_ids:
+            now = self._mono()
+            if len(self._entries) > self.MAX_EVENTS:
+                self._entries = {eid: v for eid, v in self._entries.items()
+                                 if now - v[0] < 60.0}
+            for eid in event_ids:
+                if got is not None:
                     self._entries[eid] = (now, got.get(eid, []))
+                else:
+                    # A failed read is still an attempt (lane1 S2): what was
+                    # known stays, and the next read waits READ_TTL_S, not
+                    # the next stream pass, while Redis is down.
+                    previous = self._entries.get(eid)
+                    self._entries[eid] = (now, previous[1] if previous else [])
         except asyncio.CancelledError:
             raise
         except Exception:

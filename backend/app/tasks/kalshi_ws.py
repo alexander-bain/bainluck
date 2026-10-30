@@ -2794,11 +2794,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 )
             except Exception:
                 mark = None
-            # #10090 decision J: a winner leg's input, judged for agreement
-            # with what this source published. Bookkeeping only.
+            # #10090 decision J: a blend leg's input — a slate winner or a
+            # BRIDGED open contract, both read by the event's blend (lane1 R1)
+            # — judged for agreement with what this source published.
+            # Bookkeeping only.
             confirmed = getattr(tail_receipts, "confirmed", None)
-            if (confirmed is not None and ticker in ticker_to_ids
-                    and outcome_id not in non_blend_outcome_ids):
+            if confirmed is not None and outcome_id not in non_blend_outcome_ids:
                 with contextlib.suppress(Exception):
                     confirmed.note_mark(mark)
             if mark is not None:
