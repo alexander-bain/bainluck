@@ -2899,6 +2899,27 @@ struct OddsChartView: View {
         var rendered = points
         var frames = liveFrames
         var replacedPin = false
+        // #10090 — the committed headline re-values an older pin (web's #8749
+        // `appendHeroObservation`): the marker is never drawn, and the pin keeps
+        // its time. Re-checked against THIS payload, like the preview.
+        var revaluedAt: Date?
+        if let marker = frames.last, let authority = marker.headlineOverPin {
+            frames.removeLast()
+            if let edge = BlendPreview.olderPinUnderHeadline(
+                   history, authority: authority, at: marker.date, p: marker.homeProbability),
+               let edgeAt = edge.timestamp.asDate,
+               let carried = BlendPreview.carriedPointsAfter(history, at: marker.date),
+               let index = rendered.lastIndex(where: {
+                   $0.source == "aggregate" && $0.date == edgeAt && $0.probability == edge.homeProbability
+               }) {
+                rendered[index] = ChartDataPoint(date: edgeAt, probability: marker.homeProbability, source: "aggregate")
+                // The carry-forward minute after the headline goes with the value it carried.
+                rendered.removeAll {
+                    $0.source == "aggregate" && $0.date >= marker.date && $0.date < edgeAt && carried.contains($0.date)
+                }
+                revaluedAt = marker.date
+            }
+        }
         if let preview = frames.last, let authority = preview.previewAuthority {
             if !BlendPreview.chartCoversAuthority(history, authority: authority) {
                 frames.removeLast()
@@ -2921,8 +2942,10 @@ struct OddsChartView: View {
             }
         }
         if !frames.isEmpty {
+            // A re-valued pin caps the relabel at the headline's clock, so no
+            // bucket moves onto the pin past the value that replaced it.
             rendered = servedBlendAtEvidenceTime(
-                rendered, history: history, previewAt: replacedPin ? frames.last?.date : nil)
+                rendered, history: history, previewAt: replacedPin ? frames.last?.date : revaluedAt)
         }
         let publishedEdge = rendered
             .filter { $0.source == "aggregate" }
