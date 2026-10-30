@@ -6,8 +6,8 @@ once at import, default 6, clamped to 1..6). Unset, the predicate is the same
 SQL text as before; set to 3, only the scheduled arm's upper bound moves.
 
 The real-Postgres half (a 4 h game dropped, a 2 h game, a live game and a
-suspended open market kept) is
-`integration/test_ws_slate_upcoming_hours_pg_10090.py`.
+suspended open market kept) is `test_the_upcoming_window_setting_keeps_exactly`
+in `integration/test_ws_slate_age_floor_pg_837.py`, run by CI's #837 step.
 """
 
 import logging
