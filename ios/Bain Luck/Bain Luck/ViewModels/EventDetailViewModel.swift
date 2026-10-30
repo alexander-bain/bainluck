@@ -1572,7 +1572,6 @@ final class EventDetailViewModel: ObservableObject {
         streamHasPushedPrice = true
         acceptPushedPrice()
         event = current
-        endFloorHandover()
         LiveTimingSeam.modelHeadlineAdopted(current, path: "folded")
         recordPriceActivity(from: prior, to: current)
         if armScoreCatchUp, current.status == "live" { configureAutoRefresh() }

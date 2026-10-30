@@ -201,6 +201,8 @@ final class AFoldedHeroKeepsItsPreviewAcrossTheCommitFloor10090Tests: XCTestCase
             ("revoke", { $0.fire("preview_v3", Self.foldedRevoke) }),
             ("malformed floor", { $0.fire("fold_preview_floor", "broken") }),
             ("reconnect", { $0.fire("reconnect") }),
+            ("new domain", { $0.fire("preview_open_v3", V3PageWire.open(Self.id, members: [4242, 4243],
+                                                                       session: Self.session, incarnation: "2")) }),
         ]
         for (name, withdraw) in during {
             let (_, handle, _, vm) = try await loaded()
