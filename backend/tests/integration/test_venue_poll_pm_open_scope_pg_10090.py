@@ -141,15 +141,19 @@ async def _seed(maker):
     return ids
 
 
-async def _population(maker, open_arm, scope, held=None):
+async def _population(maker, open_arm, scope, held=None, *, held_arm=None):
+    """``held_arm`` (``VENUE_POLL_30S_HELD``) defaults to whether a held set is
+    given."""
     from sqlalchemy import text
 
     from app.tasks import venue_poll_30s as v
 
+    if held_arm is None:
+        held_arm = held is not None
     async with maker() as session:
         rows = (
             await session.execute(
-                text(v.polymarket_population_sql(open_arm, scope)),
+                text(v.polymarket_population_sql(open_arm, scope, held_arm)),
                 v.population_binds([], held),
             )
         ).fetchall()
@@ -238,6 +242,48 @@ async def test_a_held_market_is_in_the_population_at_any_distance(maker):
         maker, True, "all", held
     )
     assert far_event is not None
+
+
+async def test_the_held_flag_unset_polls_no_held_market(maker):
+    """12b (latency R1 on a792d96b). `all`, open arm on: a held, untokened,
+    low-value, event-less market is polled only with ``VENUE_POLL_30S_HELD``
+    on; unset, the population is exactly the no-reader one, held set or not."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.reader_presence import ReaderPresence
+
+    await _seed(maker)
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        market = FuturesMarket(
+            source="polymarket",
+            external_id=_cid(77),
+            name="quiet untokened",
+            category="futures",
+            status="open",
+            event_id=None,
+            volume=10,
+            resolution_date=now + timedelta(days=30),
+            market_metadata={"polymarket_event_id": "9177"},
+        )
+        session.add(market)
+        await session.flush()
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=_cid(77),
+                name="Yes",
+                is_winner=False,
+                current_probability=0.5,
+            )
+        )
+        await session.commit()
+        mid = market.id
+    held = ReaderPresence(frozenset({mid}), frozenset())
+
+    nobody = await _population(maker, True, "all")
+    assert mid not in nobody
+    assert await _population(maker, True, "all", held, held_arm=False) == nobody
+    assert mid in await _population(maker, True, "all", held, held_arm=True)
 
 
 async def test_the_population_takes_what_the_slate_scope_drops(maker):

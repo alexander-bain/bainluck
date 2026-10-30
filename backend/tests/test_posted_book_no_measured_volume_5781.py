@@ -483,6 +483,9 @@ class TestEverySiteBindsTheNewParameters:
             "tests/test_futures_price_refresh.py": MENTIONS,
             # Reads the strings to assert their shape; never runs them.
             "tests/test_posted_book_no_measured_volume_5781.py": MENTIONS,
+            # #10090 — renders G2's pool text from `HIGH_VALUE_SQL` to compare
+            # the poll's population SQL byte for byte; never runs it.
+            "tests/test_venue_poll_pm_open_scope_10090.py": MENTIONS,
             # #5896. Names `_CANDIDATE_SQL` in its module docstring — the
             # six-hour anti-join is the REASON that ship exists, so the prose
             # has to name it — and imports the two withdrawal statements,

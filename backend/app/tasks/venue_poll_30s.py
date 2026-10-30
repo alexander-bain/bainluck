@@ -30,7 +30,12 @@ WHAT IS POLLED: shown, minus socket
   linked or not, at any distance (``utils/reader_presence``: the SSE hub's
   ``live:market:*`` / ``live:event:*`` channels, the signal the Polymarket
   socket's ``slate`` scope seeds from). An unreadable held set reuses the last
-  one read (:func:`held_presence`).
+  one read (:func:`held_presence`). Only while ``VENUE_POLL_30S_HELD=1``
+  (:func:`held_arm_enabled`, read at each population read): unset, the held arm
+  is not rendered and the held set is not read, so nothing above changes.
+  A ``POLYMARKET_WS_OPEN_SCOPE`` flip skews: the socket re-reads it per catalog
+  refresh (600 s), the poll per population read (300 s per child), so a market
+  just descoped can wait ~300 s plus its rotation turn; flipping back overlaps.
 
 All under ``LIVE_MARKET_SQL`` (open, unresolved, not venue-settled), and only
 legs ``_write_prices`` itself would accept (not crowned, not ``api_settlement``).
@@ -144,6 +149,7 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 ENABLED_ENV = "VENUE_POLL_30S_ENABLED"
+HELD_ENV = "VENUE_POLL_30S_HELD"
 VENUES = ("kalshi", "polymarket")
 
 
@@ -214,6 +220,16 @@ def enabled_venues(environ=None) -> frozenset[str]:
     return frozenset(p.strip() for p in raw.split(",") if p.strip() in VENUES)
 
 
+def held_arm_enabled(environ=None) -> bool:
+    """#10090: ``VENUE_POLL_30S_HELD=1`` adds the held arm on both venues.
+
+    Off unless set, read at every population read like ``open_contract_scope()``,
+    so unsetting it undoes the arm at the next read.
+    """
+    raw = (environ if environ is not None else os.environ).get(HELD_ENV, "")
+    return raw.strip().lower() in ("1", "on", "true", "yes")
+
+
 # ── socket scope, rendered from the sockets' own predicates ───────────────────
 
 
@@ -273,7 +289,7 @@ def _socket_game_sql(window_sql: str) -> str:
     )
 
 
-def _pool_sql(venue: str, window_sql: str) -> str:
+def _pool_sql(venue: str, window_sql: str, held: bool = False) -> str:
     """The shown markets of one venue the game socket does not carry.
 
     Two arms, each planned on its own driving index, because one predicate over
@@ -286,13 +302,35 @@ def _pool_sql(venue: str, window_sql: str) -> str:
     * linked: events ``scheduled`` and not yet started, within
       ``GAME_HORIZON_HOURS`` (a range on ``ix_events_commence_time``), minus the
       game socket's window and plus its hand-off band;
-    * held (#10090): the held markets and the markets of held events, by
-      primary key and ``ix_futures_markets_event_id``, minus the game socket's
-      window (NULL-safe: an event-less market is never in it).
+    * held (#10090, only when ``held``): the held markets and the markets of
+      held events, by primary key and ``ix_futures_markets_event_id``, minus the
+      game socket's window (NULL-safe: an event-less market is never in it).
+      Not held: neither the arm nor its ``UNION`` is rendered.
     """
     from app.tasks.futures_price_refresh import HIGH_VALUE_SQL
 
     valued = f"({HIGH_VALUE_SQL} OR fm.id = ANY(CAST(:shown_ids AS integer[])))"
+    held_arm = held_union = ""
+    if held:
+        held_arm = f"""
+        held AS MATERIALIZED (
+            SELECT fm.id
+              FROM futures_markets fm
+              LEFT JOIN events e ON e.id = fm.event_id
+             WHERE fm.id IN (
+                       SELECT unnest(CAST(:held_market_ids AS integer[]))
+                       UNION
+                       SELECT h.id
+                         FROM futures_markets h
+                        WHERE h.event_id = ANY(CAST(:held_event_ids AS integer[]))
+                   )
+               AND fm.status = 'open'
+               AND fm.source = '{venue}'
+               AND NOT {_socket_game_sql(window_sql)}
+        ),"""
+        held_union = """
+            UNION
+            SELECT id FROM held"""
     return f"""
         unlinked AS MATERIALIZED (
             SELECT fm.id
@@ -312,28 +350,11 @@ def _pool_sql(venue: str, window_sql: str) -> str:
                AND fm.source = '{venue}'
                AND e.commence_time <= NOW() + make_interval(hours => :game_horizon_hours)
                AND NOT {_socket_game_sql(window_sql)}
-        ),
-        held AS MATERIALIZED (
-            SELECT fm.id
-              FROM futures_markets fm
-              LEFT JOIN events e ON e.id = fm.event_id
-             WHERE fm.id IN (
-                       SELECT unnest(CAST(:held_market_ids AS integer[]))
-                       UNION
-                       SELECT h.id
-                         FROM futures_markets h
-                        WHERE h.event_id = ANY(CAST(:held_event_ids AS integer[]))
-                   )
-               AND fm.status = 'open'
-               AND fm.source = '{venue}'
-               AND NOT {_socket_game_sql(window_sql)}
-        ),
+        ),{held_arm}
         pool AS (
             SELECT id FROM unlinked
             UNION
-            SELECT id FROM linked
-            UNION
-            SELECT id FROM held
+            SELECT id FROM linked{held_union}
         )
     """
 
@@ -350,7 +371,7 @@ _PM_TOKEN_KEYS_SQL = (
 )
 
 
-def kalshi_population_sql(open_arm: bool) -> str:
+def kalshi_population_sql(open_arm: bool, held: bool = False) -> str:
     from app.tasks.kalshi_ws import _kalshi_slate_event_window
     from app.tasks.ws_open_contracts import kalshi_open_contract_stmt
     from app.utils.futures_liveness import LIVE_MARKET_SQL
@@ -362,7 +383,7 @@ def kalshi_population_sql(open_arm: bool) -> str:
         else ""
     )
     return f"""
-        WITH {_pool_sql("kalshi", window)}
+        WITH {_pool_sql("kalshi", window, held)}
         SELECT fm.id, fo.id, fo.external_id
           FROM pool
           JOIN futures_markets fm ON fm.id = pool.id
@@ -375,7 +396,9 @@ def kalshi_population_sql(open_arm: bool) -> str:
     """
 
 
-def polymarket_population_sql(open_arm: bool, open_scope: str = "all") -> str:
+def polymarket_population_sql(
+    open_arm: bool, open_scope: str = "all", held: bool = False
+) -> str:
     from app.tasks.polymarket_open_contracts import (
         OPEN_SCOPE_SLATE, OUTCOME_TOKEN_METADATA_KEY,
     )
@@ -398,7 +421,7 @@ def polymarket_population_sql(open_arm: bool, open_scope: str = "all") -> str:
     else:
         open_market = "AND NOT " + tokened
     return f"""
-        WITH {_pool_sql("polymarket", window)}
+        WITH {_pool_sql("polymarket", window, held)}
         SELECT fm.id, {GAMMA_EVENT_ID_EXPR} AS gamma_event_id, fo.id, fo.external_id
           FROM pool
           JOIN futures_markets fm ON fm.id = pool.id
@@ -522,17 +545,19 @@ async def load_population(session, venue: str, *, now_mono: float) -> list[Unit]
     cached = _POPULATION.get(venue)
     if cached is not None and now_mono - cached[0] < POPULATION_TTL_S:
         return cached[1]
+    held = held_arm_enabled()
     if venue == "kalshi":
-        sql = kalshi_population_sql(_kalshi_open_arm())
+        sql = kalshi_population_sql(_kalshi_open_arm(), held)
     else:
         sql = polymarket_population_sql(
-            _polymarket_open_arm(), _polymarket_open_scope()
+            _polymarket_open_arm(), _polymarket_open_scope(), held
         )
+    # Both signals read Redis synchronously; off the loop the other venue's
+    # pass and its ``wait_for`` timers never wait behind a stall.
+    shown = await asyncio.to_thread(shown_market_ids)
+    presence = await asyncio.to_thread(held_presence) if held else None
     rows = (
-        await session.execute(
-            text(sql),
-            population_binds(shown_market_ids(), held_presence()),
-        )
+        await session.execute(text(sql), population_binds(shown, presence))
     ).fetchall()
     units = build_units(venue, rows)
     _POPULATION[venue] = (now_mono, units)
