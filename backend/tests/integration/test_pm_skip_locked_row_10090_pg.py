@@ -44,7 +44,9 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
+from sqlalchemy import (
+    Column, DateTime, Integer, MetaData, Numeric, Table, insert, text,
+)
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
@@ -394,16 +396,26 @@ async def writer_db():
             await engine.dispose()
 
 
+#: The private schema's table, as Core (no raw INSERT in a `*_pg.py` gate:
+#: `test_pg_gate_seed_completeness`). Only the columns created above.
+_PRIVATE_OUTCOMES = Table(
+    "futures_outcomes", MetaData(),
+    Column("id", Integer, primary_key=True),
+    Column("market_id", Integer, nullable=False),
+    Column("current_probability", Numeric(7, 6)),
+    Column("rank", Integer),
+    Column("last_updated", DateTime(timezone=True), nullable=False),
+    Column("price_changed_at", DateTime(timezone=True)),
+)
+
+
 async def _seed(engine, rows):
     async with engine.begin() as connection:
         await connection.execute(
-            text(
-                "INSERT INTO futures_outcomes "
-                "(id, market_id, current_probability, rank, last_updated, price_changed_at) "
-                "VALUES (:id, :market, :price, :rank, :before, :before)"
-            ),
+            insert(_PRIVATE_OUTCOMES),
             [
-                {"id": oid, "market": market, "price": price, "rank": rank, "before": BEFORE}
+                {"id": oid, "market_id": market, "current_probability": price,
+                 "rank": rank, "last_updated": BEFORE, "price_changed_at": BEFORE}
                 for oid, market, price, rank in rows
             ],
         )
