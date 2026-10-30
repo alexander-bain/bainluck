@@ -11,6 +11,7 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 """
 
 import logging
+import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -11143,6 +11144,58 @@ class _LivePollPopulation:
         return cls([], {}, {}, {}, {}, set())
 
 
+#: How far ahead a `scheduled` event's KALSHI markets join the 2-minute poll.
+#: Not a setting: the Kalshi arm is one REST call per market, and its load is
+#: not what #10090's decision L moved.
+_LIVE_POLL_KALSHI_UPCOMING_HOURS = 3
+
+#: The POLYMARKET arm's window, and its bounds when the env is set.
+LIVE_POLL_PM_UPCOMING_HOURS_DEFAULT = 3
+LIVE_POLL_PM_UPCOMING_HOURS_MIN = 1
+LIVE_POLL_PM_UPCOMING_HOURS_MAX = 12
+
+
+def _live_poll_pm_upcoming_hours_env() -> int:
+    """#10090 — env `LIVE_POLL_PM_UPCOMING_HOURS`, read once at import.
+
+    Missing or blank is the default, 3 (the window as it always was, and the
+    Kalshi arm's). A whole number is clamped to 1..12 with one warning when it
+    moves; anything else is the default with one warning.
+
+    Decision L (Alex, 2026-10-30, ALEX-DECISIONS item 42) narrows the
+    Polymarket socket to live + 3 h (`PM_WS_UPCOMING_HOURS`) and stretches THIS
+    window to 6 h, so a game 3-6 h out is priced by the 2-minute poll rather
+    than by the hourly one. The two are set together; neither alone is L.
+
+    A changed value reaches the beat on RESTART ONLY. The poll runs on the main
+    app's `realtime` worker, and a Heroku config change restarts it.
+    """
+    raw = os.environ.get("LIVE_POLL_PM_UPCOMING_HOURS")
+    if raw is None or not raw.strip():
+        return LIVE_POLL_PM_UPCOMING_HOURS_DEFAULT
+    try:
+        hours = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "live poll: LIVE_POLL_PM_UPCOMING_HOURS=%r is not a whole number of "
+            "hours; using %d", raw, LIVE_POLL_PM_UPCOMING_HOURS_DEFAULT,
+        )
+        return LIVE_POLL_PM_UPCOMING_HOURS_DEFAULT
+    clamped = min(
+        max(hours, LIVE_POLL_PM_UPCOMING_HOURS_MIN), LIVE_POLL_PM_UPCOMING_HOURS_MAX
+    )
+    if clamped != hours:
+        logger.warning(
+            "live poll: LIVE_POLL_PM_UPCOMING_HOURS=%r is outside %d..%d; using %d",
+            raw, LIVE_POLL_PM_UPCOMING_HOURS_MIN, LIVE_POLL_PM_UPCOMING_HOURS_MAX,
+            clamped,
+        )
+    return clamped
+
+
+LIVE_POLL_PM_UPCOMING_HOURS = _live_poll_pm_upcoming_hours_env()
+
+
 async def _load_live_poll_population(session, now) -> _LivePollPopulation:
     """Read the beat's linked markets, their events, and their outcomes.
 
@@ -11152,11 +11205,13 @@ async def _load_live_poll_population(session, now) -> _LivePollPopulation:
     """
     from app.models.models import Event, FuturesMarket, FuturesOutcome
 
-    # Live events OR events starting within 3 hours. Pre-game prop prices
-    # undergo price discovery in the hours before game time — polling only live
-    # events misses this entirely and leaves props with 1-2 snapshots from the
-    # 2h full-poll interval.
-    upcoming_cutoff = now + timedelta(hours=3)
+    # Live events OR events starting soon. Pre-game prop prices undergo price
+    # discovery in the hours before game time — polling only live events misses
+    # this entirely and leaves props with 1-2 snapshots from the 2h full-poll
+    # interval. "Soon" is per venue since #10090: Kalshi 3 h, Polymarket
+    # `LIVE_POLL_PM_UPCOMING_HOURS` (default 3, so the default is the old read).
+    kalshi_upcoming_cutoff = now + timedelta(hours=_LIVE_POLL_KALSHI_UPCOMING_HOURS)
+    polymarket_upcoming_cutoff = now + timedelta(hours=LIVE_POLL_PM_UPCOMING_HOURS)
     result = await session.execute(
         select(FuturesMarket, Event)
         .join(Event, FuturesMarket.event_id == Event.id)
@@ -11168,8 +11223,17 @@ async def _load_live_poll_population(session, now) -> _LivePollPopulation:
                 and_(
                     Event.status == "scheduled",
                     Event.commence_time.isnot(None),
-                    Event.commence_time <= upcoming_cutoff,
                     Event.commence_time > now,
+                    or_(
+                        and_(
+                            FuturesMarket.source == "kalshi",
+                            Event.commence_time <= kalshi_upcoming_cutoff,
+                        ),
+                        and_(
+                            FuturesMarket.source == "polymarket",
+                            Event.commence_time <= polymarket_upcoming_cutoff,
+                        ),
+                    ),
                 ),
             ),
         )
