@@ -530,6 +530,14 @@ class _PMStampOwner:
 #: reach an unrelated game through a full queue.
 PM_BRIDGE_QUEUE_LIMIT = 2
 
+#: #10090: a queued pre-game bridged cohort that has waited this long is the
+#: next one written, ahead of live cohorts. Live cohorts lead the queue, so
+#: without this a live stream at or above the writer's throughput left a
+#: pre-game event's price (and the withdrawal waiting with it) unwritten for
+#: as long as the load lasted (lane1, #11769 review). Two 0.25 s game flushes;
+#: a live cohort then waits at most one pre-game write (<=0.28 s measured).
+PM_PREGAME_BRIDGE_MAX_WAIT_S = 0.5
+
 
 def _bridged_side_first_env() -> bool:
     """#10090 — env `PM_BRIDGED_SIDE_FIRST`, read once at import.
@@ -716,10 +724,11 @@ class _PMBridgeWriter:
     work (`take_completed`) that the next game flush stamps through the one
     existing stamp owner, before this writer waits for the cohort's market
     notification. A cohort of live events (``live``) leads the queue and takes
-    the side connection's first turn; it is still this one serial writer, and
-    each cohort reads its prices from the buffer only once it holds the turn,
-    so no outcome is ever written by two writers or with an older value after
-    a newer one.
+    the side connection's first turn, though never past a pre-game cohort that
+    has waited ``PM_PREGAME_BRIDGE_MAX_WAIT_S``; it is still this one serial
+    writer, and each cohort reads its prices from the buffer only once it holds
+    the turn, so no outcome is ever written by two writers or with an older
+    value after a newer one.
 
     ``reserved`` — events a queued or running cohort may still write or
     notify: game writes and withdrawals skip them, and no newer cohort of the
@@ -770,14 +779,25 @@ class _PMBridgeWriter:
         return self.task is not None and not self.task.done()
 
     def accepting(self, live: bool = False) -> bool:
-        """Room for one more cohort. A live cohort counts only the live ones
-        outstanding against the bound, so pre-game cohorts never keep it out."""
+        """Room for one more cohort. Live and pre-game cohorts each count only
+        their own kind outstanding against the bound (at most twice the bound
+        in all), so neither kind keeps the other out."""
         if time.monotonic() < self.hold_until:
             return False
         outstanding = [queued[2] for queued in self.queue]
         if self._entry is not None:
             outstanding.append(self._entry["live"])
-        return (sum(outstanding) if live else len(outstanding)) < PM_BRIDGE_QUEUE_LIMIT
+        mine = sum(1 for is_live in outstanding if is_live == bool(live))
+        return mine < PM_BRIDGE_QUEUE_LIMIT
+
+    def _next_index(self, now: float) -> int:
+        """The queued cohort to write next: the head (a live cohort when one is
+        queued), unless the oldest pre-game cohort has waited
+        ``PM_PREGAME_BRIDGE_MAX_WAIT_S`` — so a live stream cannot starve it."""
+        for index, (_ids, _events, live, offered) in enumerate(self.queue):
+            if not live:
+                return index if now - offered >= PM_PREGAME_BRIDGE_MAX_WAIT_S else 0
+        return 0
 
     def offer(
         self, ids, events, *, write, publish,
@@ -856,9 +876,10 @@ class _PMBridgeWriter:
         turn = getattr(side_writer, "turn", None)
         while self.queue:
             # #10090: the turn is taken BEFORE the cohort is chosen, so a live
-            # cohort offered during the wait is the one written next, and its
-            # offer moves a plain wait to the first turn. A live cohort leads
-            # the queue, so its head says whether one is waiting.
+            # cohort offered during the wait is the one written next (unless a
+            # pre-game cohort has waited past its bound, `_next_index`), and
+            # its offer moves a plain wait to the first turn. A live cohort
+            # leads the queue, so its head says whether one is waiting.
             go_first = PM_BRIDGED_SIDE_FIRST or self.queue[0][2]
             entry = None
             publishing = None
@@ -868,7 +889,7 @@ class _PMBridgeWriter:
                 async with turn(go_first, ticket) if turn is not None else side_writer:
                     self._asking = None
                     took = time.monotonic()
-                    ids, events, live, offered = self.queue.pop(0)
+                    ids, events, live, offered = self.queue.pop(self._next_index(took))
                     entry = self._entry = {
                         "events": events, "committed": None, "marks": {},
                         "exposed": False, "live": live,
