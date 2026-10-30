@@ -2548,6 +2548,34 @@ def poll_venue_prices_30s(self):
         return _tracked_run("venue_poll_30s", poll_venue_prices(venues))
 
 
+@celery_app.task(
+    bind=True,
+    name="app.tasks.poll_venue_prices_tail",
+    soft_time_limit=170,
+    time_limit=180,
+)
+def poll_venue_prices_tail(self):
+    """#10090 — the Polymarket long tail off CLOB token books, every 3 minutes.
+
+    Off unless ``VENUE_POLL_TAIL_ENABLED`` is ``shadow`` or on; off, the task
+    body returns before it touches Redis or the database. Its own task and
+    lease, never part of the 30-second poll. See
+    :mod:`app.tasks.venue_poll_pm_tail`.
+    """
+    from app.tasks.venue_poll_pm_tail import LEASE_TTL_S, MODE_OFF, poll_tail, tail_mode
+    from app.utils.single_flight import single_flight
+
+    mode = tail_mode()
+    if mode == MODE_OFF:
+        return {"status": "disabled", "terminal": "complete"}
+    with single_flight(
+        "app.tasks.poll_venue_prices_tail", ttl_seconds=LEASE_TTL_S
+    ) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run("venue_poll_tail", poll_tail(mode))
+
+
 @celery_app.task(bind=True, name="app.tasks.backfill_polymarket_win_prob")
 def backfill_polymarket_win_prob(self, market_id: int, event_id: int):
     """Backfill win_prob_snapshots from Polymarket CLOB price history."""
@@ -7662,6 +7690,17 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.poll_venue_prices_30s",
         "schedule": 30.0,
         "options": {"expires": 30},
+    },
+    # #10090 — the Polymarket long tail (open tokened markets the socket does
+    # not carry under its scope) off CLOB token books. Dark unless
+    # `VENUE_POLL_TAIL_ENABLED` is `shadow` or on — read on bainluck-heavy,
+    # which runs this queue. `heavy`, not `realtime`: a tail pass must never
+    # take a slot from the live queue. Every 3 minutes, so its expiry is the
+    # heavy floor (`apply_heavy_beat_expires`); its lease declines a lapping run.
+    "poll-venue-prices-tail": {
+        "task": "app.tasks.poll_venue_prices_tail",
+        "schedule": crontab(minute="*/3"),
+        "options": {"queue": "heavy"},
     },
     "sync-mlb-win-probability": {
         "task": "app.tasks.sync_mlb_win_probability",
