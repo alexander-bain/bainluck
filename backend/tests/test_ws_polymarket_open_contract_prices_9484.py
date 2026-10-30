@@ -755,7 +755,8 @@ class _Session:
             if stmt.table.name == "futures_outcomes" and any(
                 getattr(c, "key", c) == "current_probability" for c in stmt._values
             ):
-                return self.sync_session.execute(stmt)
+                # #10090 C: the price statement is a reused shape plus its binds.
+                return self.sync_session.execute(stmt, *_a, **_kw)
             self._rig.other_updates.append(stmt)
             return _Replayed([], rowcount=0)
         if isinstance(stmt, Select) and "win_probability_sources" in sql:
@@ -1444,7 +1445,7 @@ class _HeldUpdate:
                 if (
                     isinstance(stmt, Update)
                     and stmt.table.name == "futures_outcomes"
-                    and held.outcome_id in dict(price_writes(stmt))
+                    and held.outcome_id in dict(price_writes(stmt, *a[:1]))
                     and not held.blocked.is_set()
                 ):
                     held.blocked.set()

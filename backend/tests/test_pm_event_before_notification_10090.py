@@ -79,7 +79,10 @@ def committed_rig(*, fail_commit=False, hold_cleanup=False):
         get_task_session=session,
         blend_refresher=Refresher(),
         _PMPriceWriteResult=_PMPriceWriteResult,
-        chunk_price_update_stmt=lambda chunk, **kw: ("prices", chunk),
+        chunk_price_update_execution=lambda chunk, **kw: (("prices", chunk), {}),
+        pm_rerank_market_fields_execution=lambda ids: (
+            r.ns["rerank_market_fields_stmt"](ids), {}
+        ),
     )
     # Execute the actual writer as well as the actual game-flush implementation.
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["write_chunk"], r.ns)

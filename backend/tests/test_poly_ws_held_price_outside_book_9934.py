@@ -209,7 +209,7 @@ def _granted_withdrawal_owner(monkeypatch):
             return rig._Result([])
         if "pg_current_xact_id()" in str(stmt):
             return SimpleNamespace(scalar_one=lambda: "1")
-        return await execute(self, stmt)
+        return await execute(self, stmt, params)  # #10090 C: the price shape's binds
 
     monkeypatch.setattr(rig._Session, "execute", _execute)
 

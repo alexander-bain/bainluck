@@ -262,14 +262,14 @@ class _Session:
         self._meta_writes = meta_writes
         self._scenario = scenario
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, binds=None):
         if isinstance(stmt, Update):
             params = stmt.compile(dialect=postgresql.dialect()).params
             if (
                 stmt.table.name == "futures_outcomes"
-                and price_writes(stmt)
+                and price_writes(stmt, binds)
             ):
-                self._writes.extend(price_writes(stmt))
+                self._writes.extend(price_writes(stmt, binds))
             elif stmt.table.name == "futures_markets":
                 self._meta_writes.append(params["id_1"])
             return _Result([])
