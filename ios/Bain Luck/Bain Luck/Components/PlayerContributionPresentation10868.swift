@@ -2833,8 +2833,10 @@ struct PlayerDuelValuePresentation10868: View {
 
     @ViewBuilder private func observationLines(_ observation: PlayerDuelValueObservation10868) -> some View {
         Text(observation.time).font(.footnote).foregroundStyle(DS.textSecondary)
-        if let source = observation.source {
-            Text(source).font(.caption2).foregroundStyle(DS.textSecondary)
+        // The owner's source WORDS ("traded minute close"), never a raw venue
+        // key: printed as given (#4135 names venues only through SourceLabels).
+        if let words = observation.source {
+            Text(words).font(.caption2).foregroundStyle(DS.textSecondary)
         }
     }
 

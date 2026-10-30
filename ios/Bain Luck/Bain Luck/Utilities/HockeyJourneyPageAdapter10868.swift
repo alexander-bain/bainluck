@@ -362,8 +362,12 @@ enum HockeyJourneyPageAdapter10868 {
             if event.startIsTbd == true { return ("Before game · start time to be announced", dayWords(start, host: host)) }
             return ("Before game · \(timeWords(start, host: host)) start", dayWords(start, host: host))
         case .live:
-            let state = PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock)
-                ?? (EventState.isSuspended(event.status) ? "Play suspended" : "Live")
+            // A started suspended game wears the app's one suspended treatment
+            // (`StatusBadge`'s order and words, #4021/#9208), never a stoppage
+            // this file names for itself.
+            let state = EventState.isSuspendedAndStarted(event.status, commenceTime: start, now: host.now)
+                ? EventState.suspendedLabel(authorityPeriod: event.espn?.period)
+                : PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock) ?? "Live"
             // ESPN's period and clock carry no observation time of their own, and a
             // held newer score (`LiveEventScoreReconciliation`) replaces only the
             // score tuple and its clock — so the state is never dated by the score's

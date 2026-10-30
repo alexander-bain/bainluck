@@ -260,7 +260,7 @@ enum HockeyJourneyContributionAdapter10868 {
                   QuestionCatalog9483.lineSide(QuestionCatalog9483.row(prop)) == .over
             else { continue }
             let market = prop.marketName.trimmingCharacters(in: .whitespaces)
-            let source = prop.source ?? ""
+            let source = venueKey(prop)
             let key = [id, market, source].joined(separator: "\u{1F}")
             if groups[key] == nil {
                 order.append(key)
@@ -307,7 +307,15 @@ enum HockeyJourneyContributionAdapter10868 {
     }
 
     static func milestoneID(_ prop: GameMarketPlayerProp) -> String {
-        "\(prop.source ?? "")|\(prop.id)"
+        "\(venueKey(prop))|\(prop.id)"
+    }
+
+    /// The venue half of an identity key: the served source key, or empty.
+    /// A key only — a venue is named to the reader through `SourceLabels`
+    /// (#4135), never through this.
+    static func venueKey(_ prop: GameMarketPlayerProp) -> String {
+        guard let venue = prop.source else { return "" }
+        return venue
     }
 
     private static func isStat(_ stat: Stat, _ prop: GameMarketPlayerProp, subject: String,

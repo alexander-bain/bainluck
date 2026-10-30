@@ -191,8 +191,7 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
                     // First screen inside real chrome.
                     let window = UIWindow(frame: CGRect(origin: .zero, size: screen))
                     window.overrideUserInterfaceStyle = style
-                    let host = UIHostingController(rootView: chrome(page(plain, mode: .page))
-                        .environment(\.dynamicTypeSize, size))
+                    let host = hostForMeasurement(chrome(page(plain, mode: .page)), at: size)
                     window.rootViewController = host
                     window.makeKeyAndVisible()
                     host.view.setNeedsLayout()
