@@ -242,14 +242,16 @@ struct MarketChanceMovementTrack10238: View {
     /// The zero-based scale: the smallest of 0–25%, 0–50% and 0–100% that holds
     /// BOTH raw probabilities. It picks a scale; it never moves a value.
     nonisolated enum TrackDomain: Equatable, CaseIterable {
-        case quarter
+        /// 0–25%. A scale, deliberately not spelled like a game period: the
+        /// period-label guard reads period words anywhere in app code.
+        case low
         case half
         case whole
 
         /// The top of the scale, in whole percent.
         var upperPercent: Int {
             switch self {
-            case .quarter: return 25
+            case .low: return 25
             case .half: return 50
             case .whole: return 100
             }

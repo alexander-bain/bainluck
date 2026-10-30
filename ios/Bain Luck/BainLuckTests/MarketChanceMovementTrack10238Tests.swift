@@ -238,9 +238,9 @@ final class MarketChanceMovementTrack10238Tests: XCTestCase {
 
     func testScaleIsTheSmallestZeroBasedRangeHoldingBothValues() {
         let d = Track.TrackDomain.self
-        XCTAssertEqual(d.smallest(containing: 0.11, 0.16), .quarter)
-        XCTAssertEqual(d.smallest(containing: 0, 0), .quarter)
-        XCTAssertEqual(d.smallest(containing: 0.25, 0.1), .quarter, "an exact top is inside")
+        XCTAssertEqual(d.smallest(containing: 0.11, 0.16), .low)
+        XCTAssertEqual(d.smallest(containing: 0, 0), .low)
+        XCTAssertEqual(d.smallest(containing: 0.25, 0.1), .low, "an exact top is inside")
         XCTAssertEqual(d.smallest(containing: 0.2501, 0.1), .half)
         // Either value can be the larger one: a fall from 45% needs the half scale.
         XCTAssertEqual(d.smallest(containing: 0.45, 0.05), .half)
@@ -271,14 +271,14 @@ final class MarketChanceMovementTrack10238Tests: XCTestCase {
     }
 
     func testTicksDescribeEachScaleAndCompactKeepsBothEnds() {
-        XCTAssertEqual(Track.TrackDomain.quarter.tickPercents, [0, 5, 10, 15, 20, 25])
+        XCTAssertEqual(Track.TrackDomain.low.tickPercents, [0, 5, 10, 15, 20, 25])
         XCTAssertEqual(Track.TrackDomain.half.tickPercents, [0, 10, 20, 30, 40, 50])
         XCTAssertEqual(Track.TrackDomain.whole.tickPercents, [0, 20, 40, 60, 80, 100])
         XCTAssertEqual(Track.TrackDomain.tickLabel(0), "0%", "a scale label, not the <1% quote guard")
         XCTAssertEqual(Track.TrackDomain.tickLabel(25), "25%")
         let g = Track.TrackGeometry.self
-        XCTAssertEqual(g.labelledTickPercents(.quarter, width: 360, compact: false), [0, 5, 10, 15, 20, 25])
-        XCTAssertEqual(g.labelledTickPercents(.quarter, width: 360, compact: true), [0, 25])
+        XCTAssertEqual(g.labelledTickPercents(.low, width: 360, compact: false), [0, 5, 10, 15, 20, 25])
+        XCTAssertEqual(g.labelledTickPercents(.low, width: 360, compact: true), [0, 25])
         XCTAssertEqual(g.labelledTickPercents(.half, width: 200, compact: false), [0, 50])
         XCTAssertEqual(g.labelledTickPercents(.whole, width: 200, compact: true), [0, 100])
     }
@@ -293,7 +293,7 @@ final class MarketChanceMovementTrack10238Tests: XCTestCase {
         XCTAssertEqual([r.pregame.text, r.later.text], ["11%", "16%"])
         XCTAssertEqual(r.change.text, "Up 5.0 percentage points since pregame")
         let domain = try XCTUnwrap(r.domain)
-        XCTAssertEqual(domain, .quarter, "11 → 16 is never drawn on 0–100")
+        XCTAssertEqual(domain, .low, "11 → 16 is never drawn on 0–100")
         let g = Track.TrackGeometry.self
         let width = g.maxWidth
         let usable = width - 2 * g.inset
