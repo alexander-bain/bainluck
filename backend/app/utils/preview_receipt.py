@@ -40,18 +40,26 @@ its meaning so earlier lines stay comparable):
   for that event; ``live_moved_*`` — both, the population a live-game reader
   waits on. Each: ``_measured`` and p50/p90/p99/max in ms; ``live_moved_worst``
   up to three ``event:ms``. Pre-game, suspended, first and repeat blends are
-  counted above, never dropped.
+  counted above, never dropped;
+* ``live_moved_late`` — live, moved blends whose charge was purged as older
+  than ``PREVIEW_RECEIPT_AWAIT_S`` (also in ``unpreviewed``; never timed).
+  Marks purged at the minute close had no blend and stay unclassified.
 
 ATTRIBUTION. A published blend for an event is charged to the newest committed
 revision of that event not yet charged, at most once. A blend composed before
 a newer revision was noted is charged to the newer one (understates). A
 revision already older than ``PREVIEW_RECEIPT_AWAIT_S`` when a blend would
 charge it is purged as ``unpreviewed`` instead, so no charge exceeds it. A
-moved value is charged to the oldest revision still awaiting, which may be a
-repeat or another outcome of the event: ``moved_*`` bounds the reader's wait
-from above, it does not identify the input that moved the blend. Counters
-read at the close are those up to the closing flush, at most one flush past the
-boundary.
+moved value is charged to the newest committed input of the event (any
+outcome, repeats included). It understates when an earlier input moved the
+value and a newer one replaced it before the blend published; it overstates
+only when the move came from an input not yet noted (the other arm). So
+``moved_*`` is neither bound on the reader's wait, and it does not identify
+the input that moved the blend. A live, moved blend whose charge is purged
+counts in ``live_moved_late`` (and ``unpreviewed``), so a wait pushed past
+``PREVIEW_RECEIPT_AWAIT_S`` never reads as a lower ``live_moved_max``.
+Counters read at the close are those up to the closing flush, at most one
+flush past the boundary.
 
 VOLUME. One fixed-size line per arm per minute the refresher flushed in — a
 ZERO line when nothing happened, so a missing line means nothing rolled it (no
@@ -100,7 +108,7 @@ PREVIEW_RECEIPT_FORMAT = (
     "live_measured=%d live_p50_ms=%s live_p90_ms=%s live_p99_ms=%s live_max_ms=%s "
     "moved_measured=%d moved_p50_ms=%s moved_p90_ms=%s moved_p99_ms=%s moved_max_ms=%s "
     "live_moved_measured=%d live_moved_p50_ms=%s live_moved_p90_ms=%s "
-    "live_moved_p99_ms=%s live_moved_max_ms=%s live_moved_worst=%s"
+    "live_moved_p99_ms=%s live_moved_max_ms=%s live_moved_worst=%s live_moved_late=%d"
 )
 
 
@@ -190,7 +198,7 @@ class PreviewReceipt:
         self._samples: list[tuple[float, int]] = []
         self._dropped = 0
         self._max: Optional[tuple[float, int]] = None
-        self._purged = self._first = self._repeat = 0
+        self._purged = self._first = self._repeat = self._live_moved_late = 0
         self._live, self._moved, self._live_moved = _Subset(), _Subset(), _Subset()
 
     # ── the refresher's side ─────────────────────────────────────────────────
@@ -229,8 +237,11 @@ class PreviewReceipt:
         if mark is None:
             return
         latency = max(0.0, now - mark.recv_mono)
+        live = frame.get("status") == "live"
+        moved = known and value is not None and before is not None and value != before
         if latency > PREVIEW_RECEIPT_AWAIT_S:
             self._purged += 1  # no blend carried it in time: unpreviewed
+            self._live_moved_late += live and moved
             return
         self._measured += 1
         if self._max is None or latency > self._max[0]:
@@ -239,8 +250,6 @@ class PreviewReceipt:
             self._samples.append((latency, event_id))
         else:
             self._dropped += 1
-        live = frame.get("status") == "live"
-        moved = known and value is not None and before is not None and value != before
         if not known:
             self._first += 1
         elif not moved:
@@ -306,6 +315,7 @@ class PreviewReceipt:
             self._first, self._repeat,
             *self._live.fields(), *self._moved.fields(), *self._live_moved.fields(),
             _worst(self._live_moved.samples, self._live_moved.top),
+            self._live_moved_late,
         )
         self.lines += 1
         self._reset()
