@@ -1629,7 +1629,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     prices.stamping.done() or final_drain
                 ):
                     await prices.join_stamp(blend_refresher)
-                if prices.stamping is None:
+                if prices.stamping is not None:
+                    # #10090 (Argon Rank 2), as Polymarket's quiet flush does:
+                    # while it admits, the running call's door takes the due
+                    # debt now (a live game's throttled price first), instead
+                    # of that debt waiting for the call to return.
+                    admit = getattr(blend_refresher, "admit_fresh", None)
+                    if admit is not None and not final_drain:
+                        admit((), flush_started=flush_started,
+                              defer_event_ids=() if beside is None else beside[1])
+                else:
                     owed = blend_refresher.pending_event_ids()
                     if owed and beside is None:
                         prices.flush_work += 1  # owed stamps are actual work
