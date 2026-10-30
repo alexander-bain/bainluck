@@ -873,6 +873,9 @@ class TailReceipts:
         from app.utils.reader_trail import ReaderTrail
 
         self._trail = ReaderTrail()
+        #: Outcome-id sets the arm keeps IN PLACE that the headline read leaves
+        #: out (props, non-blend series): their inputs never join the trail.
+        self.trail_excluded: tuple = ()
         #: The frame value each live event's in-flight stamp publishes, by
         #: revision; taken by `_note_stamp` once that stamp committed.
         self._stamp_frames: dict[int, tuple] = {}
@@ -966,7 +969,10 @@ class TailReceipts:
             mark.event_id, deque(maxlen=DELIVERY_RECEIPT_MAX_PENDING)
         ).append((mark.seq, mark.recv_wall))
         # Last: the trail is the newest receipt, and never costs the others.
-        self._trail.note_input(mark, prior is None or prior != mark.probability)
+        headline = not any(mark.outcome_id in ids for ids in self.trail_excluded)
+        self._trail.note_input(
+            mark, headline and (prior is None or prior != mark.probability),
+        )
 
     def _note_stamp(self, event_id: int, disposition: tuple) -> None:
         """A committed stamp: the published `rev`, its `stamped_at` (the SSE

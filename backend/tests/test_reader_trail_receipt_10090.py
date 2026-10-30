@@ -258,6 +258,103 @@ def test_the_refresher_forwards_committed_rows_and_preview_sends(clock):
     assert m1.seq == 1
 
 
+# ── R1 (lane1 review of 07cc2dd3): only headline inputs join the trail ───────
+# `event_id_by_outcome` maps a live game's prop-board and non-blend outcomes to
+# the game too, so without the arm's exclusion sets a prop's receipt became the
+# `first_new_recv` of the next headline publication (0.0 s here, not 5.0 s).
+
+PROP = 777  # a prop-board / non-blend outcome linked to the same live game
+
+
+def _excl(r):
+    r.trail_excluded = (set(), {PROP})
+    return r
+
+
+def test_R1_prop_excluded_preview(clock, caplog):
+    r = _excl(_receipts())
+    _input(r, clock, 0.0, PROP, 0.30)
+    _commit(r, (PROP, 0.30))
+    _input(r, clock, 5.0, A, 0.55)
+    _commit(r, (A, 0.55))
+    _preview(r, clock, 5.2, 0.62, seq=7)
+    (pv,) = _previews(_close(r, caplog))
+    assert pv[2] == _iso(5.0), pv
+
+
+def test_R1_prop_excluded_stamp(clock, caplog):
+    r = _excl(_receipts())
+    _input(r, clock, 0.0, PROP, 0.30)
+    m = _input(r, clock, 5.0, A, 0.55)
+    _stamp(r, clock, 5.3, 0.62, 101, m)
+    (st,) = _stamps(_close(r, caplog))
+    assert st[5] == _iso(5.0) and st[4] == "2", st  # covered count unchanged
+
+
+def test_R1_in_place_set_is_read_live(clock, caplog):
+    aux = set()
+    r = _receipts(); r.trail_excluded = (aux,)
+    aux.add(PROP)  # a re-scope fills the arm's set in place
+    _input(r, clock, 0.0, PROP, 0.30)
+    m = _input(r, clock, 5.0, A, 0.55)
+    _stamp(r, clock, 5.3, 0.62, 101, m)
+    (st,) = _stamps(_close(r, caplog))
+    assert st[5] == _iso(5.0), st
+
+
+def _arm_wiring(path, consumer):
+    """The `tail_receipts.trail_excluded` tuple of an arm's consumer, and every
+    binding of a name it holds anywhere in that consumer (nested functions
+    included): bound ONCE means the tuple holds the very set objects the
+    re-scope refills in place."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / path).read_text())
+    (fn,) = [n for n in ast.walk(tree)
+             if isinstance(n, ast.AsyncFunctionDef) and n.name == consumer]
+    (wired,) = [n for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Attribute) and t.attr == "trail_excluded"
+                        and isinstance(t.value, ast.Name) and t.value.id == "tail_receipts"
+                        for t in n.targets)]
+    assert isinstance(wired.value, ast.Tuple)
+    names = [e.id for e in wired.value.elts]
+    bindings = {name: [] for name in names}
+    for node in ast.walk(fn):
+        if isinstance(node, (ast.Nonlocal, ast.Global)):
+            assert not set(node.names) & set(names), node.names
+        targets = (node.targets if isinstance(node, ast.Assign)
+                   else [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign,
+                                                           ast.For, ast.AsyncFor,
+                                                           ast.comprehension, ast.NamedExpr))
+                   else [])
+        for target in targets:
+            for leaf in ast.walk(target):
+                if isinstance(leaf, ast.Name) and leaf.id in bindings:
+                    bindings[leaf.id].append(leaf.lineno)
+    for name, lines in bindings.items():
+        assert len(lines) == 1 and lines[0] < wired.lineno, (name, lines, wired.lineno)
+    return names
+
+
+def test_R1_kalshi_arm_wires_its_live_exclusion_sets():
+    # `headline_aux_outcome_ids` IS `prices.headline_aux_outcome_ids`; both
+    # sets are refilled with clear()/update() on a re-scope, never rebound.
+    assert _arm_wiring("app/tasks/kalshi_ws.py", "_run_kalshi_ws_consumer") == [
+        "headline_aux_outcome_ids", "non_blend_outcome_ids",
+    ]
+
+
+def test_R1_polymarket_arm_wires_its_live_non_blend_set():
+    # `open_outcome_ids` stays OUT: a bridged open leg is its own game-winner
+    # market's leg (`open_contract_event_candidates`), which `_read_groups`
+    # reads by `FuturesMarket.event_id`; an unbridged one has no event and
+    # never reaches the trail. Only venue refusals are left out of that read.
+    assert _arm_wiring("app/tasks/polymarket_ws.py", "_run_polymarket_ws_consumer") == [
+        "non_blend_outcome_ids",
+    ]
+
+
 # ── field 2: previews= in the minute receipt ─────────────────────────────────
 
 

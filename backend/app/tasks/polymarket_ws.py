@@ -3683,6 +3683,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # entry per subscribed outcome) and holds the mark of the buffered value.
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
+    # #10090 R1: venue-refused props never join the trail (the live set,
+    # refilled in place on a re-slate). Bridged open legs stay: each is its
+    # own game-winner market's leg, which the headline read includes.
+    tail_receipts.trail_excluded = (non_blend_outcome_ids,)
     # #10090 stage trace: OFF unless 1-4 events (a fold's members), their
     # explicit outcomes and an absolute expiry <=600 s away are configured
     # (`app/utils/pm_stage_trace.py`).

@@ -1460,6 +1460,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # published revision carried it. Keyed like `price_buffer`.
     tail_receipts = TailReceipts("kalshi")
     blend_refresher.receipts = tail_receipts
+    # #10090 R1: inputs the headline read leaves out never join the trail.
+    # The live set objects, so a re-scope's in-place refill is read.
+    tail_receipts.trail_excluded = (headline_aux_outcome_ids, non_blend_outcome_ids)
     # #10702: disabled without exact targets AND a short absolute expiry.
     # One budget for this run, including its existing open-contract sockets.
     if exact_trace is not None:
