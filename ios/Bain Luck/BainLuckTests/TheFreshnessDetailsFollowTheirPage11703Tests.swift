@@ -195,7 +195,14 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         _ = try onScreenText(window, "first-page-details-open")
 
         router.path.append(Self.second)
-        await settle(host, timeout: 1.5) { router.path.count == 1 && host.presentedViewController == nil }
+        print("DIAG11703S push t=\(CACurrentMediaTime()) presented=\(host.presentedViewController.map { String(describing: ObjectIdentifier($0)) } ?? "nil")")
+        var seen = host.presentedViewController.map(ObjectIdentifier.init)
+        await settle(host, timeout: 1.5) {
+            let now = host.presentedViewController.map(ObjectIdentifier.init)
+            if now != seen { print("DIAG11703S presentedChanged t=\(CACurrentMediaTime()) to=\(now.map { String(describing: $0) } ?? "nil")"); seen = now }
+            return router.path.count == 1 && host.presentedViewController == nil
+        }
+        print("DIAG11703S settled t=\(CACurrentMediaTime()) presented=\(host.presentedViewController.map { String(describing: ObjectIdentifier($0)) } ?? "nil")")
         let leftOver = host.presentedViewController
         _ = try onScreenText(window, "after-link-to-second-game")
         XCTAssertNil(leftOver,
@@ -216,7 +223,15 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         // (its `onDisappear`); it must not take the second game's details
         // with it.
         let secondDetails = host.presentedViewController
-        await settle(host, timeout: 6)
+        let started = Date()
+        print("DIAG11703S secondDetails=\(secondDetails.map { String(describing: ObjectIdentifier($0)) } ?? "nil")")
+        await settle(host, timeout: 6) {
+            if host.presentedViewController !== secondDetails {
+                print("DIAG11703S secondDetailsChanged after=\(Date().timeIntervalSince(started)) now=\(host.presentedViewController.map { String(describing: ObjectIdentifier($0)) } ?? "nil")")
+                return true
+            }
+            return false
+        }
         XCTAssertTrue(secondDetails != nil && host.presentedViewController === secondDetails,
             "#11703: the second game's details closed on their own after the first page's late close")
     }
