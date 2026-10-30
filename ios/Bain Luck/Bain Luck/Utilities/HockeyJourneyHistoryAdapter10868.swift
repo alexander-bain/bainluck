@@ -60,8 +60,11 @@ import SwiftUI
 ///   - pregame / game   split at `OddsChartView.sinceStartCut` (:1664) — the
 ///                      listed start only when the payload says it is a kick-off
 ///                      — and refused outright when `startIsTbd` says the clock
-///                      is a placeholder. No start ⇒ no history is drawn (the
-///                      owner's plot absence), never a split at a guessed time.
+///                      is a placeholder. No start ⇒ no split, never one at a
+///                      guessed time: the recorded rows still draw, as one
+///                      unsplit history with no last pregame reading, hollow
+///                      mark or guide, and the readout says the start is not
+///                      confirmed (`Words.unconfirmedStart`).
 ///   - guides           `OddsChartView.periodSightings` (:1827), kept only for
 ///                      labels `PeriodLabel.columnLabel` (PeriodLabel.swift:168)
 ///                      admits as a game division (so `Final`, `INT`, `HT` are
@@ -89,6 +92,12 @@ import SwiftUI
 ///   live   — the last pregame row, then the game's rows up to now.
 ///   final  — the last pregame row, then the game's rows up to the game's end,
 ///            without the settlement row.
+///   no confirmed start, any phase — every readable row up to now (a finished
+///            game's end), unsplit. The chart's gap rule still judges in-play
+///            holes from the listed commence, exactly as the production chart
+///            does (`OddsChartView.gameStartDate`, the scheduled commence
+///            whether or not it is a confirmed kickoff): that window only
+///            BREAKS lines, it never splits pregame from game or dates a start.
 /// Where the in-game frame opens is the host's admission and is still owed: it
 /// is the `inGameStart` parameter, defaulting to the screen's last pregame row.
 ///
@@ -159,8 +168,11 @@ enum HockeyJourneyHistoryAdapter10868 {
         static let inspect = "Inspect history"
     }
 
+    /// Offered unavailable until a history details destination exists.
     static let detailsActionID = "history.details"
+    /// The one action the host routes: the full-size history reader.
     static let expandActionID = "history.expand"
+    /// Offered unavailable until an owner-admitted inspection and its held reader exist.
     static let inspectActionID = "history.inspect"
 
     /// The before frame reaches back one day from the listed start.
@@ -176,11 +188,8 @@ enum HockeyJourneyHistoryAdapter10868 {
         let line = Self.line(response)
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)
-        guard let kickoff = Self.kickoff(response, event: event) else {
-            return absence(response, event: event, line: line, phase: phase, tints: tints,
-                           plot: FieldHistoryPlotAbsence10868(title: Words.unconfirmedStart,
-                                                             words: Words.unconfirmedStartWords))
-        }
+        // Nil when the start is not a confirmed kick-off: the readings still draw, unsplit.
+        let kickoff = Self.kickoff(response, event: event)
         let entries = Self.entries(servedRows(response, line: line, sport: event.sport),
                                    removing: removedIndexes(response, event: event, line: line))
         let end: Date = phase == .final
@@ -192,9 +201,11 @@ enum HockeyJourneyHistoryAdapter10868 {
 
         let homeID = seriesID(line: line, eventId: response.eventId, side: .home)
         let awayID = seriesID(line: line, eventId: response.eventId, side: .away)
-        let home = drawn(entries, side: .home, phase: phase, kickoff: kickoff, end: end, now: host.now,
+        let home = drawn(entries, side: .home, phase: phase, kickoff: kickoff,
+                         gapStart: event.commenceTime?.asDate, end: end, now: host.now,
                          opening: opening, line: line)
-        let away = drawn(entries, side: .away, phase: phase, kickoff: kickoff, end: end, now: host.now,
+        let away = drawn(entries, side: .away, phase: phase, kickoff: kickoff,
+                         gapStart: event.commenceTime?.asDate, end: end, now: host.now,
                          opening: opening, line: line)
 
         let dates = (home.runs + away.runs).flatMap { $0.map(\.date) }
@@ -220,12 +231,15 @@ enum HockeyJourneyHistoryAdapter10868 {
             ceiling: 1,
             yTicks: yTicks(),
             xTicks: xTicks(domain, host: host),
-            guides: phase == .before ? [] : guides(response, event: event, from: domain.lowerBound, through: last),
+            guides: phase == .before || kickoff == nil
+                ? [] : guides(response, event: event, from: domain.lowerBound, through: last),
             breaks: [],
-            readout: phase == .live
-                ? .beforeAndRecorded(beforeLabel: Words.pregame, recordedLabel: Words.recorded)
-                : .singleBefore(label: Words.pregame),
-            markKey: FieldHistoryMarkKey10868(hollow: Words.hollowKey, filled: nil),
+            readout: kickoff == nil
+                ? .singleBefore(label: Words.unconfirmedStart)
+                : phase == .live
+                    ? .beforeAndRecorded(beforeLabel: Words.pregame, recordedLabel: Words.recorded)
+                    : .singleBefore(label: Words.pregame),
+            markKey: FieldHistoryMarkKey10868(hollow: kickoff == nil ? nil : Words.hollowKey, filled: nil),
             comparisonExplanation: nil,
             notes: [sourceWords(line)] + (complement.map { [$0] } ?? []) + [Words.gapsNote],
             summary: summary([(event.homeTeam, !home.runs.isEmpty), (event.awayTeam, !away.runs.isEmpty)])
@@ -234,9 +248,9 @@ enum HockeyJourneyHistoryAdapter10868 {
             unboundReadingWords: Words.notRecorded,
             plotUnavailableWords: nil,
             windows: nil, scale: nil, moreOriginals: nil,
-            details: action(detailsActionID, Words.details),
+            details: action(detailsActionID, Words.details, available: false),
             expand: action(expandActionID, Words.expand, spoken: Words.expandSpoken),
-            inspect: phase == .live ? action(inspectActionID, Words.inspect) : nil,
+            inspect: phase == .live ? action(inspectActionID, Words.inspect, available: false) : nil,
             previous: nil, next: nil, inspection: nil)
     }
 
@@ -388,16 +402,23 @@ enum HockeyJourneyHistoryAdapter10868 {
         /// Separated runs, in time order. Two runs are never joined.
         let runs: [[Vertex]]
         /// The team's last readable pregame row at or before now, drawn or not.
+        /// Nil with no confirmed start: then no row is pregame.
         let lastPregame: Vertex?
         /// Whether `lastPregame` is one of the drawn vertices.
         let pregameDrawn: Bool
     }
 
+    /// `gapStart` is the chart's gap-rule window, the listed commence
+    /// (`OddsChartView.gameStartDate`); `kickoff` is the confirmed start that
+    /// splits pregame from game, nil when unconfirmed.
     static func drawn(_ entries: [Entry], side: Side, phase: HockeyJourneyPagePhase10868,
-                      kickoff: Date, end: Date, now: Date, opening: Date?, line: Line) -> Drawn {
-        let lastPregamePosition = entries.lastIndex { entry in
-            guard let date = entry.date else { return false }
-            return date < kickoff && date <= now && Self.value(entry.row, side) != nil
+                      kickoff: Date?, gapStart: Date?, end: Date, now: Date, opening: Date?,
+                      line: Line) -> Drawn {
+        let lastPregamePosition = kickoff.flatMap { kickoff in
+            entries.lastIndex { entry in
+                guard let date = entry.date else { return false }
+                return date < kickoff && date <= now && Self.value(entry.row, side) != nil
+            }
         }
         let lastPregame = lastPregamePosition.flatMap { position -> Vertex? in
             let entry = entries[position]
@@ -407,18 +428,25 @@ enum HockeyJourneyHistoryAdapter10868 {
 
         let start: Int?
         let stop: Int?
-        switch phase {
-        case .before:
-            let floor = kickoff.addingTimeInterval(-beforeWindow)
-            start = entries.firstIndex { $0.date.map { $0 >= floor } ?? false }
-            stop = lastPregamePosition
-        case .live, .final:
-            if let opening {
-                start = entries.firstIndex { $0.date.map { $0 >= opening } ?? false }
-            } else {
-                start = lastPregamePosition ?? entries.firstIndex { $0.date.map { $0 >= kickoff } ?? false }
+        if let kickoff {
+            switch phase {
+            case .before:
+                let floor = kickoff.addingTimeInterval(-beforeWindow)
+                start = entries.firstIndex { $0.date.map { $0 >= floor } ?? false }
+                stop = lastPregamePosition
+            case .live, .final:
+                if let opening {
+                    start = entries.firstIndex { $0.date.map { $0 >= opening } ?? false }
+                } else {
+                    start = lastPregamePosition ?? entries.firstIndex { $0.date.map { $0 >= kickoff } ?? false }
+                }
+                let limit = min(end, now)
+                stop = entries.lastIndex { $0.date.map { $0 <= limit } ?? false }
             }
+        } else {
+            // No split to make: every readable row up to the frame's end, as one history.
             let limit = min(end, now)
+            start = entries.firstIndex { $0.date != nil }
             stop = entries.lastIndex { $0.date.map { $0 <= limit } ?? false }
         }
         guard let start, let stop, start <= stop else {
@@ -443,7 +471,7 @@ enum HockeyJourneyHistoryAdapter10868 {
                 byPoint[point.id] = vertex
                 points.append(point)
             }
-            for segment in OddsChartView.observationSegments(points, gameStart: kickoff) {
+            for segment in OddsChartView.observationSegments(points, gameStart: gapStart) {
                 let run = segment.compactMap { byPoint[$0.id] }
                 if !run.isEmpty { runs.append(run) }
             }
@@ -455,7 +483,7 @@ enum HockeyJourneyHistoryAdapter10868 {
     }
 
     static func series(_ id: String, side: Side, name: String, shape: FieldHistoryShape10868, tint: Color,
-                       drawn: Drawn, phase: HockeyJourneyPagePhase10868, kickoff: Date,
+                       drawn: Drawn, phase: HockeyJourneyPagePhase10868, kickoff: Date?,
                        host: Host) -> FieldHistorySeries10868 {
         let hollow = drawn.pregameDrawn ? drawn.lastPregame?.entry.row.index : nil
         let runs = drawn.runs.enumerated().map { number, run in
@@ -474,11 +502,12 @@ enum HockeyJourneyHistoryAdapter10868 {
                 ? .observation(pointID: pointID(id, pregame.entry.row.timestamp), figure: figure, provenance: provenance)
                 : .independent(figure: figure, provenance: provenance)
         } else {
-            before = .absent(words: Words.notRecorded)
+            // With no confirmed start the baseline slot says why it holds no reading.
+            before = .absent(words: kickoff == nil ? Words.unconfirmedStartWords : Words.notRecorded)
         }
 
         let recorded: FieldHistoryReading10868
-        if phase == .live, let latest = drawn.runs.last?.last, latest.date >= kickoff {
+        if phase == .live, let kickoff, let latest = drawn.runs.last?.last, latest.date >= kickoff {
             recorded = .observation(pointID: pointID(id, latest.entry.row.timestamp),
                                     figure: readingFigure(latest, side: side),
                                     provenance: "\(Words.recorded) \(clockWords(latest.date, host: host))")
@@ -593,8 +622,9 @@ enum HockeyJourneyHistoryAdapter10868 {
         return missing.isEmpty ? lead : "\(lead) No recorded history for \(missing.joined(separator: " or "))."
     }
 
-    static func action(_ id: String, _ label: String, spoken: String? = nil) -> FieldHistoryAction10868 {
-        FieldHistoryAction10868(id: id, label: label, spokenLabel: spoken, isAvailable: true)
+    static func action(_ id: String, _ label: String, spoken: String? = nil,
+                       available: Bool = true) -> FieldHistoryAction10868 {
+        FieldHistoryAction10868(id: id, label: label, spokenLabel: spoken, isAvailable: available)
     }
 
     /// Nothing to draw, in the owner's words: no point, axis or guide is offered
@@ -624,7 +654,7 @@ enum HockeyJourneyHistoryAdapter10868 {
             unboundReadingWords: Words.notRecorded,
             plotUnavailableWords: nil,
             windows: nil, scale: nil, moreOriginals: nil,
-            details: action(detailsActionID, Words.details),
+            details: action(detailsActionID, Words.details, available: false),
             expand: nil, inspect: nil, previous: nil, next: nil, inspection: nil,
             plotAbsence: plot)
     }

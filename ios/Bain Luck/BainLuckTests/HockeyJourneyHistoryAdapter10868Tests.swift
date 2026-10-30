@@ -53,8 +53,9 @@ import XCTest
 ///
 /// CONSTRUCTED here, and named where used: the reader's calendar (Pacific,
 /// en_US), `now`, a live replay of the finished game at 01:45:25Z, a
-/// sportsbooks-only variant (two keys removed), a draw-priced sport key and
-/// two unconfirmed-start variants (one key changed each). Clock words are compared with the adapter's
+/// sportsbooks-only variant (two keys removed), a draw-priced sport key,
+/// three unconfirmed-start variants (one key changed each) and an unconfirmed
+/// start with its line rows emptied. Clock words are compared with the adapter's
 /// own clock words, never with hard-coded strings.
 @MainActor
 final class HockeyJourneyHistoryAdapter10868Tests: XCTestCase {
@@ -351,6 +352,10 @@ final class HockeyJourneyHistoryAdapter10868Tests: XCTestCase {
             pointID: H.pointID(home.id, latest), figure: "82%",
             provenance: "Recorded \(A.clockWords(latest.asDate!, host: host.words))"))
         XCTAssertEqual(input.inspect?.id, "history.inspect")
+        // Only the full-size reader has an owner yet: details and inspection are offered, unavailable.
+        XCTAssertEqual(input.expand?.isAvailable, true)
+        XCTAssertEqual(input.details?.isAvailable, false)
+        XCTAssertEqual(input.inspect?.isAvailable, false)
         XCTAssertEqual(input.caption, "Game history")
         XCTAssertNil(input.inspection, "the held inspection is the host's")
     }
@@ -432,23 +437,94 @@ final class HockeyJourneyHistoryAdapter10868Tests: XCTestCase {
                                       FieldHistoryTick10868(value: 1, lines: ["100%"])])
     }
 
-    /// CONSTRUCTED: one key changed on each served body.
-    func testAStartThatIsNotAConfirmedKickoffDrawsNoHistory() throws {
+    /// CONSTRUCTED: one key changed on each served body — the scheduled game's
+    /// history with `commence_time_is_kickoff: false`, its detail with
+    /// `start_is_tbd: true`, and the finished game's history with
+    /// `commence_time_is_kickoff: false`. An uncertain start withholds the
+    /// pregame/game split, never the recorded readings.
+    func testAStartThatIsNotAConfirmedKickoffStillDrawsTheRecordedReadingsUnsplit() throws {
         let event = try detail(Self.devilsKnightsDetail)
         let history = try response(Self.devilsKnightsHistory)
         let notKickoff = try decoder().decode(EventHistoryResponse.self, from: edited(
             Self.devilsKnightsHistory, setting: ["commence_time_is_kickoff": false]))
         let placeholder = try decoder().decode(EventDetail.self, from: edited(
             Self.devilsKnightsDetail, setting: ["start_is_tbd": true]))
+        let why = "Pregame and game readings are split at a confirmed start, and this game has none yet."
         for (body, game) in [(notKickoff, event), (history, placeholder)] {
             let input = H.history(body, event: game, phase: .before, host: readerHost("2026-10-30T20:13:55Z"))
-            XCTAssertEqual(input.plotAbsence, FieldHistoryPlotAbsence10868(
-                title: "Start time not confirmed",
-                words: "Pregame and game readings are split at a confirmed start, and this game has none yet."))
-            XCTAssertTrue(input.series.allSatisfy { $0.runs.isEmpty })
-            XCTAssertEqual(input.xTicks, [])
+            XCTAssertNil(input.plotAbsence, "the recorded readings are not blanked")
+            let home = input.series[0], away = input.series[1]
+            let points = home.runs.flatMap(\.points)
+
+            // Every served blend row but the pinned edge (26 − 1), from the first served
+            // row: there is no listed start to reach back one day from.
+            XCTAssertEqual(points.count, 25)
+            XCTAssertEqual(home.runs.count, 1)
+            XCTAssertEqual(points.first?.x, x("2026-10-29T21:58:00+00:00"))
+            XCTAssertEqual(points.first?.probability, 0.515)
+            XCTAssertEqual(points.last?.x, x("2026-10-30T20:11:00+00:00"))
+            XCTAssertEqual(points.last?.probability, 0.505)
+            XCTAssertFalse(points.contains { $0.x == x("2026-10-30T20:12:00+00:00") }, "the pinned edge is still not a reading")
+            XCTAssertEqual(away.runs.flatMap(\.points).map(\.x), points.map(\.x))
+            XCTAssertEqual(away.runs.flatMap(\.points).map(\.probability), points.map { 1 - $0.probability })
+            XCTAssertEqual(input.domain, FieldHistoryDomain10868(lower: x("2026-10-29T21:58:00+00:00"),
+                                                                upper: x("2026-10-30T20:11:00+00:00")))
+
+            // No reading is called pregame: no hollow mark, no baseline readout; the slot says why.
+            XCTAssertTrue((home.runs + away.runs).flatMap(\.points).allSatisfy { $0.style == .filled })
+            XCTAssertEqual(input.markKey, FieldHistoryMarkKey10868(hollow: nil, filled: nil))
+            XCTAssertEqual(input.readout, .singleBefore(label: "Start time not confirmed"))
+            XCTAssertEqual(home.before, .absent(words: why))
+            XCTAssertEqual(away.before, .absent(words: why))
             XCTAssertEqual(input.guides, [])
+
+            // Labelled by time: the chart's own ticks over the drawn frame.
+            let domain = Date(timeIntervalSince1970: input.domain.lower)...Date(timeIntervalSince1970: input.domain.upper)
+            let ticks = OddsChartView.xAxisTicks(
+                for: domain, plan: OddsChartView.xAxisPlan(for: domain, calendar: Self.pacific), calendar: Self.pacific)
+            XCTAssertFalse(ticks.isEmpty)
+            XCTAssertEqual(input.xTicks.map(\.value), ticks.map(\.timeIntervalSince1970))
         }
+
+        // The finished game: confirmed, its frame carries P1–P3 guides and a hollow
+        // last pregame row (the Final tests above); unconfirmed, neither.
+        let finished = try decoder().decode(EventHistoryResponse.self, from: edited(
+            Self.wildBruinsHistory, setting: ["commence_time_is_kickoff": false]))
+        let input = H.history(finished, event: try detail(Self.wildBruinsDetail), phase: .final,
+                              host: readerHost("2026-10-11T04:56:41Z"))
+        let home = input.series[0]
+        let points = home.runs.flatMap(\.points)
+        // 67 served rows, less the settlement row and the 03:14 row after the game's end.
+        XCTAssertEqual(points.count, 65)
+        XCTAssertEqual(points.first?.x, x("2026-10-02T23:52:00+00:00"))
+        XCTAssertEqual(points.first?.probability, 0.645)
+        XCTAssertEqual(points.last?.x, x("2026-10-04T02:49:00+00:00"))
+        XCTAssertEqual(points.last?.probability, 0.98857)
+        XCTAssertFalse(points.contains { $0.probability == 1.0 }, "the result is still never a reading")
+        XCTAssertTrue(points.allSatisfy { $0.style == .filled })
+        XCTAssertEqual(input.guides, [], "no period or scoring guide without a confirmed start")
+        XCTAssertEqual(input.readout, .singleBefore(label: "Start time not confirmed"))
+        XCTAssertEqual(home.before, .absent(words: why))
+        XCTAssertEqual(input.markKey, FieldHistoryMarkKey10868(hollow: nil, filled: nil))
+    }
+
+    /// CONSTRUCTED: the scheduled game's history with `commence_time_is_kickoff:
+    /// false` and both line arrays (`aggregate_line`, `history`) emptied.
+    func testAnUnconfirmedStartWithNoRecordedRowsStillShowsTheEmptyState() throws {
+        let empty = try decoder().decode(EventHistoryResponse.self, from: edited(
+            Self.devilsKnightsHistory,
+            setting: ["commence_time_is_kickoff": false, "aggregate_line": [Any](), "history": [Any]()]))
+        let input = H.history(empty, event: try detail(Self.devilsKnightsDetail), phase: .before,
+                              host: readerHost("2026-10-30T20:13:55Z"))
+        XCTAssertEqual(input.plotAbsence, FieldHistoryPlotAbsence10868(title: "No recorded history", words: nil))
+        XCTAssertTrue(input.series.allSatisfy { $0.runs.isEmpty })
+        XCTAssertEqual(input.xTicks, [])
+        XCTAssertEqual(input.guides, [])
+        XCTAssertEqual(input.summary, "No recorded history")
+        // Details has no destination yet: offered, unavailable. Nothing to expand or inspect.
+        XCTAssertEqual(input.details?.isAvailable, false)
+        XCTAssertNil(input.expand)
+        XCTAssertNil(input.inspect)
     }
 
     // MARK: - Retained bodies
