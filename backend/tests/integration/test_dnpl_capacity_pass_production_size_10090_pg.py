@@ -56,13 +56,56 @@ V2_SPLIT = '96,48,192,128,448,112'
 
 
 @pytest.fixture
-async def production(rig, redis_kwargs, monkeypatch, request):
+def ticket_kind():
+    """``int``: the bare ledger. ``authority``: production's
+    `AuthorityLedgerRegistry`, whose tickets are `AuthorityTicket`s (v5964)."""
+    return 'int'
+
+
+async def authority_registry(client, now):
+    """Production's registry over its own initialized namespace on this Redis."""
+    from dataclasses import replace
+    from uuid import uuid4
+
+    from app.services.dnpl_authority import Authority
+    from app.utils.dnpl_authority_registry import AuthorityLedgerRegistry
+    from app.utils.dnpl_redis_authority import namespace_keys
+    from tests.test_dnpl_redis_authority_10090 import initial
+
+    policy = blend_preview.LedgerRegistry(sources=('kalshi', 'polymarket')).policy
+    server, repl = await client.info('server'), await client.info('replication')
+    authority = Authority(3, 1, uuid4(), uuid4(), 'preparing', server['run_id'],
+                          repl['master_replid'], policy.fingerprint)
+    assert _text((await initial(client, authority))[0]) == 'initialized'
+    authority = replace(authority, state='ready')
+    return (AuthorityLedgerRegistry(authority=authority, observed_after=now - timedelta(seconds=2),
+                                    sources=frozenset({'kalshi', 'polymarket'})),
+            namespace_keys(authority)[0])
+
+
+def _text(value):
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def basis(now):
+    """An observation after the authority registry's floor (the bare ledger ignores it)."""
+    return {'1': (now - timedelta(seconds=1)).timestamp()}
+
+
+@pytest.fixture
+async def production(rig, redis_kwargs, monkeypatch, request, ticket_kind):
     if getattr(request, 'param', None):
         monkeypatch.setenv(RESERVATIONS_ENV, request.param)
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setattr(blend_preview, '_REGISTRY',
-                        blend_preview.LedgerRegistry(sources=('kalshi', 'polymarket')))
     client = Redis(**redis_kwargs)
+    now = datetime.now(timezone.utc)
+    if ticket_kind == 'authority':
+        authority, key = await authority_registry(client, now)
+        monkeypatch.setattr(blend_preview, '_REGISTRY', authority)
+        monkeypatch.setitem(globals(), 'L', key)
+    else:
+        monkeypatch.setattr(blend_preview, '_REGISTRY',
+                            blend_preview.LedgerRegistry(sources=('kalshi', 'polymarket')))
     registry = blend_preview.registry()
     await registry.claim(client.execute_command, 'kalshi')
     await registry.claim(client.execute_command, 'polymarket')
@@ -84,7 +127,6 @@ async def production(rig, redis_kwargs, monkeypatch, request):
     worker = LiveBlendRefresher('kalshi', session_factory=factory)
     worker._owns_preview_maintenance = False
     monkeypatch.setattr(worker, '_client', lambda: client)
-    now = datetime.now(timezone.utc)
     keys = ('tennis_atp', 'americanfootball_nfl')
     events = {}
     async with rig.maker() as session:
@@ -103,8 +145,12 @@ async def production(rig, redis_kwargs, monkeypatch, request):
                               win_probability_sources=BASE10, win_probability_sources_rev=10))
         await session.commit()
     for eid in [*ACTIVE_PREVIEW, *ACTIVE_IDLE, *OTHER_UPCOMING, *T1_UPCOMING]:
+        if ticket_kind == 'authority':
+            events[eid].preview_read_ticket, _ = await registry.read_ticket(
+                client.execute_command, 'kalshi')
         ops = registry.propose(eid, 'kalshi', value=.7, event=events[eid],
-                               row_sources=BASE10, row_rev=10, stamped_at=now)
+                               row_sources=BASE10, row_rev=10, stamped_at=now,
+                               observed_basis=basis(now) if ticket_kind == 'authority' else None)
         assert ops
         await registry.execute(ops, client.execute_command, event_channel, worker.preview_stats)
         if eid not in ACTIVE_PREVIEW:
@@ -132,8 +178,11 @@ async def admit(rig, registry, client, worker, eid):
     """A busy live game's next price: one fresh open, the way a flush makes it."""
     ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
     event = await fresh_event(rig, eid, ticket)
+    observed = (basis(datetime.now(timezone.utc))
+                if type(ticket) is not int else None)  # AuthorityTicket: production's floor
     frames = await registry.prepare(registry.propose(eid, 'kalshi', value=.8, event=event,
-                                                     row_sources=BASE10, row_rev=10),
+                                                     row_sources=BASE10, row_rev=10,
+                                                     observed_basis=observed),
                                     client.execute_command, worker.preview_stats)
     return [f['preview']['kind'] for f in frames]
 
@@ -145,8 +194,9 @@ def receipt(caplog):
     return dict(part.split('=', 1) for part in line.split('pass ', 1)[1].split())
 
 
+@pytest.mark.parametrize('ticket_kind', ['int', 'authority'])
 async def test_full_other_group_reclaims_idle_residents_and_admits_busy_games(
-        rig, production, caplog):
+        rig, production, caplog, ticket_kind):
     import logging
 
     worker, registry, client, statements = production
