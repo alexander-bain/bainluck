@@ -17,6 +17,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
+import calendarSlice from "./fixtures/4751SpotifyCalendarSlice.json";
 import type { EntertainmentData, EntMarketRow } from "@/lib/api";
 
 jest.mock("swr", () => ({
@@ -153,4 +154,18 @@ describe("#9468 SpotifyRace draws a cumulative ladder as dates, not ranks", () =
     const html = render([row({})]);
     expect(ranks(html)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
   });
+});
+
+
+it("renders the actual backend mixed-board calendar slice without ranks or a leader", () => {
+  // Python checks this fixture against _build_music, including the absent
+  // exception and no full-board headline. This is the F3 consumer seam.
+  const html = render([row(calendarSlice)]);
+  expect(legOrder(html, calendarSlice.top_outcomes.map((o) => o.name))).toEqual([
+    "Before Dec 3", "Before Dec 4", "Before Dec 5",
+  ]);
+  expect(ranks(html)).toEqual([]);
+  expect(html).not.toContain("raceRankLead");
+  expect(html).not.toContain("Spotify Chart Race");
+  expect(html).not.toContain("Not in 2026");
 });
