@@ -194,6 +194,7 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         XCTAssertTrue(opened, "control: a reader who opens the details sees them")
         _ = try onScreenText(window, "first-page-details-open")
 
+        print("DIAG11703 push t=\(CACurrentMediaTime()) presented=\(host.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil")")
         router.path.append(Self.second)
         await settle(host, timeout: 1.5) { router.path.count == 1 && host.presentedViewController == nil }
         let leftOver = host.presentedViewController

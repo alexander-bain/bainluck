@@ -16,7 +16,10 @@ import UIKit
 final class PresentedDetailsCloser {
     private weak var presented: UIViewController?
 
-    fileprivate func adopt(_ controller: UIViewController) { presented = controller }
+    fileprivate func adopt(_ controller: UIViewController) {
+        presented = controller
+        print("DIAG11703 adopt t=\(CACurrentMediaTime()) type=\(type(of: controller)) style=\(controller.modalPresentationStyle.rawValue) presenter=\(controller.presentingViewController.map { String(describing: type(of: $0)) } ?? "nil")")
+    }
 
     /// The page at `pageView` is leaving `window`. Dismisses the recorded
     /// popover, or failing that a popover anchored inside this page. It never
@@ -33,6 +36,14 @@ final class PresentedDetailsCloser {
             }
             next = controller.presentedViewController
         }
+        var chain: [String] = []
+        var walk = window.rootViewController?.presentedViewController
+        while let c = walk {
+            let src = c.popoverPresentationController?.sourceView
+            chain.append("\(type(of: c))/style=\(c.modalPresentationStyle.rawValue)/src=\(src.map { String(describing: type(of: $0)) } ?? "nil")/inPage=\(src?.isDescendant(of: pageView) ?? false)")
+            walk = c.presentedViewController
+        }
+        print("DIAG11703 pageLeaving t=\(CACurrentMediaTime()) page=\(type(of: pageView)) pageVC=\(pageView.next.map { String(describing: type(of: $0)) } ?? "nil") recorded=\(presented.map { String(describing: type(of: $0)) } ?? "nil") targets=\(targets.count) chain=\(chain)")
         guard !targets.isEmpty else { return }
         // One turn later: this runs inside the push's own completion, and a
         // dismissal started there can be dropped.
@@ -40,6 +51,10 @@ final class PresentedDetailsCloser {
             for controller in targets where controller.presentingViewController != nil
                 && !controller.isBeingDismissed {
                 controller.dismiss(animated: false)
+            }
+            print("DIAG11703 dismissed t=\(CACurrentMediaTime()) stillPresented=\(window.rootViewController?.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil") states=\(targets.map { "\($0.presentingViewController != nil)/\($0.isBeingDismissed)" })")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                print("DIAG11703 after0.3 t=\(CACurrentMediaTime()) stillPresented=\(window.rootViewController?.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil")")
             }
         }
     }
@@ -64,6 +79,7 @@ struct PresentedDetailsAnchor: UIViewRepresentable {
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
+            print("DIAG11703 contentDidMove t=\(CACurrentMediaTime()) window=\(window != nil)")
             guard window != nil else { return }
             // The root of a presentation has no parent and a presenter. A
             // child controller also reports its ancestor's presenter, so the
@@ -100,6 +116,7 @@ struct PageWindowAnchor: UIViewRepresentable {
 
         override func willMove(toWindow newWindow: UIWindow?) {
             super.willMove(toWindow: newWindow)
+            print("DIAG11703 pageWillMove t=\(CACurrentMediaTime()) toWindow=\(newWindow != nil) hadWindow=\(window != nil) closer=\(closer != nil)")
             guard newWindow == nil, let window else { return }
             closer?.pageLeaving(pageView ?? self, window: window)
         }
