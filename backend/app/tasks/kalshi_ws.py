@@ -1474,6 +1474,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # Redis on the refresher's own client (`app.utils.confirmed_at`).
     from app.utils.confirmed_at import ConfirmedAt
     tail_receipts.confirmed = ConfirmedAt("kalshi", client=getattr(blend_refresher, "_client", None))
+    # #10090 R1: inputs the headline read leaves out never join the trail.
+    # The live set objects, so a re-scope's in-place refill is read.
+    tail_receipts.trail_excluded = (headline_aux_outcome_ids, non_blend_outcome_ids)
     # #10702: disabled without exact targets AND a short absolute expiry.
     # One budget for this run, including its existing open-contract sockets.
     if exact_trace is not None:
