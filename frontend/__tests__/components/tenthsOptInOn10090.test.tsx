@@ -1,10 +1,10 @@
 /**
- * #10090 — WITH THE OPT-IN, THE HEADLINE AND THE CHART'S END LABEL PRINT ONE
+ * #10090 — WITH TENTHS ON, THE HEADLINE AND THE CHART'S END LABEL PRINT ONE
  * DECIMAL, AS ONE PAIR.
  *
- * Alex lives with tenths on real live games before deciding (`?tenths=fit`,
- * `lib/tenthsOptIn.ts`). The OFF half is `tenthsOptInOffIsMaster10090`; this file
- * pins what an opted-in reader sees:
+ * Tenths are on by default on the event page (`lib/tenthsOptIn.ts`, ALEX-DECISIONS
+ * item 39). The OFF half (`?tenths=off`) is `tenthsOptInOffIsMaster10090`; this
+ * file pins what every other reader sees:
  *
  *   * the two sides sum to 100.0, the second derived from the first;
  *   * the chart's end label is the same pair's digit at a half-tenth tie

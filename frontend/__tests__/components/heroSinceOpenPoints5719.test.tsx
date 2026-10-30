@@ -125,6 +125,15 @@ jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "1175875" }),
 }));
 
+// #10090 — tenths are on by default on the event page. This file pins the since-open caption against the integers the hero prints,
+// which reads the whole-number hero, so it renders as a reader who opened
+// `?tenths=off` (the tenths markup is `tenthsOptInOn10090`'s to pin).
+jest.mock("@/lib/tenthsOptIn", () => ({
+  __esModule: true,
+  ...jest.requireActual("@/lib/tenthsOptIn"),
+  useTenthsOptIn: () => false,
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const EventDetailPage = require("@/app/events/[id]/page").default;
 // eslint-disable-next-line @typescript-eslint/no-var-requires

@@ -170,8 +170,8 @@ interface EventHeroProbabilityPairProps {
    */
   displayIdentity?: HeadlineDisplayIdentity | null;
   /**
-   * #10090 — print one decimal (`lib/tenthsOptIn.ts`). Only a reader who opted
-   * in gets it; the page passes its one decision to this hero and the chart's
+   * #10090 — print one decimal (`lib/tenthsOptIn.ts`). The event page passes
+   * its one decision (on unless the reader opted out) to this hero and the chart's
    * end label together. Ignored on a venue-settled contest, which keeps the
    * whole-number pair. Defaults false, so every caller renders exactly as before.
    */
@@ -326,7 +326,7 @@ export default function EventHeroProbabilityPair({
   // #6064 — the clamp the whole rest of the site applies, finally applied here.
   const homeWhole = sideParts(homeProb, shownHome);
   const awayWhole = sideParts(awayProb, shownAway);
-  // #10090 — tenths from the adopted probability, for an opted-in reader only.
+  // #10090 — tenths from the adopted probability, when the page asks for them.
   // Off, every value below is today's: the whole parts, no decimal span, no
   // added style and the numeral class unchanged.
   const tenths =

@@ -66,6 +66,15 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/events/14632820", useSearchParams: () => new URLSearchParams(),
   useParams: () => ({ id: "14632820" }),
 }));
+// #10090 — tenths are on by default on the event page. This file pins preview reporting when the printed percent is unchanged,
+// which reads the whole-number hero, so it renders as a reader who opened
+// `?tenths=off` (the tenths markup is `tenthsOptInOn10090`'s to pin).
+jest.mock("@/lib/tenthsOptIn", () => ({
+  __esModule: true,
+  ...jest.requireActual("@/lib/tenthsOptIn"),
+  useTenthsOptIn: () => false,
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const EventDetailPage = require("@/app/events/[id]/page").default;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
