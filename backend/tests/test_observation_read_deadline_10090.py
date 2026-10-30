@@ -78,7 +78,10 @@ async def test_deadline_skips_as_before_and_the_statement_ends_by_itself(monkeyp
     assert records[0].args[1]["query_completed"] is False
     assert records[0].args[2] == {"detached": 1, "finished": 0, "capped": 0,
                                   "ceiling_cancelled": 0, "running": 1}
-    assert r.preview_stats["publish_errors"] == 1
+    # #10090 receipt: the read's own budget is an observation timeout, not a
+    # publish error — nothing was sent.
+    assert r.preview_stats["observation_timeouts"] == 1
+    assert r.preview_stats["publish_errors"] == 0
     assert len(r._detached_reads) == 1 and r._session_slots._value == 2
     release.set()
     await join_detached(r)
