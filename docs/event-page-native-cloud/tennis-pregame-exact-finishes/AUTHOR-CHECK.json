@@ -1,0 +1,53 @@
+{
+  "status": "SOURCE_REVIEWED_PUBLISHED_NATIVE_UNQUALIFIED",
+  "pillar": [
+    "FORMATTING",
+    "TRUTH"
+  ],
+  "ship": "Show all four original pre-match finish chances without later score or elimination leakage.",
+  "source_commit": "090910d03720a65ea368102bf132a2489c7427ef",
+  "source_tree": "e324df9b3b45cda176f50c8d8ab3749322d14bfb",
+  "implementation_parent": "66280247b93752814815dd01a85a4ae14093f353",
+  "import_parent": "029c6045f01b523e9b25e28c36562c6594ab4532",
+  "original_checkpoint_provenance_only": "48945d4146caa7f97989b4780fcca94abfb2ca0f",
+  "archive_sha256": "b37281865c6750cb9ccba39c57079f85d8f8c69182c63b4783f534aafece2978",
+  "manifest_sha256": "fdd43b69fff8925fc128648258ae9807f35a7ce42f3833a3519cf6b18271d607",
+  "archive_members": 52,
+  "protected_bindings_verified": 30,
+  "preserved_core_bytes": 101860,
+  "preserved_parent_tests": 89,
+  "prepared_tests": 104,
+  "new_prepared_tests": 15,
+  "checks": {
+    "archive_manifest_and_member_hashes": "PASS",
+    "source_test_pins_and_bundle": "PASS",
+    "protected_bindings_actual_branch_and_frozen_base": "PASS",
+    "immutable_core_and_parent_test_bytes": "PASS",
+    "two_path_source_scope": "PASS",
+    "diff_check": "PASS",
+    "independent_manual_source_review": "PASS",
+    "swift_syntax": "NOT_RUN_UNAVAILABLE",
+    "native_compile": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "XCTest": "NOT_RUN",
+    "native_render": "NOT_RUN",
+    "device_TestFlight": "NOT_RUN"
+  },
+  "files": [
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/ExactScoreMapPresentation10868.swift",
+      "bytes": 143144,
+      "sha256": "da8acc4a77e5ac556c057ec43aa2637ef5ac106f8c88b3ef51415e6b6bfb42dc",
+      "git_blob": "3f6f913d679376a4ba89a35ec6ecad83de0b58a1"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/ExactScoreMapPresentation10868Tests.swift",
+      "bytes": 210325,
+      "sha256": "d55e7b0da61a24f176869224a89b5b388eed11aeb56ce37629ac2d0920488736",
+      "git_blob": "4bbfd60dc219f9bd6f0f4205a6d41bb972cfdc10"
+    }
+  ],
+  "design_acceptance": "PENDING",
+  "production_integration": false,
+  "route_completion_credit": false
+}
