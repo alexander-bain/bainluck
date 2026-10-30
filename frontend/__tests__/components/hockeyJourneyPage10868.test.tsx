@@ -24,6 +24,7 @@ import type { GameMarketsResponse } from "@/lib/api";
 import {
   buildHockeyJourney,
   hockeyJourneyContribution,
+  hockeyJourneyHeadline,
   hockeyJourneyOriginals,
   NO_HELD_CHOICE,
   type HockeyJourneyContribution,
@@ -308,4 +309,100 @@ it("steps to short names, then to labelled pairs, only when the wider arrangemen
     delete proto.clientWidth;
     delete proto.scrollWidth;
   }
+});
+
+/**
+ * Forced layout for the same-component reflow cases: the matrix frame is 300 px
+ * wide, and a GRID with four metric columns (five header cells) is 1000 px
+ * wide — it overflows — while two or three columns fit. Every other element
+ * reports 0. jsdom lays nothing out, so this proves the re-measure, not real fit.
+ */
+function withForcedMatrixLayout(run: () => void) {
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+  Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => 300 });
+  Object.defineProperty(proto, "scrollWidth", {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (this.dataset?.arrangement === undefined) return 0;
+      return this.querySelectorAll("thead th").length >= 5 ? 1000 : 300;
+    },
+  });
+  try {
+    run();
+  } finally {
+    delete proto.clientWidth;
+    delete proto.scrollWidth;
+  }
+}
+
+const arrangementNow = () => host.querySelector("[data-arrangement]")?.getAttribute("data-arrangement");
+
+it("re-fits the SAME matrix when its content changes: before fits, live overflows to pairs, a narrower final climbs back", () => {
+  const history = fixtures.finalHistory as unknown as EventHistoryResponse;
+  const hostAt = (nowMs: number) => ({ nowMs, hero: null, probabilityObservedAt: null });
+  // CONSTRUCTED lifecycle of 15169793 (status, scores, score clock and ESPN period/clock edited):
+  const before = hockeyJourneyHeadline(
+    { ...finalEvent, status: "scheduled", home_score: null, away_score: null } as unknown as EventDetailResponse,
+    history,
+    hostAt(Date.parse("2026-10-03T23:00:00Z")),
+  );
+  const live = hockeyJourneyHeadline(
+    {
+      ...finalEvent,
+      status: "live",
+      home_score: 2,
+      away_score: 1,
+      score_observed_at: "2026-10-04T01:45:25Z",
+      espn: { ...finalEvent.espn, period: "2nd Period", game_clock: "4:09" },
+    } as EventDetailResponse,
+    history,
+    hostAt(Date.parse("2026-10-04T01:46:00Z")),
+  );
+  const final = hockeyJourneyHeadline(finalEvent, history, hostAt(FINAL_NOW));
+  expect([before.matrix.columns.length, live.matrix.columns.length, final.matrix.columns.length]).toEqual([2, 4, 3]);
+
+  withForcedMatrixLayout(() => {
+    // One element type, no key, no resize event: only the headline prop changes.
+    act(() => root.render(<HockeyJourneyMatrix headline={before} inlineProvenance={false} />));
+    expect(arrangementNow()).toBe("grid");
+    const frame = host.querySelector("[data-arrangement]");
+
+    act(() => root.render(<HockeyJourneyMatrix headline={live} inlineProvenance={false} />));
+    expect(host.querySelector("[data-arrangement]")).toBe(frame); // same element: not remounted
+    expect(arrangementNow()).toBe("pairs");
+    expect(host.querySelector("table")).toBeNull();
+    // The current chance still leads in the fallback.
+    expect(live.matrix.lead).toBe(1);
+
+    act(() => root.render(<HockeyJourneyMatrix headline={final} inlineProvenance={false} />));
+    expect(host.querySelector("[data-arrangement]")).toBe(frame);
+    expect(arrangementNow()).toBe("grid");
+    expect(host.querySelector("table")?.textContent).toContain("Won");
+  });
+});
+
+it("reflows the page's matrix from before to live without remounting or losing the held player", () => {
+  const pregameDetail = fixtures.pregameDetail as unknown as EventDetailResponse;
+  const build = (event: EventDetailResponse, nowMs: number) =>
+    buildHockeyJourney({
+      event,
+      history: fixtures.pregameHistory as unknown as EventHistoryResponse,
+      gameMarkets: fixtures.pregameMarkets as unknown as GameMarketsResponse,
+      host: { nowMs, hero: null, probabilityObservedAt: null },
+    });
+  withForcedMatrixLayout(() => {
+    act(() => root.render(<HockeyJourneyPage journey={build(pregameDetail, Date.parse("2026-10-30T20:13:55Z"))} />));
+    expect(arrangementNow()).toBe("grid");
+    const select = () => host.querySelector("article select") as HTMLSelectElement;
+    choose(select(), "player:jack hughes");
+    expect(host.querySelector('[aria-label="Jack Hughes milestones"]')).not.toBeNull();
+
+    // CONSTRUCTED: the same game read live (status only); same page element, no key change.
+    const live = { ...pregameDetail, status: "live" } as EventDetailResponse;
+    act(() => root.render(<HockeyJourneyPage journey={build(live, Date.parse("2026-10-30T22:30:00Z"))} />));
+    expect(arrangementNow()).toBe("pairs");
+    expect(select().value).toBe("player:jack hughes");
+    expect(host.querySelector('[aria-label="Jack Hughes milestones"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("Selected player unavailable.");
+  });
 });

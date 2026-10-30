@@ -20,9 +20,15 @@
  * during play, else the first (`matrix.lead`) — is the largest figure, in the
  * team's colour. Figures never shrink or wrap; absence words wrap as words.
  *
- * "Fits" is measured, not assumed: after each render the frame's scroll width is
- * compared with its own width before paint, and a grid that overflows steps to
- * the next arrangement. A width change starts again from 1. Web has no Dynamic
+ * "Fits" is measured, not assumed: the frame's scroll width is compared with
+ * its own width before paint, and a grid that overflows steps to the next
+ * arrangement. The search starts again from 1 whenever what it is fitting
+ * changes — the frame's width, the text size, OR THE MATRIX'S OWN CONTENT
+ * (`matrixFitContent`: phase, columns, printed values, names, results) — so a
+ * before → live change at the same viewport that widens the grid falls back,
+ * and a later, narrower final climbs back to full names, with no remount and no
+ * resize. The step is derived per fit key during render, so a stale fallback is
+ * never drawn for new content. Web has no Dynamic
  * Type category, so an accessibility size is read the way `usePlotBox`
  * (NFLEventCards.tsx) reads enlarged text — the root font size — at or above
  * `ACCESSIBILITY_ROOT_FONT_PX` (150% of the 16 px default).
@@ -50,6 +56,24 @@ export function matrixArrangements(accessibilitySize: boolean): HockeyJourneyMat
 }
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/**
+ * Everything in the headline that can change the matrix's width: the phase,
+ * the lead and groups, each column title, each printed value or absence, the
+ * team names (full and short) and the result words. Two headlines with the same
+ * signature lay out alike; any change re-runs the fit from full names.
+ */
+export function matrixFitContent(headline: HockeyJourneyHeadline): string {
+  const { matrix } = headline;
+  return JSON.stringify([
+    matrix.phase,
+    matrix.lead,
+    matrix.groups,
+    matrix.columns.map((c) => c.title),
+    matrix.rows.map((r) => [r.side, r.values.map((v) => v.text), r.result]),
+    [headline.home.name, headline.home.short, headline.away.name, headline.away.short],
+  ]);
+}
 
 function SlotValue({ slot, lead, tint }: { slot: HockeyJourneySlot; lead: boolean; tint: string | null }) {
   if (slot.kind === "absent") {
@@ -97,29 +121,28 @@ export default function HockeyJourneyMatrix({
   const provenance = inlineProvenance ? matrix.columns.filter((c) => c.provenance) : [];
 
   const frame = useRef<HTMLDivElement>(null);
-  const measured = useRef({ width: -1, accessibilitySize: false });
   const [width, setWidth] = useState(0);
   const [accessibilitySize, setAccessibilitySize] = useState(false);
-  const [step, setStep] = useState(0);
+  // What the fit search is for: this content, at this width, at this text size.
+  // A step found for another key is never reused — the search restarts at full
+  // names in the same render that brings the new content (expansion OR contraction).
+  const fitKey = `${matrixFitContent(headline)}|${width}|${accessibilitySize ? "large" : "standard"}`;
+  const [fit, setFit] = useState({ key: fitKey, step: 0 });
+  const step = fit.key === fitKey ? fit.step : 0;
   // A short grid identical to the full one is not a different arrangement.
   const order = matrixArrangements(accessibilitySize).filter(
     (a) => a !== "shortGrid" || !!(headline.home.short || headline.away.short),
   );
   const arrangement = order[Math.min(step, order.length - 1)];
 
-  // Width and text size: read now and on every resize; a new width or text size starts over at the first arrangement.
+  // Width and text size: read now and on every resize. Unchanged values bail out.
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
     const read = () => {
       const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-      const large = root >= ACCESSIBILITY_ROOT_FONT_PX;
-      const w = el.clientWidth;
-      if (w === measured.current.width && large === measured.current.accessibilitySize) return;
-      measured.current = { width: w, accessibilitySize: large };
-      setStep(0);
-      setWidth(w);
-      setAccessibilitySize(large);
+      setWidth(el.clientWidth);
+      setAccessibilitySize(root >= ACCESSIBILITY_ROOT_FONT_PX);
     };
     read();
     if (typeof ResizeObserver === "undefined") return;
@@ -128,12 +151,14 @@ export default function HockeyJourneyMatrix({
     return () => observer.disconnect();
   }, []);
 
-  // Fit: a grid wider than its frame steps to the next arrangement before paint.
+  // Fit, before paint: measure what this render drew for this key; a grid wider
+  // than its frame steps to the next arrangement. Runs whenever the key or the
+  // drawn arrangement changes, so new headline content is always measured.
   useIsomorphicLayoutEffect(() => {
     const el = frame.current;
     if (!el || arrangement === "pairs") return;
-    if (el.scrollWidth > el.clientWidth + 1) setStep((s) => s + 1);
-  }, [arrangement, width, accessibilitySize]);
+    if (el.scrollWidth > el.clientWidth + 1) setFit({ key: fitKey, step: step + 1 });
+  }, [arrangement, fitKey, step]);
 
   const short = arrangement === "shortGrid";
 
