@@ -2273,7 +2273,8 @@ nonisolated struct PlayerDuelValueObservation10868: Equatable {
     /// The owner's time for this reading ("Oct 3, 4:51 PM").
     let time: String
     /// The owner's source words ("traded minute close"); nil draws none.
-    let source: String?
+    /// Words, never a venue key (#4135 names venues through `SourceLabels`).
+    let sourceWords: String?
 }
 
 nonisolated enum PlayerDuelValueReading10868: Equatable {
@@ -2520,7 +2521,7 @@ nonisolated struct PlayerDuelValueInput10868: Equatable {
     private static func spoken(_ label: String, _ display: PlayerDuelValueDisplay10868) -> String {
         switch display {
         case .marked(let observation, _), .unplaced(let observation):
-            "\(label): " + ([observation.figure, observation.time, observation.source].compactMap { $0 }).joined(separator: ", ")
+            "\(label): " + ([observation.figure, observation.time, observation.sourceWords].compactMap { $0 }).joined(separator: ", ")
         case .words(let text):
             "\(label): \(text)"
         }
@@ -2833,9 +2834,7 @@ struct PlayerDuelValuePresentation10868: View {
 
     @ViewBuilder private func observationLines(_ observation: PlayerDuelValueObservation10868) -> some View {
         Text(observation.time).font(.footnote).foregroundStyle(DS.textSecondary)
-        // The owner's source WORDS ("traded minute close"), never a raw venue
-        // key: printed as given (#4135 names venues only through SourceLabels).
-        if let words = observation.source {
+        if let words = observation.sourceWords {
             Text(words).font(.caption2).foregroundStyle(DS.textSecondary)
         }
     }

@@ -1425,7 +1425,7 @@ final class PlayerDuelValuePresentation10868Tests: XCTestCase {
     private static func value(_ original: String, _ fraction: Double, _ figure: String, _ minuteEnding: Int,
                               _ time: String, id: String? = nil) -> PlayerDuelValueObservation10868 {
         PlayerDuelValueObservation10868(originalID: original, observationID: id ?? "\(original)@\(minuteEnding)",
-                                        fractionOfDollar: fraction, figure: figure, time: time, source: source)
+                                        fractionOfDollar: fraction, figure: figure, time: time, sourceWords: source)
     }
 
     private static func endpoint(_ label: String, _ observation: PlayerDuelValueObservation10868?,
@@ -1668,7 +1668,7 @@ final class PlayerDuelValuePresentation10868Tests: XCTestCase {
 
         // No observation id: ties rest on the original alone.
         let anonymous = PlayerDuelValueObservation10868(originalID: Self.champagnieOriginal, observationID: nil, fractionOfDollar: 0.57,
-                                                        figure: "57¢", time: "Jun 3, 5:29 PM", source: nil)
+                                                        figure: "57¢", time: "Jun 3, 5:29 PM", sourceWords: nil)
         let plain = Self.input([Self.champagnie(earlier: Self.endpoint("Pre-game", anonymous), later: Self.endpoint("Last trade", anonymous), change: "Unchanged")])
         XCTAssertEqual(plain.connector(plain.rows[0]), PlayerDuelValueConnector10868(earlier: 0.57, later: 0.57))
         XCTAssertEqual(plain.accessibilityValue(for: plain.rows[0]),
