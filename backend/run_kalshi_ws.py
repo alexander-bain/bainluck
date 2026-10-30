@@ -14,6 +14,7 @@ Usage (Procfile):
 
 import argparse
 import asyncio
+import atexit
 import gc
 import logging
 import os
@@ -351,7 +352,12 @@ def _start_cpu_sampler():
     try:
         from app.utils.loop_cpu_sampler import LoopCpuSampler
 
-        return LoopCpuSampler().start()
+        sampler = LoopCpuSampler().start()
+        if sampler is not None:
+            # Every exit path, not only run_venue's finally: atexit runs before
+            # interpreter shutdown resets SIGPROF to SIG_DFL under an armed timer.
+            atexit.register(sampler.stop)
+        return sampler
     except Exception:
         logger.exception("PM CPU sampler did not start")
         return None

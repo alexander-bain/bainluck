@@ -35,6 +35,16 @@ Each sample adds one count to:
   so that CPU belongs to another thread or the kernel. Anything else is
   ``other``.
 
+The walk continues across greenlet boundaries (SQLAlchemy's ``greenlet_spawn``)
+into the parent greenlet's suspended frame, so a statement's compile/execute/row
+Python is charged to the stage that issued it.
+
+LIMITS. On 3.11 the handler runs at the next RESUME, backward jump or C-call
+return: C-call CPU lands on its caller's line, but straight-line Python with no
+calls lands on the next function entered. TLS decryption (PM sockets, Postgres,
+Redis) and asyncpg's Cython row parsing run in loop transport callbacks, so they
+always tag ``other`` (``asyncio/sslproto.py`` / ``selector_events.py`` leaves).
+
 Every ``window_s`` a daemon thread (which needs no timing precision) closes the
 window, builds ONE line of at most ``max_line`` bytes, and logs it:
 
@@ -68,6 +78,7 @@ import os
 import random
 import re
 import signal
+import sys
 import threading
 import time
 from typing import Callable, Optional
@@ -237,7 +248,20 @@ class LoopCpuSampler:
             outer = None
             refresher = False
             depth = 0
-            while frame is not None and depth < MAX_DEPTH:
+            # SQLAlchemy's async layer runs each statement inside greenlet_spawn,
+            # and a greenlet keeps its own frame chain: the outermost frame in it
+            # has f_back None. Continue from the parent greenlet's suspended frame,
+            # or every statement's Python reads `other`. sys.modules, so no import
+            # runs inside the handler.
+            greenlet_mod = sys.modules.get("greenlet")
+            g = greenlet_mod.getcurrent() if greenlet_mod is not None else None
+            while depth < MAX_DEPTH:
+                if frame is None:
+                    g = g.parent if g is not None else None
+                    if g is None:
+                        break
+                    frame = g.gr_frame
+                    continue
                 code = frame.f_code
                 if code not in seen:
                     seen.add(code)

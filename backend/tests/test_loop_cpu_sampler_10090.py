@@ -298,6 +298,8 @@ async def test_only_the_polymarket_venue_starts_it_and_a_failure_never_stops_the
             events.append("stop")
 
     monkeypatch.setattr(mod, "LoopCpuSampler", Fake)
+    registered = []
+    monkeypatch.setattr(runner.atexit, "register", registered.append)
     callbacks = {}
     loop = asyncio.get_running_loop()
     monkeypatch.setattr(loop, "add_signal_handler", lambda sig, cb: callbacks.update({sig: cb}))
@@ -318,6 +320,8 @@ async def test_only_the_polymarket_venue_starts_it_and_a_failure_never_stops_the
     await asyncio.wait_for(task, 1)
     expected = ["start", "stop"] if venue == "polymarket" and not fails else []
     assert events == expected
+    # R2: stop also runs at interpreter exit, whatever path left run_venue.
+    assert [f.__name__ for f in registered] == (["stop"] if expected else [])
 
 
 def test_each_rearm_is_jittered_so_samples_cannot_alias_with_the_flush_cadence(monkeypatch):
@@ -381,3 +385,64 @@ def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigpr
     assert got_hot + got_decoy >= 150, counts
     share = got_hot / (got_hot + got_decoy)
     assert abs(share - expected) < 0.15, (share, expected, counts)
+
+
+# ── R1 (latency's review of 32219d19): the walk crosses SQLAlchemy's greenlet ──
+GREENLET_STAGES = (("flush", os.path.basename(__file__), frozenset({"flush_prices"})),)
+
+
+def _orm_like_cpu(n):
+    """Pure Python inside the greenlet, like ORM compile / row processing, with
+    one hop back to the loop between halves, like a DB round trip."""
+    from sqlalchemy.util import await_only
+
+    s = 0
+    for i in range(n):
+        s += hash((i, str(i))) & 7
+    await_only(asyncio.sleep(0))
+    for i in range(n):
+        s += hash((i, str(i))) & 7
+    return s
+
+
+def test_fold_inside_greenlet_spawn_reaches_the_stage_that_issued_it():
+    from sqlalchemy.util import greenlet_spawn
+
+    sampler = LoopCpuSampler(stages=GREENLET_STAGES, enabled=_on)
+
+    async def flush_prices():
+        await greenlet_spawn(lambda: sampler.fold(sys._getframe()))
+
+    asyncio.run(flush_prices())
+    assert sampler._window.stage_counts == {"flush": 1}, sampler._window.stage_counts
+    assert "flush_prices" in _names(sampler._window.cum_counts)
+
+
+def test_sqlalchemy_statement_cpu_is_charged_to_its_stage_not_other(restore_sigprof):
+    """Half the flush's CPU runs inside ``greenlet_spawn`` (every AsyncSession
+    statement does), half in plain coroutine code. Without the greenlet hop the
+    first half read ``other`` (latency: flush=36.4 other=63.0)."""
+    from sqlalchemy.util import greenlet_spawn
+
+    async def flush_prices():
+        end = time.process_time() + 2.0
+        while time.process_time() < end:
+            await greenlet_spawn(_orm_like_cpu, 20000)
+            s = 0
+            for i in range(20000):
+                s += hash((i, str(i))) & 7
+            await asyncio.sleep(0)
+
+    sampler = LoopCpuSampler(
+        stages=GREENLET_STAGES, interval_s=0.005, enabled=_on, timer=ATTRIBUTION_TIMER
+    ).start(thread=False)
+    assert sampler is not None
+    try:
+        asyncio.run(flush_prices())
+    finally:
+        sampler.stop()
+    stages = dict(sampler._window.stage_counts)
+    stages.pop(IDLE, None)
+    total = sum(stages.values())
+    assert total >= 100, stages
+    assert stages.get("flush", 0) / total >= 0.9, stages
