@@ -282,3 +282,181 @@ async def test_postgres_greatest_and_the_python_judgment_agree_row_by_row(pg_eng
         and settled_tennis_score_is_impossible(home_score=home, away_score=away)
     }
     assert mine == judged
+
+
+# ═══ THE RECALL SEEKS: IT NEVER WALKS THE WHOLE TABLE (#10090) ══════════════
+#
+# The set tests above are about WHICH rows come back. These are about how many
+# rows Postgres reads to find them, which is what regressed: by 2026-10-29 the
+# 60-second status beat ran 6-124 s because this statement averaged 4.0 s (max
+# 66 s) against the 116 ms its docstring measured. The planner had started
+# answering `ORDER BY id LIMIT 200` by walking `events_pkey` from the start and
+# filtering every row, betting on 200 matches early; there are ~0, so every
+# pass read the 866 MB heap.
+#
+# A plan is a function of statistics, so the fixture below manufactures the
+# statistics that flip it: a table where tennis is a small minority, every
+# tennis score is legal, and the planner's guess at the matches is inflated by
+# the same correlation it cannot see on production (the score columns are not
+# independent of the sport). All of it is inserted and ANALYZEd inside one
+# transaction that is rolled back. That undoes only part of it: `pg_statistic`
+# is transactional and rolls back, but ANALYZE updates `pg_class.reltuples` and
+# `relpages` IN PLACE, so `events` keeps the inflated row count (measured 100 →
+# 120,100 after ROLLBACK) plus ~120k dead tuples until autovacuum. So never put
+# an `events` plan assertion after this test in the same CI matrix group
+# (`shared`); today every other `events` EXPLAIN test runs in a different one.
+#
+# THE CONTROLS ARE WHAT MAKE THE GUARD WORTH HAVING. A fixture on which the old
+# shape also seeks proves nothing, so the old shape and the half-fix are planned
+# on the same statistics and must still walk the key. If a Postgres upgrade ever
+# makes them stop, the guard says the fixture no longer reproduces the trap,
+# rather than passing.
+
+PLAN_TENNIS_SPORTS = 60
+PLAN_OTHER_SPORTS = 40
+PLAN_ROWS = 120_000
+PLAN_SPORT_BASE = 993000
+PLAN_EVENT_BASE = 7_000_000
+
+
+def _pre_10090_recall_shape(*, seek: bool):
+    """The recall as it was (``seek=False``), or with only the ANY(ARRAY) half
+    of the fix and the key-servable order (``seek=True``). Built here, not
+    imported, because these are the shapes the guard exists to refuse."""
+    from sqlalchemy import and_, any_, func, select
+
+    from app.models import Event, Sport
+    from app.utils.espn_tennis_anchor import (
+        COMPLETED_WINNER_SET_COUNTS,
+        TENNIS_STATUSES_CLAIMING_A_RESULT,
+    )
+
+    query = select(Event)
+    if seek:
+        query = query.where(
+            Event.sport_id == any_(func.array(
+                select(Sport.id).where(Sport.key.like("tennis%")).scalar_subquery()
+            ))
+        )
+    else:
+        query = query.join(Sport, Event.sport_id == Sport.id).where(
+            Sport.key.like("tennis%")
+        )
+    return (
+        query.where(
+            Event.status.in_(TENNIS_STATUSES_CLAIMING_A_RESULT),
+            Event.home_score.isnot(None),
+            Event.away_score.isnot(None),
+            ~and_(
+                func.greatest(Event.home_score, Event.away_score).in_(
+                    COMPLETED_WINNER_SET_COUNTS
+                ),
+                Event.home_score != Event.away_score,
+            ),
+        )
+        .order_by(Event.id)
+        .limit(200)
+    )
+
+
+def _plan_nodes(plan):
+    yield plan
+    for child in plan.get("Plans", []):
+        yield from _plan_nodes(child)
+
+
+def _events_scans(plan) -> list[str]:
+    """Every node that reads `events`, as `<node type> <index or ->`."""
+    return [
+        f"{node['Node Type']} {node.get('Index Name', '-')}"
+        for node in _plan_nodes(plan)
+        if node.get("Relation Name") == "events"
+        or node.get("Index Name", "").startswith(("ix_events_", "events_"))
+    ]
+
+
+def _walks_the_table(scans: list[str]) -> bool:
+    return any(
+        scan.startswith("Seq Scan") or scan == "Index Scan events_pkey"
+        or scan == "Parallel Seq Scan -"
+        for scan in scans
+    )
+
+
+async def _plans_on_inflated_statistics(conn) -> dict[str, list[str]]:
+    import json
+
+    from sqlalchemy.dialects import postgresql
+
+    await conn.execute(
+        text(
+            "INSERT INTO sports (id, key, name, active) "
+            "SELECT :b + g, 'tennis_zz10090_' || g, 'x', true "
+            "FROM generate_series(1, :t) g "
+            "UNION ALL "
+            "SELECT :b + 100 + g, 'zz10090_other_' || g, 'x', true "
+            "FROM generate_series(1, :o) g"
+        ),
+        {"b": PLAN_SPORT_BASE, "t": PLAN_TENNIS_SPORTS, "o": PLAN_OTHER_SPORTS},
+    )
+    # One row in 17 is tennis, always a legal 2-0/2-1; the rest are other
+    # sports with scores spread over 0..6, so the score predicate alone looks
+    # unselective. 90% settled, as production is.
+    await conn.execute(
+        text(
+            "INSERT INTO events (id, sport_id, home_team_name, away_team_name, "
+            "commence_time, status, home_score, away_score) "
+            "SELECT :e + g, "
+            "CASE WHEN g % 17 = 0 THEN :b + (g % :t) + 1 "
+            "ELSE :b + 100 + (g % :o) + 1 END, 'H', 'A', "
+            "now() - make_interval(mins => g), "
+            "CASE WHEN g % 10 = 0 THEN 'scheduled' ELSE 'completed' END, "
+            "CASE WHEN g % 17 = 0 THEN 2 ELSE g % 7 END, "
+            "CASE WHEN g % 17 = 0 THEN g % 2 ELSE g % 5 END "
+            "FROM generate_series(1, :n) g"
+        ),
+        {
+            "e": PLAN_EVENT_BASE, "b": PLAN_SPORT_BASE, "n": PLAN_ROWS,
+            "t": PLAN_TENNIS_SPORTS, "o": PLAN_OTHER_SPORTS,
+        },
+    )
+    await conn.execute(text("ANALYZE events"))
+    await conn.execute(text("ANALYZE sports"))
+
+    shapes = {
+        "recall": illegal_settled_tennis_score_recall(),
+        "pre_10090": _pre_10090_recall_shape(seek=False),
+        "any_array_only": _pre_10090_recall_shape(seek=True),
+    }
+    plans = {}
+    for name, query in shapes.items():
+        sql = str(query.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        ))
+        raw = (await conn.execute(text("EXPLAIN (FORMAT JSON) " + sql))).scalar()
+        plan = (json.loads(raw) if isinstance(raw, str) else raw)[0]["Plan"]
+        plans[name] = _events_scans(plan)
+    return plans
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_recall_seeks_the_tennis_rows_instead_of_walking_events(pg_engine):
+    async with pg_engine.connect() as conn:
+        trans = await conn.begin()
+        try:
+            plans = await _plans_on_inflated_statistics(conn)
+        finally:
+            await trans.rollback()
+
+    print(f"\n#2772 RECALL PLAN {plans}")
+    assert _walks_the_table(plans["pre_10090"]), (
+        "fixture no longer reproduces the trap: the pre-#10090 shape did not "
+        f"walk events on inflated statistics ({plans['pre_10090']})"
+    )
+    assert _walks_the_table(plans["any_array_only"]), (
+        "fixture no longer reproduces the trap: ANY(ARRAY) with a key-servable "
+        f"order did not walk events_pkey ({plans['any_array_only']})"
+    )
+    assert not _walks_the_table(plans["recall"]), plans["recall"]
+    assert "Bitmap Index Scan ix_events_sport_id" in plans["recall"], plans["recall"]

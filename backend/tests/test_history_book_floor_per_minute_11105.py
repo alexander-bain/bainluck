@@ -227,6 +227,11 @@ async def test_control_before_the_fix_the_route_served_what_production_served(
     disagree with the frames, so the test above cannot pass against the old code.
     """
     _without_the_floor(monkeypatch)
+    # And without the full-book consensus (#11105 layer 2): production served the
+    # repriced-books rows, which on a minute one of the two books wrote is that book.
+    monkeypatch.setattr(
+        "app.routes.events._full_book_consensus_points", lambda points, *a, **k: points
+    )
     offset = _offset()
     wp, odds = _specimen(offset)
     payload = await _serve(_event(offset), wp, odds)

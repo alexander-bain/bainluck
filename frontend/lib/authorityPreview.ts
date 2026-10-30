@@ -224,3 +224,34 @@ export function authorityPreviewFrame(r: AuthorityPreviewReader, raw: unknown, e
     multiOrigin: { ...multi, authorities: { ...multi.authorities, [key]: fence } },
     held: held && deadline !== undefined ? { ...held, expiresAt: deadline } : held } };
 }
+
+/** #10090: the longest a withdrawn folded preview stays on the headline. */
+export const FLOOR_HANDOVER_MS = 1000;
+
+/**
+ * #10090 — display only; the reader above is unchanged and admits nothing over
+ * an uncovered base. On a page that folds several rows, a commit floor
+ * (`fold_preview_floor`, or a raw frame that promises its folded result)
+ * withdraws the held preview before the combined result folding the same write
+ * arrives, and until then the committed hero is the value at the OLD base:
+ * older than both the floor and the preview. So the page keeps the preview it
+ * already holds — the same state, with its own identity, receipt and
+ * observation clock, never re-admitted — until that result decides, for at most
+ * its own lifetime and FLOOR_HANDOVER_MS. `before`/`after` are the reader either
+ * side of the floor; `current` is a hand-over already running (never extended).
+ * Anything but a plain floor over this fold's own rows (a reset, a new session,
+ * saturation, a row outside the fold, a membership change) hands over nothing.
+ */
+export function authorityPreviewHandover(before: AuthorityPreviewReader, after: AuthorityPreviewReader,
+  raw: unknown, current: BlendPreviewState | null, now: number): BlendPreviewState | null {
+  if (after.preview.held) return null;
+  const held = current ?? before.preview.held;
+  const incoming = parseFoldRevision(raw);
+  if (!held || !held.authority?.fold || before.members.length < 2 || after.saturated
+      || !before.session || after.session !== before.session || held.authority.session !== after.session
+      || !before.preview.multiOrigin || after.preview.multiOrigin !== before.preview.multiOrigin
+      || !sameKeys(after.members, before.members)
+      || !incoming || !Object.keys(incoming).every(key => before.members.includes(key))
+      || !Number.isFinite(now) || now >= held.expiresAt) return null;
+  return current ?? { ...held, expiresAt: Math.min(held.expiresAt, now + FLOOR_HANDOVER_MS) };
+}

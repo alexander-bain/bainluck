@@ -2134,15 +2134,56 @@ _VENUE_SOURCE_SQL_LIST = ", ".join(f"'{s}'" for s in sorted(VENUE_PRICE_SOURCES)
 # the reading: a value first seen before kickoff is a pregame line however long
 # it is re-observed afterwards, which is the same argument the paragraph above
 # makes about venue prices.
+#
+# ═══ #10090: THE VENUE EXCLUSION IS AN INDEX CONDITION, NOT A FILTER ═══
+#
+# MEASURED, production 2026-10-29 (pg_stat_statements, latency's lock-holder
+# read): 1,643,779 calls, mean 277 ms, max 247 s — the largest single cost in
+# the status pass. Production's only per-event index is ``ix_winprob_event_source
+# (event_id, source)``, and ``source NOT IN (…)`` cannot be an index condition, so
+# the old single-arm form fetched EVERY row of every candidate event from the
+# heap and threw the venue rows away afterwards. Venue rows are 93% of the table
+# (polymarket 50%, kalshi 43%); that night's 54 live events held 34,231 rows of
+# which 235 were play sources.
+#
+# So the rows are reached through the ranges BETWEEN the venue names instead:
+# ``source IS NULL``, ``< 'betting'``, ``> 'betting' AND < 'kalshi'``, …,
+# ``> 'polymarket'``. Each arm is an index range on (event_id, source), the arms
+# are disjoint, and together they are exactly "NULL or not a venue" under any
+# deterministic collation, provided the names are in the column collation's
+# order (Python's ``sorted`` agrees for lowercase ASCII; production's planner
+# proves it by eliding the redundant filter on every arm). The original
+# denylist stays in the outer WHERE as the definition: if an arm ever covered a
+# venue name, it would still be filtered out. The answer is unchanged:
+# same rows, same per-row expression, same MAX. Plan-only, same night: cost
+# 55,844 → 4,552 (54 live events) and 437,317 → 48,518 (615 suspended); one
+# event, EXPLAIN ANALYZE, 124 ms / 3,178 buffers → 7.8 ms / 533.
+_VENUE_NAMES_SORTED = sorted(VENUE_PRICE_SOURCES)
+_NON_VENUE_SOURCE_RANGES = (
+    ["source IS NULL", f"source < '{_VENUE_NAMES_SORTED[0]}'"]
+    + [
+        f"source > '{lo}' AND source < '{hi}'"
+        for lo, hi in zip(_VENUE_NAMES_SORTED, _VENUE_NAMES_SORTED[1:])
+    ]
+    + [f"source > '{_VENUE_NAMES_SORTED[-1]}'"]
+)
+_NON_VENUE_SNAPSHOT_ARMS = "\n                UNION ALL\n".join(
+    f"""                SELECT event_id, source, captured_at, valid_until
+                  FROM win_prob_snapshots
+                 WHERE event_id = ANY(:event_ids) AND {arm}"""
+    for arm in _NON_VENUE_SOURCE_RANGES
+)
 LAST_POST_COMMENCE_SNAPSHOT_SQL = f"""
     SELECT x.event_id, MAX(x.last_seen) AS last_snap
     FROM (
         SELECT w.event_id,
                GREATEST(w.captured_at, COALESCE(w.valid_until, w.captured_at))
                    AS last_seen
-          FROM win_prob_snapshots w
+          FROM (
+{_NON_VENUE_SNAPSHOT_ARMS}
+               ) w
           JOIN events e ON e.id = w.event_id
-         WHERE w.event_id = ANY(:event_ids) AND w.captured_at >= e.commence_time
+         WHERE w.captured_at >= e.commence_time
            AND (w.source IS NULL OR w.source NOT IN ({_VENUE_SOURCE_SQL_LIST}))
     ) x
     GROUP BY x.event_id

@@ -10,6 +10,7 @@ import {
   EMPTY_AUTHORITY_PREVIEW,
   authorityPreviewFrame,
   authorityPreviewFloor,
+  authorityPreviewHandover,
   authorityPreviewOpen,
   authorityPreviewReset,
   authorityPreviewMembership,
@@ -50,6 +51,20 @@ import {
  */
 
 export type LiveFrame = LiveStreamFrame;
+
+/**
+ * #10090: the preview reader and, beside it, a folded preview still on the
+ * headline across a commit floor (`authorityPreviewHandover`). Only a floor
+ * sets `handover`; every other change writes a fresh object without it, so a
+ * revoke, reset, reconnect, reconcile, membership change or any other frame
+ * ends the hand-over at once and the reader alone decides.
+ */
+type PreviewView = { reader: AuthorityPreviewReader; previewNow: number; handover?: BlendPreviewState | null };
+
+function afterFloor(previous: PreviewView, reader: AuthorityPreviewReader, raw: unknown): PreviewView {
+  const at = performance.now();
+  return { reader, previewNow: at, handover: authorityPreviewHandover(previous.reader, reader, raw, previous.handover ?? null, at) };
+}
 
 /**
  * #10090: the frame the page should see after `next` arrives.
@@ -166,10 +181,9 @@ export function useLiveEventStream(
   const [gate, setGate] = useState<{ eventId: number | undefined; floors: FoldRevision; members: string }>({
     eventId, floors: {}, members: memberKeys,
   });
-  const [{ reader, previewNow }, setPreview] = useState<{
-    reader: AuthorityPreviewReader; previewNow: number;
-  }>({ reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
-  const preview = reader.preview.held;
+  const [{ reader, previewNow, handover }, setPreview] = useState<PreviewView>(
+    { reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
+  const preview = reader.preview.held ?? handover ?? null;
   // A replacement controller starts its own ordinal at one; the hook does not.
   const recoveryOrdinal = useRef(0);
   // A ref so the controller's callbacks never close over a stale setter.
@@ -212,9 +226,11 @@ export function useLiveEventStream(
   }, [eventId, memberKeys]);
 
   useEffect(() => {
-    if (eventId) setPreview(previous => ({
-      reader: authorityPreviewMembership(previous.reader, membershipRef.current, eventId), previewNow: performance.now(),
-    }));
+    // Unchanged membership is a commit floor (a newly adopted detail's
+    // vector); a changed one hands nothing over.
+    if (eventId) setPreview(previous => afterFloor(
+      previous, authorityPreviewMembership(previous.reader, membershipRef.current, eventId), membershipRef.current,
+    ));
   }, [eventId, authoritativeMembership]);
 
   useEffect(() => {
@@ -249,9 +265,19 @@ export function useLiveEventStream(
       now: () => Date.now(),
       onFrame: (next) => {
         if (mounted.current) {
-          if (next.event_id === eventId && next.rev) setPreview(previous => ({
-            reader: authorityPreviewFloor(previous.reader, next.rev), previewNow: performance.now(),
-          }));
+          // #10090: a raw frame that promises its folded result, in the same
+          // status, may hand the displayed folded preview over until that
+          // result; the result itself (adopted, held, null or refused) and any
+          // other frame end it.
+          const promise = next.folded_quote_pending === true && !('folded_quote' in next);
+          if (next.event_id === eventId && next.rev) setPreview(previous => {
+            const floored = authorityPreviewFloor(previous.reader, next.rev);
+            const shown = previous.reader.preview.held ?? previous.handover;
+            return promise && (next.status === undefined || next.status === shown?.status)
+              ? afterFloor(previous, floored, next.rev) : { reader: floored, previewNow: performance.now() };
+          });
+          else if (next.event_id === eventId && !promise) setPreview(previous => previous.handover
+            ? { reader: previous.reader, previewNow: performance.now() } : previous);
           setFrame(previous => heldFrameAfter(previous, next));
           // Collect in the transport callback, not an effect on `frame`: React
           // may batch several publications into one render.
@@ -308,9 +334,7 @@ export function useLiveEventStream(
           const packet = typeof raw === 'string' ? JSON.parse(raw) : raw;
           if (!packet || packet.event_id !== eventId) return;
           raiseFloors(packet.floor);
-          setPreview(previous => ({
-            reader: authorityPreviewFloor(previous.reader, packet.floor), previewNow: performance.now(),
-          }));
+          setPreview(previous => afterFloor(previous, authorityPreviewFloor(previous.reader, packet.floor), packet.floor));
         } catch {
           setPreview(previous => ({
             reader: authorityPreviewReset(previous.reader), previewNow: performance.now(),
