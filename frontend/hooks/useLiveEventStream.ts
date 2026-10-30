@@ -161,10 +161,13 @@ export function useLiveEventStream(
   const [confirmed, setConfirmed] = useState<{ eventId: number | undefined; at: string | null }>({
     eventId, at: null,
   });
-  // #10090 J C1: the commit floors announced for this event, max per row, and
-  // the rows of the committed revision they were last pruned against.
-  const [gate, setGate] = useState<{ eventId: number | undefined; floors: FoldRevision; members: string }>({
-    eventId, floors: {}, members: memberKeys,
+  // #10090 J C1: the commit floors announced for this event, max per row, the
+  // floors of rows that left the committed fold (parked, as the reader retires
+  // them), and the rows of the committed revision they were last pruned against.
+  const [gate, setGate] = useState<{
+    eventId: number | undefined; floors: FoldRevision; parked: FoldRevision; members: string;
+  }>({
+    eventId, floors: {}, parked: {}, members: memberKeys,
   });
   const [{ reader, previewNow }, setPreview] = useState<{
     reader: AuthorityPreviewReader; previewNow: number;
@@ -195,19 +198,29 @@ export function useLiveEventStream(
     setPreview({ reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
   }, [eventId]);
 
-  // #10090 J C1: a row that leaves the committed fold takes its floor with it,
-  // as the reader retires it. A page with no revision on screen keeps every
-  // floor: nothing on screen covers them.
+  // #10090 J C1 R1: a row that leaves the committed fold parks its floor, as
+  // the reader retires it, and gets it back if a later revision carries the row
+  // again — a stale detail read re-adding it below its known floor stays owed.
+  // A page with no revision on screen keeps every floor: nothing on screen
+  // covers them. A new event clears both.
   useEffect(() => {
     setGate(previous => {
-      if (previous.eventId !== eventId) return { eventId, floors: {}, members: memberKeys };
+      if (previous.eventId !== eventId) return { eventId, floors: {}, parked: {}, members: memberKeys };
       if (!memberKeys || previous.members === memberKeys) return previous;
       const rows = memberKeys.split(',');
       const floors = { ...previous.floors };
+      const parked = { ...previous.parked };
       for (const key of previous.members ? previous.members.split(',') : []) {
-        if (!rows.includes(key)) delete floors[key];
+        if (rows.includes(key) || !(key in floors)) continue;
+        parked[key] = Math.max(parked[key] ?? -1, floors[key]);
+        delete floors[key];
       }
-      return { eventId, floors, members: memberKeys };
+      for (const key of rows) {
+        if (!(key in parked)) continue;
+        floors[key] = Math.max(floors[key] ?? -1, parked[key]);
+        delete parked[key];
+      }
+      return { eventId, floors, parked, members: memberKeys };
     });
   }, [eventId, memberKeys]);
 
@@ -236,7 +249,7 @@ export function useLiveEventStream(
     // (preview dropped, the old committed value showing) with the confirmation
     // still claimed over it.
     const raiseFloors = (raw: unknown) => flushSync(() => setGate(previous => {
-      const held = previous.eventId === eventId ? previous : { eventId, floors: {}, members: '' };
+      const held = previous.eventId === eventId ? previous : { eventId, floors: {}, parked: {}, members: '' };
       const floors = confirmationFloorsAfter(held.floors, raw);
       return floors === held.floors && held === previous ? previous : { ...held, floors };
     }));
