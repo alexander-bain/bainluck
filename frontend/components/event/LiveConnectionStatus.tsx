@@ -223,7 +223,9 @@ export default function LiveConnectionStatus({
   now = Date.now(),
   ...times
 }: LiveConnectionStatusProps) {
-  const { open, id: detailsId, root, button, toggle } = useTimesDisclosure();
+  const { open, id: detailsId, root, button, toggle, close } = useTimesDisclosure();
+  // Quiet unmounts the button; a panel left open must not return untapped.
+  useEffect(() => { if (quiet) close(); }, [quiet, close]);
   const { label, tone, breathes, announcement } = presentation;
   const { observation, priceObservedAt } = times;
 

@@ -23,6 +23,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
 
 import EkgTimesButton from "@/components/event/EkgTimesButton";
+import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
 import { connectionStatusIsHealthy } from "@/lib/event/liveConnectionStatus";
 
 const NOW = Date.UTC(2026, 9, 2, 20, 0, 0);
@@ -202,5 +203,39 @@ describe("Alex 67 — healthy, by the model's own inputs", () => {
     expect(connectionStatusIsHealthy({ ...ok, status: "open", terminalLabel: "Finished" })).toBe(false);
     expect(connectionStatusIsHealthy({ ...ok, status: "open", priceMayBeOld: true })).toBe(false);
     expect(connectionStatusIsHealthy({ ...ok, status: "quiet", scoreMayBeOld: true })).toBe(false);
+  });
+});
+
+describe("Alex 67 — the status's panel never comes back open by itself", () => {
+  // live's R1 on #11839 (probe zzLiveProbeReopen11839, 38c24629): quiet unmounts
+  // the button but the disclosure kept `open`, so a flapping connection brought
+  // the panel back expanded at the next trouble with no tap.
+  const trouble = { label: "Price may be old", tone: "neutral" as const, breathes: false, announcement: "" };
+  const times = {
+    priceObservedAt: OBSERVED_AT, priceConfirmedAt: null,
+    scoreShown: false, scoreConfirmedAt: null, oldestFact: null, now: NOW,
+  };
+
+  it("opened during trouble, quiet in between, trouble again: collapsed and hidden", () => {
+    const host = (document as unknown as { createElement: (t: string) => N }).createElement("div");
+    (document as unknown as { body: { appendChild: (n: N) => void } }).body.appendChild(host);
+    const root: Root = createRoot(host as unknown as Element);
+    const render = (quiet: boolean) =>
+      act(() => root.render(<LiveConnectionStatus presentation={trouble} quiet={quiet} {...times} />));
+    const button = () => find(host, (n) => n.tagName === "BUTTON");
+
+    render(false);
+    act(() => reactProps(button()!).onClick({}));
+    expect(button()!["aria-expanded"]).toBe("true");
+
+    render(true);
+    expect(button()).toBeNull();
+
+    render(false);
+    const again = button()!;
+    const panel = find(host, (n) => n.tagName === "DIV" && n.id === again["aria-controls"])!;
+    expect(again["aria-expanded"]).toBe("false");
+    expect(panel.hidden).toBe("");
+    act(() => root.unmount());
   });
 });
