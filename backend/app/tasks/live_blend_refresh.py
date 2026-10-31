@@ -381,7 +381,7 @@ def _admitted_stamp_batch() -> int:
         return ADMITTED_STAMP_BATCH
 
 
-def _admitted_live_batch() -> int:
+def _admitted_live_batch_size() -> int:
     """This worker turn's LIVE batch size: a running alternation's arm, else the setting."""
     try:
         return _optional_db_trial().value(ADMITTED_LIVE_BATCH_SWITCH, ADMITTED_LIVE_BATCH)
@@ -5294,7 +5294,7 @@ class LiveBlendRefresher:
         event counts against ADMITTED_LIVE_RUN as its own pick would, so a
         waiting pre-game event keeps today's one turn in ADMITTED_LIVE_RUN + 1
         live EVENTS, not live transactions."""
-        limit = _admitted_live_batch()
+        limit = _admitted_live_batch_size()
         live = self._live_event_ids
         if limit <= 1 or head not in live:
             return [head]
@@ -5303,6 +5303,8 @@ class LiveBlendRefresher:
         group_ids = [head]
         live_queue = window.live_queue
         while live_queue and len(group_ids) < limit:
+            if window.queue and window.live_run >= ADMITTED_LIVE_RUN:
+                break
             event_id = live_queue[0]
             if (
                 event_id not in live

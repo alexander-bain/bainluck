@@ -147,10 +147,35 @@ async def test_the_extra_events_count_against_the_live_run(live_batch_trial, mon
     r.admit_fresh([1, 2, 10, 11, 12, 13, 14, 15], flush_started=1001)
     await _settle()
     groups = _own_groups(r)
-    assert groups[0] == [10, 11, 12, 13]
+    assert groups[0] == [10, 11, 12]
     assert groups[1] == [1]
-    assert groups[2] == [14, 15]
+    assert groups[2] == [13, 14, 15]
     assert groups[3] == [2]
+    await _finish(r, task)
+
+
+@pytest.mark.parametrize("limit", [1, 4, 8])
+async def test_a_waiting_pre_game_event_keeps_its_turn_at_every_setting(
+        live_batch_trial, monkeypatch, limit):
+    # Authority's probe P2 (R1 on db6cb107): one worker, 3 pre-game + 16 live
+    # of one cohort. Without the live-run stop a batch overshoots the run:
+    # [4,4,4] at 4 and [8,8,0] at 8 live events before each pre-game turn.
+    live_batch_trial["value"] = limit
+    monkeypatch.setattr(lbr, "FRESH_STAMP_WORKERS", 1)
+    r = _Recorded(blocked={99})
+    task = await _running_call(r)
+    live = list(range(10, 26))
+    r._live_event_ids.update(live)
+    r.admit_fresh([1, 2, 3] + live, flush_started=1001)
+    await _settle()
+    runs, n = [], 0
+    for group in _own_groups(r):
+        if group[0] < 10:
+            runs.append(n)
+            n = 0
+        else:
+            n += len(group)
+    assert runs == [lbr.ADMITTED_LIVE_RUN] * 3
     await _finish(r, task)
 
 
@@ -252,7 +277,7 @@ def test_a_switch_read_error_reads_the_live_setting(monkeypatch):
 
     monkeypatch.setattr(lbr, "_optional_db_trial", broken)
     monkeypatch.setattr(lbr, "ADMITTED_LIVE_BATCH", 1)
-    assert lbr._admitted_live_batch() == 1
+    assert lbr._admitted_live_batch_size() == 1
 
 
 # ── the real stamp: one session, a savepoint each, one COMMIT, frames after it ─
