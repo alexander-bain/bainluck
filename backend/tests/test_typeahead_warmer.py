@@ -1059,8 +1059,10 @@ class TestTheWidthIsBoundedByTheEngineItUses:
         from app.tasks import base
 
         src = inspect.getsource(base._get_task_engine)
-        pool = int(re.search(r"pool_size=(\d+)", src).group(1))
-        overflow = int(re.search(r"max_overflow=(\d+)", src).group(1))
+        # The default engine's branch (`... else N`): a socket consumer's pool
+        # (`retain_full_pool`, #10090 `_consumer_pool_size`) is not this one.
+        pool = int(re.search(r"pool_size=.* else (\d+)", src).group(1))
+        overflow = int(re.search(r"max_overflow=.* else (\d+)", src).group(1))
 
         assert warmer.WARM_CONCURRENCY <= pool + overflow, (
             f"WARM_CONCURRENCY={warmer.WARM_CONCURRENCY} exceeds the "

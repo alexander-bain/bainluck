@@ -63,12 +63,25 @@ def _get_task_engine(
     return create_async_engine(
         DATABASE_URL,
         pool_pre_ping=pool_pre_ping,
-        pool_size=5 if retain_full_pool else 3,
+        pool_size=_consumer_pool_size() if retain_full_pool else 3,
         max_overflow=0 if retain_full_pool else 2,
         pool_recycle=1800,
         connect_args=connect_args,
         **fast_json,
     )
+
+
+def _consumer_pool_size() -> int:
+    """#10090 — a socket consumer's pool: its stamp workers plus two writers.
+
+    Each of the refresher's ``FRESH_STAMP_WORKERS`` session slots holds one
+    connection, beside the price writer's and the standalone writer's. Today's
+    3 workers keep today's 5; never below it. Raising the workers without the
+    pool would leave the writers queued for a connection behind the stamps.
+    """
+    from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
+
+    return max(5, FRESH_STAMP_WORKERS + 2)
 
 
 @asynccontextmanager
