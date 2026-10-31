@@ -16,7 +16,7 @@ from app.tasks.live_blend_refresh import (
     PREPARED_OUTCOME_FIELDS,
     restamp_records_no_observation,
 )
-from tests.test_live_blend_read_footprint import ReadSession, event, market, outcomes
+from tests.test_live_blend_read_footprint import ReadSession, event, market, outcomes, projected
 
 
 @pytest.mark.asyncio
@@ -44,7 +44,7 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
     assert [o.id for o in graph[1].outcomes] == [o.id for o in quotes]
     assert len(session.statements) == 1
     statement = session.statements[0]
-    columns = list(statement.selected_columns)
+    columns = projected(statement.selected_columns)
     position = len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
         "win_probability_sources"
     )
@@ -94,7 +94,11 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
     assert "LEFT OUTER JOIN sports ON sports.id = events.sport_id" in sql
     assert context.sport_key == "basketball_nba"
     assert not statement._order_by_clauses and not statement._group_by_clauses
-    assert "OVER (" not in sql and not statement._distinct
+    # #10090 `STAMP_READ_JSON_ONCE`: its two `row_number()` flags, each in one
+    # JSON column's CASE and in its own column, are the only window functions.
+    from app.tasks.live_blend_refresh import stamp_read_json_once
+    assert sql.count("OVER (") == (4 if stamp_read_json_once() else 0)
+    assert not statement._distinct
 
 
 STAMP = datetime(2026, 10, 8, tzinfo=timezone.utc)

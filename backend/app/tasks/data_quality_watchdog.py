@@ -113,6 +113,9 @@ CHECKS: list[dict[str, Any]] = [
             "FROM futures_outcomes fo JOIN futures_markets fm ON fo.market_id = fm.id "
             "WHERE fm.source = 'kalshi' AND fm.status = 'resolved'"
         ),
+        # #10090: a full resolved-outcome census (~300k blocks a run on
+        # 2026-10-31); it waits for the evening while the database is busy.
+        "busy_db_deferrable": True,
         "threshold": 99.0,
         "comparison": "gte",
         "severity": "P1",
@@ -126,6 +129,9 @@ CHECKS: list[dict[str, Any]] = [
             "FROM futures_outcomes fo JOIN futures_markets fm ON fo.market_id = fm.id "
             "WHERE fm.source = 'polymarket' AND fm.status = 'resolved'"
         ),
+        # #10090: a full resolved-outcome census (~300k blocks a run on
+        # 2026-10-31); it waits for the evening while the database is busy.
+        "busy_db_deferrable": True,
         "threshold": 99.0,
         "comparison": "gte",
         "severity": "P1",
@@ -964,9 +970,22 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
         logger.warning("Watchdog: open-issue snapshot failed: %s", exc)
         open_issues = None
 
+    from app.utils import busy_db_defer
+
+    defer_coverage = busy_db_defer.should_defer("data_quality_watchdog winner coverage")
+    stats["checks_deferred"] = 0
+
     async with get_task_session() as session:
         for check in CHECKS:
             check_name = check["name"]
+            if defer_coverage and check.get("busy_db_deferrable"):
+                # Not run is not passed: no value, no verdict, no filing.
+                stats["checks_deferred"] += 1
+                stats["results"][check_name] = {
+                    "deferred": busy_db_defer.DEFERRED_REASON,
+                    "severity": check["severity"],
+                }
+                continue
             try:
                 result = await session.execute(text(check["query"]))
                 value = result.scalar()
@@ -1266,7 +1285,8 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 "issue": r.get("issue"),
             }
             for name, r in stats["results"].items()
-            if not r.get("passed")
+            # A busy-db deferred check was not run; it is neither red nor green.
+            if not r.get("passed") and not r.get("deferred")
         ]
         red = any(f["severity"] in ("P0", "P1") for f in failing)
         amber = bool(failing) or bool(stats["errors"])
@@ -1275,6 +1295,7 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
             "status": "red" if red else ("amber" if amber else "green"),
             "checks_run": stats["checks_run"],
             "checks_passed": stats["checks_passed"],
+            "checks_deferred": stats.get("checks_deferred", 0),
             "alerts_fired": stats["alerts_fired"],
             "self_error": bool(stats["errors"]),
             "failing": failing,

@@ -954,7 +954,7 @@ _EXPECTED_SYNC_SIGNATURES = {
     (5.0, 5.0, False),  # the default — the overwhelming majority of call sites
     (5.0, 5.0, True),   # sentinel filing + the Sentry filter
     (2.0, 2.0, False),  # the price-refresh / watchdog variant
-    (1.0, 1.0, True),   # search_head_warmer's two named 1.0s constants + #9051 trail
+    (1.0, 1.0, True),   # search_head_warmer's two named 1.0s constants + #9051 trail + #10090 held read
     (0.5, 5.0, True),   # the latency middleware on the hot request path
     (0.25, 0.25, True),  # #10090 speed_switches._read_stored, one thread at a time
 }
@@ -988,9 +988,12 @@ class TestTheSignatureCountInTheClaimIsTheOneInTheTree:
         removed, which would silently inflate the number the comment cites.
         """
         sites = _sync_client_signatures()[(1.0, 1.0, True)]
-        assert len(sites) == 3, sites
+        assert len(sites) == 4, sites
         warmer = [s for s in sites if "search_head_warmer" in s]
         assert len(warmer) == 2, sites
-        # #9051's trail joins this pool via its own named constant, not a new one.
-        assert [s for s in sites if s not in warmer][0].startswith(
-            "app/utils/blend_prune_trail.py:"), sites
+        # #9051's trail joins this pool via its own named constant, not a new
+        # one, and #10090's held-event read (literal 1.0s) joins the same pool.
+        assert sorted(s.split(":")[0] for s in sites if s not in warmer) == [
+            "app/utils/blend_prune_trail.py",
+            "app/utils/reader_presence.py",
+        ], sites

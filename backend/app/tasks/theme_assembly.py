@@ -1070,6 +1070,12 @@ async def _run_assemble_theme_collections(
     now = now or started
     if not theme_assembly_enabled():
         return _skipped("theme_assembly_disabled")
+    from app.utils import busy_db_defer
+
+    # #10090: the candidate union is a ~260k-block scan a run; the published
+    # collections stay up and the next evening run refreshes them.
+    if busy_db_defer.should_defer("assemble_theme_collections", now):
+        return _skipped(busy_db_defer.DEFERRED_REASON)
     definitions = [d for s, d in REGISTRY.items() if only is None or s == only]
     if not definitions:
         return _skipped("no_such_theme", only=only)
