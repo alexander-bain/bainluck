@@ -573,7 +573,164 @@ _SPEED_SWITCH_LOGGED_PID: Optional[int] = None
 # on rows/publication must not hold a third ready fresh event. Each holds one
 # session only inside its stamp; with a consumer's price writer and standalone
 # writer that is the lent engine's five connections (pool 3 + overflow 2).
-FRESH_STAMP_WORKERS = 3
+# Env `FRESH_STAMP_WORKERS` (1..8, read once at import); 3 is today's
+# behaviour. Everything sized from it follows: the session slots, the live
+# debt allowance, and the consumer engine's pool (`base._get_task_engine`:
+# these workers plus the two writers' connections, never below today's 5).
+FRESH_STAMP_WORKERS = _owed_budget_env("FRESH_STAMP_WORKERS", 3, int, 1, 8)
+
+#: #10090 — `_read_groups` returns one row per (market, outcome), and before
+#: this every row carried its event's JSON (the preview's full source bag, or
+#: this source's entry) and its market's content-understanding object, decoded
+#: on the venue loop for each row while only the first row of each was used.
+#: Production 2026-10-31 04:4xZ, v5997: the live Lakers–Warriors event read
+#: 1,157 Polymarket rows (387 markets, mostly player props) against ~10 for
+#: Kalshi's game-only join, and PM's `stamp_read` was 47-54 s/min (0.10 s per
+#: transaction, 6x Kalshi) with `loop_busy` far above `loop_idle`. Local PG at
+#: that shape: 18.5 ms per read, of which ~5 ms was 2,314 JSON decodes and ~3 ms
+#: parsing the 1.7 MB they rode in. On (default), the same single statement
+#: (one snapshot) sends each JSON value on exactly one row of its event or
+#: market (`row_number() = 1`) and NULL on the rest; the graph built from it is
+#: identical. ``STAMP_READ_JSON_ONCE=0`` restores the per-row read. Read at
+#: call time; a config change restarts the dyno anyway.
+STAMP_READ_JSON_ONCE_ENV = "STAMP_READ_JSON_ONCE"
+
+
+def stamp_read_json_once() -> bool:
+    return os.getenv(STAMP_READ_JSON_ONCE_ENV, "1").strip() != "0"
+
+
+# #10090 `stamp_wait_reason` — why a LIVE game's oldest unstamped input is
+# still waiting once it is STAMP_WAIT_BUDGET_S old. Production 03:40Z
+# 2026-10-31 (Polymarket 15331470, live soccer): an input received 03:40:12.988
+# was stamped at 03:42:10.714, 117.7 s later, and nothing retained said whether
+# it was queued, held, refused or never owed. Classified from state this
+# refresher already holds, at debt selection (`refresh`, `admit_fresh`) and
+# after each attempted read (`_refresh_batch`); at most one line per event per
+# STAMP_WAIT_LINE_INTERVAL_S (an episode that printed one also prints its
+# closing STAMPED), plus a per-minute count of events by reason on the venue
+# minute line (`StampSpans.wait_reasons`). Log only: no await, lock or query.
+# ``STAMP_WAIT_REASON_LOG=0`` turns it off.
+STAMP_WAIT_REASON_ENV = "STAMP_WAIT_REASON_LOG"
+STAMP_WAIT_BUDGET_S = 5.0
+STAMP_WAIT_LINE_INTERVAL_S = 60.0
+#: What an attempted read did with the event (`_dispositions`), as a reason.
+#: `stamped` ends the wait; the rest say why the read did not.
+STAMP_WAIT_DISPOSITIONS = {
+    "stamped": "STAMPED",
+    "no_reading": "NO_VALID_READING",
+    "stale": "NO_VALID_READING",
+    "no_market": "CATALOG_CLOSED",
+    "no_row": "CATALOG_CLOSED",
+    "lock": "ROW_LOCK_SKIPPED",
+    "unchanged": "READ_UNCHANGED",
+    "unobserved": "READ_UNCHANGED",
+    "preview_only": "READ_UNCHANGED",
+    "error": "READ_ERROR",
+}
+
+
+def stamp_wait_reason_on() -> bool:
+    return os.getenv(STAMP_WAIT_REASON_ENV, "1").strip() != "0"
+
+
+class StampWaitLog:
+    """#10090 — the `stamp_wait_reason` lines' rate limit, per event.
+
+    An episode is one oldest-unstamped input (its `seq`); it ends when a read
+    stamps the event or that input stops being the oldest owed one. `seen`
+    counts every reason noted since the episode's last line, so a line names
+    each cause the wait passed through, not only the latest. Pure bookkeeping.
+    """
+
+    def __init__(self, source: str) -> None:
+        self.source = source
+        self._episodes: dict[int, dict] = {}
+        self._last_line: dict[int, float] = {}
+        self.lines = 0
+        self.errors = 0
+
+    def note(self, event_id: int, reason: str, obligation: tuple, now: float, *,
+             run: str, site: str) -> None:
+        seq, outcome_id, age, committed = obligation
+        episode = self._episodes.get(event_id)
+        if episode is None or episode["seq"] != seq:
+            episode = self._episodes[event_id] = {
+                "seq": seq, "seen": {}, "printed": False, "admitted_age": None,
+            }
+        seen = episode["seen"]
+        seen[reason] = seen.get(reason, 0) + 1
+        if reason == "ADMITTED" and episode["admitted_age"] is None:
+            episode["admitted_age"] = age
+        last = self._last_line.get(event_id)
+        due = last is None or now - last >= STAMP_WAIT_LINE_INTERVAL_S
+        if reason == "STAMPED":
+            del self._episodes[event_id]
+            if not (due or episode["printed"]):
+                return
+        elif not due:
+            return
+        else:
+            episode["printed"] = True
+        self._last_line[event_id] = now
+        self.lines += 1
+        logger.info(
+            "live_blend_refresh[%s]: stamp_wait_reason=%s run=%s venue=%s event=%s "
+            "outcome=%s seq=%s age_s=%.3f committed_seq=%s committed_age_s=%s "
+            "admitted_age_s=%s seen=%s site=%s",
+            self.source, reason, run, self.source, event_id, outcome_id, seq, age,
+            "-" if committed is None else committed[0],
+            "-" if committed is None else f"{committed[1]:.3f}",
+            "-" if episode["admitted_age"] is None else f"{episode['admitted_age']:.3f}",
+            ",".join(f"{name}:{count}" for name, count in sorted(seen.items())),
+            site,
+        )
+        episode["seen"] = {}
+
+    def retain(self, event_ids, now: float) -> None:
+        """Episodes of events no longer waiting end; rate-limit marks older
+        than the interval go."""
+        for event_id in [eid for eid in self._episodes if eid not in event_ids]:
+            del self._episodes[event_id]
+        for event_id in [eid for eid, at in self._last_line.items()
+                         if now - at >= STAMP_WAIT_LINE_INTERVAL_S]:
+            del self._last_line[event_id]
+
+
+# #10090 `price_commit_ack_wall` — when the price transaction that carried a
+# tail receipt's held input (`rev`) returned successfully, on this process's
+# wall clock. Production 03:00-05:36Z 2026-10-31 (Argon, 89 PM chains):
+# receive -> `stored_wall` was p50 0.53 s / p90 4.0 s against Kalshi's 0.10 /
+# 0.21, and `stored_wall` is sampled when marks are OFFERED to the refresher,
+# so a slow price COMMIT and a committed price waiting to be offered read the
+# same. Sampled at the writer's synchronous success seam, bound to that
+# write's own frozen marks for the rows it returned, kept on the chain's
+# original input (a later superseding write never fills it). None for an
+# overlay-only, skipped, non-returning or unacknowledged input; an overlay
+# offer that precedes the acknowledgement keeps that order. A local
+# acknowledgement clock, not the database COMMIT time. Log only: no await,
+# lock or query. ``PRICE_COMMIT_ACK_LOG=0`` turns it off.
+PRICE_COMMIT_ACK_LOG_ENV = "PRICE_COMMIT_ACK_LOG"
+#: Acknowledgements waiting for their chain: per event, and events in all.
+PRICE_COMMIT_ACK_PER_EVENT = 8
+PRICE_COMMIT_ACK_EVENTS = 2048
+
+
+def price_commit_ack_log_on() -> bool:
+    return os.getenv(PRICE_COMMIT_ACK_LOG_ENV, "1").strip() != "0"
+
+
+def note_price_commit_ack(receipts, marks, wall: Optional[float]) -> None:
+    """A writer's `price_commit_ack_wall`: ``marks`` are the inputs of the
+    rows its committed transaction returned, ``wall`` the clock it sampled at
+    the success seam (None: switch off, or no acknowledgement). Never raises."""
+    if wall is None or receipts is None:
+        return
+    try:
+        receipts.note_commit_ack(marks, wall)
+    except Exception:
+        logger.warning("tail receipt: price commit ack failed", exc_info=True)
+
 
 # #10090 — an observation-preview read whose caller stopped waiting at its
 # 0.25 s deadline is left to end by itself instead of being cancelled. A
@@ -594,7 +751,10 @@ OBSERVATION_READ_DETACHED_S = 2.0
 # compete for three slots). While the share is taken every optional kind's next
 # opportunity passes exactly as it does when the slots are taken, and a read
 # that reaches its deadline then is cancelled, as it is with the switch off.
-OPTIONAL_DB_HELD_MAX = FRESH_STAMP_WORKERS - 2
+# More workers (`FRESH_STAMP_WORKERS` above 3) never widen this share past
+# today's 1: each held read pins a pool connection, and the added workers are
+# for stamps.
+OPTIONAL_DB_HELD_MAX = max(0, min(FRESH_STAMP_WORKERS - 2, 1))
 
 # #10090 — admitted cohorts are stamped live-first, as a call's own population
 # is. Stage trace 02:14Z 2026-10-15: a live game's admitted stamp started
@@ -712,6 +872,272 @@ def _wall() -> float:
     return time.time()
 
 
+def _stamp_span_clock() -> float:
+    """#10090 `StampSpans`' monotonic clock. Its own seam, so the spans never
+    take a reading from (or advance) a rig's `_mono`."""
+    return time.monotonic()
+
+
+def _stamp_span_cpu() -> float:
+    """#10090 `StampSpans`: CPU seconds on this thread, the event loop's."""
+    return time.thread_time()
+
+
+class StampSpans:
+    """#10090 — where this refresher's stamp time went, per venue minute line.
+
+    Every `_refresh_batch` transaction, from any caller (game flush, side
+    loops, admitted workers, debt), on wall clock:
+
+    - `slot`: waiting for one of the FRESH_STAMP_WORKERS session slots, then
+      opening the session.
+    - `read`: `_read_groups` and the cold orientation fallback (`_oriented`).
+      An AsyncSession checks its connection out on its first statement, so pool
+      checkout lands here (in `write` for a prepared group).
+    - `compute`: the synchronous rest of the transaction body (readings,
+      proofs, frames). Nothing in it awaits, so it is CPU on the loop.
+    - `write`: the lock-budget SET plus the stamp's savepoint scope (its row
+      UPDATE, owed chart point and custody INSERTs, savepoint release or
+      rollback).
+    - `commit`: leaving the session (COMMIT, close) and its slot.
+    - `publish`: previews published inside the transaction, then everything
+      after COMMIT (committed frames and preview settlement).
+
+    `prepared` reads (`_prepare_groups`, one shared read for several fresh
+    events, no stamp of its own) add their slot wait and read to `slot` and
+    `read` and are counted apart from `stamp_tx`.
+
+    `checkout` is the part of `read`/`write` spent until the consumer pool
+    handed a connection over (`ws_consumer_sessions.checkout_probe`), and
+    `pool_full=K/P` is K of P probed transactions whose body began with every
+    pool connection out. Both are nested, never added to the buckets.
+
+    LOOP WAIT. The exact time a ready stamp waited for the loop is not
+    attributable without hooking every resume. What the line gives instead,
+    from two thread-CPU reads per transaction: `loop_busy`, the loop thread's
+    CPU spent while stamps awaited (other tasks, plus the stamp's own work
+    inside its awaits), the upper bound on that wait; and `loop_idle`, the
+    awaited time with the loop thread idle, which is time spent truly waiting
+    on the database, the pool or Redis. Mostly `loop_busy` means more workers
+    will not help; mostly `loop_idle` means they can.
+
+    `stamp_read_rows` is the rows every `_read_groups` statement returned
+    (stamps, prepared and observation-preview reads alike) and
+    `stamp_read_json` the JSON values those rows carried, each decoded on the
+    loop (`STAMP_READ_JSON_ONCE`: one per event and market instead of two per
+    row).
+
+    `workers` is FRESH_STAMP_WORKERS; `slots_max`/`slots_mean` are slots in
+    use (any holder, the stamp included) as each transaction got its own;
+    `slot_full` is how many transactions found no slot free and waited.
+
+    Transactions overlap, so every bucket is stamp-seconds and can sum past
+    60 s a minute. A transaction joins the minute it ends in. Log only:
+    monotonic deltas, no await, no query.
+    """
+
+    SPANS = ("slot", "read", "compute", "write", "commit", "publish")
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.transactions = 0
+        self.events = 0
+        self.prepared = 0
+        self.spent = dict.fromkeys(self.SPANS, 0.0)
+        self.checkout = 0.0
+        self.pool_full = 0
+        self.probed = 0
+        self.busy = 0.0
+        self.idle = 0.0
+        self.slots_max = 0
+        self.slots_sum = 0
+        self.slots_seen = 0
+        self.slot_full = 0
+        self.read_rows = 0
+        self.read_json = 0
+        #: #10090 `stamp_wait_reason`: reason -> the events that waited for it.
+        self.wait_reasons: dict[str, set] = {}
+
+    def add_prepared(self, slot_s: float, read_s: float) -> None:
+        self.prepared += 1
+        self.spent["slot"] += max(0.0, slot_s)
+        self.spent["read"] += max(0.0, read_s)
+
+    def line(self) -> str:
+        spent = self.spent
+        mean = self.slots_sum / self.slots_seen if self.slots_seen else 0.0
+        return (
+            f"stamp_tx={self.transactions} events={self.events} "
+            f"prepared={self.prepared} "
+            f"stamp_slot={spent['slot']:.1f}s stamp_read={spent['read']:.1f}s "
+            f"stamp_read_rows={self.read_rows} stamp_read_json={self.read_json} "
+            f"stamp_compute={spent['compute']:.1f}s "
+            f"stamp_write={spent['write']:.1f}s "
+            f"stamp_commit={spent['commit']:.1f}s "
+            f"stamp_publish={spent['publish']:.1f}s "
+            f"stamp_checkout={self.checkout:.1f}s "
+            f"pool_full={self.pool_full}/{self.probed} "
+            f"loop_busy={self.busy:.1f}s loop_idle={self.idle:.1f}s "
+            f"workers={FRESH_STAMP_WORKERS} slots_max={self.slots_max} "
+            f"slots_mean={mean:.1f} slot_full={self.slot_full}"
+        ) + (
+            " wait_reasons=" + ",".join(
+                f"{reason}:{len(events)}"
+                for reason, events in sorted(self.wait_reasons.items())
+            )
+            if self.wait_reasons else ""
+        )
+
+
+class _StampSpan:
+    """Times its body into one `_StampTx` bucket. Sync or async ``with``; the
+    async form never suspends."""
+
+    __slots__ = ("_tx", "_bucket", "_started")
+
+    def __init__(self, tx: "_StampTx", bucket: str) -> None:
+        self._tx = tx
+        self._bucket = bucket
+
+    def __enter__(self) -> None:
+        self._started = _stamp_span_clock()
+
+    def __exit__(self, *_exc) -> bool:
+        self._tx.spent[self._bucket] += _stamp_span_clock() - self._started
+        return False
+
+    async def __aenter__(self) -> None:
+        self.__enter__()
+
+    async def __aexit__(self, *exc) -> bool:
+        return self.__exit__(*exc)
+
+
+class _StampBody:
+    """The transaction body's bounds, entered once the session is open."""
+
+    __slots__ = ("_tx", "_probe_cm")
+
+    def __init__(self, tx: "_StampTx") -> None:
+        self._tx = tx
+        self._probe_cm = None
+
+    async def __aenter__(self) -> None:
+        tx = self._tx
+        tx.body_started = _stamp_span_clock()
+        free = getattr(tx.slots, "_value", None)
+        if isinstance(free, int):
+            tx.slots_in_use = max(0, FRESH_STAMP_WORKERS - free)
+        try:
+            from app.tasks.ws_consumer_sessions import checkout_probe
+
+            self._probe_cm = checkout_probe(_stamp_span_clock)
+            tx.probe = self._probe_cm.__enter__()
+        except Exception:  # a log field never fails a stamp
+            self._probe_cm = tx.probe = None
+
+    async def __aexit__(self, *_exc) -> bool:
+        tx = self._tx
+        tx.body_ended = _stamp_span_clock()
+        awaited = sum(tx.spent.values())
+        tx.compute = max(0.0, tx.body_ended - tx.body_started - awaited)
+        if self._probe_cm is not None:
+            with contextlib.suppress(Exception):  # exited in another context
+                self._probe_cm.__exit__(None, None, None)
+        return False
+
+
+class _StampTx:
+    """One `_refresh_batch` transaction's spans (`StampSpans`).
+
+    As an async context manager it brackets the whole ``async with``: entered
+    before the session slot is taken, left after COMMIT and the slot's release.
+    The publication after it is added by `published`.
+    """
+
+    __slots__ = (
+        "spans", "events", "slots", "spent", "started", "cpu_started",
+        "body_started", "body_ended", "compute", "ended", "cpu_ended",
+        "slots_in_use", "probe",
+    )
+
+    def __init__(self, spans: Optional[StampSpans], events: int, slots) -> None:
+        self.spans = spans
+        self.events = events
+        self.slots = slots
+        self.spent = {"read": 0.0, "write": 0.0, "publish": 0.0}
+        self.started = self.cpu_started = None
+        self.body_started = self.body_ended = None
+        self.compute = 0.0
+        self.ended = self.cpu_ended = None
+        self.slots_in_use = None
+        self.probe = None
+
+    def span(self, bucket: str) -> _StampSpan:
+        return _StampSpan(self, bucket)
+
+    def body(self) -> _StampBody:
+        return _StampBody(self)
+
+    async def __aenter__(self) -> "_StampTx":
+        self.started = _stamp_span_clock()
+        self.cpu_started = _stamp_span_cpu()
+        spans = self.spans
+        locked = getattr(self.slots, "locked", None)
+        if spans is not None and callable(locked):
+            with contextlib.suppress(Exception):
+                if locked():
+                    spans.slot_full += 1
+        return self
+
+    async def __aexit__(self, *_exc) -> bool:
+        self.ended = _stamp_span_clock()
+        self.cpu_ended = _stamp_span_cpu()
+        spans = self.spans
+        if spans is None:
+            return False
+        spans.transactions += 1
+        spans.events += self.events
+        spent = spans.spent
+        wall = self.ended - self.started
+        if self.body_started is None:  # never got a session: all slot
+            spent["slot"] += wall
+        else:
+            spent["slot"] += self.body_started - self.started
+            body_ended = self.body_ended if self.body_ended is not None else self.ended
+            spent["commit"] += self.ended - body_ended
+        spent["compute"] += self.compute
+        for bucket, seconds in self.spent.items():
+            spent[bucket] += seconds
+        busy = max(0.0, min(self.cpu_ended - self.cpu_started, wall) - self.compute)
+        spans.busy += busy
+        spans.idle += max(0.0, wall - self.compute - busy)
+        if self.slots_in_use is not None:
+            spans.slots_max = max(spans.slots_max, self.slots_in_use)
+            spans.slots_sum += self.slots_in_use
+            spans.slots_seen += 1
+        probe = self.probe
+        if probe is not None and self.body_started is not None:
+            spans.probed += 1
+            spans.pool_full += bool(probe.full_at_start)
+            if probe.checked_out_at is not None:
+                spans.checkout += max(0.0, probe.checked_out_at - self.body_started)
+        return False
+
+    def published(self) -> None:
+        """The publication after COMMIT ended (or raised): add it."""
+        spans = self.spans
+        if spans is None or self.ended is None:
+            return
+        wall = max(0.0, _stamp_span_clock() - self.ended)
+        busy = min(wall, max(0.0, _stamp_span_cpu() - self.cpu_ended))
+        spans.spent["publish"] += wall
+        spans.busy += busy
+        spans.idle += wall - busy
+
+
 # Call-local timing for the existing optional-read failure receipt. A fetch
 # cancellation alone cannot say whether checkout/admission consumed its budget.
 # Ordinary stamp reads have no timing state; no payloads or event IDs are kept.
@@ -811,6 +1237,8 @@ class _TailChain:
     lock_retries: int = 0
     commit_failures: int = 0
     batch_failures: int = 0
+    #: #10090 `price_commit_ack_wall` of `rev` itself, never of `stamp_rev`.
+    commit_ack_wall: Optional[float] = None
 
 
 class TailReceipts:
@@ -864,6 +1292,9 @@ class TailReceipts:
         self._staged: dict[int, InputMark] = {}
         self._staged_wall: Optional[float] = None
         self._open: dict[int, _TailChain] = {}
+        #: #10090 `price_commit_ack_wall`s no chain has taken yet: event id ->
+        #: {input seq: wall}. Bounded (`PRICE_COMMIT_ACK_*`).
+        self._commit_acks: dict[int, dict[int, float]] = {}
         self._last_logged: dict[int, float] = {}
         self._coalesced: dict[int, int] = {}
         self.stats: dict[str, int] = {
@@ -1198,6 +1629,28 @@ class TailReceipts:
             message = line()
         logger.info("%s", message)
 
+    def aged_obligations(self, wall: float, budget_s: float, event_ids=None) -> dict:
+        """#10090 `stamp_wait_reason` — each LIVE event's oldest input no
+        stamp has covered yet, once it is ``budget_s`` old (of ``event_ids``
+        only, when given): event id -> (seq, outcome id, age s, and the
+        newest committed input's (seq, age s) or None). Pure read."""
+        aged = {}
+        candidates = self._uncovered if event_ids is None else event_ids
+        for event_id in candidates:
+            pending = self._uncovered.get(event_id)
+            if not pending or event_id not in self._live_events:
+                continue
+            seq, recv_wall, outcome_id = pending[0]
+            age = wall - recv_wall
+            if age < budget_s:
+                continue
+            committed = self._committed.get(event_id)
+            aged[event_id] = (
+                seq, outcome_id, age,
+                None if committed is None else (committed.seq, wall - committed.recv_wall),
+            )
+        return aged
+
     def unowed(self, marks: Iterable[InputMark]) -> None:
         """#10090 (A1) — committed inputs no stamp reads (a live game's prop
         board): they leave the stamp-coverage queue without being 'covered'."""
@@ -1243,6 +1696,41 @@ class TailReceipts:
         self._staged, self._staged_wall = {}, None
         return staged, wall
 
+    # ── #10090 `price_commit_ack_wall` (the writer's side) ───────────────────
+
+    def note_commit_ack(self, marks: Iterable[Optional[InputMark]], wall: float) -> None:
+        """The price transaction carrying these exact inputs returned at
+        ``wall``. An open chain held on one of them takes it now (its offer
+        came first); otherwise it waits for the chain that input opens. An
+        input's first acknowledgement is its clock."""
+        for mark in marks:
+            if mark is None:
+                continue
+            chain = self._open.get(mark.event_id)
+            if chain is not None and chain.rev.seq == mark.seq:
+                if chain.commit_ack_wall is None:
+                    chain.commit_ack_wall = wall
+                continue
+            acks = self._commit_acks.get(mark.event_id)
+            if acks is None:
+                if len(self._commit_acks) >= PRICE_COMMIT_ACK_EVENTS:
+                    del self._commit_acks[next(iter(self._commit_acks))]
+                acks = self._commit_acks[mark.event_id] = {}
+            acks.setdefault(mark.seq, wall)
+            if len(acks) > PRICE_COMMIT_ACK_PER_EVENT:
+                del acks[min(acks)]
+
+    def _prune_commit_acks(self, event_id: int, below_seq: int) -> None:
+        """Acknowledgements of this event's inputs older than ``below_seq``:
+        a staging that offered a newer input superseded them."""
+        acks = self._commit_acks.get(event_id)
+        if acks is None:
+            return
+        for seq in [seq for seq in acks if seq < below_seq]:
+            del acks[seq]
+        if not acks:
+            del self._commit_acks[event_id]
+
     # ── the refresher's side ─────────────────────────────────────────────────
 
     def _open_chain(self, origin, mark, stored_wall, now) -> _TailChain:
@@ -1251,6 +1739,11 @@ class TailReceipts:
             stored_wall=stored_wall if stored_wall is not None else _wall(),
             opened_wall=_wall(), opened_mono=now,
         )
+        acks = self._commit_acks.get(mark.event_id)
+        if acks is not None:
+            chain.commit_ack_wall = acks.pop(mark.seq, None)
+            if not acks:
+                del self._commit_acks[mark.event_id]
         self._open[mark.event_id] = chain
         self.stats["opened"] += 1
         return chain
@@ -1260,6 +1753,8 @@ class TailReceipts:
         chain is a later write inside the hold; one for an event the throttle
         is holding opens a chain."""
         for event_id, mark in staged.items():
+            if self._commit_acks:
+                self._prune_commit_acks(event_id, mark.seq)
             held = self._committed.get(event_id)
             if event_id in self._live_events and (held is None or mark.seq > held.seq):
                 self._committed[event_id] = mark
@@ -1349,6 +1844,7 @@ class TailReceipts:
         open_at_close = len(self._open)
         for event_id in sorted(self._open):
             self._close(event_id, reason, now)
+        self._commit_acks.clear()
         # #10090 — the partial minute the run ended in, with its real length,
         # and the live games for the next run of this source.
         self._roll(_wall(), final=True)
@@ -1398,7 +1894,7 @@ class TailReceipts:
             "held_wall=%s stamp_rev_seq=%s stamped_at=%s value=%s previous=%s "
             "later_inputs=%d later_committed=%d last_input_seq=%s "
             "lock_retries=%d commit_failures=%d batch_failures=%d held_s=%.3f "
-            "recv_to_close_s=%.3f coalesced=%d error=%s%s",
+            "recv_to_close_s=%.3f coalesced=%d error=%s%s%s",
             self.source, self.run, event_id, result, quiet, moved, chain.origin,
             rev.seq, rev.outcome_id, rev.probability, rev.kind,
             _iso(rev.recv_wall), rev.venue_ts_ms, _iso(chain.stored_wall),
@@ -1409,7 +1905,10 @@ class TailReceipts:
             self._last_seq_by_event.get(event_id), chain.lock_retries,
             chain.commit_failures, chain.batch_failures,
             now - chain.opened_mono, now - rev.recv_mono,
-            self._coalesced.pop(event_id, 0), error, _switch_tags(event_id),
+            self._coalesced.pop(event_id, 0), error,
+            f" price_commit_ack_wall={_iso(chain.commit_ack_wall)}"
+            if price_commit_ack_log_on() else "",
+            _switch_tags(event_id),
         )
 
 
@@ -2000,6 +2499,13 @@ PREPARED_OUTCOME_FIELDS = (
     "id", "market_id", "name", "rank", "current_probability", "last_updated", "is_winner",
     "external_id", "resolution_source",
 )
+
+
+def _json_row_patch(fill, row) -> dict:
+    """#10090 `STAMP_READ_JSON_ONCE`: the event JSON fields one row carries."""
+    patch: dict = {}
+    fill(row, patch)
+    return patch
 
 
 class HeldRowQuotes:
@@ -2631,9 +3137,9 @@ class LiveBlendRefresher:
             logger.info(
                 "live_blend_refresh[%s]: owed-stamp budget "
                 "FRESH_FLUSH_PENDING_ATTEMPTS=%d PENDING_STAMP_BUDGET_S=%.3g "
-                "ADMITTED_DEBT_SLOTS=%d ADMITTED_STAMP_BATCH=%d",
+                "ADMITTED_DEBT_SLOTS=%d ADMITTED_STAMP_BATCH=%d FRESH_STAMP_WORKERS=%d",
                 source, FRESH_FLUSH_PENDING_ATTEMPTS, PENDING_STAMP_BUDGET_S,
-                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH,
+                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH, FRESH_STAMP_WORKERS,
             )
         global _SPEED_SWITCH_LOGGED_PID
         if _SPEED_SWITCH_LOGGED_PID != os.getpid():
@@ -2783,6 +3289,10 @@ class LiveBlendRefresher:
         # One owner across refresh calls. A chart session cannot borrow slots
         # from a newer admission window or escape the three-session ceiling.
         self._session_slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
+        #: #10090 — this minute's stamp transaction spans, for the venue line.
+        self.stamp_spans = StampSpans()
+        #: #10090 `stamp_wait_reason` lines (`STAMP_WAIT_REASON_ENV`).
+        self.stamp_waits = StampWaitLog(source)
         self._history: list[tuple] = []
         self._history_task: Optional[asyncio.Task] = None
         self._history_count = 0  # committed debt plus pre-COMMIT reservations
@@ -2925,8 +3435,10 @@ class LiveBlendRefresher:
             if now < hold:
                 return False
             del self._failed_hold_until[event_id]
+        return self._floor_passed(event_id, now, self._current_clock(now))
+
+    def _floor_passed(self, event_id: int, now: float, current: float) -> bool:
         last = self._last_refresh_at.get(event_id)
-        current = self._current_clock(now)
         if last is None:
             return True
         floor = self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
@@ -2942,6 +3454,95 @@ class LiveBlendRefresher:
         # start + floor would stamp it again inside the floor.
         stamped = self._last_refresh_current.get(event_id, last)
         return current - max(stamped, last) >= floor
+
+    def _due_unchanged(self, event_id: int, now: float) -> bool:
+        """`_due`, changing nothing: no expired hold is dropped and no clock
+        is recorded (`stamp_wait_reason` only)."""
+        hold = self._failed_hold_until.get(event_id)
+        if hold is not None and now < hold:
+            return False
+        high = self._clock_high
+        current = now
+        if high is not None and now <= high[0]:
+            current = max(now, high[0] + max(0.0, _mono() - high[1]))
+        return self._floor_passed(event_id, now, current)
+
+    # ── #10090 `stamp_wait_reason`: why a live game's input still waits ──────
+
+    def _stamp_wait_reason(self, event_id: int, now: float, *, excluded=(),
+                           due_reason: str) -> str:
+        """The reason an owed LIVE event is not being stamped right now, from
+        state already held; ``due_reason`` is the caller's for one that is
+        owed, due and still not taken."""
+        window = self._admission
+        if window is not None and event_id in window.holding:
+            return "QUEUED_OR_RUNNING"
+        if event_id in excluded:
+            return "COHORT_UNFINISHED_OR_WITHDRAWAL"
+        hold = self._failed_hold_until.get(event_id)
+        if hold is not None and now < hold:
+            return "RETRY_HOLD"
+        if event_id in self._book_refused:
+            return "NO_VALID_READING"
+        if event_id not in self._lock_retry and event_id not in self._throttle_deferred:
+            # Nothing owed here: not committed yet (the writer's side), or a
+            # stamp that reread the board carried it without crediting it.
+            return "NOT_OWED"
+        if not self._due_unchanged(event_id, now):
+            return "NOT_DUE"
+        return due_reason
+
+    def _stamp_wait_sweep(self, site: str, now: float, *, taken=(), excluded=(),
+                          due_reason: str) -> None:
+        """Debt selection: one reason per live event whose oldest unstamped
+        input is past STAMP_WAIT_BUDGET_S; ``taken`` are ADMITTED. Never raises."""
+        receipts = getattr(self, "receipts", None)
+        waits = getattr(self, "stamp_waits", None)
+        if receipts is None or waits is None or not stamp_wait_reason_on():
+            return
+        try:
+            mono = _mono()
+            aged = receipts.aged_obligations(_wall(), STAMP_WAIT_BUDGET_S)
+            for event_id, obligation in aged.items():
+                reason = "ADMITTED" if event_id in taken else self._stamp_wait_reason(
+                    event_id, now, excluded=excluded, due_reason=due_reason,
+                )
+                self._stamp_wait_noted(waits, event_id, reason, obligation, mono, site)
+            waits.retain(aged, mono)
+        except Exception:
+            self._stamp_wait_failed(waits)
+
+    def _stamp_wait_read(self, event_ids, dispositions: dict) -> None:
+        """After an attempted read: what the read did with each aged live
+        event (`STAMP_WAIT_DISPOSITIONS`). Never raises."""
+        receipts = getattr(self, "receipts", None)
+        waits = getattr(self, "stamp_waits", None)
+        if receipts is None or waits is None or not stamp_wait_reason_on():
+            return
+        try:
+            mono = _mono()
+            aged = receipts.aged_obligations(_wall(), STAMP_WAIT_BUDGET_S, event_ids)
+            for event_id, obligation in aged.items():
+                disposition = dispositions.get(event_id) or ("no_market",)
+                reason = STAMP_WAIT_DISPOSITIONS.get(disposition[0], "READ_ERROR")
+                self._stamp_wait_noted(waits, event_id, reason, obligation, mono, "read")
+        except Exception:
+            self._stamp_wait_failed(waits)
+
+    def _stamp_wait_noted(self, waits, event_id, reason, obligation, mono, site) -> None:
+        spans = getattr(self, "stamp_spans", None)
+        if spans is not None:
+            spans.wait_reasons.setdefault(reason, set()).add(event_id)
+        waits.note(event_id, reason, obligation, mono,
+                   run=getattr(self.receipts, "run", "-"), site=site)
+
+    def _stamp_wait_failed(self, waits) -> None:
+        waits.errors += 1
+        if waits.errors == 1 or waits.errors % 1000 == 0:
+            logger.warning(
+                "live_blend_refresh[%s]: stamp_wait_reason failed (%d)",
+                self.source, waits.errors, exc_info=True,
+            )
 
     def _record_stamp_clock(self, event_ids: Iterable[int], now: float) -> None:
         """#10090 — the current clock as these events' stamp starts (`_due`'s
@@ -3127,6 +3728,11 @@ class LiveBlendRefresher:
         # this read parks it again with the inputs it was refused on.
         for event_id in due:
             self._book_refused.pop(event_id, None)
+        # Owed, due and not excluded, yet not taken: only the debt budget.
+        self._stamp_wait_sweep(
+            "refresh", clock, taken=due, excluded=excluded,
+            due_reason="DEBT_BUDGET_SPENT",
+        )
         self.stats["considered"] += len(due)
         # Counted once per throttled price, not once per flush it waits out.
         skipped = len(self._throttle_deferred.difference(deferred))
@@ -3926,6 +4532,12 @@ class LiveBlendRefresher:
         self._start_history()
         if (not self._lock_retry and not self._throttle_deferred
                 and not self._book_refused_woken(_mono())):
+            # Nothing owed is due here, so an aged input is not owed at all
+            # (or parked, or held): no `refresh` will run to say so.
+            self._stamp_wait_sweep(
+                "pending", _mono() if flush_started is None else flush_started,
+                excluded=set(defer_event_ids), due_reason="NOT_OWED",
+            )
             if self.receipts is not None:
                 # #10090: a quiet flush still closes a finished minute.
                 self._receipt_call(self.receipts.roll)
@@ -4265,6 +4877,7 @@ class LiveBlendRefresher:
         live = self._live_event_ids
         live_owed = (live & self._throttle_deferred) - self._lock_retry
         live_free = _admitted_live_debt_slots(slots) - len(window.live_debts)
+        debt_excluded = excluded
         if free > 0 or (live_free > 0 and live_owed):
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed events
@@ -4304,6 +4917,10 @@ class LiveBlendRefresher:
                         rotation.append(eid)
             self._debt_rotation = rotation
         if not taken:
+            self._stamp_wait_sweep(
+                "admit", flush_started, excluded=debt_excluded,
+                due_reason="LIVE_DEBT_SLOT_BUSY",
+            )
             return frozenset()
         # #10090: an event whose earlier stamp in this call has returned is
         # admitted again for its newer committed price. That attempt is retired
@@ -4386,6 +5003,11 @@ class LiveBlendRefresher:
                     task.exception()
             for _ in range(min(FRESH_STAMP_WORKERS - len(window.workers), len(due))):
                 window.workers.add(asyncio.create_task(self._admitted_worker(window)))
+        # Owed, due and not excluded, yet not taken: no debt slot was free.
+        self._stamp_wait_sweep(
+            "admit", flush_started, taken=frozenset(due), excluded=debt_excluded,
+            due_reason="LIVE_DEBT_SLOT_BUSY",
+        )
         return cohort
 
     def stop_admitting(self) -> None:
@@ -4396,6 +5018,36 @@ class LiveBlendRefresher:
         window = self._admission
         if window is not None:
             window.closed = True
+
+    def shed_queued(self) -> frozenset:
+        """#10090 — `stop_admitting` for a drain that holds every flush while
+        it waits (the PM catalog handover's `stamps` phase): also hand back
+        each admitted attempt no worker has started, so the wait covers only
+        the attempts already running. A shed attempt read nothing and sent no
+        frame; its committed price stays owed with no failed-retry hold, as
+        a cancelled close leaves an admitted attempt whose worker never ran
+        (`_admission_close`), and the next call stamps it on the board as
+        it is then. Returns the shed events. Synchronous."""
+        window = self._admission
+        if window is None:
+            return frozenset()
+        window.closed = True
+        shed = [*window.live_queue, *window.queue]
+        window.live_queue.clear()
+        window.queue.clear()
+        if not shed:
+            return frozenset()
+        window.admitted.difference_update(shed)
+        for event_id in shed:
+            self._refresh_failed(
+                [event_id], window.retry, window.clocks.get(event_id, window.clock),
+                self.receipts,
+                {event_id: window.staged[event_id]} if event_id in window.staged else {},
+                window.stored_wall.get(event_id),
+                CancelledError(), hold=False,
+            )
+        window.release(shed)
+        return frozenset(shed)
 
     def admitting(self) -> bool:
         """#10090 — a running call is still taking later flushes' cohorts."""
@@ -4567,7 +5219,9 @@ class LiveBlendRefresher:
                            clock_sample=None, stopped_waiting=None) -> dict[int, tuple]:
         from copy import deepcopy
         from types import SimpleNamespace
-        from sqlalchemy import ARRAY, Integer, and_, any_, bindparam, cast, func, literal, null, or_, select
+        from sqlalchemy import (
+            ARRAY, Integer, and_, any_, bindparam, case, cast, func, literal, null, or_, select,
+        )
         from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
         from app.utils.live_blend import MarketOutcomes
         from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
@@ -4634,8 +5288,36 @@ class LiveBlendRefresher:
         # whole committed bag and the revision that dates it. A plain read: it
         # waits on no row lock. Not selected unless this arm previews a
         # canary event in this batch: any other read is the statement it was.
+        # #10090 `STAMP_READ_JSON_ONCE`: each JSON value rides one row of its
+        # event / market. The trailing flags say which row; Python reads the
+        # value from that row only, so any row order builds the same graph.
+        once = stamp_read_json_once()
+        if once:
+            market_json_row = func.row_number().over(
+                partition_by=(FuturesMarket.event_id, FuturesMarket.id),
+                order_by=FuturesOutcome.id,
+            ) == 1
+            event_json_row = func.row_number().over(
+                partition_by=FuturesMarket.event_id,
+                order_by=(FuturesMarket.id, FuturesOutcome.id),
+            ) == 1
+
+            def market_json(expr):
+                return case((market_json_row, expr), else_=null())
+
+            def event_json(expr):
+                return case((event_json_row, expr), else_=null())
+
+            json_flags = (market_json_row.label("market_json_row"),
+                          event_json_row.label("event_json_row"))
+        else:
+            def market_json(expr):
+                return expr
+
+            event_json = market_json
+            json_flags = ()
         preview_columns = (
-            (Event.win_probability_sources.label("preview_sources"),
+            (event_json(Event.win_probability_sources).label("preview_sources"),
              Event.win_probability_sources_rev.label("preview_rev"),
              func.statement_timestamp().label("preview_context_at"))
             if not getattr(self, "preview_events", frozenset()).isdisjoint(event_ids)
@@ -4659,22 +5341,23 @@ class LiveBlendRefresher:
         if stopped_waiting is not None and stopped_waiting():
             raise _ObservationReadAbandoned
         with _observation_read_step("query"):
-            rows = (
+            result = (
                 await session.execute(
                     select(*(
                         Sport.key.label("sport_key") if model is Event and key == "sport_key"
                         else (cast(null(), Event.win_probability_sources.type)
                          if preview_columns else
-                         Event.win_probability_sources.op("->")(literal(self.source))).label(key)
+                         event_json(Event.win_probability_sources.op("->")(
+                             literal(self.source)))).label(key)
                         if model is Event and key == "win_probability_sources"
-                        else func.jsonb_build_object(
+                        else market_json(func.jsonb_build_object(
                             CONTENT_UNDERSTANDING_KEY,
                             FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY],
-                        ).label(key)
+                        )).label(key)
                         if model is FuturesMarket and key == "market_metadata"
                         else getattr(model, key)
                         for model, keys in fields for key in keys
-                    ), *preview_columns, *(
+                    ), *json_flags, *preview_columns, *(
                         (func.clock_timestamp().label("observation_clock"),)
                         if clock_sample is not None else ()
                     ))
@@ -4692,7 +5375,12 @@ class LiveBlendRefresher:
                         )),
                     )
                 )
-            ).all()
+            )
+            rows = result.all()
+            # The flags are found by NAME: a result without them (a rig's
+            # canned rows) is read exactly as before, every row its own JSON.
+            keys = getattr(result, "keys", None)
+            once = once and callable(keys) and "event_json_row" in keys()
         if stopped_waiting is not None and stopped_waiting():
             raise _ObservationReadAbandoned
         if clock_sample is not None and rows:
@@ -4703,39 +5391,57 @@ class LiveBlendRefresher:
         grouped: dict[int, tuple] = {}
         entries: dict[int, MarketOutcomes] = {}
         held = self.held_quotes if overlay_held else None
+        n_market, n_event = len(PREPARED_MARKET_FIELDS), len(PREPARED_EVENT_FIELDS)
+        metadata_at = PREPARED_MARKET_FIELDS.index("market_metadata")
+        source_at = n_market + PREPARED_EVENT_FIELDS.index("win_probability_sources")
+        flags_at = n_market + n_event + len(PREPARED_OUTCOME_FIELDS)
+        # `STAMP_READ_JSON_ONCE`: markets / events whose JSON row is still to come.
+        json_owed: set = set()
+        json_cells = 0
+
+        def event_json_from(row, target):
+            # Before the UPDATE only this source's restamp guard reads
+            # the JSON. The full aggregate uses UPDATE RETURNING below.
+            source_value = row[source_at]
+            if preview_columns:
+                # This same SELECT already returned the full bag. Avoid
+                # transferring/decoding its source again on every row.
+                # Preserve the two independently decoded JSON owners,
+                # copying only once per event, including nested values.
+                full_sources = row[-3]
+                source_value = (deepcopy(full_sources.get(self.source))
+                                if isinstance(full_sources, dict) else None)
+            target["win_probability_sources"] = {self.source: source_value}
+            if preview_columns:
+                # This SELECT proves an authoritative null bag is
+                # empty at preview_rev, including before the first
+                # source stamp commits. Missing reads and malformed
+                # non-null roots must still fail closed downstream.
+                target["preview_sources"] = {} if row[-3] is None else row[-3]
+
         for row in rows:
             market_id = row[0]
+            event_id = row[n_market]
+            if once:
+                market_row, event_row = row[flags_at], row[flags_at + 1]
+                json_cells += bool(market_row) + bool(event_row)
             entry = entries.get(market_id)
             if entry is None:
-                offset = 0
                 market = SimpleNamespace(**dict(zip(
-                    PREPARED_MARKET_FIELDS, row[:len(PREPARED_MARKET_FIELDS)]
+                    PREPARED_MARKET_FIELDS, row[:n_market]
                 )))
-                offset += len(PREPARED_MARKET_FIELDS)
-                event_values = row[offset:offset + len(PREPARED_EVENT_FIELDS)]
-                event_id = event_values[0]
+                if once and not market_row:
+                    json_owed.add(("market", market_id))
+                event_values = row[n_market:n_market + n_event]
                 if event_id not in grouped:
                     context = dict(zip(PREPARED_EVENT_FIELDS, event_values))
-                    # Before the UPDATE only this source's restamp guard reads
-                    # the JSON. The full aggregate uses UPDATE RETURNING below.
-                    source_value = context["win_probability_sources"]
-                    if preview_columns:
-                        # This same SELECT already returned the full bag. Avoid
-                        # transferring/decoding its source again on every row.
-                        # Preserve the two independently decoded JSON owners,
-                        # copying only once per event, including nested values.
-                        full_sources = row[-3]
-                        source_value = (deepcopy(full_sources.get(self.source))
-                                        if isinstance(full_sources, dict) else None)
-                    context["win_probability_sources"] = {self.source: source_value}
+                    if once and not event_row:
+                        json_owed.add(("event", event_id))
+                    else:
+                        event_json_from(row, context)
                     if preview_columns:
                         # Trailing columns; the outcome slice below zips by
                         # field name, so they never reach an outcome row.
-                        # This SELECT proves an authoritative null bag is
-                        # empty at preview_rev, including before the first
-                        # source stamp commits. Missing reads and malformed
-                        # non-null roots must still fail closed downstream.
-                        context["preview_sources"] = {} if row[-3] is None else row[-3]
                         context["preview_rev"] = row[-2]
                         context["preview_context_at"] = row[-1]
                         context["preview_read_ticket"] = preview_ticket
@@ -4743,6 +5449,9 @@ class LiveBlendRefresher:
                         SimpleNamespace(**context),
                         [],
                     )
+                elif once and event_row:
+                    vars(grouped[event_id][0]).update(_json_row_patch(event_json_from, row))
+                    json_owed.discard(("event", event_id))
                 event, group = grouped[event_id]
                 entry = MarketOutcomes(
                     market=market,
@@ -4756,12 +5465,27 @@ class LiveBlendRefresher:
                 )
                 entries[market_id] = entry
                 group.append(entry)
-            outcome_values = row[len(PREPARED_MARKET_FIELDS) + len(PREPARED_EVENT_FIELDS):]
+            elif once:
+                if market_row:
+                    entry.market.market_metadata = row[metadata_at]
+                    json_owed.discard(("market", market_id))
+                if event_row:
+                    vars(grouped[event_id][0]).update(_json_row_patch(event_json_from, row))
+                    json_owed.discard(("event", event_id))
+            outcome_values = row[n_market + n_event:]
             if outcome_values[0] is not None:
                 outcome = SimpleNamespace(**dict(zip(
                     PREPARED_OUTCOME_FIELDS, outcome_values
                 )))
                 entry.outcomes.append(outcome)
+        if json_owed:
+            # `row_number() = 1` exists in every partition, so this is a broken
+            # statement, never a quiet market or event: refuse the graph.
+            raise RuntimeError(f"_read_groups: no JSON row for {sorted(json_owed)[:5]}")
+        spans = getattr(self, "stamp_spans", None)
+        if spans is not None:
+            spans.read_rows += len(rows)
+            spans.read_json += json_cells if once else 2 * len(rows)
         # Strong references prevent id reuse while held.overlay_event replaces
         # rows. Membership by id is safe until classification below completes.
         original_rows = {id(row): row for _event, group in grouped.values()
@@ -4796,8 +5520,15 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
 
         factory = self._session_factory or get_task_session
+        started = _stamp_span_clock()  # #10090 `StampSpans` (`prepared`)
         async with self._session_slot(), factory() as session:
-            return await self._read_groups(session, event_ids)
+            entered = _stamp_span_clock()
+            try:
+                return await self._read_groups(session, event_ids)
+            finally:
+                spans = getattr(self, "stamp_spans", None)
+                if spans is not None:
+                    spans.add_prepared(entered - started, _stamp_span_clock() - entered)
 
     def _session_slot(self):
         """The run's existing three slots, across quote and history owners."""
@@ -5018,20 +5749,25 @@ class LiveBlendRefresher:
             raise interrupted
 
     @contextlib.asynccontextmanager
-    async def _event_stamp_scope(self, session, *, single_event: bool):
-        """One event already owns the transaction; only siblings need a savepoint."""
-        if not single_event:
-            async with session.begin_nested():
+    async def _event_stamp_scope(self, session, *, single_event: bool, span=None):
+        """One event already owns the transaction; only siblings need a savepoint.
+
+        ``span`` (#10090 `StampSpans`) times the whole scope, its savepoint
+        and any rollback included. Log only.
+        """
+        with span if span is not None else contextlib.nullcontext():
+            if not single_event:
+                async with session.begin_nested():
+                    yield
+                return
+            try:
                 yield
-            return
-        try:
-            yield
-        except BaseException:
-            # A lock timeout aborts PostgreSQL's transaction. Without the
-            # redundant event SAVEPOINT, rollback the whole single-event
-            # transaction before the caller handles/requeues the failure.
-            await session.rollback()
-            raise
+            except BaseException:
+                # A lock timeout aborts PostgreSQL's transaction. Without the
+                # redundant event SAVEPOINT, rollback the whole single-event
+                # transaction before the caller handles/requeues the failure.
+                await session.rollback()
+                raise
 
     async def _refresh_batch(
         self,
@@ -5106,16 +5842,25 @@ class LiveBlendRefresher:
         # (a lock-budget raise, a cancellation), is closed as unsent.
         select_open = self._stage_hook("selection_open")
         selections: Optional[dict[int, tuple]] = None if select_open is None else {}
+        # #10090: this transaction's spans (`StampSpans`): slot to COMMIT, its
+        # body's awaited spans, then the publication after it. Log only.
+        tx = _StampTx(
+            getattr(self, "stamp_spans", None), len(event_ids),
+            getattr(self, "_session_slots", None),
+        )
         async with (
+            tx,
             self._normal_holds() as held,
             self._history_reservations(event_ids, now, owed_snapshots) as reservation,
             self._session_slot(), get_task_session() as session,
             self._selections_closer(selections),
+            tx.body(),
         ):
             reserved, history_ready = reservation
             self._stage_trace("attempt_session", event_ids)
             if prepared is None:
-                grouped = await self._read_groups(session, event_ids)
+                with tx.span("read"):
+                    grouped = await self._read_groups(session, event_ids)
             else:
                 grouped = {
                     eid: prepared[eid] for eid in event_ids if eid in prepared
@@ -5126,12 +5871,14 @@ class LiveBlendRefresher:
                 else:
                     self._live_event_ids.discard(eid)
             if not grouped:
+                self._stamp_wait_read(event_ids, {})
                 if self.preview:
                     # #10090: this source spoke for none of these events, so
                     # none of its pending values may keep speaking.
-                    await self._publish_previews(self._preview_settlement(
-                        event_ids, grouped, {}, set(), {},
-                    ))
+                    with tx.span("publish"):
+                        await self._publish_previews(self._preview_settlement(
+                            event_ids, grouped, {}, set(), {},
+                        ))
                 return
 
             # #837 — ONE LOCK ORDER, ONE SAVEPOINT PER EVENT WITH SIBLINGS.
@@ -5224,10 +5971,11 @@ class LiveBlendRefresher:
                 work = [("both", eid) for eid in ordered]
             for phase, event_id in work:
                 if phase == "preview":
-                    await self._preview_before_stamp(
-                        grouped, preview_plans, preview_seq, observation_only=preview_only,
-                        **({"selections": selections} if selections else {}),
-                    )
+                    with tx.span("publish"):
+                        await self._preview_before_stamp(
+                            grouped, preview_plans, preview_seq, observation_only=preview_only,
+                            **({"selections": selections} if selections else {}),
+                        )
                     continue
                 if phase == "stamp" and (event_id not in preview_plans or event_id in preview_only):
                     continue
@@ -5257,12 +6005,13 @@ class LiveBlendRefresher:
                                 )
                             continue
 
-                        home_prob = await self._oriented(
-                            session, event_id, reading.home_probability, reading=reading,
-                            **({"before_fallback": ensure_lock_budget} if len(grouped) == 1
-                               else {"before_fallback": sibling_fallback,
-                                     "fallback_scope": session.begin_nested}),
-                        )
+                        with tx.span("read"):
+                            home_prob = await self._oriented(
+                                session, event_id, reading.home_probability, reading=reading,
+                                **({"before_fallback": ensure_lock_budget} if len(grouped) == 1
+                                   else {"before_fallback": sibling_fallback,
+                                         "fallback_scope": session.begin_nested}),
+                            )
                         value = round(home_prob, 4)
 
                         # #5661 — before the throttle decides WHEN to re-stamp, ask
@@ -5372,9 +6121,10 @@ class LiveBlendRefresher:
                     # no SET command. Every actual stamp still installs the
                     # same budget before its savepoint and row UPDATE, and
                     # (#11138) bounds that UPDATE as a whole statement.
-                    await ensure_lock_budget(whole_statement=True)
+                    with tx.span("write"):
+                        await ensure_lock_budget(whole_statement=True)
                     async with self._event_stamp_scope(
-                        session, single_event=len(grouped) == 1,
+                        session, single_event=len(grouped) == 1, span=tx.span("write"),
                     ):
                         if proof_kwargs:
                             checked = compute_source_home_probability(
@@ -5607,6 +6357,12 @@ class LiveBlendRefresher:
         # Session closed and committed — only now is the pushed number a number
         # the database actually kept, and only now is it "written".
         self._stage_trace("attempt_committed", event_ids, self._dispositions)
+        # Before `on_committed` resolves the receipts: the stamped input is
+        # still the oldest owed one, so its wait closes as STAMPED.
+        self._stamp_wait_read(event_ids, {
+            eid: self._dispositions.get(eid, ("error",))
+            for eid in event_ids if eid in grouped
+        })
         for event_id, value in written.items():
             self._last_write_at[event_id] = now
             self._last_written_value[event_id] = value
@@ -5674,6 +6430,7 @@ class LiveBlendRefresher:
             # first publication await. Cancellation cannot strand it.
             history_ready.set()
             self._start_history()
+            tx.published()  # #10090 `StampSpans`: COMMIT to here is `publish`
 
     async def _write_owed_snapshots(
         self, owed: list[tuple], now: float, get_task_session,

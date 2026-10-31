@@ -17,6 +17,27 @@ from app.tasks.live_blend_refresh import (
 from app.utils.live_blend import MarketOutcomes, compute_source_home_probability
 
 
+def projected(columns):
+    """The statement's projection as before #10090 `STAMP_READ_JSON_ONCE`.
+
+    On, each JSON column is ``CASE WHEN row_number() OVER (...) = 1 THEN <the
+    same projection> END`` and two flag columns trail the outcome fields. The
+    projection inside the CASE is the one these tests pin; the wrapper itself
+    is pinned in `test_stamp_read_json_once_10090`.
+    """
+    from sqlalchemy.sql.elements import Case
+
+    out = []
+    for column in columns:
+        if getattr(column, "name", None) in ("market_json_row", "event_json_row"):
+            continue
+        element = getattr(column, "element", None)
+        if isinstance(element, Case):
+            column = element.whens[0][1].label(column.name)
+        out.append(column)
+    return out
+
+
 class Result:
     def __init__(self, rows):
         self.rows = rows
@@ -42,7 +63,7 @@ class ReadSession:
             venue_label_refutes_full_contest_winner,
         )
 
-        columns = list(getattr(statement, "selected_columns", ()))
+        columns = projected(getattr(statement, "selected_columns", ()))
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
             "win_probability_sources"
         )] if columns else None
@@ -216,7 +237,7 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
     assert "box_score_data" not in sql
     assert "calibration_probability" not in sql
     # Scalar columns only: no ORM hydration or unprojected payload columns.
-    columns = list(session.statements[0].selected_columns)
+    columns = projected(session.statements[0].selected_columns)
     source_position = len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
         "win_probability_sources"
     )
