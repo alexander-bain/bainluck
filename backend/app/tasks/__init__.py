@@ -3757,6 +3757,30 @@ MOVEMENT_RETIRE_CHUNK = 1_000
 #: precedent).
 MOVEMENT_CHUNK_IDLE_TIMEOUT_MS = 5_000
 
+#: Seconds into a run after which retirement stops (#10090): no prepare read or
+#: chunk starts, and a prepare read still running is cancelled by its own
+#: `statement_timeout`.
+#:
+#: This task's 120 s `soft_time_limit` killed about 135 of its 144 daily runs
+#: from 2026-10-17 through 2026-10-30 (Sentry BAINLUCK-PM, daily buckets). Every
+#: kill landed before the tail, so the full B/C recompute, the A8 dated-basis
+#: banks and the movers warm did not run. Breadcrumbs from those runs put A10
+#: at 5-52 s and the A4 prepare at 20-80 s; pg_stat_statements means are 13.2 s
+#: and 27.1 s (maxima 97 s and 96 s). After them come four seq-scan prepares
+#: over the 2.3 GB outcomes heap and, with the backlog standing, up to 300
+#: chunks. That does not fit in 120 s.
+#:
+#: So past this point retirement starts nothing new and the run goes on to its
+#: tail. Each chunk already commits alone (`MOVEMENT_RETIRE_CHUNK`), so nothing
+#: is lost: a deferred id is prepared again by the next run, as a skipped
+#: locked row already is. The other 50 s are the tail's.
+MOVEMENT_RETIRE_BUDGET_SECONDS = 70
+
+
+def _movement_run_clock() -> float:
+    """The clock `MOVEMENT_RETIRE_BUDGET_SECONDS` is measured on."""
+    return _time.monotonic()
+
 #: A4's and A7's eligibility, ONE text each, shared by the lock-free prepare
 #: read and the locking write (#10090). Their `futures_odds_snapshots` LATERAL
 #: over every candidate leg is the core's costly scan; run inside the core it
@@ -3954,6 +3978,17 @@ def update_max_movement(self):
         from app.tasks.base import get_task_session
         from sqlalchemy import text
 
+        run_started = _movement_run_clock()
+        # Each retirement statement the budget stopped, with the prepared ids
+        # it left for the next run (None: its read never ran).
+        retire_deferred = {}
+
+        def retire_budget_spent(label, unattempted=None):
+            if _movement_run_clock() - run_started < MOVEMENT_RETIRE_BUDGET_SECONDS:
+                return False
+            retire_deferred[label] = unattempted
+            return True
+
         # A4's floor is the threshold that decides whether a card names a mover
         # at all. Imported from the module that OWNS that decision rather than
         # restated as a number here, so the sweep and the copy layer cannot
@@ -3985,6 +4020,7 @@ def update_max_movement(self):
         from app.utils.futures_highlights import MODERATE_SURPRISE_THRESHOLD
         from app.utils.futures_market_snapshot import UNPRICED_OPENING_METADATA_KEY
         from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, lock_timeout_value
+        from app.utils.statement_timeout import is_statement_timeout
 
         # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
         # REAL BUG, not a style preference. Both columns A4 compares are
@@ -4117,18 +4153,54 @@ def update_max_movement(self):
 
             await session.commit()
 
+            async def bounded_prepare(label, statement, params):
+                # A prepare read still running when the retirement budget ends
+                # is cancelled there and deferred, so one slow scan cannot carry
+                # the run past its soft limit. The A4 read alone measured up to
+                # 96 s. Its bound is set for this read only, and the previous
+                # value comes back after it, so no chunk UPDATE inherits it.
+                if retire_budget_spent(label):
+                    return []
+                remaining_ms = max(1, int(1000 * (
+                    MOVEMENT_RETIRE_BUDGET_SECONDS
+                    - (_movement_run_clock() - run_started)
+                )))
+                previous = (await session.execute(
+                    text("SELECT current_setting('statement_timeout')"),
+                )).scalar_one()
+                await session.execute(
+                    text("SELECT set_config('statement_timeout', CAST(:ms AS text), true)"),
+                    {"ms": f"{remaining_ms}ms"},
+                )
+                try:
+                    ids = list((await session.execute(text(statement), params)).scalars().all())
+                except Exception as exc:
+                    if not is_statement_timeout(exc):
+                        raise
+                    # The read takes no lock and writes nothing, so the rollback
+                    # loses nothing; it also ends the bound with the transaction.
+                    await session.rollback()
+                    retire_deferred[label] = None
+                    return []
+                await session.execute(
+                    text("SELECT set_config('statement_timeout', CAST(:ms AS text), true)"),
+                    {"ms": previous},
+                )
+                return ids
+
             # A4/A7 PREPARE (#10090): their snapshot LATERAL scans run here,
             # plain reads that take no row lock, so no quote row is held while
             # they run. The core re-checks the same predicate on these ids only.
             # See A4_UNOBSERVED_PREDICATE.
-            a4_prepared_ids = list((await session.execute(
-                text("""
+            a4_prepared_ids = await bounded_prepare(
+                "A4",
+                """
                     /* movement prepare: A4 */
                     SELECT fo.id
                 """ + A4_UNOBSERVED_PREDICATE + """
                     ORDER BY abs(fo.probability_change_24h) DESC
                     LIMIT :batch
-                """),
+                """,
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
                     "tolerance": tolerance,
@@ -4136,15 +4208,16 @@ def update_max_movement(self):
                     "batch": UNOBSERVED_PRIOR_BATCH,
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                 },
-            )).scalars().all())
-            a7_prepared_ids = list((await session.execute(
-                text("""
+            )
+            a7_prepared_ids = await bounded_prepare(
+                "A7",
+                """
                     /* movement prepare: A7 */
                     SELECT fo.id
                 """ + A7_CONTRADICTED_PREDICATE + """
                     ORDER BY abs(fo.probability_change_24h) DESC
                     LIMIT :batch
-                """),
+                """,
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
                     "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
@@ -4152,7 +4225,7 @@ def update_max_movement(self):
                     "batch": CONTRADICTED_DIRECTION_BATCH,
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                 },
-            )).scalars().all())
+            )
 
             # A1-A7 commit in many transactions (#10090 part 2) but judge one
             # instant: the prepare reads' own, never a later one per chunk.
@@ -4263,12 +4336,14 @@ def update_max_movement(self):
                 movement_committed = True
                 return retired.rowcount
 
-            async def retire_prepared(statement, params, prepared_ids):
+            async def retire_prepared(statement, params, prepared_ids, label):
                 # The statement re-checks its own predicate on `:prepared_ids`,
                 # so a row a writer changed since the prepare read is re-judged,
                 # never retired on that read's word. See MOVEMENT_RETIRE_CHUNK.
                 retired_rows = 0
                 for start in range(0, len(prepared_ids), MOVEMENT_RETIRE_CHUNK):
+                    if retire_budget_spent(label, len(prepared_ids) - start):
+                        break
                     retired_rows += await retire(statement, {
                         **params,
                         "prepared_ids": prepared_ids[start:start + MOVEMENT_RETIRE_CHUNK],
@@ -4280,11 +4355,12 @@ def update_max_movement(self):
                 # predicate, order and LIMIT the locking write re-checks. Read
                 # after the previous retirement committed, so it never selects
                 # a row that retirement already cleared.
-                return list((await session.execute(
-                    text(f"/* movement prepare: {label} */ SELECT id"
-                         + predicate + order + " LIMIT :batch"),
+                return await bounded_prepare(
+                    label,
+                    f"/* movement prepare: {label} */ SELECT id"
+                    + predicate + order + " LIMIT :batch",
                     params,
-                )).scalars().all())
+                )
 
             # A. Retire deltas whose row has not been written inside the window.
             #    `last_updated` is the right stamp and `price_changed_at` is the
@@ -4326,6 +4402,7 @@ def update_max_movement(self):
                 """,
                 a_params,
                 a_prepared_ids,
+                "A",
             )
 
             # A2. Retire deltas on GRADED outcomes, whatever their stamp says.
@@ -4393,6 +4470,7 @@ def update_max_movement(self):
                 """,
                 a2_params,
                 a2_prepared_ids,
+                "A2",
             )
 
             # A3. Retire deltas that REFUTE THEMSELVES — the row's own two
@@ -4465,7 +4543,7 @@ def update_max_movement(self):
             #     One statement in its own transaction, not prepared: its
             #     population is tens of rows, and a prepare read would add a
             #     second scan for nothing.
-            impossible_rows = await retire(
+            impossible_rows = 0 if retire_budget_spent("A3") else await retire(
                 """
                     UPDATE futures_outcomes
                     SET probability_change_24h = NULL,
@@ -4628,6 +4706,7 @@ def update_max_movement(self):
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                 },
                 a4_prepared_ids,
+                "A4",
             )
 
             # A5. Retire the RANK claim on rows nothing has written inside the
@@ -4678,6 +4757,7 @@ def update_max_movement(self):
                 """,
                 a5_params,
                 a5_prepared_ids,
+                "A5",
             )
 
             # A6. Retire the RANK claim on GRADED outcomes — A2's predicate,
@@ -4722,6 +4802,7 @@ def update_max_movement(self):
                 """,
                 a6_params,
                 a6_prepared_ids,
+                "A6",
             )
 
             # A7. Retire deltas whose DIRECTION a dated comparison contradicts
@@ -4852,6 +4933,7 @@ def update_max_movement(self):
                         "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                     },
                     a7_prepared_ids,
+                    "A7",
                 )
 
                 # Preserve the original full B/C maintenance for markets whose
@@ -5381,16 +5463,22 @@ def update_max_movement(self):
                 # held were passed over and wait for a later run. A full batch
                 # still proves more are waiting (`False`); a short one is
                 # unverified (`None`), never `True`. The rowcounts stay exact.
+                #
+                # A statement the retirement budget stopped also proves more
+                # are waiting, so it reads `False` too.
                 "backlog_drained": (
                     False
                     if (
                         expired_rows >= STALE_DELTA_BATCH
                         or graded_rows >= GRADED_DELTA_BATCH
+                        or {"A", "A2"} & retire_deferred.keys()
                     )
                     else None
                 ),
                 "graded_backlog_drained": (
-                    False if graded_rows >= GRADED_DELTA_BATCH else None
+                    False
+                    if graded_rows >= GRADED_DELTA_BATCH or "A2" in retire_deferred
+                    else None
                 ),
                 # A5/A6. Reported on their own counters and NEVER folded into
                 # `expired`/`graded_retired`: those two are how the delta drain
@@ -5408,9 +5496,15 @@ def update_max_movement(self):
                     if (
                         rank_expired_rows >= STALE_RANK_BATCH
                         or rank_graded_rows >= GRADED_RANK_BATCH
+                        or {"A5", "A6"} & retire_deferred.keys()
                     )
                     else None
                 ),
+                # #10090. Each retirement statement that
+                # `MOVEMENT_RETIRE_BUDGET_SECONDS` stopped, with the prepared ids
+                # it left for the next run (None when its read never ran). Empty
+                # on a run that finished every statement.
+                "retire_deferred": retire_deferred,
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "movers_warm": warm,
             }
