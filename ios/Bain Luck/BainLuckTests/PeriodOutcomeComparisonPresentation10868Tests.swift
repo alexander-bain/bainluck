@@ -1631,6 +1631,63 @@ final class PeriodOutcomeFinalScorePresentation10868Tests: XCTestCase {
         XCTAssertEqual(calls, 1, "only an explicit perform calls back")
     }
 
+    /// #10868 decision F: the owner's per-original Details availability.
+    func testOwnerDetailsAvailabilityIsNilByDefaultAndOtherwiseOffersOnlyTheNamedExactOriginals() {
+        func offered(_ input: PeriodOutcomeFinalScoreInput10868, canOpen: Bool = true) -> [String] {
+            input.periodIndices.flatMap { index in
+                input.comparison.series.compactMap { one -> String? in
+                    guard case .details(let id)? = input.detailsAction(one, periodIndex: index, canOpenDetails: canOpen) else {
+                        return nil
+                    }
+                    return id
+                }
+            }
+        }
+        /// What each chance shows, without its control.
+        func shown(_ input: PeriodOutcomeFinalScoreInput10868) -> [String] {
+            input.periodIndices.flatMap { index in
+                input.comparison.series.map { one -> String in
+                    let lookup = input.chance(one, periodIndex: index)
+                    let fraction = lookup.cell.flatMap { input.barFraction($0) }.map { "\($0)" } ?? "no fill"
+                    return "\(input.accessibilityChanceLabel(one, periodIndex: index)) = \(input.accessibilityChanceValue(lookup)) [\(fraction)]"
+                }
+            }
+        }
+
+        // Nil — every existing caller's default — is today's behaviour exactly.
+        let open = Self.input()
+        XCTAssertNil(open.detailsOriginalIDs)
+        XCTAssertEqual(offered(open), Self.retainedIDs)
+        XCTAssertEqual(open.notes(canOpenDetails: true),
+                       ["Chance bars share a 0–100% scale.", "Tap a player for its original outcome and recorded time."])
+
+        // Supplied: only the named exact originals offer Details; every chance
+        // still shows, and an id the card does not show adds nothing.
+        var some = Self.input()
+        some.detailsOriginalIDs = [Self.awaySet1, "constructed:not-on-this-card"]
+        XCTAssertEqual(offered(some), [Self.awaySet1])
+        XCTAssertEqual(shown(some), shown(open), "every chance, figure and bar is unchanged")
+        XCTAssertEqual(some.notes(canOpenDetails: true), open.notes(canOpenDetails: true),
+                       "a chance that opens Details keeps the invitation")
+        XCTAssertEqual(offered(some, canOpen: false), [], "still nothing without a callback")
+        var details: [String] = []
+        some.detailsAction(some.comparison.series[1], periodIndex: 0, canOpenDetails: true)?
+            .perform(onSelect: nil, onDetails: { details.append($0) })
+        XCTAssertEqual(details, [Self.awaySet1], "the named original, exactly")
+
+        // None named: no control and no invitation; the card is unchanged.
+        var none = Self.input()
+        none.detailsOriginalIDs = []
+        XCTAssertEqual(offered(none), [])
+        XCTAssertEqual(shown(none), shown(open))
+        XCTAssertEqual(none.notes(canOpenDetails: true), ["Chance bars share a 0–100% scale."])
+
+        // Naming a repeated identity never opens it.
+        var repeated = Self.input(originals: Self.replacing(Self.awaySet2) { $0.with(id: Self.homeSet2) })
+        repeated.detailsOriginalIDs = [Self.homeSet2]
+        XCTAssertEqual(offered(repeated), [])
+    }
+
     // MARK: Spoken and shown text
 
     func testSpokenTextSeparatesEachScoreAndItsProvenanceFromEachChanceAndItsClock() {

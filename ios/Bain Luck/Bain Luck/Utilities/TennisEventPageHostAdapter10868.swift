@@ -47,11 +47,13 @@ import SwiftUI
 /// admits them (`TennisCardsAdapter10868.admit`), the page offers the ones its
 /// own mount rule shows, and their actions reach the host: a totals milestone or
 /// an exact finish is held as the reader's choice; a handicap panel or a routed
-/// Details opens exactly that catalogue original, never a neighbour. A card's
-/// Details control is offered only when what that card shows on this pass
-/// resolves to exactly one catalogue original (`detailsControls`, decided
-/// before the control is drawn); otherwise the card keeps its comparisons and
-/// offers no Details. Every original stays reachable in All props.
+/// Details opens exactly that catalogue original, never a neighbour. A Details
+/// control is drawn only for an original that resolves, on this pass, to
+/// exactly one catalogue original (`TennisCardsAdapter10868.offeringDetails`
+/// per set chance and lane, `detailsControls` per card, both decided before
+/// the control is drawn); an unrouted original beside it shows with no
+/// control, and the card keeps every comparison. Every original stays
+/// reachable in All props.
 ///
 /// EVENT IDENTITY. A history response whose `event_id` is not this event's is
 /// refused whole (`TennisHistoryAdapter10868.admitted`), for the chart AND for
@@ -213,8 +215,10 @@ struct TennisEventPageHost10868: View {
 
     /// Each card's Details callback, or nil — decided from THIS pass's shown
     /// cards and catalogue before any control is drawn
-    /// (`TennisCardsAdapter10868.detailsAvailability`), so a leaf never draws
-    /// a Details control that would open nothing. A supplied callback still
+    /// (`TennisCardsAdapter10868.detailsAvailability`, over the input `build`
+    /// already narrowed per original), so a leaf never draws a Details control
+    /// that would open nothing, and a routed original keeps its Details beside
+    /// an unrouted one. A supplied callback still
     /// resolves the id it is handed and opens only exactly that catalogue
     /// original; it never opens another in its place. The page and the
     /// full-size reader get the same callbacks; the presentation adds the
@@ -315,13 +319,16 @@ struct TennisEventPageHost10868: View {
             tint: tint, selection: reading.selection)
         let stories = TennisCardsAdapter10868.admit(cards, event: event, phase: phase, originals: originals,
                                                      held: reading.cards, tint: tint)
-        let input = TennisPageInputAdapter10868.input(
+        let admittedCards = cards?.eventID == event.id ? cards : nil
+        let mounted = TennisPageInputAdapter10868.input(
             event, history: historyInput, reading: dated,
             sets: stories.sets, totals: stories.totals, exact: stories.exact, handicaps: stories.handicaps,
             originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)
-        return Built(input: input, originals: originals, series: series,
-                     cards: cards?.eventID == event.id ? cards : nil)
+        // Each set chance and lane offers Details only for an original that
+        // resolves in THIS pass's catalogue; every comparison stays.
+        let input = TennisCardsAdapter10868.offeringDetails(mounted, supplied: admittedCards, originals: originals)
+        return Built(input: input, originals: originals, series: series, cards: admittedCards)
     }
 }

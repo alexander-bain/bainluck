@@ -37,10 +37,10 @@ import SwiftUI
 /// Which supplied card is offered at all is the page's own mount rule
 /// (`TennisEventPageModel10868`), applied in `TennisPageInputAdapter10868`: a
 /// card in the wrong phase, the wrong variant or with nothing to show is never
-/// offered. Whether a mounted card offers Details is decided per pass, before
-/// the control is drawn (`detailsAvailability`): only when what it shows
-/// resolves to exactly one catalogue original. Nothing here fetches,
-/// subscribes, formats a figure, grades or ranks.
+/// offered. Which originals offer Details is decided per pass, before the
+/// control is drawn (`offeringDetails`, `detailsAvailability`): only an
+/// original that resolves to exactly one catalogue original. Nothing here
+/// fetches, subscribes, formats a figure, grades or ranks.
 enum TennisCardsAdapter10868 {
     typealias Details = OriginalMarketDetails9483
 
@@ -279,21 +279,54 @@ enum TennisCardsAdapter10868 {
         }
     }
 
+    /// The page input with the set chances and the lanes offering Details only
+    /// for an original that resolves, on THIS pass, through its owner's route to
+    /// exactly one original of the current catalogue — for a lane, inside the
+    /// card's own scope (the leaves' `detailsOriginalIDs`). Every chance, lane
+    /// and named original still shows; an unrouted id, a route to an original
+    /// the catalogue does not hold (or no longer holds) or holds twice, and an
+    /// original the leaf itself does not offer get no control. A routed one
+    /// beside them keeps its Details. It only narrows: an owner's own
+    /// `detailsOriginalIDs` is kept as an upper bound, and nothing else on the
+    /// input changes. The totals card and the finish tiles draw one Details,
+    /// for their shown selection, so they need no list (`detailsAvailability`).
+    static func offeringDetails(_ input: TennisEventPageInput10868, supplied: Supplied?,
+                                originals: TennisEventPageOriginals10868) -> TennisEventPageInput10868 {
+        var input = input
+        if var sets = input.sets {
+            sets.detailsOriginalIDs = Set(offeredSetDetails(sets).filter {
+                setDetails($0, supplied: supplied, originals: originals) != nil
+            })
+            input.sets = sets
+        }
+        if case .lanes(var lanes)? = input.exact {
+            let shown = input.exact
+            lanes.detailsOriginalIDs = Set(offeredExactDetails(shown).filter {
+                exactDetails(scopeID: $0.scopeID, originalID: $0.originalID, mounted: shown,
+                             supplied: supplied, originals: originals) != nil
+            }.map(\.originalID))
+            input.exact = .lanes(lanes)
+        }
+        return input
+    }
+
     /// Decided BEFORE any control is drawn, from what each card shows on THIS
-    /// pass (the page's own mount rule, the host's held choices applied) and
-    /// the current catalogue: a card's Details is offered only when every
-    /// Details control it would draw names an original that resolves through
-    /// its owner's route to exactly one catalogue original — in the exact card,
+    /// pass (the page's own mount rule, the host's held choices and
+    /// `offeringDetails` applied) and the current catalogue: a card's Details
+    /// callback is offered only when it draws at least one Details control and
+    /// every control it draws names an original that resolves through its
+    /// owner's route to exactly one catalogue original — in the exact card,
     /// inside its own scope. An unrouted id, a route to an original the
     /// catalogue does not hold or holds twice, a held choice no longer offered
     /// and a scope that is not the card's own each close it. Never a neighbour.
     ///
     /// The totals card and the final's finish tiles draw one Details, for the
     /// shown selection only, so the decision is exactly that original's. The
-    /// set chances and the lanes draw one per original through one callback
-    /// (the accepted leaves take no per-original availability), so they are
-    /// offered only when ALL of them resolve: a partially routed card shows its
-    /// comparisons with no Details rather than one dead control.
+    /// set chances and the lanes draw one per original; after
+    /// `offeringDetails` they draw one only for a resolving original, so a
+    /// partially routed card keeps its routed Details and its unrouted
+    /// originals draw none. An input that was not narrowed for this catalogue
+    /// fails closed: no callback rather than one dead control.
     static func detailsAvailability(_ input: TennisEventPageInput10868, supplied: Supplied?,
                                     originals: TennisEventPageOriginals10868) -> DetailsAvailability {
         let model = TennisEventPageModel10868(input)

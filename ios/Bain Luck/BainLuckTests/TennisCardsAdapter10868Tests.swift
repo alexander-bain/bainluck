@@ -225,10 +225,13 @@ final class TennisCardsAdapter10868Tests: XCTestCase {
                      "an identity the catalogue does not hold opens nothing")
 
         // An id that resolves nothing is never OFFERED either: this owner routes
-        // one of the four shown set chances, so the set card offers no Details
-        // control at all, while the routed totals and exact Details stay offered.
+        // one of the four shown set chances, so only that chance offers Details
+        // and the three unrouted ones draw no control; the routed totals and
+        // exact Details stay offered.
+        XCTAssertEqual(built.input.sets?.detailsOriginalIDs, Set(["65138603:fokina"]))
+        XCTAssertEqual(C.offeredSetDetails(built.input.sets), ["65138603:fokina"])
         let controls = Host.detailsControls(built) { _ in }
-        XCTAssertNil(controls.sets, "no dead set control for the three unrouted chances")
+        XCTAssertNotNil(controls.sets)
         XCTAssertNotNil(controls.totals)
         XCTAssertNotNil(controls.exact)
     }
@@ -517,40 +520,59 @@ final class TennisCardsAdapter10868Tests: XCTestCase {
 
     // MARK: Never offered
 
-    func testAPartialRouteMapDrawsNoDeadControlKeepsEveryComparisonAndKeepsEveryWorkingRoute() throws {
-        // The final: one of four set chances routed (`everything()`).
+    func testAPartialRouteMapKeepsEveryComparisonAndAValidRouteOpensOnceBesideAnUnavailableOne() throws {
+        // The final: one of four set chances routed (`everything()`). The routed
+        // chance opens its own original once (one hold on the page, none in the
+        // reader); the three unrouted chances beside it draw no control.
         let finished = { (reading: Host.Reading) in try self.buildFinal(cards: self.everything(), reading: reading) }
-        let sets = try meet(.sets, build: finished)
-        XCTAssertEqual(sets.page, [])
-        XCTAssertEqual(sets.reader, [])
+        let sets = try meet(.sets, tap: "65138603:fokina", build: finished)
+        XCTAssertEqual(sets.page, ["65138603:fokina"])
+        XCTAssertEqual(sets.reader, ["65138603:fokina"])
+        let fokinaSet1 = Self.opened(finalScope, Self.pm("65138603", "244929341"))
+        XCTAssertEqual(sets.log, ["hold:sets", fokinaSet1, "reader", fokinaSet1])
         let built = try finished(Host.Reading(story: .sets))
         let card = try XCTUnwrap(screen(built, .page, Log()).setsContent())
-        XCTAssertEqual(card.input, Screen.sets(.final), "every chance and score is still shown")
-        XCTAssertFalse(card.input.notes(canOpenDetails: card.onDetails != nil)
+        var unnarrowed = card.input
+        unnarrowed.detailsOriginalIDs = nil
+        XCTAssertEqual(unnarrowed, Screen.sets(.final), "every chance and score is still shown, only Details narrowed")
+        XCTAssertEqual(card.input.periodIndices.count, 3)
+        XCTAssertTrue(card.input.notes(canOpenDetails: card.onDetails != nil)
                         .contains("Tap a player for its original outcome and recorded time."),
-                       "the card never invites a tap it cannot honour")
+                      "a chance that opens Details keeps the invitation")
         XCTAssertEqual(try meet(.totals, build: finished).page, ["65123147:over"], "a working route on another card stays")
         XCTAssertEqual(try meet(.exact, build: finished).page, ["exact:15327291/245000002"])
 
         // During and before play: totals route only the 23.5 milestone, lanes
-        // three of four finishes.
+        // three of four finishes, sets one of two players.
         var partial = liveRoutes()
         partial.totals["245152784"] = nil
         partial.exact["245059338"] = nil
+        partial.sets["245152775"] = nil
         for before in [false, true] {
             let live = { (reading: Host.Reading) in
                 try self.buildLive(cards: self.liveCards(partial, before: before), reading: reading, before: before)
             }
+            let scope = try XCTUnwrap(try live(Host.Reading()).originals.catalogue?.scope)
             XCTAssertEqual(try meet(.totals, build: live).page, [], "the owner's 22.5 selection is unrouted")
             XCTAssertEqual(try meet(.totals, build: live).reader, [])
             XCTAssertEqual(try meet(.totals, reading: Host.Reading(cards: C.Held(totalMilestoneID: "245152786")),
                                     build: live).page, ["245152786"], "the routed milestone keeps its Details")
-            let lanes = try meet(.exact, build: live)
-            XCTAssertEqual(lanes.page, [])
-            XCTAssertEqual(lanes.reader, [])
+
+            let lanes = try meet(.exact, tap: "exact:15327807/245059341", build: live)
+            XCTAssertEqual(lanes.page, ["exact:15327807/245059339", "exact:15327807/245059341", "exact:15327807/245059340"],
+                           "the unrouted Fils 2-0 lane draws no control; the others keep theirs")
+            XCTAssertEqual(lanes.reader, lanes.page)
+            let zandschulp20 = Self.opened(scope, Self.kalshi("65176060", "245059341"))
+            XCTAssertEqual(lanes.log, ["hold:exact", zandschulp20, "reader", zandschulp20])
             let shown = try XCTUnwrap(screen(try live(Host.Reading(story: .exact)), .page, Log()).laneExactContent())
             XCTAssertEqual(shown.input.lanes.count, 4, "every lane is still shown")
-            XCTAssertEqual(try meet(.sets, build: live).page, ["245152775", "245152776"])
+            XCTAssertEqual((0..<4).map { shown.input.state(shown.input.lanes[$0]) != nil }, [true, true, true, true])
+
+            let set = try meet(.sets, tap: "245152776", build: live)
+            XCTAssertEqual(set.page, ["245152776"])
+            XCTAssertEqual(set.reader, ["245152776"])
+            let zandschulpSet1 = Self.opened(scope, Self.pm("65197795", "245152776"))
+            XCTAssertEqual(set.log, ["hold:sets", zandschulpSet1, "reader", zandschulpSet1])
         }
     }
 
@@ -584,35 +606,79 @@ final class TennisCardsAdapter10868Tests: XCTestCase {
             XCTAssertEqual(met.reader, [], "\(card)")
         }
 
-        // One lane's route names nothing the live catalogue holds.
+        // One lane's route names nothing the live catalogue holds: only that
+        // lane loses its control; the routed lanes beside it still open.
         var oneAbsent = liveRoutes()
         oneAbsent.exact["245059341"] = Self.kalshi("65176060", "999")
         let live = { (reading: Host.Reading) in try self.buildLive(cards: self.liveCards(oneAbsent), reading: reading) }
-        XCTAssertEqual(try meet(.exact, build: live).page, [])
-        XCTAssertEqual(try meet(.exact, build: live).reader, [])
+        let lanes = try meet(.exact, tap: "exact:15327807/245059338", build: live)
+        XCTAssertEqual(lanes.page, ["exact:15327807/245059339", "exact:15327807/245059340", "exact:15327807/245059338"])
+        XCTAssertEqual(lanes.reader, lanes.page)
+        let fils20 = Self.opened(liveScope, Self.kalshi("65176060", "245059338"))
+        XCTAssertEqual(lanes.log, ["hold:exact", fils20, "reader", fils20])
     }
 
-    func testARouteToAnOriginalTheCatalogueHoldsTwiceOffersNoDetails() throws {
+    /// The same pass with its catalogue changed (CONSTRUCTED), narrowed exactly
+    /// as `Host.build` narrows it: the step only narrows, so applying it over a
+    /// catalogue that resolves a subset is the same as building with it.
+    private func withCatalogue(_ built: Host.Built,
+                               _ change: ([Details.Original]) -> [Details.Original]) throws -> Host.Built {
+        let catalogue = try XCTUnwrap(built.originals.catalogue)
+        let o = built.originals
+        let changed = TennisEventPageOriginals10868(
+            catalogue: Details.Catalogue(scope: catalogue.scope, originals: change(catalogue.originals)),
+            selection: o.selection, recorded: o.recorded, labels: o.labels, heading: o.heading, context: o.context,
+            emptyWords: o.emptyWords, unavailableChoice: o.unavailableChoice, tint: o.tint)
+        return Host.Built(input: C.offeringDetails(built.input, supplied: built.cards, originals: changed),
+                          originals: changed, series: built.series, cards: built.cards)
+    }
+
+    func testARouteToAnOriginalTheCatalogueHoldsTwiceOffersNoDetailsForItAlone() throws {
         // CONSTRUCTED: the final's catalogue repeating the routed set-2 Tiafoe,
         // 22.5 Over and "wins 2-1" originals, so none of them is exactly one.
         let twice: Set<Details.Identity> = [Self.pm("65138604", "244929344"), Self.pm("65123147", "244876655"),
                                             Self.kalshi("65129363", "244894447")]
         let build = { (reading: Host.Reading) -> Host.Built in
             let built = try self.buildFinal(cards: self.finalCards(self.finalRoutes()), reading: reading)
-            let catalogue = try XCTUnwrap(built.originals.catalogue)
-            let o = built.originals
-            let doubled = TennisEventPageOriginals10868(
-                catalogue: Details.Catalogue(scope: catalogue.scope,
-                                             originals: catalogue.originals + catalogue.originals.filter { twice.contains($0.identity) }),
-                selection: o.selection, recorded: o.recorded, labels: o.labels, heading: o.heading, context: o.context,
-                emptyWords: o.emptyWords, unavailableChoice: o.unavailableChoice, tint: o.tint)
-            return Host.Built(input: built.input, originals: doubled, series: built.series, cards: built.cards)
+            return try self.withCatalogue(built) { $0 + $0.filter { twice.contains($0.identity) } }
         }
-        for card in [TennisEventPageCard10868.sets, .totals, .exact] {
+        let sets = try meet(.sets, tap: "65138604:fokina", build: build)
+        XCTAssertEqual(sets.page, ["65138603:fokina", "65138603:tiafoe", "65138604:fokina"],
+                       "only the repeated original loses its control")
+        XCTAssertEqual(sets.reader, sets.page)
+        let fokinaSet2 = Self.opened(finalScope, Self.pm("65138604", "244929343"))
+        XCTAssertEqual(sets.log, ["hold:sets", fokinaSet2, "reader", fokinaSet2])
+        for card in [TennisEventPageCard10868.totals, .exact] {
             let met = try meet(card, build: build)
-            XCTAssertEqual(met.page, [], "\(card)")
+            XCTAssertEqual(met.page, [], "\(card): its one shown original is repeated")
             XCTAssertEqual(met.reader, [], "\(card)")
         }
+    }
+
+    func testAnOriginalWithdrawnFromTheCatalogueClosesOnlyItsOwnDetailsAndItsReturnReopensIt() throws {
+        // CONSTRUCTED: the final's catalogue without set 1 Tiafoe; the live
+        // catalogue without "Fils wins 2-0".
+        let finished = { (reading: Host.Reading) -> Host.Built in
+            let built = try self.buildFinal(cards: self.finalCards(self.finalRoutes()), reading: reading)
+            return try self.withCatalogue(built) { $0.filter { $0.identity != Self.pm("65138603", "244929342") } }
+        }
+        let withdrawn = try meet(.sets, build: finished)
+        XCTAssertEqual(withdrawn.page, ["65138603:fokina", "65138604:fokina", "65138604:tiafoe"])
+        XCTAssertEqual(withdrawn.reader, withdrawn.page)
+        let back = try meet(.sets, tap: "65138603:tiafoe", build: { reading in
+            try self.buildFinal(cards: self.finalCards(self.finalRoutes()), reading: reading)
+        })
+        XCTAssertEqual(back.page, ["65138603:fokina", "65138603:tiafoe", "65138604:fokina", "65138604:tiafoe"])
+        let tiafoeSet1 = Self.opened(finalScope, Self.pm("65138603", "244929342"))
+        XCTAssertEqual(back.log, ["hold:sets", tiafoeSet1, "reader", tiafoeSet1])
+
+        let live = { (reading: Host.Reading) -> Host.Built in
+            let built = try self.buildLive(cards: self.liveCards(self.liveRoutes()), reading: reading)
+            return try self.withCatalogue(built) { $0.filter { $0.identity != Self.kalshi("65176060", "245059338") } }
+        }
+        let lanes = try meet(.exact, build: live)
+        XCTAssertEqual(lanes.page, ["exact:15327807/245059339", "exact:15327807/245059341", "exact:15327807/245059340"])
+        XCTAssertEqual(lanes.reader, lanes.page)
     }
 
     func testAHeldChoiceOmittedThenRestoredClosesThenReopensItsOwnDetails() throws {
@@ -662,9 +728,47 @@ final class TennisCardsAdapter10868Tests: XCTestCase {
         XCTAssertEqual(opened, [])
         controls.exact?("exact:15327291", "245000002")
         XCTAssertEqual(opened, [Details.Selection(scope: finalScope, identity: Self.kalshi("65129363", "244894447"))])
+
+        // The lanes during play: a callback handed another scope opens nothing,
+        // while a routed lane of the card's own scope still opens once.
+        let during = try buildLive(cards: liveCards(liveRoutes()))
+        var live: [Details.Selection] = []
+        let laneControls = Host.detailsControls(during) { live.append($0) }
+        laneControls.exact?("exact:15327291", "245059339")
+        XCTAssertEqual(live, [])
+        laneControls.exact?("exact:15327807", "245059339")
+        XCTAssertEqual(live, [Details.Selection(scope: liveScope, identity: Self.kalshi("65176060", "245059339"))])
+
+        // Lanes whose owner selects another match's scope place nothing and offer no Details.
+        let foreignLanes = { (reading: Host.Reading) in
+            try self.buildLive(cards: C.Supplied(eventID: 15327807, exact: self.lanes(selectingScope: "exact:15327291"),
+                                                 routes: self.liveRoutes()), reading: reading)
+        }
+        let moved = try meet(.exact, build: foreignLanes)
+        XCTAssertEqual(moved.page, [])
+        XCTAssertEqual(moved.reader, [])
+        guard case .lanes(let shown)? = try foreignLanes(Host.Reading()).input.exact else {
+            return XCTFail("the lanes are still on the page")
+        }
+        XCTAssertEqual(shown.detailsOriginalIDs, Set<String>(), "no original of another scope is offered")
     }
 
     // MARK: Constructed omissions
+
+    /// The owner's lanes with the map selecting another scope: CONSTRUCTED.
+    private func lanes(selectingScope scopeID: String) -> TennisEventPageExact10868 {
+        guard case .lanes(let lanes) = Screen.exact(.during) else { return Screen.exact(.during) }
+        let map = lanes.map
+        var moved = ExactScoreFinishLaneInput10868(
+            map: ExactScoreMapInput10868(
+                phase: map.phase, title: map.title, intro: map.intro, homeLabel: map.homeLabel, awayLabel: map.awayLabel,
+                rowsTitle: map.rowsTitle, columnsTitle: map.columnsTitle, scopes: map.scopes,
+                selectedScopeID: scopeID, selectedOriginalID: map.selectedOriginalID,
+                legend: map.legend, words: map.words),
+            lanes: lanes.lanes, words: lanes.words)
+        moved.beforePresentation = lanes.beforePresentation
+        return .lanes(moved)
+    }
 
     /// The owner's thresholds card with one milestone no longer offered: CONSTRUCTED.
     private func omitting(_ id: String, from totals: TennisEventPageTotals10868) -> TennisEventPageTotals10868 {

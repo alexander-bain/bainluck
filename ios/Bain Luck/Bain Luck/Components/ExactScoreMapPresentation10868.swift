@@ -2478,6 +2478,12 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
     let words: ExactScoreFinishLaneWords10868
     /// Default off; does not rewrite the map's actual phase or its truth inputs.
     var beforePresentation: ExactScoreFinishLaneBefore10868? = nil
+    /// Nil by default: every exact original offers its Details, as before.
+    /// When supplied, only the original ids the owner names offer Details;
+    /// every other lane and named original still shows, with no control. An
+    /// availability permission only — it never places or adds an original, and
+    /// an id the scope does not hold exactly once still offers nothing.
+    var detailsOriginalIDs: Set<String>? = nil
 
     /// During play by default, before only by explicit admission; never final.
     var isShown: Bool {
@@ -2654,9 +2660,11 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
     /// The exact original's Details. Membership is the map's exact-id uniqueness,
     /// never the whole payload: an ignored later reading cannot close a unique
     /// original, and a foreign, repeated or blank id has no action. Availability,
-    /// a pending result and a missing chance never disable it.
+    /// a pending result and a missing chance never disable it; only the owner's
+    /// `detailsOriginalIDs`, when supplied, can (nil = every exact original).
     func detailsAction(_ original: ExactScoreMapOriginal10868, canOpen: Bool) -> ExactScoreMapAction10868? {
         guard canOpen, isExact(original), let scope else { return nil }
+        if let detailsOriginalIDs, !detailsOriginalIDs.contains(original.id) { return nil }
         return .details(scopeID: scope.id, originalID: original.id)
     }
 

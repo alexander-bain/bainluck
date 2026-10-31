@@ -2715,6 +2715,44 @@ final class ExactScoreFinishLanePresentation10868Tests: XCTestCase {
         }
     }
 
+    /// #10868 decision F: the owner's per-original Details availability.
+    func testOwnerDetailsAvailabilityIsNilByDefaultAndOtherwiseOffersOnlyTheNamedExactOriginals() {
+        let extra = Self.constructed("constructed:original:named", "Constructed named outcome",
+                                     pregame: .recorded(Self.observation(0.01, "1%")))
+        // Nil — every existing caller's default — is today's behaviour exactly.
+        let open = Self.input(originals: Self.originals + [extra])
+        XCTAssertNil(open.detailsOriginalIDs)
+        XCTAssertEqual(Self.routedCalls(open), (Self.ownerIDs + [extra.id]).map { "details|\(Self.scopeID)|\($0)" })
+
+        // Supplied: only the named exact originals offer Details; every lane and
+        // named original still shows, and an id the scope does not hold adds nothing.
+        var some = open
+        some.detailsOriginalIDs = [Self.zandschulpTwoOne, extra.id, "constructed:original:not-in-scope"]
+        XCTAssertEqual(Self.routedCalls(some), [Self.zandschulpTwoOne, extra.id].map { "details|\(Self.scopeID)|\($0)" })
+        for index in 0..<4 {
+            XCTAssertEqual(Self.placed(some, index), Self.placed(open, index), "every lane keeps its original")
+            XCTAssertEqual(some.accessibilityValue(some.lanes[index]), open.accessibilityValue(open.lanes[index]))
+        }
+        XCTAssertEqual(some.unplaced, open.unplaced)
+        XCTAssertEqual(some.accessibilityValue(extra), open.accessibilityValue(extra))
+        XCTAssertNil(Self.details(some, 0), "an unnamed lane draws no control")
+        XCTAssertEqual(Self.details(some, 2), .details(scopeID: Self.scopeID, originalID: Self.zandschulpTwoOne))
+        XCTAssertNil(Self.details(some, 2, canOpen: false), "still nothing without a callback")
+
+        // None named: no control at all; nothing else changes.
+        var none = open
+        none.detailsOriginalIDs = []
+        XCTAssertEqual(Self.routedCalls(none), [])
+        XCTAssertEqual(none.unplaced, open.unplaced)
+
+        // Naming a repeated identity never opens it.
+        var repeated = Self.input(originals: Self.originals + [
+            Self.constructed(Self.filsTwoZero, "Constructed repeat", pregame: .recorded(Self.observation(0.2, "20%"))),
+        ])
+        repeated.detailsOriginalIDs = [Self.filsTwoZero]
+        XCTAssertEqual(Self.routedCalls(repeated), [])
+    }
+
     // MARK: VoiceOver and strings
 
     func testSpokenTextNamesChanceClockCurrentAvailabilityAndOwnResult() {

@@ -1337,6 +1337,12 @@ nonisolated struct PeriodOutcomeFinalScoreInput10868: Equatable {
     /// periods the owner names are shown before play with each outcome's
     /// pre-match chance only. A display permission, not a phase change.
     var beforePlay: PeriodOutcomeBeforePlay10868? = nil
+    /// Nil by default: every exact original offers its Details, as before.
+    /// When supplied, only the original ids the owner names offer Details;
+    /// every other chance still shows, with no control. An availability
+    /// permission only — it never adds an original, and an id the card does
+    /// not show, or shows twice, still offers nothing.
+    var detailsOriginalIDs: Set<String>? = nil
 
     /// Bars place a chance on this explicit probability scale only; a value on
     /// any other scale gets no fill.
@@ -1474,9 +1480,11 @@ nonisolated struct PeriodOutcomeFinalScoreInput10868: Equatable {
 
     /// The exact original's Details through the comparison's own helper, only
     /// for an exactly associated, nonblank identity. The helper checks
-    /// uniqueness; the blank guard is this card's.
+    /// uniqueness; the blank guard is this card's, and so is the owner's
+    /// availability (`detailsOriginalIDs`, nil = every exact original).
     func detailsAction(_ one: PeriodOutcomeSeries10868, periodIndex: Int, canOpenDetails: Bool) -> PeriodOutcomeAction10868? {
         guard let cell = chance(one, periodIndex: periodIndex).cell, Self.isExact(cell.id) else { return nil }
+        if let detailsOriginalIDs, !detailsOriginalIDs.contains(cell.id) { return nil }
         return comparison.detailsAction(cell, canOpenDetails: canOpenDetails)
     }
 

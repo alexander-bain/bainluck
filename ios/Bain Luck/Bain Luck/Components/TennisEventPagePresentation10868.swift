@@ -273,9 +273,12 @@ struct TennisEventPageInput10868: Equatable {
     let history: FieldHistoryInput10868
     /// The held recorded reading; nil draws none.
     var reading: TennisEventPageReading10868? = nil
-    let sets: PeriodOutcomeFinalScoreInput10868?
+    /// `var` so the host can narrow which originals offer Details
+    /// (`TennisCardsAdapter10868.offeringDetails`); nothing else is changed.
+    var sets: PeriodOutcomeFinalScoreInput10868?
     let totals: TennisEventPageTotals10868?
-    let exact: TennisEventPageExact10868?
+    /// `var` for the same narrowing on the lanes.
+    var exact: TennisEventPageExact10868?
     let handicaps: TennisEventPageHandicaps10868?
     /// The owner's story stream; nil draws no stories.
     let stream: StoryStreamPresentation10868?
