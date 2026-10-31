@@ -242,7 +242,7 @@ final class TennisEventPagePresentation10868Tests: XCTestCase {
         detailsNote: "Tap a player for its original outcome and recorded time.")
 
     /// `phase` is the leaf's own; `optIn` supplies the phase's display permission.
-    private static func sets(_ phase: PeriodOutcomePhase10868, optIn: Bool = true) -> PeriodOutcomeFinalScoreInput10868 {
+    static func sets(_ phase: PeriodOutcomePhase10868, optIn: Bool = true) -> PeriodOutcomeFinalScoreInput10868 {
         let isFinal = phase == .final
         let periods = isFinal
             ? [PeriodOutcomePeriod10868(id: "set-1", label: "Set 1"), PeriodOutcomePeriod10868(id: "set-2", label: "Set 2"),
@@ -345,7 +345,7 @@ final class TennisEventPagePresentation10868Tests: XCTestCase {
         originalsTitle: "Original total-game contracts", note: "Circles mark total-game thresholds, not projected final scores.",
         invitation: nil, unresolved: "Original contract unavailable", subtotalsTitle: "Games won")
 
-    private static func totals(_ phase: TennisEventPagePhase10868, as leafPhase: TotalMilestonePhase10868? = nil,
+    static func totals(_ phase: TennisEventPagePhase10868, as leafPhase: TotalMilestonePhase10868? = nil,
                                finalVariant: Bool? = nil) -> TennisEventPageTotals10868 {
         let leaf = leafPhase ?? TennisEventPageModel10868.totalPhase(phase)
         if finalVariant ?? (phase == .final) {
@@ -414,7 +414,7 @@ final class TennisEventPagePresentation10868Tests: XCTestCase {
             legend: exactLegend, words: exactWords)
     }
 
-    private static func exact(_ phase: TennisEventPagePhase10868, as leafPhase: ExactScoreMapPhase10868? = nil,
+    static func exact(_ phase: TennisEventPagePhase10868, as leafPhase: ExactScoreMapPhase10868? = nil,
                               finalVariant: Bool? = nil) -> TennisEventPageExact10868 {
         let leaf = leafPhase ?? TennisEventPageModel10868.exactPhase(phase)
         if finalVariant ?? (phase == .final) {
@@ -601,7 +601,7 @@ final class TennisEventPagePresentation10868Tests: XCTestCase {
         return TennisEventPageOriginals10868(
             catalogue: handicap.catalogue, selection: selection,
             labels: [handicapIdentity("65123150", "244876662"): "Set Handicap · Alejandro Davidovich Fokina"],
-            heading: "All props", context: "2 originals", emptyWords: "No retained originals for this match",
+            heading: "All props", context: "2 originals", emptyWords: "Props unavailable",
             unavailableChoice: "Unnamed original", tint: homeTint)
     }
 

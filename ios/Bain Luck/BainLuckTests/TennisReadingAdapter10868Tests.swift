@@ -72,6 +72,16 @@ final class TennisReadingAdapter10868Tests: XCTestCase {
         XCTAssertNotNil(series.latest)
     }
 
+    func testAForeignHistoryYieldsNoPointsNoSeriesAndSoNoReading() throws {
+        let event = try Fixtures.detail(Fixtures.liveDetail)
+        let now = at(Fixtures.liveReadAt)
+        // CONSTRUCTED: the live subset with only its `event_id` changed (`Histories.foreign`).
+        let foreign = try Histories.foreign()
+        XCTAssertTrue(R.points(foreign, event: event, now: now).isEmpty)
+        XCTAssertNil(R.series(foreign, event: event, now: now), "no foreign baseline, held or latest reading")
+        XCTAssertEqual(R.points(try Histories.live(), event: event, now: now).count, 104, "this event's own body is unchanged")
+    }
+
     // MARK: - Holding
 
     func testWithNothingHeldThePageShowsNoReadingAndTheReaderShowsTheLatest() throws {

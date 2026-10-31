@@ -17,6 +17,10 @@ import SwiftUI
 /// combat screen also calls: it is sport-free and reads only the production
 /// chart rules, so no two screens can draw one served body two ways:
 ///
+///   - whose body       only this event's: a response whose `event_id` is not
+///                      `event.id` is refused whole (`admitted`) and the page
+///                      shows its own "History unavailable". The dated reading
+///                      and the host pass through the same gate.
 ///   - which line       `OddsChartView.primarySource(in: servedPoints(from:))`:
 ///                      the backend blend when served, else the sportsbook
 ///                      consensus — the same series the tennis reading panel reads
@@ -132,8 +136,19 @@ enum TennisHistoryAdapter10868 {
 
     // MARK: - The history
 
+    /// The history response only when it is THIS event's (`event_id` equals the
+    /// page event's id). A foreign body is refused whole: no plot, baseline,
+    /// series or reading is ever taken from it, and the page shows its own
+    /// "History unavailable" instead. Every reader of `/history` on this screen
+    /// (this file, `TennisReadingAdapter10868`, the host) passes through here.
+    static func admitted(_ response: EventHistoryResponse?, for event: EventDetail) -> EventHistoryResponse? {
+        guard let response, response.eventId == event.id else { return nil }
+        return response
+    }
+
     static func history(_ response: EventHistoryResponse, event: EventDetail,
                         phase: TennisEventPagePhase10868, host: Host) -> FieldHistoryInput10868 {
+        guard let response = admitted(response, for: event) else { return unavailable(event: event, phase: phase) }
         let line = Rows.line(response)
         let tints = TennisMatchPageAdapter10868.tints(event)
         // Nil when the start is not a confirmed cut: the readings still draw, unsplit.

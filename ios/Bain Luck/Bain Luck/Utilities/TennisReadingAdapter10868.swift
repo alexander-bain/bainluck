@@ -18,6 +18,9 @@ import SwiftUI
 ///                    finished-match result-row rule, its own away contract
 ///                    (the blend's away side is its complement, printed and never
 ///                    looked up; the consensus supplies its own).
+///   - whose body     only this event's (`TennisHistoryAdapter10868.admitted`):
+///                    another event's response yields no point, no series and so
+///                    no baseline, held or latest reading.
 ///   - what it reads  EXACTLY the rows the history draws as readings (part two's
 ///                    row machinery, `HockeyJourneyHistoryAdapter10868`): the
 ///                    history's line (`Rows.line`, which is the chart's
@@ -57,6 +60,8 @@ enum TennisReadingAdapter10868 {
 
     /// The history's readings as chart points, in served order.
     static func points(_ response: EventHistoryResponse, event: EventDetail, now: Date) -> [ChartDataPoint] {
+        // Another event's body yields no point (`TennisHistoryAdapter10868.admitted`).
+        guard let response = TennisHistoryAdapter10868.admitted(response, for: event) else { return [] }
         let line = Rows.line(response)
         let entries = Rows.entries(Rows.servedRows(response, line: line, sport: event.sport),
                                    removing: Rows.removedIndexes(response, event: event, line: line))
@@ -71,6 +76,8 @@ enum TennisReadingAdapter10868 {
 
     /// The production tennis series over those readings, or nil with none.
     static func series(_ response: EventHistoryResponse, event: EventDetail, now: Date) -> Series? {
+        // Another event's body yields no series, so no baseline, held or latest reading.
+        guard let response = TennisHistoryAdapter10868.admitted(response, for: event) else { return nil }
         let line = Rows.line(response)
         return TennisChartReading9483.series(
             eventId: response.eventId, points: points(response, event: event, now: now),

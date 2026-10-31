@@ -261,7 +261,7 @@ final class TennisOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertNil(built.catalogue)
         XCTAssertNil(built.context)
         XCTAssertTrue(built.labels.isEmpty)
-        XCTAssertEqual(built.emptyWords, "No retained originals for this match")
+        XCTAssertEqual(built.emptyWords, "Props unavailable")
         XCTAssertEqual(built.heading, "All props")
     }
 

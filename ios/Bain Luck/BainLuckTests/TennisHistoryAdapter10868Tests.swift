@@ -67,6 +67,15 @@ final class TennisHistoryAdapter10868Tests: XCTestCase {
         try Fixtures.decoder().decode(EventHistoryResponse.self, from: Data(Self.finalHistory.utf8))
     }
 
+    /// CONSTRUCTED: the live subset with ONLY its `event_id` changed to the
+    /// final's (15327291) — another event's body arriving on this page.
+    static func foreign() throws -> EventHistoryResponse {
+        let own = "{\"event_id\":15327807,"
+        XCTAssertTrue(liveHistory.hasPrefix(own))
+        let body = liveHistory.replacingOccurrences(of: own, with: "{\"event_id\":15327291,")
+        return try Fixtures.decoder().decode(EventHistoryResponse.self, from: Data(body.utf8))
+    }
+
     private func x(_ stamp: String) -> Double { stamp.asDate!.timeIntervalSince1970 }
 
     /// The blend's complement pair for one home value, through the app's own
@@ -227,6 +236,30 @@ final class TennisHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(input.markKey, FieldHistoryMarkKey10868(hollow: nil, filled: nil))
         XCTAssertEqual(home.before, .absent(words: H.Words.unconfirmedStartWords))
         XCTAssertEqual(input.guides, [])
+    }
+
+    // MARK: - Event identity
+
+    func testAForeignHistoryIsRefusedWholeAndTheSameEventIsUnchanged() throws {
+        let event = try Fixtures.detail(Fixtures.liveDetail)
+        let reader = host(Fixtures.liveReadAt)
+        let live = try Self.live()
+        XCTAssertEqual(H.admitted(live, for: event), live)
+        XCTAssertNil(H.admitted(nil, for: event))
+        XCTAssertEqual(H.history(live, event: event, phase: .during, host: reader).series[0].runs.first?.points.count, 89,
+                       "this event's own body is drawn exactly as before")
+
+        let foreign = try Self.foreign()
+        XCTAssertEqual(foreign.eventId, 15327291)
+        XCTAssertNil(H.admitted(foreign, for: event))
+        let refused = H.history(foreign, event: event, phase: .during, host: reader)
+        XCTAssertEqual(refused, H.unavailable(event: event, phase: .during),
+                       "another event's rows are never this match's plot, baseline or reading")
+        XCTAssertEqual(refused.plotAbsence?.title, "History unavailable")
+        XCTAssertTrue(refused.series.allSatisfy { $0.runs.isEmpty })
+        XCTAssertEqual(refused.series.map(\.name), ["Arthur Fils", "Botic van de Zandschulp"], "this page's own players")
+        XCTAssertNil(refused.expand)
+        XCTAssertNil(refused.inspect)
     }
 
     // MARK: - No response

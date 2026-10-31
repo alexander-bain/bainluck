@@ -88,6 +88,51 @@ final class TennisEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(without.originals.catalogue, withHistory.originals.catalogue)
     }
 
+    func testAForeignHistoryLeavesNoPlotSeriesReadingOrControlsAndTheRestOfThePageStays() throws {
+        let event = try Fixtures.detail(Fixtures.liveDetail)
+        let markets = try TennisOriginalsAdapter10868Tests.live()
+        let same = build(event, history: try TennisHistoryAdapter10868Tests.live(), markets: markets,
+                         now: Fixtures.liveReadAt)
+        let own = try XCTUnwrap(same.series)
+        // A reading held on this event's own series, then another event's body arrives.
+        let held = TennisReadingAdapter10868.inspect(try XCTUnwrap("2026-10-12T11:30:20Z".asDate).timeIntervalSince1970,
+                                                     in: own)
+        XCTAssertNotNil(held)
+        // CONSTRUCTED: the live subset with only its `event_id` changed (`TennisHistoryAdapter10868Tests.foreign`).
+        let foreign = build(event, history: try TennisHistoryAdapter10868Tests.foreign(), markets: markets,
+                            now: Fixtures.liveReadAt, reading: Host.Reading(held: held))
+        XCTAssertEqual(foreign.input.history, TennisHistoryAdapter10868.unavailable(event: event, phase: .during))
+        XCTAssertNil(foreign.input.history.expand)
+        XCTAssertNil(foreign.input.history.inspect)
+        XCTAssertNil(foreign.series)
+        XCTAssertNil(foreign.input.reading, "no foreign baseline, held or latest reading")
+        XCTAssertNil(TennisEventPageModel10868(foreign.input).pageReading)
+        XCTAssertNil(TennisEventPageModel10868(foreign.input).readerReading)
+        let controls = Host.readingControls(foreign.series) { _ in XCTFail("no plot-reading control exists") }
+        XCTAssertNil(controls.plot)
+        XCTAssertNil(controls.latest)
+
+        // Everything that does not read the history is the same page.
+        XCTAssertEqual(foreign.input.headline, same.input.headline)
+        XCTAssertEqual(foreign.input.reader, same.input.reader)
+        XCTAssertEqual(foreign.input.about, same.input.about)
+        XCTAssertEqual(foreign.input.copy, same.input.copy)
+        XCTAssertEqual(foreign.originals.catalogue, same.originals.catalogue)
+    }
+
+    func testThisEventsSeriesOffersBothPlotReadingControlsAndTheyHoldThroughTheHost() throws {
+        let event = try Fixtures.detail(Fixtures.liveDetail)
+        let built = build(event, history: try TennisHistoryAdapter10868Tests.live(), markets: nil, now: Fixtures.liveReadAt)
+        let series = try XCTUnwrap(built.series)
+        var holds: [TennisChartReading9483.Held?] = []
+        let controls = Host.readingControls(series) { holds.append($0) }
+        try XCTUnwrap(controls.plot)(try XCTUnwrap("2026-10-12T11:30:20Z".asDate).timeIntervalSince1970)
+        try XCTUnwrap(controls.latest)()
+        XCTAssertEqual(holds, [TennisReadingAdapter10868.inspect(try XCTUnwrap("2026-10-12T11:30:20Z".asDate).timeIntervalSince1970,
+                                                                 in: series),
+                               TennisReadingAdapter10868.latest(in: series)])
+    }
+
     // MARK: - The retained final
 
     func testTheRetainedFinalComposesWithItsGradedOriginalsAndNoSettlementReading() throws {

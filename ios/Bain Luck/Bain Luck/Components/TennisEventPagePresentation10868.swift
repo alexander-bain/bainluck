@@ -285,7 +285,7 @@ struct TennisEventPageInput10868: Equatable {
     let copy: TennisEventPageCopy10868
 }
 
-/// The owner's retained originals behind "All props", for the catalogue and
+/// The owner's originals behind "All props", for the catalogue and
 /// Details modes. Every field reaches the existing leaves unchanged.
 struct TennisEventPageOriginals10868 {
     /// The latest admitted originals for one scope; nil shows `emptyWords`.
@@ -301,7 +301,7 @@ struct TennisEventPageOriginals10868 {
     let heading: String
     /// "18 originals"; nil draws none.
     var context: String? = nil
-    /// "No retained originals for this match".
+    /// "Props unavailable".
     let emptyWords: String
     /// The label for an original with no readable title of its own.
     let unavailableChoice: String

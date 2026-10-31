@@ -87,7 +87,7 @@ enum TennisOriginalsAdapter10868 {
 
     enum Words {
         static let heading = "All props"
-        static let emptyWords = "No retained originals for this match"
+        static let emptyWords = "Props unavailable"
         static let unavailableChoice = "Unnamed original"
         static let preMatchNotRecorded = "Pre-match chance not recorded"
         static let preMatchUnavailable = "Pre-match chance unavailable"

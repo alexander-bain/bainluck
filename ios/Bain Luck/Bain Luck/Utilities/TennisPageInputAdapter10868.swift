@@ -13,7 +13,10 @@ import Foundation
 ///   - history                                          part two (`TennisHistoryAdapter10868`), passed in
 ///   - dated reading                                    part three (`TennisReadingAdapter10868`), passed in
 ///   - originals count                                  part four's catalogue size, for All props
-///   - sets, totals, exact, handicaps                   passed in, and NIL FROM PRODUCTION TODAY
+///   - sets, totals, exact, handicaps                   passed in (`TennisCardsAdapter10868`'s
+///                                                      admission), and NIL FROM PRODUCTION TODAY;
+///                                                      offered only where the page's own mount rule
+///                                                      (`TennisEventPageModel10868`) shows them
 ///
 /// THE FOUR STORY CARDS HAVE NO PRODUCTION OWNER YET. Each accepted leaf needs
 /// words and membership no served field proves for tennis: the served matrix
@@ -26,8 +29,10 @@ import Foundation
 /// needs completed-set state and games within sets, and `EventDetail` does not
 /// decode the served `linescore`. Owners: backend matrix typing
 /// (`app/utils/event_question_matrix.py`) and Native's model (`EventDetail`
-/// `linescore`). Until then the host passes nil, no story is offered, the stream
-/// is absent, and every original stays reachable in All props.
+/// `linescore`). Until then the proposed mount passes nil, no story is offered,
+/// the stream is absent, and every original stays reachable in All props. The
+/// host accepts an owner's admitted cards when they are supplied
+/// (`TennisCardsAdapter10868.Supplied`).
 ///
 /// THE STREAM IS MANUAL, as the hockey and combat screens'. The only owner that
 /// ranks and auto-advances story cards is NBA's (`NBAStoryStreamPolicy9483`);
@@ -82,23 +87,36 @@ enum TennisPageInputAdapter10868 {
         host: TennisMatchPageAdapter10868.Host
     ) -> TennisEventPageInput10868 {
         let phase = TennisMatchPageAdapter10868.phase(event, now: host.now)
-        let offered = offeredCards(sets: sets, totals: totals, exact: exact, handicaps: handicaps)
+        let reader = TennisMatchPageAdapter10868.readerHeader(event, host: host)
+        let headline = TennisMatchPageAdapter10868.headline(event, host: host)
+        let about = TennisMatchPageAdapter10868.about(event, host: host)
+        let words = copy(originalsCount: originalsCount)
+        // The page's own mount rule decides which supplied card is offered: a
+        // card in the wrong phase or variant, or with nothing to show, never
+        // reaches the stream or the reader.
+        let supplied = TennisEventPageInput10868(
+            phase: phase, eventID: String(event.id), reader: reader, headline: headline, history: history,
+            sets: sets, totals: totals, exact: exact, handicaps: handicaps, stream: nil, stories: [],
+            about: about, copy: words)
+        let mounted = TennisEventPageModel10868(supplied)
+        let offered = offeredCards(sets: mounted.sets, totals: mounted.totals, exact: mounted.exact,
+                                   handicaps: mounted.handicaps)
         return TennisEventPageInput10868(
             phase: phase,
             eventID: String(event.id),
-            reader: TennisMatchPageAdapter10868.readerHeader(event, host: host),
-            headline: TennisMatchPageAdapter10868.headline(event, host: host),
+            reader: reader,
+            headline: headline,
             notice: TennisMatchPageAdapter10868.notice(host: host),
             history: history,
             reading: reading,
-            sets: sets,
-            totals: totals,
-            exact: exact,
-            handicaps: handicaps,
+            sets: mounted.sets,
+            totals: mounted.totals,
+            exact: mounted.exact,
+            handicaps: mounted.handicaps,
             stream: stream(scope: scope(event, phase: phase), offered: offered, phase: phase, state: state),
             stories: stories(offered),
-            about: TennisMatchPageAdapter10868.about(event, host: host),
-            copy: copy(originalsCount: originalsCount))
+            about: about,
+            copy: words)
     }
 
     /// One owner scope per event and phase, as the stream requires.

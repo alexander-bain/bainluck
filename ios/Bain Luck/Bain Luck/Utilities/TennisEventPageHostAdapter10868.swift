@@ -41,10 +41,20 @@ import SwiftUI
 ///
 /// STORY CARDS. No production owner proves which original belongs to which of
 /// the four tennis stories (see `TennisPageInputAdapter10868`), so the proposed
-/// mount passes none: the page shows the players, the history, the dated
-/// reading and All props, with no story stream, and no card callback is wired —
-/// an owner that supplies a card supplies its routing with it. Every original
-/// stays reachable in All props.
+/// mount passes none and the page shows the players, the history, the dated
+/// reading and All props, with no story stream. When an owner does supply cards
+/// (`cards`, a `TennisCardsAdapter10868.Supplied` for this event), the host
+/// admits them (`TennisCardsAdapter10868.admit`), the page offers the ones its
+/// own mount rule shows, and their actions reach the host: a totals milestone or
+/// an exact finish is held as the reader's choice; a handicap panel or a routed
+/// Details opens exactly that catalogue original, never a neighbour. A card's
+/// Details control is wired only when the owner supplied routes for that card.
+/// Every original stays reachable in All props.
+///
+/// EVENT IDENTITY. A history response whose `event_id` is not this event's is
+/// refused whole (`TennisHistoryAdapter10868.admitted`), for the chart AND for
+/// the dated reading: no foreign plot, baseline, series, held or latest reading,
+/// and no plot-reading control. The rest of the page is unaffected.
 ///
 /// Without a history response (not arrived, or failed) the page still shows its
 /// chances and All props; only the chart slot says "History unavailable"
@@ -54,10 +64,11 @@ import SwiftUI
 /// Controls: Full chart and a headline player's open open the full-size history,
 /// which holds what it shows (`TennisReadingAdapter10868.opening`, the pin's
 /// `holdShown`). A tap on the plot holds the reading under it (or the break);
-/// "Show latest recorded chance" holds the newest. Details and Inspect are
-/// offered unavailable until their owner contracts exist, so the shared callback
-/// never enables a control that does nothing. The About opens with no source
-/// link (none is served). The page's hold (`onInteraction`) is handed to the
+/// "Show latest recorded chance" holds the newest. Both exist only while this
+/// event's readout series exists. The history's Details and Inspect are offered
+/// unavailable until their owner contracts exist, so the shared callback never
+/// enables a control that does nothing. The About opens with no source link
+/// (none is served). The page's hold (`onInteraction`) is handed to the
 /// presentation, which calls it once before each page, catalogue or Details
 /// action; full-size content keeps the exact callbacks with no second hold.
 struct TennisEventPageHost10868: View {
@@ -67,6 +78,8 @@ struct TennisEventPageHost10868: View {
     let probabilityObservedAt: Date?
     var deliveryInterrupted: Bool = false
     var now: Date = Date()
+    /// An owner's admitted story cards for this event; nil (production today) shows none.
+    var cards: TennisCardsAdapter10868.Supplied? = nil
     /// The page's existing hold, requested BEFORE any reader action. Appearance
     /// and reads call nothing.
     var onInteraction: (() -> Void)? = nil
@@ -95,8 +108,10 @@ struct TennisEventPageHost10868: View {
         let input: TennisEventPageInput10868
         let originals: TennisEventPageOriginals10868
         /// The readout series this pass read, for the host's next hold; nil
-        /// without a history response or a readable row.
+        /// without this event's history response or a readable row.
         let series: TennisChartReading9483.Series?
+        /// The owner's cards as supplied, for routing their Details.
+        let cards: TennisCardsAdapter10868.Supplied?
     }
 
     /// The screen's own reading state, as the builders take it.
@@ -104,6 +119,7 @@ struct TennisEventPageHost10868: View {
         var story: TennisEventPageCard10868? = nil
         var held: TennisChartReading9483.Held? = nil
         var selection: OriginalMarketDetails9483.Selection? = nil
+        var cards = TennisCardsAdapter10868.Held()
         var readerOpen = false
         var wide = false
     }
@@ -112,6 +128,9 @@ struct TennisEventPageHost10868: View {
     @State private var story: TennisEventPageCard10868?
     @State private var held: TennisChartReading9483.Held?
     @State private var selection: OriginalMarketDetails9483.Selection?
+    @State private var cardsHeld = TennisCardsAdapter10868.Held()
+    @State private var totalTiming = false
+    @State private var handicapExplanation = false
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
@@ -132,7 +151,9 @@ struct TennisEventPageHost10868: View {
     }
 
     private func page(_ built: Built, mode: TennisEventPageMode10868) -> TennisEventPagePresentation10868 {
-        TennisEventPagePresentation10868(
+        let routes = built.cards?.routes ?? TennisCardsAdapter10868.Routes()
+        let controls = Self.readingControls(built.series) { held = $0 }
+        return TennisEventPagePresentation10868(
             input: built.input, mode: mode, originals: built.originals,
             onAbout: { open(.about) },
             onAllProps: { open(.catalogue) },
@@ -147,18 +168,58 @@ struct TennisEventPageHost10868: View {
                 if id == TennisHistoryAdapter10868.expandActionID { openHistory(built.series) }
             },
             onHistoryInspectionChoice: nil,
-            onHistoryPlotPosition: built.series.map { series -> (Double) -> Void in
-                { position in held = TennisReadingAdapter10868.inspect(position, in: series) }
+            onHistoryPlotPosition: controls.plot,
+            onShowLatestReading: controls.latest,
+            onSetDetails: routes.sets.isEmpty ? nil : { (id: String) in
+                details(TennisCardsAdapter10868.setDetails(id, supplied: built.cards, originals: built.originals))
             },
-            onShowLatestReading: built.series.map { series -> () -> Void in
-                { held = TennisReadingAdapter10868.latest(in: series) }
+            onTotalSelect: { id in cardsHeld.totalMilestoneID = id },
+            onTotalDetails: routes.totals.isEmpty ? nil : { (id: String) in
+                details(TennisCardsAdapter10868.totalDetails(id, supplied: built.cards, originals: built.originals))
             },
+            totalTimingExpanded: $totalTiming,
+            onExactSelect: { scope, id in
+                cardsHeld.exactScopeID = scope
+                cardsHeld.exactOriginalID = id
+            },
+            onExactDetails: routes.exact.isEmpty ? nil : { (scope: String, id: String) in
+                details(TennisCardsAdapter10868.exactDetails(
+                    scopeID: scope, originalID: id, mounted: built.input.exact, supplied: built.cards,
+                    originals: built.originals))
+            },
+            onExactRecover: {
+                cardsHeld.exactScopeID = nil
+                cardsHeld.exactOriginalID = nil
+            },
+            onHandicapSelect: { chosen in
+                details(TennisCardsAdapter10868.handicapSelection(chosen, in: built.originals))
+            },
+            handicapExplanationExpanded: $handicapExplanation,
             onInteraction: onInteraction)
+    }
+
+    /// The plot tap and "Show latest recorded chance", each holding through
+    /// `hold`. Both exist only while this event's readout series does: without
+    /// a history response, or with another event's, neither is offered.
+    static func readingControls(_ series: TennisChartReading9483.Series?,
+                                hold: @escaping (TennisChartReading9483.Held?) -> Void)
+        -> (plot: ((Double) -> Void)?, latest: (() -> Void)?) {
+        guard let series else { return (nil, nil) }
+        return ({ position in hold(TennisReadingAdapter10868.inspect(position, in: series)) },
+                { hold(TennisReadingAdapter10868.latest(in: series)) })
     }
 
     /// The exact mode; the presentation has already asked for the hold.
     private func open(_ mode: TennisEventPageMode10868) {
         presented = Presented(mode: mode)
+    }
+
+    /// A card's Details: the exact catalogue original it resolved, held and
+    /// opened; nothing when it resolved none.
+    private func details(_ resolved: OriginalMarketDetails9483.Selection?) {
+        guard let resolved else { return }
+        selection = resolved
+        open(.original)
     }
 
     /// The full-size history, holding what it shows so neither a later arrival
@@ -184,38 +245,47 @@ struct TennisEventPageHost10868: View {
     private func make() -> Built {
         Self.build(event: event, history: history, markets: markets,
                    probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
-                   now: now,
-                   reading: Reading(story: story, held: held, selection: selection, readerOpen: presented != nil,
-                                    wide: sizeClass == .regular))
+                   now: now, cards: cards,
+                   reading: Reading(story: story, held: held, selection: selection, cards: cardsHeld,
+                                    readerOpen: presented != nil, wide: sizeClass == .regular))
     }
 
     /// The page input, originals and readout series from the passed values
     /// alone — pure, so every changed value reaches the screen on the next
-    /// pass. A missing history response leaves only the chart slot unavailable.
+    /// pass. A missing or foreign history response leaves only the chart slot
+    /// and the dated reading unavailable.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
                       probabilityObservedAt: Date?, deliveryInterrupted: Bool = false, now: Date,
+                      cards: TennisCardsAdapter10868.Supplied? = nil,
                       reading: Reading = Reading(),
                       calendar: Calendar = .current, locale: Locale = .current) -> Built {
         let host = TennisMatchPageAdapter10868.Host(
             probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
             now: now, calendar: calendar, locale: locale)
         let phase = TennisMatchPageAdapter10868.phase(event, now: now)
-        let historyInput = history.map {
+        // One identity gate for the chart and the dated reading alike.
+        let admitted = TennisHistoryAdapter10868.admitted(history, for: event)
+        let historyInput = admitted.map {
             TennisHistoryAdapter10868.history(
                 $0, event: event, phase: phase,
                 host: TennisHistoryAdapter10868.Host(now: now, calendar: calendar, locale: locale))
         } ?? TennisHistoryAdapter10868.unavailable(event: event, phase: phase)
-        let series = history.flatMap { TennisReadingAdapter10868.series($0, event: event, now: now) }
+        let series = admitted.flatMap { TennisReadingAdapter10868.series($0, event: event, now: now) }
         let dated = series.map { TennisReadingAdapter10868.reading($0, held: reading.held, event: event, now: now) }
+        let tint = TennisMatchPageAdapter10868.tints(event).home
         let originals = TennisOriginalsAdapter10868.originals(
             event, markets: markets,
             host: TennisOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
-            tint: TennisMatchPageAdapter10868.tints(event).home, selection: reading.selection)
+            tint: tint, selection: reading.selection)
+        let stories = TennisCardsAdapter10868.admit(cards, event: event, phase: phase, originals: originals,
+                                                     held: reading.cards, tint: tint)
         let input = TennisPageInputAdapter10868.input(
             event, history: historyInput, reading: dated,
+            sets: stories.sets, totals: stories.totals, exact: stories.exact, handicaps: stories.handicaps,
             originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)
-        return Built(input: input, originals: originals, series: series)
+        return Built(input: input, originals: originals, series: series,
+                     cards: cards?.eventID == event.id ? cards : nil)
     }
 }
