@@ -335,6 +335,9 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   // #10868. The hockey journey screen's live state (`HockeyJourneyPageAdapter10868.stateWords`)
   // delegates the join and adds no rule of its own.
   [join(IOS_ROOT, "Utilities/HockeyJourneyPageAdapter10868.swift"), "the hockey journey screen's live state"],
+  // #10868. The combat bout screen's live state (`CombatBoutPageAdapter10868.duringWords`)
+  // delegates the join and adds no rule of its own.
+  [join(IOS_ROOT, "Utilities/CombatBoutPageAdapter10868.swift"), "the combat bout screen's live state"],
 ];
 
 /**
