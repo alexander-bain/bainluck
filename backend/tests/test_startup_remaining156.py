@@ -87,11 +87,13 @@ class Rig(CatalogRig):
                 session = await original.__aenter__()
                 execute = session.execute
                 async def route(stmt, params=None):
-                    if stmt is task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
+                    if stmt is task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL or (
+                        stmt is task.ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL
+                    ):
                         # The recording session's writes are immediate; model
                         # its default timeout for the writer's restore step.
                         return SimpleNamespace(scalar_one=lambda: "0")
-                    if stmt is SET_STATEMENT_TIMEOUT_SQL:
+                    if stmt is SET_STATEMENT_TIMEOUT_SQL or stmt is task.RESTORE_DNPL_PRICE_TIMEOUTS_SQL:
                         return _Result([])
                     sql, bound = str(stmt), stmt.compile().params
                     if isinstance(stmt, Update):

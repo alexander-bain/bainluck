@@ -78,6 +78,41 @@ ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL = text("""
         ELSE CAST(:ms AS text) END, true)
     FROM prior
 """)
+#: #10090 — the same two arms a DNPL game chunk sends one after another (its
+#: price-row lock budget, then the bounded statement above), in ONE statement:
+#: same transaction, same order, same values. Its restore is fused the same
+#: way. Each pair was a round trip of its own on a writer at cpu ~0.95 that
+#: sends ~8 per chunk; fused, a bound chunk sends 6.
+ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL = text("""
+    WITH prior AS MATERIALIZED (
+        SELECT current_setting('statement_timeout') AS value
+    )
+    SELECT value,
+        set_config('lock_timeout', CAST(:lock_ms AS text), true),
+        set_config('statement_timeout', CASE
+            WHEN CAST(value AS interval) > interval '0'
+             AND CAST(value AS interval) < CAST(CAST(:ms AS text) AS interval) THEN value
+            ELSE CAST(:ms AS text) END, true)
+    FROM prior
+""")
+RESTORE_DNPL_PRICE_TIMEOUTS_SQL = text(
+    "SELECT set_config('statement_timeout', CAST(:ms AS text), true), "
+    "set_config('lock_timeout', CAST(:lock_ms AS text), true)"
+)
+
+
+def _fuse_price_timeout_sets_env() -> bool:
+    """#10090 — env `PM_FUSE_PRICE_TIMEOUT_SETS`, read once at import.
+
+    On (the default), a DNPL-bound game chunk arms and restores its lock and
+    statement budgets in one statement each; `0`/`false`/`off`/`no` sends the
+    four separate statements, today's path exactly.
+    """
+    raw = os.environ.get("PM_FUSE_PRICE_TIMEOUT_SETS")
+    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
+
+
+PM_FUSE_PRICE_TIMEOUT_SETS = _fuse_price_timeout_sets_env()
 
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
@@ -4510,7 +4545,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.polymarket_ws import (
             _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
             DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
-            is_price_statement_timeout, _pm_game_flush_span,
+            ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL, RESTORE_DNPL_PRICE_TIMEOUTS_SQL,
+            PM_FUSE_PRICE_TIMEOUT_SETS, is_price_statement_timeout, _pm_game_flush_span,
         )
         from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
@@ -4554,6 +4590,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
         # Includes unrelated game B: bounding B is what lets a later DNPL A
         # reach the same serial writer. Side loops and disabled/final stay as-is.
+        # A bound chunk is never final, so it always sends both pairs.
+        fuse_timeout_sets = bound_price_statement and PM_FUSE_PRICE_TIMEOUT_SETS
         previous_statement_timeout = None
         rolled_back_statement_timeout = None
         price_statement_timeout_seen = False
@@ -4570,7 +4608,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             async with get_task_session() as session:
                 if stage_trace is not None:
                     stage_trace.write_stage(chunk, "SESSION")
-                if not final:
+                if not final and not fuse_timeout_sets:
                     await session.execute(
                         SET_LOCK_TIMEOUT_SQL,
                         {"ms": lock_timeout_value(price_lock_timeout_ms)},
@@ -4595,7 +4633,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
-                if bound_price_statement:
+                if fuse_timeout_sets:
+                    previous_statement_timeout = (await session.execute(
+                        ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+                        {
+                            "lock_ms": lock_timeout_value(price_lock_timeout_ms),
+                            "ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS),
+                        },
+                    )).scalar_one()
+                elif bound_price_statement:
                     previous_statement_timeout = (await session.execute(
                         ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
                         {"ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS)},
@@ -4657,17 +4703,26 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         await session.rollback()
                         rolled_back_statement_timeout = exc
                     raise
-                if previous_statement_timeout is not None:
+                if fuse_timeout_sets:
                     await session.execute(
-                        SET_STATEMENT_TIMEOUT_SQL, {"ms": previous_statement_timeout},
+                        RESTORE_DNPL_PRICE_TIMEOUTS_SQL,
+                        {
+                            "ms": previous_statement_timeout,
+                            "lock_ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS),
+                        },
                     )
-                # The shorter budget belongs only to the price-row attempt.
-                # Rerank and other transaction work keep their existing budget.
-                if not final:
-                    await session.execute(
-                        SET_LOCK_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
-                    )
+                else:
+                    if previous_statement_timeout is not None:
+                        await session.execute(
+                            SET_STATEMENT_TIMEOUT_SQL, {"ms": previous_statement_timeout},
+                        )
+                    # The shorter budget belongs only to the price-row attempt.
+                    # Rerank and other transaction work keep their existing budget.
+                    if not final:
+                        await session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                        )
                 returned_rows = result.all()
                 # Explicit, never inferred: an unchanged row returns nothing too.
                 held_back = {
