@@ -356,9 +356,12 @@ enum LiveTimingSeam {
 /// (`state_read_fresh`). Build 96 had no exchange, so every hold was scored
 /// on an ASSUMED phone↔server clock.
 ///
-/// A reader pairs the lines by `seq` and uses only `http=200 fresh=true`: the
-/// offset θ = database − trace then lies in
-/// (`not_after` − received, `not_before` − sent).
+/// A reader pairs the lines by `seq` and uses only `http=200 fresh=true` with
+/// `echo` equal to `nonce`: the offset θ = database − trace then lies in
+/// (`not_after` − received, `not_before` − sent). The nonce is a fresh UUID
+/// sent as `X-Request-ID`; the server echoes the id it received on every
+/// response, outside the body, so a response replayed from any cache carries
+/// an earlier read's id and anchors nothing.
 ///
 /// `sent` is written after the auth token is read and immediately before the
 /// request leaves; `received` immediately after the body lands, from a 3-key
@@ -391,22 +394,32 @@ nonisolated enum ClockExchange {
         }
     }
 
-    static func sentLine(seq: Int, eventId: Int, freshAsk: Bool) -> String {
-        "clock.exchange.sent seq=\(seq) event=\(eventId) fresh_ask=\(freshAsk ? 1 : 0)"
+    /// The request's nonce goes out in this header and comes back in it.
+    static let nonceHeader = "X-Request-ID"
+
+    /// A body the periodic exchange reads and drops.
+    nonisolated struct Ignored: Decodable, Sendable {}
+
+    static func sentLine(seq: Int, eventId: Int, freshAsk: Bool, nonce: String) -> String {
+        "clock.exchange.sent seq=\(seq) event=\(eventId) fresh_ask=\(freshAsk ? 1 : 0) nonce=\(field(nonce))"
     }
 
     /// `status` nil: the transport failed and no response arrived. A body that
     /// does not decode, or a key it lacks, prints `-`; so does a stamp with a
-    /// space in it, which would split the line.
-    static func receivedLine(seq: Int, eventId: Int, status: Int?, body: Data?) -> String {
+    /// space in it, which would split the line. `echo` is the response's own
+    /// `X-Request-ID`, never the nonce that was sent: a reader anchors a pair
+    /// only when the two are equal.
+    static func receivedLine(seq: Int, eventId: Int, status: Int?, body: Data?, echo: String?) -> String {
         let anchors = body.flatMap { try? JSONDecoder().decode(Anchors.self, from: $0) }
-        func field(_ value: String?) -> String {
-            guard let value, !value.isEmpty, !value.contains(where: \.isWhitespace) else { return "-" }
-            return value
-        }
         return "clock.exchange.received seq=\(seq) event=\(eventId) http=\(status.map(String.init) ?? "-")"
             + " fresh=\(anchors?.fresh.map { $0 ? "true" : "false" } ?? "-")"
             + " not_before=\(field(anchors?.notBefore)) not_after=\(field(anchors?.notAfter))"
+            + " echo=\(field(echo))"
+    }
+
+    private static func field(_ value: String?) -> String {
+        guard let value, !value.isEmpty, !value.contains(where: \.isWhitespace) else { return "-" }
+        return value
     }
 
     static func emit(_ line: String) {

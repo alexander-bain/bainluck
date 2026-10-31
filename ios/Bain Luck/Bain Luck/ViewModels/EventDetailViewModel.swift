@@ -22,6 +22,7 @@ protocol EventDetailProviding: Sendable {
     func fetchFreshGameMarkets(eventId: Int) async throws -> GameMarketsResponse
     func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse
     func fetchEventPublications(id: Int) async throws -> PublicationCheckpointsResponse
+    func clockExchange(eventId: Int) async throws
 }
 
 /// #4974 — a provider that cannot read stored checkpoints says so. Thrown by
@@ -44,6 +45,12 @@ extension EventDetailProviding {
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
         try await fetchEventHistory(id: id, hours: hours)
     }
+}
+
+// #10090 — only the kit's periodic clock exchange asks this. A provider
+// without a wire has no clock to exchange; APIClient's is the witness.
+extension EventDetailProviding {
+    func clockExchange(eventId: Int) async throws {}
 }
 
 // Existing providers keep source compatibility; APIClient supplies a true
@@ -132,6 +139,18 @@ final class EventDetailViewModel: ObservableObject {
     /// inside. `nil` whenever no task is installed.
     private var installedPlan: EventRefreshPlan?
     let eventId: Int
+
+    /// #10090 — the installed-iPhone kit's clock exchange. Launched with
+    /// `-BLClockExchangePeriodic`, an open page makes a fresh detail read every
+    /// `clockExchangePeriod` seconds that it neither shows nor caches
+    /// (`APIClient.clockExchange`), so a hold carries a phone↔database clock
+    /// pair at most one period plus one round trip apart — two misses in a row
+    /// still leave a gap under 15 s. Without the argument nothing runs and the
+    /// page reads exactly as before.
+    static let clockExchangeArgument = "-BLClockExchangePeriodic"
+    static let clockExchangePeriod: TimeInterval = 4
+    private let clockExchangePeriodic: Bool
+    private var clockExchangeTask: Task<Void, Never>?
 
     // MARK: - Live push (#2687)
 
@@ -388,9 +407,12 @@ final class EventDetailViewModel: ObservableObject {
         client: EventDetailProviding = APIClient.shared,
         makeStreamHandle: (@MainActor (Int) throws -> LiveStreamHandle)? = nil,
         now: (() -> TimeInterval)? = nil,
-        sleep: (@Sendable (TimeInterval) async -> Void)? = nil
+        sleep: (@Sendable (TimeInterval) async -> Void)? = nil,
+        clockExchangePeriodic: Bool? = nil
     ) {
         self.eventId = eventId
+        self.clockExchangePeriodic = clockExchangePeriodic
+            ?? ProcessInfo.processInfo.arguments.contains(Self.clockExchangeArgument)
         self.client = client
         self.makeStreamHandle = makeStreamHandle
         self.now = now ?? { Date().timeIntervalSince1970 }
@@ -1204,6 +1226,8 @@ final class EventDetailViewModel: ObservableObject {
 
     @MainActor
     private func configureAutoRefresh() {
+        startClockExchangeIfAsked()
+
         // Open-contract prices can move before play or during a suspension.
         // The server owns contract/window admission; a refusal keeps polling.
         if EventPriceStreaming.isEligible(event?.status) {
@@ -1281,11 +1305,28 @@ final class EventDetailViewModel: ObservableObject {
         installedPlan = plan
     }
 
+    /// The kit's periodic exchange (`clockExchangeArgument`): one loop per
+    /// visit, started with the page's refresh and stopped with it.
+    @MainActor
+    private func startClockExchangeIfAsked() {
+        guard clockExchangePeriodic, clockExchangeTask == nil else { return }
+        let wait = sleep
+        clockExchangeTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                await wait(Self.clockExchangePeriod)
+                guard !Task.isCancelled, let self else { return }
+                try? await self.client.clockExchange(eventId: self.eventId)
+            }
+        }
+    }
+
     @MainActor
     func stopRefresh() {
         marketDelivery.setVisible(false)
         refreshTask?.cancel()
         refreshTask = nil
+        clockExchangeTask?.cancel()
+        clockExchangeTask = nil
         revisionRefetchTask?.cancel()
         revisionRefetchTask = nil
         revisionRefetchPending = false

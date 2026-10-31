@@ -491,10 +491,14 @@ actor APIClient {
 
         // #10090 — a detail read brackets itself on the trace clock, after the
         // token read so its time never widens the bracket (`ClockExchange`).
-        var exchange: (seq: Int, eventId: Int)?
+        var exchange: (seq: Int, eventId: Int, nonce: String)?
         if let eventId = ClockExchange.eventId(path: path) {
             clockExchangeSeq += 1
-            exchange = (clockExchangeSeq, eventId)
+            exchange = (clockExchangeSeq, eventId, UUID().uuidString)
+            // The router passes this id on and the app echoes it on the
+            // response, per request (`main.py` `request_timing`), so a replayed
+            // or cached response answers with an earlier read's id.
+            request.setValue(exchange?.nonce, forHTTPHeaderField: ClockExchange.nonceHeader)
         }
 
         let netStart = Date()
@@ -502,22 +506,24 @@ actor APIClient {
         let response: URLResponse
         if let exchange {
             ClockExchange.emit(ClockExchange.sentLine(seq: exchange.seq, eventId: exchange.eventId,
-                                                      freshAsk: requestQuery["fresh"] == "true"))
+                                                      freshAsk: requestQuery["fresh"] == "true",
+                                                      nonce: exchange.nonce))
         }
         do {
             (data, response) = try await session.data(for: request)
         } catch {
             if let exchange {
                 ClockExchange.emit(ClockExchange.receivedLine(seq: exchange.seq, eventId: exchange.eventId,
-                                                              status: nil, body: nil))
+                                                              status: nil, body: nil, echo: nil))
             }
             throw APIError.networkError(underlying: error)
         }
         let networkMs = Date().timeIntervalSince(netStart) * 1000
         if let exchange {
+            let served = response as? HTTPURLResponse
             ClockExchange.emit(ClockExchange.receivedLine(seq: exchange.seq, eventId: exchange.eventId,
-                                                          status: (response as? HTTPURLResponse)?.statusCode,
-                                                          body: data))
+                                                          status: served?.statusCode, body: data,
+                                                          echo: served?.value(forHTTPHeaderField: ClockExchange.nonceHeader)))
         }
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
@@ -1024,6 +1030,14 @@ actor APIClient {
     /// Fetches a game or event detail page by backend event ID.
     func fetchEvent(id: Int) async throws -> EventDetail {
         return try await fetch("/api/events/\(id)", cacheTTL: 15)
+    }
+
+    /// #10090 — a kit-only clock exchange (`EventDetailViewModel`'s periodic
+    /// read): a fresh detail read that fills no cache and returns nothing, so
+    /// the page it runs beside reads and shows exactly what it would without it.
+    func clockExchange(eventId: Int) async throws {
+        let _: ClockExchange.Ignored = try await fetch("/api/events/\(eventId)", requiresNetwork: true,
+                                                        revalidationQuery: ["fresh": "true"])
     }
 
     /// Revision-triggered rereads leave the device and refresh its normal cache.
