@@ -12,8 +12,9 @@ import SwiftUI
 // "<team> vs <team>", each outcome — each team and the draw — with its own
 // pre-match chance; during the match the recorded chance beside it at the same
 // size; after the match the separately reported final beside it; the owner's
-// state line and a compact About control); the tall, named, shape-keyed win
-// probability history with every outcome's dated readouts above it; on a phone,
+// state line and a compact About control); every outcome's dated readouts as
+// the history resolves them, each figure at one scaled figure size, above the
+// tall, named, shape-keyed win probability history; on a phone,
 // a compact probability context the host may pin (each outcome's own pre-match
 // slot, as the history resolves it, and "Chart"); after the match only, the
 // chance-to-result story; then every original market by its exact identity.
@@ -28,8 +29,10 @@ import SwiftUI
 // accepted Views:
 //
 //   • `FieldPhaseHeadlinePresentation10868` — the primary outcome readings;
-//   • `FieldProbabilityHistoryPresentation10868` — the history, its readouts,
-//     its exact-minute inspection and its owner runs;
+//   • `FieldProbabilityHistoryPresentation10868` — the history, its exact-minute
+//     inspection and its owner runs; its readouts, resolved by
+//     `FieldHistoryGeometry10868.readoutSlots`, are laid out by the small
+//     comparison View below at the approved equal scaled figure size;
 //   • `HistoricalChanceResultPresentation10868` — the final story;
 //   • `OriginalMarketChooserView9483`, `OriginalMarketCatalogueView9483` and
 //     `OriginalMarketDetailsView9483` — every original and the held one.
@@ -72,16 +75,23 @@ import SwiftUI
 // host already holds while it is open. Building or reading the view calls
 // nothing. Without a callback there is no control and no hook call.
 //
-// Layout. A compact width or an accessibility size stacks: headline, history,
-// then a LazyVStack section whose header is the compact context (pinned when
-// the host's scroll contains it) above the story and the originals. A regular
-// or unspecified width puts the history beside the story and originals while
-// both keep their minimum widths, otherwise it stacks too. The history keeps
-// the owner's plot height in every arrangement; full size uses the owner's
-// full-size height. The host owns the scroll, pinning, navigation, sheets,
-// Back/Done, focus, reader paging, reader memory, selection, inspection, live
-// updates and subscriptions; this view keeps no state, runs no timer and
-// presents nothing of its own.
+// Layout. A compact width or an accessibility size stacks: headline, the
+// comparison over the history, then a LazyVStack section whose header is the
+// compact context (pinned when the host's scroll contains it) above the story
+// and the originals. A regular or unspecified width puts the comparison and
+// history beside the story and originals while both keep their minimum widths,
+// otherwise it stacks too. The history keeps the owner's plot height in every
+// arrangement; full size uses the owner's full-size height, never shorter than
+// the page's. The comparison puts the outcomes side by side while every whole
+// name and figure fits an equal share of the width it is given, else one
+// full-width row per outcome; accessibility sizes go straight to rows, and no
+// figure shrinks. The same comparison View, with the same readouts, sits over
+// the history inline and full size; while the history's key would show only
+// those readouts, a presentation copy of the history hides that key, and the
+// owner's history input is never changed. The host owns the scroll, pinning,
+// navigation, sheets, Back/Done, focus, reader paging, reader memory,
+// selection, inspection, live updates and subscriptions; this view keeps no
+// state, runs no timer and presents nothing of its own.
 //
 // Host binding still owed — not available at this base: an owner that admits,
 // for one match snapshot, the phase and the headline (outcome originals, names,
@@ -207,6 +217,8 @@ nonisolated struct RugbyMatchEventPageCopy10868: Equatable {
     let sourceLabel: String
     /// "Original outcomes & rules" — opens all originals; nil draws no entry.
     let catalogueLabel: String?
+    /// Spoken name of the readout comparison ("Recorded and pre-match chances").
+    let comparisonLabel: String
 }
 
 nonisolated struct RugbyMatchEventPageInput10868: Equatable {
@@ -218,7 +230,8 @@ nonisolated struct RugbyMatchEventPageInput10868: Equatable {
     let reader: RugbyMatchEventPageReaderHeader10868
     /// The owner's history, its runs, readouts and held inspection.
     let history: FieldHistoryInput10868
-    /// The owner's full-size plot height; nil or unusable keeps the history's own.
+    /// The owner's full-size plot height; nil or unusable keeps the history's own,
+    /// and full size is never shorter than the page's plot.
     var readerPlotHeight: CGFloat? = nil
     /// The compact phone context; nil draws none.
     let context: RugbyMatchEventPageContext10868?
@@ -263,6 +276,7 @@ nonisolated enum RugbyMatchEventPageAccessibilityID10868 {
     static let readerHeader = "rugbyMatchEventPage10868.readerHeader"
     static let readerInfo = "rugbyMatchEventPage10868.readerHeader.info"
     static let readerUnavailable = "rugbyMatchEventPage10868.reader.unavailable"
+    static let comparison = "rugbyMatchEventPage10868.comparison"
     static func contextEntry(_ seriesID: String) -> String { "rugbyMatchEventPage10868.context.\(seriesID)" }
     static func link(_ id: String) -> String { "rugbyMatchEventPage10868.link.\(id)" }
     static func sourceEntry(_ id: String) -> String { "rugbyMatchEventPage10868.sourceEntry.\(id)" }
@@ -312,36 +326,67 @@ nonisolated struct RugbyMatchEventPageModel10868: Equatable {
 
     // MARK: History
 
+    /// The approved size of every comparison figure before Dynamic Type scaling.
+    static let comparisonFigureSize: CGFloat = 26
+
     /// The full-size plot height: the owner's full-size height while usable,
-    /// else the history's own. Never derived from the arrangement.
+    /// never shorter than the page's own plot; else the page's. Presentation
+    /// geometry only, never derived from the arrangement.
     static func readerPlotHeight(_ owner: CGFloat?, history: CGFloat) -> CGFloat {
         guard let owner, owner.isFinite, owner > 0 else { return history }
-        return owner
+        return max(owner, history)
     }
 
-    /// The history full size: the same input — its series, runs, readouts,
-    /// windows, selection and inspection unchanged — at the owner's full-size
-    /// height, without its own expand control inside the reader.
-    var readerHistory: FieldHistoryInput10868 {
-        let history = input.history
-        return FieldHistoryInput10868(
+    /// Whether the comparison stands in for the shared key: only while the key
+    /// would show nothing but the readouts the comparison shows — no original's
+    /// choose control and no owner key context. Otherwise the owner's key stays.
+    var hidesSharedKey: Bool {
+        input.history.series.allSatisfy { $0.choose == nil && FieldHistoryGeometry10868.keyContext($0) == nil }
+    }
+
+    /// A presentation copy of the owner's history: every series, run, readout,
+    /// inspection, key word, action and plot field exactly as supplied, with only
+    /// the given height, expand control and key visibility. The owner's input is
+    /// never changed.
+    static func presentationCopy(_ history: FieldHistoryInput10868, plotHeight: CGFloat,
+                                 expand: FieldHistoryAction10868?, showsKey: Bool) -> FieldHistoryInput10868 {
+        FieldHistoryInput10868(
             title: history.title, caption: history.caption, series: history.series,
             selection: history.selection, domain: history.domain, ceiling: history.ceiling,
             yTicks: history.yTicks, xTicks: history.xTicks, guides: history.guides, breaks: history.breaks,
             readout: history.readout, markKey: history.markKey,
             comparisonExplanation: history.comparisonExplanation, notes: history.notes,
-            summary: history.summary,
-            plotHeight: Self.readerPlotHeight(input.readerPlotHeight, history: history.plotHeight),
+            summary: history.summary, plotHeight: plotHeight,
             unboundReadingWords: history.unboundReadingWords, plotUnavailableWords: history.plotUnavailableWords,
             windows: history.windows, scale: history.scale, moreOriginals: history.moreOriginals,
-            details: history.details, expand: nil, inspect: history.inspect,
+            details: history.details, expand: expand, inspect: history.inspect,
             previous: history.previous, next: history.next, inspection: history.inspection,
             layout: history.layout,
             probabilityLowerBound: history.probabilityLowerBound,
             probabilityRangeExplanation: history.probabilityRangeExplanation,
             selectedReadout: history.selectedReadout, inspectionRingShape: history.inspectionRingShape,
-            plotAbsence: history.plotAbsence, showsKey: history.showsKey
+            plotAbsence: history.plotAbsence, showsKey: showsKey
         )
+    }
+
+    /// The key's visibility in both presentation copies.
+    private var presentedKey: Bool { hidesSharedKey ? false : input.history.showsKey }
+
+    /// The history on the page: the owner's input with the duplicate key hidden.
+    var presentedHistory: FieldHistoryInput10868 {
+        let history = input.history
+        return Self.presentationCopy(history, plotHeight: history.plotHeight, expand: history.expand, showsKey: presentedKey)
+    }
+
+    /// The history full size: the same input — its series, runs, readouts,
+    /// windows, selection and inspection unchanged — at the owner's full-size
+    /// height (never shorter than the page's), without its own expand control
+    /// inside the reader, and with the same key visibility as the page.
+    var readerHistory: FieldHistoryInput10868 {
+        let history = input.history
+        return Self.presentationCopy(
+            history, plotHeight: Self.readerPlotHeight(input.readerPlotHeight, history: history.plotHeight),
+            expand: nil, showsKey: presentedKey)
     }
 
     // MARK: Compact context
@@ -439,6 +484,184 @@ nonisolated struct RugbyMatchEventPageModel10868: Equatable {
 }
 
 // MARK: - Small owner-labelled leaves
+
+/// One outcome in the comparison: its series and the readouts the history
+/// resolves for it, with the history's own note.
+nonisolated struct RugbyMatchEventPageComparisonEntry10868: Equatable {
+    let series: FieldHistorySeries10868
+    let note: String?
+    let slots: [FieldHistoryReadoutSlot10868]
+    /// The history's own exact selection, marked as the key marks it.
+    let isSelected: Bool
+}
+
+/// Every outcome's dated readouts exactly as the history resolves them
+/// (`FieldHistoryGeometry10868.readoutSlots`, `keyNote`, `spokenSlot`): each
+/// figure at one scaled figure size and weight under its own label with its own
+/// date, beside the outcome's whole name and its history shape. An exact-minute
+/// absence keeps the history's words in a smaller style, never a figure; equal
+/// values at different times stay separate slots. Outcomes sit side by side
+/// while every whole name and figure fits an equal share of the given width,
+/// else one full-width row each; accessibility sizes go straight to rows, and a
+/// row's slots stack where they do not fit whole. The history's exact selection
+/// is marked as its key marks it. No action, state or formatting.
+struct RugbyMatchEventPageComparisonPresentation10868: View {
+    /// The history copy the page shows beside it: the same readouts inline and full size.
+    let history: FieldHistoryInput10868
+    /// Spoken name of the comparison.
+    let label: String
+
+    static let columnSpacing: CGFloat = 12
+    static let rowSpacing: CGFloat = 14
+    static let entryPadding: CGFloat = 8
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .title) private var figureSize: CGFloat = RugbyMatchEventPageModel10868.comparisonFigureSize
+    @ScaledMetric(relativeTo: .caption) private var markRadius: CGFloat = 3.5
+
+    /// Every series in the owner's order, with its resolved readouts.
+    var entries: [RugbyMatchEventPageComparisonEntry10868] {
+        history.series.map {
+            RugbyMatchEventPageComparisonEntry10868(
+                series: $0,
+                note: FieldHistoryGeometry10868.keyNote($0, in: history),
+                slots: FieldHistoryGeometry10868.readoutSlots($0, in: history),
+                isSelected: FieldHistoryGeometry10868.isSelected($0, in: history))
+        }
+    }
+
+    /// Every figure the entries draw, measured whole (with the entry's padding)
+    /// by hidden copies so the layout picks columns only when each fits an
+    /// equal share.
+    static func figures(_ entries: [RugbyMatchEventPageComparisonEntry10868]) -> [String] {
+        entries.flatMap(\.slots).compactMap {
+            guard case .figure(let figure, _) = $0.display else { return nil }
+            return figure
+        }
+    }
+
+    /// One outcome in words: its whole name, its note, then each slot with its own date.
+    static func spoken(_ entry: RugbyMatchEventPageComparisonEntry10868) -> String {
+        ([entry.series.name] + [entry.note].compactMap(RugbyMatchEventPageModel10868.readable)
+            + entry.slots.map(FieldHistoryGeometry10868.spokenSlot))
+            .joined(separator: ". ")
+    }
+
+    /// A row's slots side by side where they fit whole, else stacked; stacked
+    /// straight away at accessibility sizes.
+    static func slotArrangements(accessibilitySize: Bool) -> [FieldChooserArrangement10868] {
+        FieldChaseGeometry10868.stacksReadouts(accessibilitySize: accessibilitySize) ? [.stacked] : [.sideBySide, .stacked]
+    }
+
+    var body: some View {
+        let entries = self.entries
+        if !entries.isEmpty {
+            FieldHeadlineCompetitorsLayout10868(count: entries.count, spacing: Self.columnSpacing, rowSpacing: Self.rowSpacing,
+                                                accessibilitySize: typeSize.isAccessibilitySize) {
+                ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                    entryView(entry)
+                }
+                ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                    nameRow(entry.series, whole: true).padding(Self.entryPadding).hidden().accessibilityHidden(true)
+                }
+                ForEach(Array(Self.figures(entries).enumerated()), id: \.offset) { _, figure in
+                    figureText(figure).padding(Self.entryPadding).hidden().accessibilityHidden(true)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(label)
+            .accessibilityIdentifier(RugbyMatchEventPageAccessibilityID10868.comparison)
+        }
+    }
+
+    private func entryView(_ entry: RugbyMatchEventPageComparisonEntry10868) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            nameRow(entry.series, whole: false)
+            if let note = RugbyMatchEventPageModel10868.readable(entry.note) {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if Self.slotArrangements(accessibilitySize: typeSize.isAccessibilitySize).contains(.sideBySide) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 14) { slots(entry) }
+                    VStack(alignment: .leading, spacing: 10) { slots(entry) }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 10) { slots(entry) }
+            }
+        }
+        .padding(Self.entryPadding)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(entry.isSelected ? DS.surface : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(entry.isSelected ? DS.textSecondary : Color.clear, lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.spoken(entry))
+        .accessibilityAddTraits(entry.isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder private func slots(_ entry: RugbyMatchEventPageComparisonEntry10868) -> some View {
+        ForEach(Array(entry.slots.enumerated()), id: \.offset) { _, slot in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(slot.label)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                switch slot.display {
+                case .figure(let figure, let provenance):
+                    figureText(figure)
+                    Text(provenance)
+                        .font(.caption)
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .words(let words):
+                    Text(words)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(DS.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// The identity glyph and the whole name; `whole` measures it on one line.
+    private func nameRow(_ series: FieldHistorySeries10868, whole: Bool) -> some View {
+        HStack(alignment: .center, spacing: 6) {
+            glyph(series)
+            Text(series.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DS.textPrimary)
+                .fixedSize(horizontal: whole, vertical: true)
+        }
+    }
+
+    /// Every figure at the one scaled size and weight; never shrunk.
+    private func figureText(_ figure: String) -> some View {
+        Text(figure)
+            .font(.system(size: figureSize, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(DS.textPrimary)
+            .fixedSize()
+    }
+
+    /// The history's own identity: a short solid line through the outcome's mark shape.
+    private func glyph(_ series: FieldHistorySeries10868) -> some View {
+        let radius = markRadius
+        let tint = series.tint
+        let shape = series.shape
+        return Canvas { context, size in
+            let middle = CGPoint(x: size.width / 2, y: size.height / 2)
+            var line = Path()
+            line.move(to: CGPoint(x: 0, y: middle.y))
+            line.addLine(to: CGPoint(x: size.width, y: middle.y))
+            context.stroke(line, with: .color(tint), lineWidth: 2)
+            context.fill(FieldHistoryGeometry10868.markPath(shape, at: middle, radius: radius * 1.3), with: .color(tint))
+        }
+        .frame(width: radius * 7, height: radius * 4.5)
+        .accessibilityHidden(true)
+    }
+}
 
 /// Each outcome's pre-match slot exactly as the history resolves it, each
 /// inspecting its own exact observation, and Chart to the full history. The
@@ -750,11 +973,18 @@ struct RugbyMatchEventPagePresentation10868: View {
         }
     }
 
+    /// The readout comparison: the same View with the same readouts inline and
+    /// full size, read from the history copy shown beside it.
+    func comparisonContent(reader: Bool) -> RugbyMatchEventPageComparisonPresentation10868 {
+        RugbyMatchEventPageComparisonPresentation10868(
+            history: reader ? model.readerHistory : model.presentedHistory, label: input.copy.comparisonLabel)
+    }
+
     /// The history: the page hook first; full size keeps the exact callbacks.
     func historyContent(reader: Bool) -> FieldProbabilityHistoryPresentation10868 {
         let interaction = reader ? nil : pageHook
         return FieldProbabilityHistoryPresentation10868(
-            input: reader ? model.readerHistory : input.history,
+            input: reader ? model.readerHistory : model.presentedHistory,
             onAction: Self.held(onHistoryAction, by: interaction),
             onInspectionChoice: Self.held(onHistoryInspectionChoice, by: interaction),
             onPlotPosition: Self.held(onHistoryPlotPosition, by: interaction)
@@ -927,12 +1157,15 @@ struct RugbyMatchEventPagePresentation10868: View {
     }
 
     private var anchor: some View {
-        historyContent(reader: false)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .modifier(RugbyMatchEventPageCardSurface10868())
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier(RugbyMatchEventPageAccessibilityID10868.anchor)
+        VStack(alignment: .leading, spacing: 14) {
+            comparisonContent(reader: false)
+            historyContent(reader: false)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(RugbyMatchEventPageCardSurface10868())
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(RugbyMatchEventPageAccessibilityID10868.anchor)
     }
 
     /// The story after the match, then every original and the catalogue entry.
@@ -988,7 +1221,9 @@ struct RugbyMatchEventPagePresentation10868: View {
             compactHeader
             if model.readerShows(card) {
                 switch card {
-                case .history: historyContent(reader: true)
+                case .history:
+                    comparisonContent(reader: true)
+                    historyContent(reader: true)
                 case .story: storyContent(reader: true)
                 }
             } else {

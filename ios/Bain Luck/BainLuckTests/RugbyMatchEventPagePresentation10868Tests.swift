@@ -417,7 +417,8 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
 
     private static func history(_ phase: RugbyMatchEventPagePhase10868, window chosen: Window? = nil, inspect: Inspect? = nil,
                                 outcomes: [Outcome] = Tests.outcomes, withoutBaseline: String? = nil,
-                                joined: Bool = false) -> FieldHistoryInput10868 {
+                                joined: Bool = false, choosing: Bool = false, keyContext: Bool = false,
+                                selecting: Outcome? = nil) -> FieldHistoryInput10868 {
         let window = chosen ?? defaultWindow(phase)
         let minute = inspect?.minute
         var withdrawn: (Int, String)?
@@ -439,10 +440,17 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
             } else {
                 recorded = .absent(words: "Current probability unavailable")
             }
-            return FieldHistorySeries10868(
+            // Key controls on the first original only: its choose action, its own key context.
+            let first = outcome.key == outcomes.first?.key
+            var built = FieldHistorySeries10868(
                 id: seriesID(outcome), name: outcome.name, shape: outcome.shape, tint: outcome.tint, runs: ownRuns,
                 links: [], labelPointID: nil, before: before, recorded: recorded,
-                absentWords: "No trades in this window", choose: nil)
+                absentWords: "No trades in this window",
+                choose: choosing && first ? action("choose.\(outcome.key)", outcome.name) : nil)
+            if keyContext, first {
+                built.keyContext = FieldHistoryKeyContext10868(label: "Original", words: "Kalshi", spoken: nil)
+            }
+            return built
         }
         let readout: FieldHistoryReadoutIntent10868
         if inspect != nil {
@@ -466,7 +474,10 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
         return FieldHistoryInput10868(
             title: "Win probability history",
             caption: phase == .before ? "Last trades before the listed start" : "Last recorded trades",
-            series: series, selection: .none, domain: range, ceiling: 1,
+            series: series,
+            selection: selecting.map { FieldHistoryOriginalSelection10868.series(id: seriesID($0), missingWords: "This original isn’t in this history") }
+                ?? FieldHistoryOriginalSelection10868.none,
+            domain: range, ceiling: 1,
             yTicks: [0, 25, 50, 75, 100].map { FieldHistoryTick10868(value: Double($0) / 100, lines: ["\($0)%"]) },
             xTicks: xTicks(phase, window),
             guides: range.lower < 0 && range.upper > 0 ? [FieldHistoryGuide10868(id: "listed-start", x: 0, label: "Listed start")] : [],
@@ -622,7 +633,8 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
         readerUnavailable: "This card is not available in this update.",
         sourceUnavailable: "This source is not available in this update.",
         sourceLabel: "Original rules & identity",
-        catalogueLabel: "Original outcomes & rules")
+        catalogueLabel: "Original outcomes & rules",
+        comparisonLabel: "Each outcome’s chances")
 
     private static func readerTitle(_ phase: RugbyMatchEventPagePhase10868) -> String {
         switch phase {
@@ -824,6 +836,23 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
         return texts
     }
 
+    /// Everything the composed comparison draws or speaks.
+    private static func comparisonText(_ comparison: RugbyMatchEventPageComparisonPresentation10868) -> [String] {
+        var texts = [comparison.label]
+        for entry in comparison.entries {
+            texts += [entry.series.name] + [entry.note].compactMap { $0 }
+            for slot in entry.slots {
+                texts.append(slot.label)
+                switch slot.display {
+                case .figure(let figure, let provenance): texts += [figure, provenance]
+                case .words(let words): texts.append(words)
+                }
+            }
+            texts.append(RugbyMatchEventPageComparisonPresentation10868.spoken(entry))
+        }
+        return texts
+    }
+
     private static func contextText(_ model: RugbyMatchEventPageModel10868) -> [String] {
         guard let context = model.input.context else { return [] }
         var texts = [context.label, context.result, context.chartLabel]
@@ -898,7 +927,7 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
     }
 
     /// Every string a reader can reach on this page in its phase — the headline,
-    /// notice, history page and full size, context, story page and full size,
+    /// notice, comparison and history page and full size, context, story page and full size,
     /// reader words, Info, sources, every original choice and Details — through
     /// the shared models the views draw from.
     private static func reachable(_ input: RugbyMatchEventPageInput10868,
@@ -911,7 +940,9 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
             texts.append(input.copy.headlineUnavailable)
         }
         texts += [input.notice, input.reader.state].compactMap { $0 } + [input.reader.title]
-        texts += historyText(input.history) + historyText(model.readerHistory)
+        texts += historyText(model.presentedHistory) + historyText(model.readerHistory)
+        texts += comparisonText(RugbyMatchEventPagePresentation10868(input: input).comparisonContent(reader: false))
+        texts += comparisonText(RugbyMatchEventPagePresentation10868(input: input, mode: .reader(.history)).comparisonContent(reader: true))
         texts += contextText(model)
         if let story = model.story { texts += storyText(HistoricalChanceModel10868(story)) }
         if RugbyMatchEventPageCard10868.allCases.contains(where: { !model.readerShows($0) }) {
@@ -1484,7 +1515,23 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
         // An unusable full-size height keeps the owner's own.
         XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(nil, history: 302), 302)
         XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(-1, history: 302), 302)
+        XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(0, history: 302), 302)
         XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(.infinity, history: 302), 302)
+        XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(.nan, history: 302), 302)
+        // A usable one is used when taller, and never makes full size shorter than the page.
+        XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(380, history: 302), 380)
+        XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(150, history: 302), 302)
+        XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(302, history: 302), 302)
+        var shorter = Self.parts(.final, inspect: .minute(Self.franceLow))
+        shorter.readerPlotHeight = 150
+        let shorterReader = RugbyMatchEventPagePresentation10868(input: shorter.input, mode: .reader(.history)).historyContent(reader: true).input
+        XCTAssertEqual(shorterReader.plotHeight, 302)
+        XCTAssertEqual(RugbyMatchEventPageModel10868(shorter.input).readerHistory.plotHeight, 302)
+        XCTAssertEqual(shorter.input.readerPlotHeight, 150)
+        XCTAssertEqual(shorter.input.history.plotHeight, 302)
+        var unset = Self.parts(.final)
+        unset.readerPlotHeight = nil
+        XCTAssertEqual(RugbyMatchEventPageModel10868(unset.input).readerHistory.plotHeight, 302)
         // The story full size reads the same input, without its full-card entry.
         let inline = RugbyMatchEventPagePresentation10868(input: input, onReaderOpen: { _ in }).storyContent(reader: false)!
         let full = RugbyMatchEventPagePresentation10868(input: input, mode: .reader(.story), onReaderOpen: { _ in }).storyContent(reader: true)!
@@ -1533,6 +1580,8 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
         _ = view(.source("rules.FRA")).sourceContent("rules.FRA")
         _ = page.catalogueAction
         _ = page.model.readerHistory
+        _ = page.comparisonContent(reader: false).entries
+        _ = view(.reader(.history)).comparisonContent(reader: true).entries
         XCTAssertEqual(log, [])
 
         // Each page action: the hook once, then the exact payload.
@@ -1626,5 +1675,135 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
         // The plot height is the owner's in every arrangement: never compressed.
         XCTAssertEqual(Self.page(.before).history.plotHeight, 302)
         XCTAssertEqual(RugbyMatchEventPageModel10868(Self.page(.before)).readerHistory.plotHeight, 380)
+        // The comparison: a row's slots side by side where they fit, stacked at accessibility sizes.
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.slotArrangements(accessibilitySize: false), [.sideBySide, .stacked])
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.slotArrangements(accessibilitySize: true), [.stacked])
+        // Its outcomes: columns while every whole measured name and figure fits an equal share, else rows; rows at
+        // accessibility sizes; a figure wider than its share never shrinks into it.
+        let spacing = RugbyMatchEventPageComparisonPresentation10868.columnSpacing
+        XCTAssertEqual(FieldHeadlineGeometry10868.arrangement(available: 900, count: 3, figureWidths: [96, 96, 96, 78, 78, 78],
+                                                             spacing: spacing, accessibilitySize: false), .columns)
+        XCTAssertEqual(FieldHeadlineGeometry10868.arrangement(available: 300, count: 3, figureWidths: [96, 96, 96, 78, 78, 78],
+                                                             spacing: spacing, accessibilitySize: false), .rows)
+        XCTAssertEqual(FieldHeadlineGeometry10868.arrangement(available: 900, count: 3, figureWidths: [96, 96, 96, 78, 78, 78],
+                                                             spacing: spacing, accessibilitySize: true), .rows)
+        XCTAssertEqual(FieldHeadlineGeometry10868.arrangement(available: 900, count: 3, figureWidths: [96, 300, 96],
+                                                             spacing: spacing, accessibilitySize: false), .rows)
+    }
+
+    // MARK: - Comparison
+
+    func testTheComparisonShowsEveryOutcomesResolvedReadoutsAtOneFigureSizeInTheSameViewInlineAndFullSize() {
+        XCTAssertEqual(RugbyMatchEventPageModel10868.comparisonFigureSize, 26)
+        let cases: [(RugbyMatchEventPagePhase10868, Inspect?)] = [
+            (.before, nil), (.during, nil), (.final, nil), (.final, .minute(Self.franceLow)), (.final, .minute(1773521640)),
+        ]
+        for (phase, inspect) in cases {
+            let input = Self.page(phase, inspect: inspect)
+            let pageView = RugbyMatchEventPagePresentation10868(input: input)
+            let readerView = RugbyMatchEventPagePresentation10868(input: input, mode: .reader(.history))
+            let inline = pageView.comparisonContent(reader: false)
+            let full = readerView.comparisonContent(reader: true)
+            // The same View and readouts inline and full size, read from the history copy drawn beside it.
+            XCTAssertEqual(inline.entries, full.entries, "\(phase)")
+            XCTAssertEqual(inline.label, Self.copy.comparisonLabel)
+            XCTAssertEqual(full.label, Self.copy.comparisonLabel)
+            XCTAssertEqual(inline.history, pageView.historyContent(reader: false).input)
+            XCTAssertEqual(full.history, readerView.historyContent(reader: true).input)
+            // Every outcome in the owner's order, by its whole name and shape, resolved by the history itself.
+            XCTAssertEqual(inline.entries.map(\.series), input.history.series)
+            XCTAssertEqual(inline.entries.map(\.series.name), Self.outcomes.map(\.name))
+            XCTAssertEqual(inline.entries.map(\.series.shape), Self.outcomes.map(\.shape))
+            for (entry, outcome) in zip(inline.entries, Self.outcomes) {
+                XCTAssertEqual(entry.slots, Self.slots(input.history, outcome), "\(phase) \(outcome.key)")
+                XCTAssertEqual(entry.note, FieldHistoryGeometry10868.keyNote(entry.series, in: input.history))
+                XCTAssertFalse(entry.isSelected)
+            }
+            let count = phase == .before && inspect == nil ? 1 : 2
+            XCTAssertEqual(inline.entries.map(\.slots.count), [count, count, count], "\(phase)")
+        }
+
+        // Spoken: the whole name, then each slot with its own label, figure and date.
+        let before = RugbyMatchEventPagePresentation10868(input: Self.page(.before)).comparisonContent(reader: false)
+        XCTAssertNil(before.entries[0].note)
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.spoken(before.entries[0]),
+                       "\(Self.france.name). Before match \(Self.figure(Self.close(Self.france, Self.france.baseline)!)), \(Self.provenance(Self.france.baseline))")
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures(before.entries),
+                       Self.outcomes.map { Self.figure(Self.close($0, $0.baseline)!) })
+
+        // An exact minute the draw did not trade keeps the history's words — no figure, nothing carried forward.
+        let sparse = RugbyMatchEventPagePresentation10868(input: Self.page(.final, inspect: .minute(1773521640))).comparisonContent(reader: false)
+        XCTAssertEqual(sparse.entries[2].slots.last,
+                       FieldHistoryReadoutSlot10868(label: "Selected minute", display: .words("No trade in this exact minute")))
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures([sparse.entries[2]]),
+                       [Self.figure(Self.close(Self.draw, Self.draw.baseline)!)])
+        XCTAssertTrue(RugbyMatchEventPageComparisonPresentation10868.spoken(sparse.entries[2])
+            .hasSuffix("Selected minute: No trade in this exact minute"))
+
+        // One observation in two slots stays two slots; equal values at two minutes keep their own dates.
+        let same = RugbyMatchEventPagePresentation10868(input: Self.page(.before, inspect: .minute(1773518880))).comparisonContent(reader: false)
+        XCTAssertEqual(same.entries[0].slots, [
+            Self.figureSlot("Before match", Self.france, 1773518880), Self.figureSlot("Selected minute", Self.france, 1773518880),
+        ])
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures([same.entries[0]]).count, 2)
+        let first = RugbyMatchEventPagePresentation10868(input: Self.page(.final, inspect: .minute(1773525900))).comparisonContent(reader: false)
+        let second = RugbyMatchEventPagePresentation10868(input: Self.page(.final, inspect: .minute(1773525960)), mode: .reader(.history))
+            .comparisonContent(reader: true)
+        XCTAssertEqual(first.entries[1].slots.last, Self.figureSlot("Selected minute", Self.england, 1773525900))
+        XCTAssertEqual(second.entries[1].slots.last, Self.figureSlot("Selected minute", Self.england, 1773525960))
+        XCTAssertNotEqual(RugbyMatchEventPageComparisonPresentation10868.spoken(first.entries[1]),
+                          RugbyMatchEventPageComparisonPresentation10868.spoken(second.entries[1]))
+
+        // The history's exact selection is marked on that outcome alone.
+        var selected = Self.parts(.final)
+        selected.history = Self.history(.final, selecting: Self.england)
+        let marked = RugbyMatchEventPagePresentation10868(input: selected.input).comparisonContent(reader: false)
+        XCTAssertEqual(marked.entries.map(\.isSelected), [false, true, false])
+    }
+
+    func testThePageHidesOnlyTheDuplicateKeyInAPresentationCopyAndTheOwnersHistoryStaysWhole() {
+        let owner = Self.history(.final, inspect: .minute(Self.franceLow))
+        let input = Self.page(.final, inspect: .minute(Self.franceLow))
+        let model = RugbyMatchEventPageModel10868(input)
+        let presented = model.presentedHistory
+        XCTAssertTrue(model.hidesSharedKey)
+        // The owner's input is untouched.
+        XCTAssertEqual(input.history, owner)
+        XCTAssertEqual(model.input.history, owner)
+        XCTAssertTrue(owner.showsKey)
+        // The copy differs only in the key: every series, run, readout, inspection, key word, action and plot field is the owner's.
+        XCTAssertFalse(presented.showsKey)
+        var restored = presented
+        restored.showsKey = true
+        XCTAssertEqual(restored, owner)
+        var fullRestored = model.readerHistory
+        fullRestored.showsKey = true
+        XCTAssertEqual(fullRestored, RugbyMatchEventPageModel10868.presentationCopy(owner, plotHeight: 380, expand: nil, showsKey: true))
+        XCTAssertEqual(FieldHistoryGeometry10868.actions(presented), FieldHistoryGeometry10868.actions(owner))
+        XCTAssertEqual(FieldHistoryGeometry10868.drawsStyle(.hollow, in: presented), FieldHistoryGeometry10868.drawsStyle(.hollow, in: owner))
+        XCTAssertEqual(FieldHistoryGeometry10868.drawsStyle(.filled, in: presented), FieldHistoryGeometry10868.drawsStyle(.filled, in: owner))
+        // Only the readout key block goes, inline and full size; the page draws the copy.
+        XCTAssertEqual(FieldHistoryGeometry10868.blocksAbovePlot(owner), [.selectionWords, .key])
+        XCTAssertEqual(FieldHistoryGeometry10868.blocksAbovePlot(presented), [.selectionWords])
+        XCTAssertEqual(FieldHistoryGeometry10868.blocksAbovePlot(model.readerHistory), [.selectionWords])
+        XCTAssertEqual(RugbyMatchEventPagePresentation10868(input: input).historyContent(reader: false).input, presented)
+
+        // A key that carries more than readouts stays: a choose control or the owner's key context.
+        for keyed in [Self.history(.final, choosing: true), Self.history(.final, keyContext: true)] {
+            var parts = Self.parts(.final)
+            parts.history = keyed
+            let keyedModel = RugbyMatchEventPageModel10868(parts.input)
+            XCTAssertFalse(keyedModel.hidesSharedKey)
+            XCTAssertEqual(keyedModel.presentedHistory, keyed)
+            XCTAssertTrue(keyedModel.readerHistory.showsKey)
+            XCTAssertEqual(FieldHistoryGeometry10868.blocksAbovePlot(keyedModel.presentedHistory), [.selectionWords, .key])
+            XCTAssertEqual(RugbyMatchEventPagePresentation10868(input: parts.input).comparisonContent(reader: false).entries.map(\.slots),
+                           keyed.series.map { FieldHistoryGeometry10868.readoutSlots($0, in: keyed) })
+        }
+        // An owner that hides its own key keeps it hidden.
+        var ownHidden = Self.parts(.final)
+        ownHidden.history.showsKey = false
+        XCTAssertFalse(RugbyMatchEventPageModel10868(ownHidden.input).presentedHistory.showsKey)
+        XCTAssertFalse(RugbyMatchEventPageModel10868(ownHidden.input).readerHistory.showsKey)
     }
 }
