@@ -3683,8 +3683,9 @@ async def backfill_winners_status(
 ):
     """Check how many markets still need is_winner backfill.
 
-    Returns a precomputed response from Redis (refreshed every hour by the
-    precompute_backfill_winners_status Celery task).  Pass bust=true to
+    Returns a precomputed response from Redis (refreshed once a day at 10:35
+    UTC by the precompute_backfill_winners_status Celery task, #10090; the
+    payload's `computed_at` says how old it is).  Pass bust=true to
     trigger an immediate async recompute and return the current cache.
     """
     _check_admin_secret(secret, request=request)
@@ -3713,7 +3714,7 @@ async def backfill_winners_status(
     raise HTTPException(
         status_code=202,
         detail="No cached result yet. The precompute_backfill_winners_status task "
-               "runs every hour, or use bust=true to trigger an immediate recompute. "
+               "runs daily at 10:35 UTC, or use bust=true to trigger an immediate recompute. "
                "Retry in a few minutes.",
     )
 

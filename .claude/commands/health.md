@@ -106,6 +106,7 @@ for src in ('kalshi','polymarket'):
 source .env.claude && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "https://api.bainluck.com/api/admin/backfill-winners/status" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
+print('  computed_at', d.get('computed_at','?'), '(daily 10:35 UTC run, #10090 — normally ≤ ~24 h; older means a daily run failed)')
 for s in d.get('sources',[]):
     resolved=s.get('resolved',0); hw=s.get('has_winner',0)
     pct=round(100*hw/max(resolved,1),1)
