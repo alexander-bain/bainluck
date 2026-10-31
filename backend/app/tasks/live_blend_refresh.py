@@ -371,7 +371,13 @@ RECEIPT_PREVIEW_INTERVAL_ENV = "PREVIEW_AT_RECEIPT_INTERVAL_S"
 #: preview. A TRUTH window like `PREVIEW_GRAPH_MAX_AGE_S`: wider because a
 #: held game's next stamp read is 13-21 s away under load (2026-10-31), and a
 #: graph that old is exactly the case this exists for. Review before raising.
-RECEIPT_GRAPH_MAX_AGE_S = 15.0
+RECEIPT_GRAPH_MAX_AGE_S = 60.0
+#: Speed may set the graph age (seconds, 3-60) without a code change; anything
+#: else keeps `RECEIPT_GRAPH_MAX_AGE_S`. 60 = the preview's own lifetime: the
+#: graph is the stamp read the page already shows, so a receipt on it is never
+#: older than the screen (2026-10-31: 15 s dropped ~28% of PM live compositions
+#: to the stamp path exactly when stamps queued).
+RECEIPT_GRAPH_MAX_AGE_ENV = "PREVIEW_AT_RECEIPT_GRAPH_MAX_AGE_S"
 #: The receipt worker logs its cumulative `receipt_preview_stats` at most this often.
 RECEIPT_STATS_LOG_INTERVAL_S = 60.0
 #: Received quotes are kept this long for the overlay: the preview's own
@@ -559,6 +565,15 @@ def _preview_from_commit(event_id) -> bool:
         return bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a write
         return False
+
+
+def _receipt_graph_max_age() -> float:
+    """`RECEIPT_GRAPH_MAX_AGE_ENV` when set to 3-60, else the default."""
+    try:
+        value = float(os.environ[RECEIPT_GRAPH_MAX_AGE_ENV])
+    except (KeyError, ValueError):
+        return RECEIPT_GRAPH_MAX_AGE_S
+    return value if 3.0 <= value <= 60.0 else RECEIPT_GRAPH_MAX_AGE_S
 
 
 def _receipt_interval() -> float:
@@ -3846,6 +3861,8 @@ class LiveBlendRefresher:
         self.receipt_compose_s = 0.0
         #: Monotonic time of the last `receipt-preview stats` line (0: none yet).
         self._receipt_stats_logged_at = 0.0
+        #: Per class, event id -> count since the last stats line (top ids logged).
+        self._receipt_class_events: dict[str, dict[int, int]] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -8698,10 +8715,12 @@ class LiveBlendRefresher:
                 # Cumulative since this refresher started; readers diff lines.
                 self._receipt_stats_logged_at = now
                 logger.info(
-                    "live_blend_refresh[%s]: receipt-preview stats %s compose_s=%.3f interval_s=%.2f",
+                    "live_blend_refresh[%s]: receipt-preview stats %s compose_s=%.3f interval_s=%.2f "
+                    "graph_max_age_s=%.0f events %s",
                     self.source,
                     " ".join(f"{k}={v}" for k, v in self.receipt_preview_stats.items()),
-                    self.receipt_compose_s, interval,
+                    self.receipt_compose_s, interval, _receipt_graph_max_age(),
+                    self._receipt_class_summary(),
                 )
             due, deferred = [], {}
             for event_id in self._receipt_due:
@@ -8728,6 +8747,20 @@ class LiveBlendRefresher:
             wake.clear()
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(wake.wait(), max(0.0, wait))
+
+    def _note_receipt_class(self, kind: str, event_id) -> None:
+        """Count one receipt composition outcome against its event (stats line)."""
+        events = self._receipt_class_events.setdefault(kind, {})
+        events[event_id] = events.get(event_id, 0) + 1
+
+    def _receipt_class_summary(self) -> str:
+        """``kind:event/count,...`` (top 6 per kind) since the last call; resets."""
+        parts = []
+        for kind, events in sorted(self._receipt_class_events.items()):
+            top = sorted(events.items(), key=lambda kv: -kv[1])[:6]
+            parts.append("%s:%s" % (kind, ",".join("%s/%d" % kv for kv in top)))
+        self._receipt_class_events = {}
+        return " ".join(parts) or "-"
 
     def _prune_receipt_quotes(self, now: float) -> None:
         quotes = self._receipt_quotes
@@ -8794,10 +8827,12 @@ class LiveBlendRefresher:
         cached = self._preview_graphs.get(event_id)
         if cached is None:
             stats["no_graph"] += 1
+            self._note_receipt_class("no_graph", event_id)
             return None
         read_at, event, group = cached
-        if now - read_at > RECEIPT_GRAPH_MAX_AGE_S:
+        if now - read_at > _receipt_graph_max_age():
             stats["old_graph"] += 1
+            self._note_receipt_class("old_graph", event_id)
             return None
         route = self.receipt_route
         token = route() if route is not None else 0
@@ -8807,6 +8842,7 @@ class LiveBlendRefresher:
                 or not _preview_at_receipt(self.source, event_id)
                 or self._current_reading_proof(event_id, group, [], park_refused=False)):
             stats["not_admitted"] += 1
+            self._note_receipt_class("not_admitted", event_id)
             return None
         quotes = self._receipt_quotes
         patched, overlaid, newest = [], set(), None
@@ -8825,6 +8861,7 @@ class LiveBlendRefresher:
                         outcomes.append(row)  # the row already holds this quote
                         continue
                     stats["ambiguous"] += 1
+                    self._note_receipt_class("ambiguous", event_id)
                     return None
                 outcomes.append(SimpleNamespace(**{
                     **vars(row), "current_probability": price,
@@ -8851,6 +8888,7 @@ class LiveBlendRefresher:
             self._receipt_speaking[event_id] = frozenset()
         if reading is None or not has_proven_home_orientation(reading):
             stats["not_admitted"] += 1
+            self._note_receipt_class("not_admitted", event_id)
             return None
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
@@ -8865,6 +8903,7 @@ class LiveBlendRefresher:
                       for row in entry.outcomes)
                for entry in {id(rows[oid][0]): rows[oid][0] for oid in ids}.values()):
             stats["not_admitted"] += 1
+            self._note_receipt_class("not_admitted", event_id)
             return None
         value = round(reading.home_probability, 4)
         basis = observation_basis(contributing)
@@ -8872,6 +8911,7 @@ class LiveBlendRefresher:
                 value, oldest_observation_time(contributing),
                 getattr(event, "win_probability_sources", None), self.source):
             stats["not_admitted"] += 1
+            self._note_receipt_class("not_admitted", event_id)
             return None
         pending = preview.pending_entry(event_id, self.source)
         if self._last_written_value.get(event_id) == value:
@@ -8882,6 +8922,7 @@ class LiveBlendRefresher:
                                     getattr(pending, "observed_basis", None))
         if shown is not None and shown == self._receipt_blend(event, value, eligibility, basis):
             stats["unchanged"] += 1
+            self._note_receipt_class("unchanged", event_id)
             return None
         return ("propose", event, reading, value, contributing, newest)
 
@@ -8964,6 +9005,7 @@ class LiveBlendRefresher:
                 if pending is None or not pending.at_receipt or pending.value != value:
                     continue  # refused locally (stale, expired value, capacity)
                 stats["proposed"] += 1
+                self._note_receipt_class("proposed", event_id)
                 if self.preview_receipt is not None and newest is not None:
                     self._receipt_call(self.preview_receipt.carried, event_id,
                                        stamped_at.isoformat(), newest)
