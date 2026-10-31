@@ -742,6 +742,26 @@ async def test_newer_committed_blend_has_newer_frame_clock(
     # #10090: the row-lock wait, commit order and frame clocks hold whether the
     # stamp writes its publication intent separately or in its own statement.
     monkeypatch.setenv("LIVE_STAMP_FUSED_INTENT", "1" if fused_intent else "0")
+    # A frame's ACK settles (DELETEs) its intent off the publish path, on its
+    # own schedule. Read the intent rows just before any settlement deletes
+    # them, so the rows asserted below are the stamps' whatever that timing.
+    from app.tasks import live_blend_refresh as lbr
+    seen_intents = {}
+    settle = lbr.LiveBlendRefresher._settle_normal_recovery
+
+    async def _read_intents():
+        async with pg_engine.connect() as conn:
+            for row in (await conn.execute(text(
+                "SELECT id, source, event_id, reading FROM owed_chart_points "
+                "WHERE source LIKE '%\\_price\\_publish'"
+            ))).all():
+                seen_intents[row[0]] = (row[1], row[2], row[3])
+
+    async def read_then_settle(self, acknowledged):
+        await _read_intents()
+        return await settle(self, acknowledged)
+
+    monkeypatch.setattr(lbr.LiveBlendRefresher, "_settle_normal_recovery", read_then_settle)
     executed = []
     frames = await _concurrent_refresh_frames(
         pg_engine, monkeypatch, prelock_control=prelock_control, executed=executed,
@@ -756,11 +776,8 @@ async def test_newer_committed_blend_has_newer_frame_clock(
     assert (stamps[1] > stamps[0]) is not prelock_control
     # Each committed stamp owes exactly one publication intent naming its own
     # write — the polymarket arm's the revision assigned AFTER its row wait.
-    async with pg_engine.connect() as conn:
-        intents = (await conn.execute(text(
-            "SELECT source, event_id, reading FROM owed_chart_points "
-            "WHERE source LIKE '%\\_price\\_publish' ORDER BY id"
-        ))).all()
+    await _read_intents()
+    intents = [seen_intents[k] for k in sorted(seen_intents)]
     assert [(row[0], row[1], row[2]) for row in intents] == [
         (frame["source"] + "_price_publish", frame["event_id"],
          {"rev": frame["rev"][str(frame["event_id"])], "updated_at": frame["updated_at"]})

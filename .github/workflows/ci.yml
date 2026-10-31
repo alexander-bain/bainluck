@@ -4973,8 +4973,8 @@ jobs:
 
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
         # #836/#837/#5661: concurrent Kalshi/PM stamps must retain both source keys.
-        # Real PostgreSQL verifies row-lock JSONB merge semantics; sqlite/fakes cannot.
-        # The read-modify-write strawman must still lose a key; reject skipped gates.
+        # Real PG verifies row-lock JSONB merge semantics; fakes cannot.
+        # The read-modify-write strawman must still lose a key.
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
