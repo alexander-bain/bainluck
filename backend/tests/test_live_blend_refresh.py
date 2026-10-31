@@ -519,6 +519,19 @@ class _Result:
         return None if self._scalar is None else (self._scalar, self._rev)
 
 
+def is_stamp_statement(statement) -> bool:
+    """#10090: the stamp's UPDATE of `events`, alone or — with
+    `LIVE_STAMP_FUSED_INTENT` on — as the data-modifying CTE of the one
+    statement that also writes its publication intent
+    (`stamp_with_publication_intent`). Rigs that sequence on "the stamp"
+    recognise both, so their controls hold in either mode.
+    """
+    if getattr(statement, "is_update", False):
+        return True
+    return any(getattr(cte, "name", None) == "publication_intent"
+               for cte in getattr(statement, "_independent_ctes", ()))
+
+
 def is_normal_publication_intent(statement) -> bool:
     """#10090 attempt151: the stamp's durable publication intent.
 

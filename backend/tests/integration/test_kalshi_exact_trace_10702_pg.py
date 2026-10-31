@@ -57,9 +57,14 @@ def _published(commands):
 @pytest.mark.parametrize("fail_stage", [None, "price", "event"])
 @pytest.mark.parametrize("repeat_race", [False, True])
 @pytest.mark.parametrize("trace_enabled", [True, False])
+@pytest.mark.parametrize("fused_intent", [False, True], ids=["separate-intent", "fused-intent"])
 async def test_existing_full_path_and_outer_rollback_marks(
-    rig, connect, monkeypatch, caplog, fail_stage, repeat_race, trace_enabled
+    rig, connect, monkeypatch, caplog, fail_stage, repeat_race, trace_enabled,
+    fused_intent,
 ):
+    # #10090: a stamp that writes its publication intent in its own statement
+    # (LIVE_STAMP_FUSED_INTENT) commits and rolls back exactly as the separate one.
+    monkeypatch.setenv("LIVE_STAMP_FUSED_INTENT", "1" if fused_intent else "0")
     now = datetime.now(timezone.utc)
     async with rig.maker() as session:
         sport = Sport(key="tennis_atp", name="ATP")
@@ -110,7 +115,7 @@ async def test_existing_full_path_and_outer_rollback_marks(
         def changed(conn, _cursor, statement, _parameters, _context, _many):
             if statement.startswith("UPDATE futures_outcomes"):
                 conn.info["trace10702_stage"] = "price"
-            elif statement.startswith("UPDATE events"):
+            elif statement.startswith(("UPDATE events", "WITH stamped AS")):
                 conn.info["trace10702_stage"] = "event"
 
         @sa_event.listens_for(rig.engine.sync_engine, "commit")
