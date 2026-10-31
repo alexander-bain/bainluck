@@ -62,7 +62,7 @@ enum RacingHistoryAdapter10868 {
         static let noHistory = "No recorded history"
         /// No history response at all: says nothing about whether points exist or why.
         static let historyUnavailable = "History unavailable"
-        static let independent = "Each line is that driver's own price, recorded at its own times. The lines are not adjusted to add up to 100%."
+        static let independent = "Each line is that driver's own chance, recorded at its own times. The lines are not adjusted to add up to 100%."
         static let startUnavailable = "The race start time is unavailable, so pre-race and race readings are not split."
         static let gapsNote = "Gaps remain blank."
         static let settledNote = "A settled result is not a chance, so no 0% or 100% point is shown."
@@ -260,7 +260,7 @@ enum RacingHistoryAdapter10868 {
             if runs.isEmpty { missing.append(outcome.name) } else { named.append(outcome.name) }
         }
         guard !named.isEmpty else { return Words.noHistory }
-        let lead = "Recorded win probability for \(named.joined(separator: ", ")), each line that driver's own price."
+        let lead = "Recorded win probability for \(named.joined(separator: ", ")), each line that driver's own chance."
         return missing.isEmpty ? lead : "\(lead) No recorded history for \(missing.joined(separator: ", "))."
     }
 

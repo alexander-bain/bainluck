@@ -347,12 +347,12 @@ enum RacingFieldPageAdapter10868 {
     /// said from `SourceAge.futuresStaleAfter` itself.
     static func raceAbout(_ market: FuturesMarketDetail) -> RacingEventPageAbout10868 {
         let venue = SourceLabels.label(for: market.source)
-        let own = venue.map { "own \($0) price" } ?? "own price"
+        let own = venue.map { "own \($0) probability" } ?? "own probability"
         let hours = Int(SourceAge.futuresStaleAfter / 3600)
         var paragraphs = [
-            "Each driver's chance is that driver's \(own) in “\(market.name)”, shown with the time it was last recorded. The prices are independent: they are not adjusted to add up to 100%.",
+            "Each driver's chance is that driver's \(own) in “\(market.name)”, shown with the time it was last recorded. The chances are independent: they are not adjusted to add up to 100%.",
             "The race start time, lap reports and finishing order are unavailable here, so readings are not split into pre-race and race, and no lap, gap or finishing position is shown.",
-            "A price not updated in the last \(hours) hours is not shown as a current chance; its last recorded value stays in that original's Details.",
+            "A reading not updated in the last \(hours) hours is not shown as a current chance; its last recorded value stays in that original's Details.",
         ]
         if phase(market) == .final {
             let settler = venue.map { "\($0)'s settlement" } ?? "the venue's settlement"
