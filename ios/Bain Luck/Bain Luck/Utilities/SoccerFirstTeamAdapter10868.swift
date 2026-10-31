@@ -106,7 +106,10 @@ enum SoccerFirstTeamAdapter10868 {
         FirstScorerObservation10868(probability: o.probability, text: o.text, accessibilityDetail: o.detail)
     }
 
-    /// `score_history` as served: each checkpoint with its own observation clock.
+    /// `score_history` as served: each checkpoint with its own observation clock,
+    /// up to the reading time only. The probability history is clipped at
+    /// `host.now` (H2), so a score observed after the time the page is read at is
+    /// never shown beside it; a checkpoint observed exactly at `host.now` is kept.
     static func checkpoints(_ event: EventDetail, history: EventHistoryResponse?,
                             host: R.Host) -> FirstScorerScorePath10868? {
         let names = SoccerMatchPageAdapter10868.names(event)
@@ -116,6 +119,7 @@ enum SoccerFirstTeamAdapter10868 {
         let own = history?.eventId == event.id ? history : nil
         let observations: [FirstScorerScoreObservation10868] = (own?.scoreHistory ?? []).compactMap { point in
             guard let at = point.timestamp.asDate else { return nil }
+            guard at <= host.now else { return nil }
             guard point.homeScore >= 0 else { return nil }
             guard point.awayScore >= 0 else { return nil }
             let score = "\(point.homeScore)–\(point.awayScore)"

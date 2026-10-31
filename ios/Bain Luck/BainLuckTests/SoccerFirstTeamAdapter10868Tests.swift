@@ -60,6 +60,34 @@ final class SoccerFirstTeamAdapter10868Tests: XCTestCase {
                                                             host: F.propHost(F.liveNow).words))
     }
 
+    /// The score path stops at the reading time, as the probability history does.
+    /// The retained live `score_history` (five checkpoints, 12:02:45–12:38:45)
+    /// is read at CONSTRUCTED intermediate clocks: exactly at the 2–0
+    /// observation, the minute after it, and before the first. Each kept
+    /// checkpoint keeps its own observation clock; the normal read is unchanged.
+    func testTheScorePathShowsOnlyCheckpointsObservedByTheReadingTime() throws {
+        let event = try F.detail(F.liveDetail)
+        let history = try F.history(F.liveHistory)
+        func scores(at stamp: String) -> [String]? {
+            T.checkpoints(event, history: history, host: F.propHost(stamp.asDate!))?.observations.map(\.score)
+        }
+        // Same-time inclusion: the 2–0 checkpoint observed exactly at the reading time is kept.
+        XCTAssertEqual(scores(at: "2026-10-12T12:28:24.555020+00:00"), ["0–0", "1–0", "2–0"])
+        // The 3–0 (12:33:45) and 4–0 (12:38:45) observations are later than 12:29: never shown.
+        XCTAssertEqual(scores(at: "2026-10-12T12:29:00+00:00"), ["0–0", "1–0", "2–0"])
+        XCTAssertEqual(
+            T.checkpoints(event, history: history, host: F.propHost("2026-10-12T12:29:00+00:00".asDate!))?
+                .observations.map(\.id),
+            ["2026-10-12T12:02:45.588824+00:00", "2026-10-12T12:17:47.333487+00:00", "2026-10-12T12:28:24.555020+00:00"])
+        // Before the first observation there is no path at all, not an empty one.
+        XCTAssertNil(scores(at: "2026-10-12T12:00:00+00:00"))
+        // The normal live read keeps all five.
+        XCTAssertEqual(scores(at: "2026-10-12T12:56:02.250422+00:00"), ["0–0", "1–0", "2–0", "3–0", "4–0"])
+        // CONSTRUCTED: the same history under another event's id is never read.
+        let foreign = try F.history(try F.edited(F.liveHistory, setting: ["event_id": 15325055]))
+        XCTAssertNil(T.checkpoints(event, history: foreign, host: F.propHost(F.liveNow)))
+    }
+
     /// Without a history response the card keeps its outcomes and drops only
     /// the checkpoints.
     func testWithNoHistoryTheCheckpointsAreAbsentAndTheRowsStay() throws {
