@@ -209,6 +209,7 @@ async def test_the_minute_line_and_its_reset(monkeypatch):
     line = x.r.stamp_spans.line()
     assert line == (
         "stamp_tx=1 events=1 prepared=0 stamp_slot=0.0s stamp_read=0.5s "
+        "stamp_read_rows=1 stamp_read_json=2 "
         "stamp_compute=1.0s stamp_write=0.2s stamp_commit=0.1s "
         "stamp_publish=0.1s stamp_checkout=0.0s pool_full=0/1 "
         f"loop_busy=0.0s loop_idle=1.0s workers={lbr.FRESH_STAMP_WORKERS} "

@@ -579,6 +579,26 @@ _SPEED_SWITCH_LOGGED_PID: Optional[int] = None
 # these workers plus the two writers' connections, never below today's 5).
 FRESH_STAMP_WORKERS = _owed_budget_env("FRESH_STAMP_WORKERS", 3, int, 1, 8)
 
+#: #10090 — `_read_groups` returns one row per (market, outcome), and before
+#: this every row carried its event's JSON (the preview's full source bag, or
+#: this source's entry) and its market's content-understanding object, decoded
+#: on the venue loop for each row while only the first row of each was used.
+#: Production 2026-10-31 04:4xZ, v5997: the live Lakers–Warriors event read
+#: 1,157 Polymarket rows (387 markets, mostly player props) against ~10 for
+#: Kalshi's game-only join, and PM's `stamp_read` was 47-54 s/min (0.10 s per
+#: transaction, 6x Kalshi) with `loop_busy` far above `loop_idle`. Local PG at
+#: that shape: 18.5 ms per read, of which ~5 ms was 2,314 JSON decodes and ~3 ms
+#: parsing the 1.7 MB they rode in. On (default), the same single statement
+#: (one snapshot) sends each JSON value on exactly one row of its event or
+#: market (`row_number() = 1`) and NULL on the rest; the graph built from it is
+#: identical. ``STAMP_READ_JSON_ONCE=0`` restores the per-row read. Read at
+#: call time; a config change restarts the dyno anyway.
+STAMP_READ_JSON_ONCE_ENV = "STAMP_READ_JSON_ONCE"
+
+
+def stamp_read_json_once() -> bool:
+    return os.getenv(STAMP_READ_JSON_ONCE_ENV, "1").strip() != "0"
+
 # #10090 — an observation-preview read whose caller stopped waiting at its
 # 0.25 s deadline is left to end by itself instead of being cancelled. A
 # cancelled SELECT invalidates its pooled connection and then holds its slot
@@ -768,6 +788,12 @@ class StampSpans:
     on the database, the pool or Redis. Mostly `loop_busy` means more workers
     will not help; mostly `loop_idle` means they can.
 
+    `stamp_read_rows` is the rows every `_read_groups` statement returned
+    (stamps, prepared and observation-preview reads alike) and
+    `stamp_read_json` the JSON values those rows carried, each decoded on the
+    loop (`STAMP_READ_JSON_ONCE`: one per event and market instead of two per
+    row).
+
     `workers` is FRESH_STAMP_WORKERS; `slots_max`/`slots_mean` are slots in
     use (any holder, the stamp included) as each transaction got its own;
     `slot_full` is how many transactions found no slot free and waited.
@@ -796,6 +822,8 @@ class StampSpans:
         self.slots_sum = 0
         self.slots_seen = 0
         self.slot_full = 0
+        self.read_rows = 0
+        self.read_json = 0
 
     def add_prepared(self, slot_s: float, read_s: float) -> None:
         self.prepared += 1
@@ -809,6 +837,7 @@ class StampSpans:
             f"stamp_tx={self.transactions} events={self.events} "
             f"prepared={self.prepared} "
             f"stamp_slot={spent['slot']:.1f}s stamp_read={spent['read']:.1f}s "
+            f"stamp_read_rows={self.read_rows} stamp_read_json={self.read_json} "
             f"stamp_compute={spent['compute']:.1f}s "
             f"stamp_write={spent['write']:.1f}s "
             f"stamp_commit={spent['commit']:.1f}s "
@@ -2256,6 +2285,13 @@ PREPARED_OUTCOME_FIELDS = (
     "id", "market_id", "name", "rank", "current_probability", "last_updated", "is_winner",
     "external_id", "resolution_source",
 )
+
+
+def _json_row_patch(fill, row) -> dict:
+    """#10090 `STAMP_READ_JSON_ONCE`: the event JSON fields one row carries."""
+    patch: dict = {}
+    fill(row, patch)
+    return patch
 
 
 class HeldRowQuotes:
@@ -4855,7 +4891,9 @@ class LiveBlendRefresher:
                            clock_sample=None, stopped_waiting=None) -> dict[int, tuple]:
         from copy import deepcopy
         from types import SimpleNamespace
-        from sqlalchemy import ARRAY, Integer, and_, any_, bindparam, cast, func, literal, null, or_, select
+        from sqlalchemy import (
+            ARRAY, Integer, and_, any_, bindparam, case, cast, func, literal, null, or_, select,
+        )
         from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
         from app.utils.live_blend import MarketOutcomes
         from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
@@ -4922,8 +4960,36 @@ class LiveBlendRefresher:
         # whole committed bag and the revision that dates it. A plain read: it
         # waits on no row lock. Not selected unless this arm previews a
         # canary event in this batch: any other read is the statement it was.
+        # #10090 `STAMP_READ_JSON_ONCE`: each JSON value rides one row of its
+        # event / market. The trailing flags say which row; Python reads the
+        # value from that row only, so any row order builds the same graph.
+        once = stamp_read_json_once()
+        if once:
+            market_json_row = func.row_number().over(
+                partition_by=(FuturesMarket.event_id, FuturesMarket.id),
+                order_by=FuturesOutcome.id,
+            ) == 1
+            event_json_row = func.row_number().over(
+                partition_by=FuturesMarket.event_id,
+                order_by=(FuturesMarket.id, FuturesOutcome.id),
+            ) == 1
+
+            def market_json(expr):
+                return case((market_json_row, expr), else_=null())
+
+            def event_json(expr):
+                return case((event_json_row, expr), else_=null())
+
+            json_flags = (market_json_row.label("market_json_row"),
+                          event_json_row.label("event_json_row"))
+        else:
+            def market_json(expr):
+                return expr
+
+            event_json = market_json
+            json_flags = ()
         preview_columns = (
-            (Event.win_probability_sources.label("preview_sources"),
+            (event_json(Event.win_probability_sources).label("preview_sources"),
              Event.win_probability_sources_rev.label("preview_rev"),
              func.statement_timestamp().label("preview_context_at"))
             if not getattr(self, "preview_events", frozenset()).isdisjoint(event_ids)
@@ -4947,22 +5013,23 @@ class LiveBlendRefresher:
         if stopped_waiting is not None and stopped_waiting():
             raise _ObservationReadAbandoned
         with _observation_read_step("query"):
-            rows = (
+            result = (
                 await session.execute(
                     select(*(
                         Sport.key.label("sport_key") if model is Event and key == "sport_key"
                         else (cast(null(), Event.win_probability_sources.type)
                          if preview_columns else
-                         Event.win_probability_sources.op("->")(literal(self.source))).label(key)
+                         event_json(Event.win_probability_sources.op("->")(
+                             literal(self.source)))).label(key)
                         if model is Event and key == "win_probability_sources"
-                        else func.jsonb_build_object(
+                        else market_json(func.jsonb_build_object(
                             CONTENT_UNDERSTANDING_KEY,
                             FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY],
-                        ).label(key)
+                        )).label(key)
                         if model is FuturesMarket and key == "market_metadata"
                         else getattr(model, key)
                         for model, keys in fields for key in keys
-                    ), *preview_columns, *(
+                    ), *json_flags, *preview_columns, *(
                         (func.clock_timestamp().label("observation_clock"),)
                         if clock_sample is not None else ()
                     ))
@@ -4980,7 +5047,12 @@ class LiveBlendRefresher:
                         )),
                     )
                 )
-            ).all()
+            )
+            rows = result.all()
+            # The flags are found by NAME: a result without them (a rig's
+            # canned rows) is read exactly as before, every row its own JSON.
+            keys = getattr(result, "keys", None)
+            once = once and callable(keys) and "event_json_row" in keys()
         if stopped_waiting is not None and stopped_waiting():
             raise _ObservationReadAbandoned
         if clock_sample is not None and rows:
@@ -4991,39 +5063,57 @@ class LiveBlendRefresher:
         grouped: dict[int, tuple] = {}
         entries: dict[int, MarketOutcomes] = {}
         held = self.held_quotes if overlay_held else None
+        n_market, n_event = len(PREPARED_MARKET_FIELDS), len(PREPARED_EVENT_FIELDS)
+        metadata_at = PREPARED_MARKET_FIELDS.index("market_metadata")
+        source_at = n_market + PREPARED_EVENT_FIELDS.index("win_probability_sources")
+        flags_at = n_market + n_event + len(PREPARED_OUTCOME_FIELDS)
+        # `STAMP_READ_JSON_ONCE`: markets / events whose JSON row is still to come.
+        json_owed: set = set()
+        json_cells = 0
+
+        def event_json_from(row, target):
+            # Before the UPDATE only this source's restamp guard reads
+            # the JSON. The full aggregate uses UPDATE RETURNING below.
+            source_value = row[source_at]
+            if preview_columns:
+                # This same SELECT already returned the full bag. Avoid
+                # transferring/decoding its source again on every row.
+                # Preserve the two independently decoded JSON owners,
+                # copying only once per event, including nested values.
+                full_sources = row[-3]
+                source_value = (deepcopy(full_sources.get(self.source))
+                                if isinstance(full_sources, dict) else None)
+            target["win_probability_sources"] = {self.source: source_value}
+            if preview_columns:
+                # This SELECT proves an authoritative null bag is
+                # empty at preview_rev, including before the first
+                # source stamp commits. Missing reads and malformed
+                # non-null roots must still fail closed downstream.
+                target["preview_sources"] = {} if row[-3] is None else row[-3]
+
         for row in rows:
             market_id = row[0]
+            event_id = row[n_market]
+            if once:
+                market_row, event_row = row[flags_at], row[flags_at + 1]
+                json_cells += bool(market_row) + bool(event_row)
             entry = entries.get(market_id)
             if entry is None:
-                offset = 0
                 market = SimpleNamespace(**dict(zip(
-                    PREPARED_MARKET_FIELDS, row[:len(PREPARED_MARKET_FIELDS)]
+                    PREPARED_MARKET_FIELDS, row[:n_market]
                 )))
-                offset += len(PREPARED_MARKET_FIELDS)
-                event_values = row[offset:offset + len(PREPARED_EVENT_FIELDS)]
-                event_id = event_values[0]
+                if once and not market_row:
+                    json_owed.add(("market", market_id))
+                event_values = row[n_market:n_market + n_event]
                 if event_id not in grouped:
                     context = dict(zip(PREPARED_EVENT_FIELDS, event_values))
-                    # Before the UPDATE only this source's restamp guard reads
-                    # the JSON. The full aggregate uses UPDATE RETURNING below.
-                    source_value = context["win_probability_sources"]
-                    if preview_columns:
-                        # This same SELECT already returned the full bag. Avoid
-                        # transferring/decoding its source again on every row.
-                        # Preserve the two independently decoded JSON owners,
-                        # copying only once per event, including nested values.
-                        full_sources = row[-3]
-                        source_value = (deepcopy(full_sources.get(self.source))
-                                        if isinstance(full_sources, dict) else None)
-                    context["win_probability_sources"] = {self.source: source_value}
+                    if once and not event_row:
+                        json_owed.add(("event", event_id))
+                    else:
+                        event_json_from(row, context)
                     if preview_columns:
                         # Trailing columns; the outcome slice below zips by
                         # field name, so they never reach an outcome row.
-                        # This SELECT proves an authoritative null bag is
-                        # empty at preview_rev, including before the first
-                        # source stamp commits. Missing reads and malformed
-                        # non-null roots must still fail closed downstream.
-                        context["preview_sources"] = {} if row[-3] is None else row[-3]
                         context["preview_rev"] = row[-2]
                         context["preview_context_at"] = row[-1]
                         context["preview_read_ticket"] = preview_ticket
@@ -5031,6 +5121,9 @@ class LiveBlendRefresher:
                         SimpleNamespace(**context),
                         [],
                     )
+                elif once and event_row:
+                    vars(grouped[event_id][0]).update(_json_row_patch(event_json_from, row))
+                    json_owed.discard(("event", event_id))
                 event, group = grouped[event_id]
                 entry = MarketOutcomes(
                     market=market,
@@ -5044,12 +5137,27 @@ class LiveBlendRefresher:
                 )
                 entries[market_id] = entry
                 group.append(entry)
-            outcome_values = row[len(PREPARED_MARKET_FIELDS) + len(PREPARED_EVENT_FIELDS):]
+            elif once:
+                if market_row:
+                    entry.market.market_metadata = row[metadata_at]
+                    json_owed.discard(("market", market_id))
+                if event_row:
+                    vars(grouped[event_id][0]).update(_json_row_patch(event_json_from, row))
+                    json_owed.discard(("event", event_id))
+            outcome_values = row[n_market + n_event:]
             if outcome_values[0] is not None:
                 outcome = SimpleNamespace(**dict(zip(
                     PREPARED_OUTCOME_FIELDS, outcome_values
                 )))
                 entry.outcomes.append(outcome)
+        if json_owed:
+            # `row_number() = 1` exists in every partition, so this is a broken
+            # statement, never a quiet market or event: refuse the graph.
+            raise RuntimeError(f"_read_groups: no JSON row for {sorted(json_owed)[:5]}")
+        spans = getattr(self, "stamp_spans", None)
+        if spans is not None:
+            spans.read_rows += len(rows)
+            spans.read_json += json_cells if once else 2 * len(rows)
         # Strong references prevent id reuse while held.overlay_event replaces
         # rows. Membership by id is safe until classification below completes.
         original_rows = {id(row): row for _event, group in grouped.values()
