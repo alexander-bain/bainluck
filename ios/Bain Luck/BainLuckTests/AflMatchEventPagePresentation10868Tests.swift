@@ -35,6 +35,7 @@ import XCTest
 // PREPARED ROSTER (NOT RUN): see the `func test…` list; each name states the
 // obligation it checks.
 
+@MainActor
 final class AflMatchEventPagePresentation10868Tests: XCTestCase {
     private typealias Tests = AflMatchEventPagePresentation10868Tests
     private typealias Page = AflMatchEventPagePresentation10868
