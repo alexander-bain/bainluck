@@ -131,6 +131,7 @@ final class GolfFieldPageInputAdapter10868Tests: XCTestCase {
         XCTAssertEqual(Host.route("golf.history.choose.242242520"), .choose(R.schauffele))
         XCTAssertEqual(Host.route(GolfFieldHistoryAdapter10868.detailsActionID), .none, "offered unavailable")
         XCTAssertEqual(Host.route("golf.history.choose.x"), .none)
+        XCTAssertEqual(Host.route(GolfFieldHistoryAdapter10868.scaleActionID), .scale)
         XCTAssertEqual(Host.chartGolfers([R.clark], selected: R.schauffele), [R.clark, R.schauffele])
         XCTAssertEqual(Host.chartGolfers([R.clark, R.schauffele], selected: R.schauffele), [R.clark, R.schauffele])
         XCTAssertEqual(Host.chartGolfers([R.clark], selected: nil), [R.clark])
@@ -166,5 +167,28 @@ final class GolfFieldPageInputAdapter10868Tests: XCTestCase {
         XCTAssertEqual(first.finish?.win.before?.text, "13%")
         XCTAssertEqual(second.finish?.win.before?.text, "20%", "no memo holds the old price")
         XCTAssertNotEqual(first, second)
+    }
+
+    func testTheReadersFullScaleChoiceReachesTheHistoryAndChangesNothingElse() throws {
+        let winner = try R.market(R.baycurrentWinner)
+        let history = try R.history(R.baycurrentHistory)
+        let now = Self.finalNow.asDate!
+        let build: (Bool) -> GolfEventPageInput10868 = { full in
+            Host.build(winner: winner, history: history, cohort: [R.clark],
+                       choice: Host.Choice(selected: R.schauffele, fullScale: full), now: now,
+                       calendar: R.pacific, locale: Locale(identifier: "en_US"))
+        }
+        let auto = build(false)
+        let full = build(true)
+        // Schauffele's highest drawn final-frame reading is 0.095147; ×1.04 = 0.0990 → the 10% rung.
+        XCTAssertEqual(auto.history.ceiling, 0.1)
+        XCTAssertEqual(auto.history.scale?.label, "Auto scale · 0–10%")
+        XCTAssertEqual(full.history.ceiling, 1)
+        XCTAssertEqual(full.history.scale?.label, "Full scale · 0–100%")
+        XCTAssertEqual(auto.history.series, full.history.series)
+        XCTAssertEqual(auto.finish, full.finish, "the scale is the chart's only")
+        // One flag in, one page out: the page and the full-size reader draw this same input, so the choice
+        // holds across the reader and across a refresh that rebuilds with it.
+        XCTAssertEqual(build(true), full)
     }
 }

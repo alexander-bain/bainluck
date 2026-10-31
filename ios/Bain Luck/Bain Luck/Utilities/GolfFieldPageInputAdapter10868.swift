@@ -58,13 +58,16 @@ enum GolfFieldPageInputAdapter10868 {
         /// The host's selected finish (recorded phase only).
         var selectedFinish: String?
         var chooser: GolfFieldChooserAdapter10868.Disclosures
+        /// The reader's Full-scale choice; false is the approved Auto scale.
+        var fullScale: Bool
 
         init(cohort: [Int], selected: Int? = nil, selectedFinish: String? = nil,
-             chooser: GolfFieldChooserAdapter10868.Disclosures = .init()) {
+             chooser: GolfFieldChooserAdapter10868.Disclosures = .init(), fullScale: Bool = false) {
             self.cohort = cohort
             self.selected = selected
             self.selectedFinish = selectedFinish
             self.chooser = chooser
+            self.fullScale = fullScale
         }
     }
 
@@ -85,7 +88,7 @@ enum GolfFieldPageInputAdapter10868 {
             ? GolfFieldHistoryAdapter10868.unavailable(winner, cohort: reading.cohort, selected: reading.selected,
                                                        phase: field.phase, chooserAvailable: chooserAvailable)
             : GolfFieldHistoryAdapter10868.history(field, cohort: reading.cohort, selected: reading.selected,
-                                                   chooserAvailable: chooserAvailable, host: host)
+                                                   chooserAvailable: chooserAvailable, full: reading.fullScale, host: host)
         let chooser = GolfFieldChooserAdapter10868.chooser(field, cohort: reading.cohort, selected: reading.selected,
                                                            state: reading.chooser, host: host)
         let finish: GolfFinishExpectationInput10868? = reading.selected.flatMap {

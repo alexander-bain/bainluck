@@ -95,8 +95,10 @@ final class GolfFieldHistoryAdapter10868Tests: XCTestCase {
 
         XCTAssertEqual(input.domain, FieldHistoryDomain10868(lower: x("2026-10-08T00:02:03.231914+00:00"),
                                                              upper: x("2026-10-08T00:27:33.145591+00:00")))
-        XCTAssertEqual(input.ceiling, 1)
-        XCTAssertEqual(input.yTicks, [0, 0.5, 1].map { FieldHistoryTick10868(value: $0, lines: [OddsChartView.axisLabel(for: $0)]) })
+        // Auto scale: the highest plotted point is Schauffele's 0.090287; ×1.04 = 0.0939 → the 10% rung.
+        XCTAssertEqual(input.ceiling, 0.1)
+        XCTAssertEqual(input.yTicks, [0, 0.05, 0.1].map { FieldHistoryTick10868(value: $0, lines: [OddsChartView.axisLabel(for: $0)]) })
+        XCTAssertEqual(input.scale?.label, "Auto scale · 0–10%")
         XCTAssertFalse(input.xTicks.isEmpty)
         XCTAssertTrue(input.guides.isEmpty, "no round start is claimed")
         XCTAssertEqual(input.caption, "Since the start date")
@@ -271,5 +273,105 @@ final class GolfFieldHistoryAdapter10868Tests: XCTestCase {
         let early = try self.field(R.indiaWin, nil, now: "2026-10-12T23:28:52Z")
         XCTAssertEqual(early.before(R.rory)?.probability, 0.1271)
         XCTAssertNil(early.later(R.rory), "a later reading exists only while recorded")
+    }
+
+    // MARK: - The approved Auto / Full scale (Design 2026-10-31, `chartCeiling`)
+
+    private func plottedPeak(_ input: FieldHistoryInput10868) -> Double {
+        input.series.flatMap { $0.runs.flatMap { $0.points.map(\.probability) } }.max() ?? 0
+    }
+
+    func testAutoIsTheFirstRungAboveThePeakWithFourPercentHeadroom() {
+        XCTAssertEqual(H.ceiling(peak: 0, full: false), 0.025)
+        XCTAssertEqual(H.ceiling(peak: 0.02, full: false), 0.025)    // 0.0208
+        XCTAssertEqual(H.ceiling(peak: 0.0241, full: false), 0.05)   // 0.025064 is past 2.5%
+        // The 4% boundary at 10%: 0.096 × 1.04 = 0.09984 fits; 0.0962 × 1.04 = 0.100048 does not.
+        XCTAssertEqual(H.ceiling(peak: 0.096, full: false), 0.1)
+        XCTAssertEqual(H.ceiling(peak: 0.0962, full: false), 0.15)
+        XCTAssertEqual(H.ceiling(peak: 0.76, full: false), 0.8)      // 0.7904
+        XCTAssertEqual(H.ceiling(peak: 0.77, full: false), 1)        // 0.8008 is past 80%
+        XCTAssertEqual(H.ceiling(peak: 0.97, full: false), 1, "no rung above, so the whole range")
+        for peak in [0, 0.02, 0.5, 1.0] {
+            XCTAssertEqual(H.ceiling(peak: peak, full: true), 1, "Full is always 0–100%")
+        }
+    }
+
+    func testEveryTickLabelIsExactlyItsValue() {
+        XCTAssertEqual(H.tickValues(ceiling: 0.025), [0, 0.01, 0.02], "1.25% and 2.5% would print rounded")
+        XCTAssertEqual(H.tickValues(ceiling: 0.05), [0, 0.05])
+        XCTAssertEqual(H.tickValues(ceiling: 0.1), [0, 0.05, 0.1])
+        XCTAssertEqual(H.tickValues(ceiling: 0.15), [0, 0.15])
+        XCTAssertEqual(H.tickValues(ceiling: 1), [0, 0.5, 1])
+        XCTAssertEqual(H.yTicks(ceiling: 0.025).map(\.lines), [["0%"], ["1%"], ["2%"]])
+        XCTAssertEqual(H.scaleAction(ceiling: 0.025, full: false).label, "Auto scale · 0–2.5%", "never rounded to 3%")
+        XCTAssertEqual(H.scaleAction(ceiling: 0.1, full: false).label, "Auto scale · 0–10%")
+        XCTAssertEqual(H.scaleAction(ceiling: 1, full: true).label, "Full scale · 0–100%")
+        XCTAssertEqual(H.scaleAction(ceiling: 0.1, full: false).spokenLabel, "Show full zero to 100 percent scale")
+        XCTAssertEqual(H.scaleAction(ceiling: 1, full: true).spokenLabel, "Use automatic probability scale")
+        XCTAssertEqual(H.scaleAction(ceiling: 1, full: true).id, H.scaleActionID)
+    }
+
+    func testAutoKeepsEveryPlottedPointAndFullChangesOnlyTheScale() throws {
+        let host = R.host(Self.recordedNow)
+        let field = try field(openWinner(), R.baycurrentHistory, now: Self.recordedNow)
+        let cohort = [R.schauffele, R.clark, R.morikawa]
+        let auto = H.history(field, cohort: cohort, selected: R.schauffele, chooserAvailable: true, host: host)
+        let full = H.history(field, cohort: cohort, selected: R.schauffele, chooserAvailable: true, full: true, host: host)
+        XCTAssertGreaterThanOrEqual(auto.ceiling, plottedPeak(auto), "no point is clipped or clamped")
+        XCTAssertEqual(auto.ceiling, H.ceiling(peak: plottedPeak(auto), full: false))
+        XCTAssertEqual(full.ceiling, 1)
+        XCTAssertEqual(full.scale?.label, "Full scale · 0–100%")
+        // Same points, runs, gaps, times, cohort, selection and readouts either way.
+        XCTAssertEqual(auto.series, full.series)
+        XCTAssertEqual(auto.domain, full.domain)
+        XCTAssertEqual(auto.xTicks, full.xTicks)
+        XCTAssertEqual(auto.selection, full.selection)
+        XCTAssertEqual(auto.readout, full.readout)
+        XCTAssertEqual(auto.notes, full.notes)
+    }
+
+    func testLowPreTournamentChancesGetALowCeiling() throws {
+        let host = R.host(Self.beforeNow)
+        let field = try field(openWinner(), R.brennanHistory, now: Self.beforeNow)
+        let input = H.history(field, cohort: [R.brennan], selected: R.brennan, chooserAvailable: true, host: host)
+        // Brennan's week before the start sits at 2.6–4.3%: the 5% rung, not a flat line at the bottom of 0–100%.
+        XCTAssertEqual(input.ceiling, 0.05)
+        XCTAssertEqual(input.scale?.label, "Auto scale · 0–5%")
+        XCTAssertGreaterThanOrEqual(input.ceiling, plottedPeak(input))
+    }
+
+    func testTheCeilingFollowsTheDrawnGolfers() throws {
+        let host = R.host(Self.recordedNow)
+        // CONSTRUCTED: Clark's 00:27:33 reading set to 0.2 (one key); every other row as served.
+        let edited = try R.edited(R.baycurrentHistory, ["outcomes", 0, "history", 6, "probability"], to: 0.2)
+        let field = try field(openWinner(), edited, now: Self.recordedNow)
+        let withClark = H.history(field, cohort: [R.schauffele, R.clark], selected: nil, chooserAvailable: true, host: host)
+        let without = H.history(field, cohort: [R.schauffele, R.morikawa], selected: nil, chooserAvailable: true, host: host)
+        XCTAssertEqual(withClark.ceiling, 0.25, "0.2 × 1.04 = 0.208")
+        XCTAssertEqual(without.ceiling, 0.1)
+    }
+
+    func testAPeakNearCertaintyUsesTheWholeRangeOnAuto() throws {
+        let host = R.host(Self.finalNow)
+        let field = try field(R.baycurrentWinner, R.brennanHistory, now: Self.finalNow)
+        let input = H.history(field, cohort: [R.brennan], selected: R.brennan, chooserAvailable: true, host: host)
+        XCTAssertEqual(input.ceiling, 1, "Brennan's drawn 1.0 needs the whole range")
+        XCTAssertEqual(input.scale?.label, "Auto scale · 0–100%")
+    }
+
+    func testAnotherMarketsHistoryIsRefusedEvenWhenOutcomeIdsOverlap() throws {
+        let host = R.host(Self.recordedNow)
+        // CONSTRUCTED: the same history body with `market_id` changed (one key); outcome ids still overlap.
+        let foreign = try R.edited(R.baycurrentHistory, ["market_id"], to: 64266834)
+        let refused = try field(openWinner(), foreign, now: Self.recordedNow)
+        let accepted = try field(openWinner(), R.baycurrentHistory, now: Self.recordedNow)
+        XCTAssertNil(refused.entries(R.schauffele))
+        XCTAssertNotNil(accepted.entries(R.schauffele))
+        let input = H.history(refused, cohort: [R.schauffele, R.clark], selected: nil, chooserAvailable: true, host: host)
+        XCTAssertTrue(input.series.allSatisfy { $0.runs.isEmpty }, "no foreign line is drawn")
+        XCTAssertEqual(input.plotAbsence?.title, "No recorded history")
+        XCTAssertNil(input.scale, "no scale over an empty plot")
+        // The detail's own price stays independently governed: stamped after this now, it is not read.
+        XCTAssertNil(refused.before(R.schauffele))
     }
 }

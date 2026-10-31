@@ -81,12 +81,15 @@ struct GolfFieldEventPageHost10868: View {
         var selected: Int?
         var selectedFinish: String?
         var chooser: GolfFieldChooserAdapter10868.Disclosures
+        /// Full scale on; false is the approved Auto scale.
+        var fullScale: Bool
 
         init(selected: Int? = nil, selectedFinish: String? = nil,
-             chooser: GolfFieldChooserAdapter10868.Disclosures = .init()) {
+             chooser: GolfFieldChooserAdapter10868.Disclosures = .init(), fullScale: Bool = false) {
             self.selected = selected
             self.selectedFinish = selectedFinish
             self.chooser = chooser
+            self.fullScale = fullScale
         }
     }
 
@@ -95,6 +98,8 @@ struct GolfFieldEventPageHost10868: View {
         case expand
         case chooser
         case choose(Int)
+        /// Auto ↔ Full scale.
+        case scale
         /// Offered unavailable, or not this page's.
         case none
     }
@@ -106,6 +111,9 @@ struct GolfFieldEventPageHost10868: View {
     @State private var moreExpanded = false
     @State private var browseExpanded = false
     @State private var browseGroup: String?
+    /// The reader's reversible Full-scale choice: one flag for the page and the
+    /// full-size reader, kept across data refreshes.
+    @State private var fullScale = false
 
     var body: some View {
         page(make(), mode: .page)
@@ -157,6 +165,7 @@ struct GolfFieldEventPageHost10868: View {
         case .expand: open(.reader(.history))
         case .chooser: open(.chooser)
         case .choose(let id): choose(id)
+        case .scale: fullScale.toggle()
         case .none: break
         }
     }
@@ -173,7 +182,8 @@ struct GolfFieldEventPageHost10868: View {
         Self.build(winner: winner, history: history, legs: legs, tournament: tournament, cohort: cohort,
                    choice: Choice(selected: hasChosen ? chosen : initialSelection, selectedFinish: selectedFinish,
                                   chooser: .init(moreExpanded: moreExpanded, browseExpanded: browseExpanded,
-                                                 browseGroup: browseGroup)),
+                                                 browseGroup: browseGroup),
+                                  fullScale: fullScale),
                    now: now)
     }
 
@@ -181,6 +191,7 @@ struct GolfFieldEventPageHost10868: View {
     static func route(_ id: String) -> HistoryRoute {
         if id == GolfFieldHistoryAdapter10868.expandActionID { return .expand }
         if id == GolfFieldHistoryAdapter10868.chooserActionID { return .chooser }
+        if id == GolfFieldHistoryAdapter10868.scaleActionID { return .scale }
         let prefix = GolfFieldHistoryAdapter10868.choosePrefix
         if id.hasPrefix(prefix), let outcome = Int(id.dropFirst(prefix.count)) { return .choose(outcome) }
         return .none
@@ -204,7 +215,7 @@ struct GolfFieldEventPageHost10868: View {
                                                             tournament: tournament)
         let reading = GolfFieldPageInputAdapter10868.Reading(
             cohort: chartGolfers(cohort, selected: choice.selected), selected: choice.selected,
-            selectedFinish: choice.selectedFinish, chooser: choice.chooser)
+            selectedFinish: choice.selectedFinish, chooser: choice.chooser, fullScale: choice.fullScale)
         return GolfFieldPageInputAdapter10868.input(
             sources, reading: reading,
             host: GolfFieldPageAdapter10868.Host(now: now, calendar: calendar, locale: locale))

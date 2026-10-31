@@ -74,15 +74,19 @@ import SwiftUI
 ///   - the chart cohort (which golfers are drawn): `EvolutionChartView` elects the
 ///     timeline's first three served outcomes inside its private state; no owner
 ///     exposes a cohort for this page, so the host passes it.
-///   - the scale: the futures chart uses Swift Charts' automatic domain, so there
-///     is no owner ceiling to pass and the approved Auto / Full scale ladder has no
-///     owner; this file draws the full 0–100% scale.
 ///   - round guides: `/history` serves `round_boundaries`, undecoded and stamped at
 ///     ~00:02 UTC data days, and the chart's own R1–R4 marks are UTC midnights
 ///     private to the View — neither is a round start, so no guide is drawn.
 ///   - Details, inspection, held windows: no owner contracts exist; Details is
 ///     offered unavailable and no inspection is built.
 ///   - post-play re-served prices (above): owner, the DataGolf futures ingest.
+///
+/// THE SCALE is Design's approved Auto / Full choice (prototype
+/// `golfJourneyEvidence.ts` `chartCeiling`, `GolfRaceChart.tsx`; Design
+/// 2026-10-31): Full is the whole 0–100%; Auto is the first rung of
+/// `scaleLadder` at or above the highest PLOTTED point plus 4% headroom, so early
+/// low chances stay readable and every plotted point stays inside the axis — none
+/// is ever clipped or clamped. The host owns the reversible full flag.
 ///
 /// Nothing here fetches, subscribes, schedules or holds state.
 enum GolfFieldHistoryAdapter10868 {
@@ -116,6 +120,11 @@ enum GolfFieldHistoryAdapter10868 {
         static let details = "History & source details"
         static let expand = "Full chart"
         static let expandSpoken = "Expand chance to win history"
+        static let autoScale = "Auto scale"
+        static let fullScale = "Full scale"
+        /// The reference's spoken words for the control (`GolfRaceChart.tsx`).
+        static let useAutoScale = "Use automatic probability scale"
+        static let showFullScale = "Show full zero to 100 percent scale"
     }
 
     /// Offered unavailable until a history details destination exists.
@@ -126,9 +135,14 @@ enum GolfFieldHistoryAdapter10868 {
     static let chooserActionID = "golf.history.chooser"
     /// A series' choose action is this prefix and the golfer's outcome id.
     static let choosePrefix = "golf.history.choose."
+    /// Switches between the Auto and Full scale.
+    static let scaleActionID = "golf.history.scale"
 
     static let plotHeight: CGFloat = 230
-    static let yTickValues: [Double] = [0, 0.5, 1]
+    /// The approved Auto ceilings, lowest first (`chartCeiling`).
+    static let scaleLadder: [Double] = [0.025, 0.05, 0.1, 0.15, 0.2, 0.25, 0.4, 0.6, 0.8, 1]
+    /// Auto leaves 4% headroom above the highest plotted point.
+    static let scaleHeadroom = 1.04
     static let shapes: [FieldHistoryShape10868] = [.circle, .square, .diamond, .triangle]
 
     // MARK: - One golfer's served line
@@ -234,7 +248,9 @@ enum GolfFieldHistoryAdapter10868 {
         /// The golfer's served points as entries, or nil when the golfer has no
         /// single served line.
         func entries(_ id: Int) -> [Entry]? {
-            guard let history, let points = GolfFieldHistoryAdapter10868.line(history, outcomeID: id) else { return nil }
+            // Another market's history is never this field's, however its outcome ids overlap.
+            guard let history, history.marketId == market.id,
+                  let points = GolfFieldHistoryAdapter10868.line(history, outcomeID: id) else { return nil }
             return GolfFieldHistoryAdapter10868.entries(points, now: now)
         }
 
@@ -322,7 +338,7 @@ enum GolfFieldHistoryAdapter10868 {
     // MARK: - The history
 
     static func history(_ field: Field, cohort: [Int], selected: Int?,
-                        chooserAvailable: Bool, host: Host) -> FieldHistoryInput10868 {
+                        chooserAvailable: Bool, full: Bool = false, host: Host) -> FieldHistoryInput10868 {
         let golfers = drawnGolfers(field, cohort: cohort)
         let cutoff = frameCutoff(field)
         let drawn: [[[Observation]]] = golfers.map { runs(field.entries($0.id) ?? [], from: cutoff) }
@@ -332,6 +348,8 @@ enum GolfFieldHistoryAdapter10868 {
                            plot: FieldHistoryPlotAbsence10868(title: Words.noHistory, words: nil))
         }
         let domain = frame(first, last)
+        let peak = drawn.flatMap { $0.flatMap { $0.map(\.probability) } }.max() ?? 0
+        let top = ceiling(peak: peak, full: full)
         var series: [FieldHistorySeries10868] = []
         for (position, golfer) in golfers.enumerated() {
             series.append(self.series(field, golfer: golfer, position: position, runs: drawn[position], host: host))
@@ -345,8 +363,8 @@ enum GolfFieldHistoryAdapter10868 {
             series: series,
             selection: selection(field, golfers: golfers, selected: selected),
             domain: plotted,
-            ceiling: 1,
-            yTicks: yTicks(),
+            ceiling: top,
+            yTicks: yTicks(ceiling: top),
             xTicks: xTicks(domain, host: host),
             guides: [],
             breaks: [],
@@ -358,7 +376,7 @@ enum GolfFieldHistoryAdapter10868 {
             plotHeight: plotHeight,
             unboundReadingWords: Words.notRecorded,
             plotUnavailableWords: nil,
-            windows: nil, scale: nil,
+            windows: nil, scale: scaleAction(ceiling: top, full: full),
             moreOriginals: chooserAction(available: chooserAvailable),
             details: action(detailsActionID, Words.details, available: false),
             expand: action(expandActionID, Words.expand, spoken: Words.expandSpoken),
@@ -512,8 +530,46 @@ enum GolfFieldHistoryAdapter10868 {
         return first...last
     }
 
-    static func yTicks() -> [FieldHistoryTick10868] {
-        yTickValues.map { FieldHistoryTick10868(value: $0, lines: [OddsChartView.axisLabel(for: $0)]) }
+    // MARK: - The Auto / Full scale
+
+    /// Full: 1. Auto: the first ladder rung at or above `peak` plus 4% headroom, else 1.
+    static func ceiling(peak: Double, full: Bool) -> Double {
+        if full { return 1 }
+        let needed = max(0, peak) * scaleHeadroom
+        return scaleLadder.first { $0 >= needed } ?? 1
+    }
+
+    /// Ticks only at whole percents, so each label is exactly its value
+    /// (`OddsChartView.axisLabel` prints whole percents): zero, the middle and the
+    /// top when they are whole; otherwise every whole percent up to the top.
+    static func tickValues(ceiling: Double) -> [Double] {
+        let kept = [0, ceiling / 2, ceiling].filter(isWholePercent)
+        if kept.count >= 2 { return kept }
+        let top = Int((ceiling * 100 + 1e-9).rounded(.down))
+        return (0...max(top, 0)).map { Double($0) / 100 }
+    }
+
+    static func isWholePercent(_ value: Double) -> Bool {
+        abs(value * 100 - (value * 100).rounded()) < 1e-9
+    }
+
+    static func yTicks(ceiling: Double = 1) -> [FieldHistoryTick10868] {
+        tickValues(ceiling: ceiling).map { FieldHistoryTick10868(value: $0, lines: [OddsChartView.axisLabel(for: $0)]) }
+    }
+
+    /// The axis top in words through the app's own printers: whole percents as the
+    /// axis prints them, the 2.5% rung at the detail precision
+    /// (`EventPropsMatrixLayout.exactPercent`) so it is never rounded to 3%.
+    static func ceilingWords(_ ceiling: Double) -> String {
+        isWholePercent(ceiling) ? OddsChartView.axisLabel(for: ceiling) : EventPropsMatrixLayout.exactPercent(ceiling)
+    }
+
+    /// "Auto scale · 0–10%" / "Full scale · 0–100%".
+    static func scaleAction(ceiling: Double, full: Bool) -> FieldHistoryAction10868 {
+        FieldHistoryAction10868(id: scaleActionID,
+                                label: "\(full ? Words.fullScale : Words.autoScale) · 0–\(ceilingWords(ceiling))",
+                                spokenLabel: full ? Words.useAutoScale : Words.showFullScale,
+                                isAvailable: true)
     }
 
     static func xTicks(_ domain: ClosedRange<Date>, host: Host) -> [FieldHistoryTick10868] {
