@@ -15,14 +15,16 @@ import SwiftUI
 ///
 /// THE CHOICE survives an update that omits it. It is held by its exact served
 /// identity (venue key, market id, outcome id — `FieldEventPageAdapter10868.Choice`),
-/// never by name or position, and only a field-card ref this market serves sets
-/// it. While a refresh omits that outcome the page keeps it as the chosen
-/// contender, unavailable in this update (the headline's first slot and the
-/// field card's selection notice), keeps no figure of it, and promotes no other
-/// contender into its place; when a refresh serves it again it is restored as
-/// the same choice. A different market passed to this host does not inherit it
-/// onto a coincident outcome id: the adapters read a choice only on its own
-/// market. It builds the page input from the values the page
+/// never found by name or position, and only a field-card ref this market serves
+/// sets it, capturing that served outcome's label at that moment. While a
+/// refresh omits that outcome the page keeps it as the chosen contender — the
+/// headline's first slot shows the captured label beside "Chosen … unavailable
+/// in this update", and the field card's selection notice says the same words —
+/// keeps no figure of it, and promotes no other contender into its place; when
+/// a refresh serves it again it is restored as the same choice under its
+/// current served label. A different market passed to this host does not
+/// inherit it or its label onto a coincident outcome id: the adapters read a
+/// choice only on its own market. It builds the page input from the values the page
 /// already holds (passed in — it reads no view model, opens no network,
 /// subscribes to nothing, runs no timer and ranks nothing). The input is
 /// recomputed from those values on every body pass: no owner supplies a

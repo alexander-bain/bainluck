@@ -45,14 +45,19 @@ import SwiftUI
 ///                     first, then the production chart's default — outcomes in
 ///                     served order (`EvolutionChartView` `prefix(3)`) — to three.
 ///   - the choice      held by its exact served identity (venue key, market id,
-///                     outcome id) — never a name, a rank or a position. While an
-///                     update omits it, it keeps the first display position as an
+///                     outcome id) — never found by a name, a rank or a position —
+///                     with the served label of that outcome captured when it was
+///                     chosen (Design decision B, 2026-10-31: page-local
+///                     presentation state, never a lookup key). While an update
+///                     omits it, it keeps the first display position as an
 ///                     unavailable slot (the chooser's own unresolved-identity
-///                     contract): no other contender is promoted into it, no figure
-///                     of it is kept, and the served contenders keep their own
-///                     positions, key shapes and colours. When it is served again
-///                     it resolves again, unchanged. Another market's choice is
-///                     never this market's, however its outcome id coincides.
+///                     contract) showing that captured label beside the unavailable
+///                     words: no other contender is promoted into it, no figure of
+///                     it is kept, and the served contenders keep their own
+///                     positions, key shapes and colours. When it is served again it
+///                     resolves again and shows its CURRENT served label. Another
+///                     market's choice — and its label — is never this market's,
+///                     however its outcome id coincides.
 ///   - key and tint    by display position: the chart palette
 ///                     (`EvolutionOutcomeColour.markHex`) and the headline key
 ///                     shapes, so a headline key always matches its chart line.
@@ -98,12 +103,17 @@ enum FieldEventPageAdapter10868 {
     }
 
     /// The reader's choice, held by the exact served identity it was made on.
-    /// No name, no figure and no scope: the scope says the phase, and a choice
-    /// outlives a phase change.
+    /// No figure and no scope: the scope says the phase, and a choice outlives a
+    /// phase change.
     struct Choice: Hashable {
         let source: String
         let marketID: String
         let outcomeID: String
+        /// The served label of that outcome at the moment it was chosen, shown
+        /// only beside the unavailable words while an update omits it. Never
+        /// read to find, match or resolve anything; a served outcome always
+        /// shows its current label. Empty shows the words alone.
+        var label: String = ""
     }
 
     /// What one contender is called on this page.
@@ -240,12 +250,13 @@ enum FieldEventPageAdapter10868 {
     // MARK: - The reader's choice
 
     /// The choice a field-card ref names: only this market's (same venue key and
-    /// market id) and only an outcome this update serves exactly once.
+    /// market id) and only an outcome this update serves exactly once. Its label
+    /// is that served outcome's own name, read through the ref's identity.
     static func choice(_ ref: FieldChooserOriginalRef10868, in market: FuturesMarketDetail) -> Choice? {
         guard ref.marketID == String(market.id), ref.source == venueKey(market),
-              let id = Int(ref.outcomeID), outcome(id, in: market) != nil
+              let id = Int(ref.outcomeID), let served = outcome(id, in: market)
         else { return nil }
-        return Choice(source: ref.source, marketID: ref.marketID, outcomeID: ref.outcomeID)
+        return Choice(source: ref.source, marketID: ref.marketID, outcomeID: ref.outcomeID, label: served.name)
     }
 
     /// The host's choice when it was made on THIS market. Another market's
@@ -395,9 +406,9 @@ enum FieldEventPageAdapter10868 {
         var slots: [FieldHeadlineSlot10868] = []
         if let missing = shown.missing {
             // The held choice, omitted by this update: its exact identity, which
-            // the catalogue cannot resolve, so the slot shows the unavailable
-            // words and no figure. No name is held, so none is shown.
-            slots.append(FieldHeadlineSlot10868(ref: ref(missing, scope: scope), name: "",
+            // the catalogue cannot resolve, so the slot shows the label captured
+            // when it was chosen beside the unavailable words, and no figure.
+            slots.append(FieldHeadlineSlot10868(ref: ref(missing, scope: scope), name: missing.label,
                                                 compactName: nil, keyShape: keyShape(0)))
         }
         for (index, outcome) in shown.served.enumerated() {

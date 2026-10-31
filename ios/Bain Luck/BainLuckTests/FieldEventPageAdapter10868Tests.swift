@@ -601,10 +601,12 @@ enum FieldEventAdapterFixtures10868 {
     }
 
     /// A CONSTRUCTED held choice on this market's exact identity (its venue key
-    /// and market id) for an outcome id — served or not.
-    static func choice(_ id: Int, in market: FuturesMarketDetail) -> FieldEventPageAdapter10868.Choice {
+    /// and market id) for an outcome id — served or not — with an optional
+    /// CONSTRUCTED captured label (empty by default: the words alone).
+    static func choice(_ id: Int, in market: FuturesMarketDetail,
+                       label: String = "") -> FieldEventPageAdapter10868.Choice {
         FieldEventPageAdapter10868.Choice(source: FieldEventPageAdapter10868.venueKey(market),
-                                          marketID: String(market.id), outcomeID: String(id))
+                                          marketID: String(market.id), outcomeID: String(id), label: label)
     }
 
     /// A CONSTRUCTED refresh: the body with exactly one served outcome row

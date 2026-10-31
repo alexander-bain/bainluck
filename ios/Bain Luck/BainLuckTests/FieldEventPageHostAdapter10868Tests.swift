@@ -99,8 +99,10 @@ final class FieldEventPageHostAdapter10868Tests: XCTestCase {
         let rugby = try F.market(F.rugbyBefore)
         let card = try XCTUnwrap(FieldEventStoriesAdapter10868.field(rugby, host: F.host(F.rugbyCapture)))
         let france = try XCTUnwrap(card.displayed.first { $0.label == "France" }).ref
+        // The label is captured from the served outcome the exact ref resolves to.
         XCTAssertEqual(Host.choice(france, in: rugby),
-                       FieldEventPageAdapter10868.Choice(source: "kalshi", marketID: "60473053", outcomeID: String(F.france)))
+                       FieldEventPageAdapter10868.Choice(source: "kalshi", marketID: "60473053", outcomeID: String(F.france),
+                                                         label: "France"))
         // CONSTRUCTED refs: another market, another source key, an unserved id.
         let otherMarket = FieldChooserOriginalRef10868(scope: france.scope, source: "kalshi", marketID: "62383719",
                                                        outcomeID: france.outcomeID)
@@ -145,11 +147,16 @@ final class FieldEventPageHostAdapter10868Tests: XCTestCase {
         let headline = omitted.input.headline
         XCTAssertEqual(headline.displayed.map(\.ref.outcomeID), [String(F.france), String(F.ireland), String(F.southAfrica)])
         XCTAssertEqual(headline.displayed.map(\.keyShape), [.circle, .diamond, .square])
+        // The label captured when France was chosen, beside the unavailable words.
+        XCTAssertEqual(headline.displayed.map(\.name), ["France", "Ireland", "South Africa"])
         let competitors = FieldHeadlineModel10868(headline).competitors
         XCTAssertEqual(competitors.map(\.resolution.original?.name), [nil, "Ireland", "South Africa"])
         XCTAssertTrue(competitors[0].metrics.isEmpty)
         XCTAssertEqual(FieldHeadlineModel10868(headline).competitorSummary(competitors[0]),
-                       "Chosen team unavailable in this update")
+                       "France. Chosen team unavailable in this update")
+        // No figure for it: only the two served teams' own chances are printed.
+        XCTAssertEqual(competitors.flatMap { $0.metrics.compactMap(FieldChaseModel10868.figure) }, ["59%", "40%"])
+        XCTAssertEqual(headline.pairs.map(\.ref.outcomeID), [String(F.ireland), String(F.southAfrica)])
         // The field card hands the chooser the held identity; its own words say it is unavailable.
         let omittedField = try XCTUnwrap(omitted.input.field)
         XCTAssertEqual(omittedField.selected?.ref.outcomeID, String(F.france))
@@ -190,8 +197,50 @@ final class FieldEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertNil(carried.input.field?.selected)
         XCTAssertEqual(carried.input.headline.displayed.map(\.name), ["Alice Lee", "Rachael Li", "Thalia Cervantes"])
         XCTAssertEqual(carried.input.headline.unavailableWords, "Player unavailable in this update")
+        // Neither the choice nor its captured label reaches the chess page.
+        XCTAssertEqual(reading.chosen?.label, "France")
+        XCTAssertFalse(carried.input.headline.displayed.contains { $0.name == "France" })
+        XCTAssertFalse(carried.input.field?.displayed.contains { $0.label == "France" } ?? false)
+        XCTAssertFalse(carried.input.history.series.contains { $0.name == "France" })
         // Back on the rugby board, the choice is still that board's.
         XCTAssertEqual(Host.build(field: rugby, history: nil, now: F.rugbyCapture.asDate!, reading: reading,
                                   calendar: F.pacific, locale: F.enUS).input.headline.displayed.first?.name, "France")
+    }
+
+    func testAChoiceServedAgainShowsItsCurrentServedLabelNotTheHeldOne() throws {
+        let rugby = try F.market(F.rugbyBefore)
+        let now = F.rugbyCapture.asDate!
+        func build(_ field: FuturesMarketDetail, _ reading: Host.Reading) -> Host.Built {
+            Host.build(field: field, history: nil, now: now, reading: reading, calendar: F.pacific, locale: F.enUS)
+        }
+        let card = try XCTUnwrap(build(rugby, Host.Reading()).input.field)
+        let france = try XCTUnwrap(card.displayed.first { $0.label == "France" }).ref
+        let reading = Host.Reading(chosen: try XCTUnwrap(Host.choice(france, in: rugby)))
+        XCTAssertEqual(reading.chosen?.label, "France")
+
+        // Omitted: the held label with the unavailable words, and no figure.
+        let omitted = build(try F.market(F.omitting(F.rugbyBefore, outcome: F.france)), reading).input.headline
+        XCTAssertEqual(omitted.displayed.first?.name, "France")
+        XCTAssertEqual(omitted.unavailableWords, "Chosen team unavailable in this update")
+        XCTAssertTrue(try XCTUnwrap(FieldHeadlineModel10868(omitted).competitors.first).metrics.isEmpty)
+
+        // CONSTRUCTED: the same REAL board with only France's served label changed;
+        // the outcome id, market id and venue are unchanged.
+        let renamedBody = try F.market(F.replacing(F.rugbyBefore, "{\"id\":\(F.france),\"name\":\"France\",",
+                                                   with: "{\"id\":\(F.france),\"name\":\"France XV\","))
+        let renamed = build(renamedBody, reading)
+        // The exact identity is served again: it resolves under its CURRENT served
+        // label, with its own current figure — the held label is not shown.
+        XCTAssertEqual(renamed.input.headline.displayed.map(\.name), ["France XV", "Ireland", "South Africa"])
+        let first = try XCTUnwrap(FieldHeadlineModel10868(renamed.input.headline).competitors.first)
+        XCTAssertEqual(first.resolution.original?.name, "France XV")
+        XCTAssertEqual(first.metrics.map(FieldChaseModel10868.figure), ["6%"])
+        let renamedCard = FieldOutlookModel10868(try XCTUnwrap(renamed.input.field))
+        XCTAssertEqual(renamedCard.selectedOriginal?.name, "France XV")
+        XCTAssertNil(renamedCard.notice)
+        XCTAssertFalse(renamed.input.headline.displayed.contains { $0.name == "France" })
+        // Restored by identity, not by name: the held choice itself is unchanged.
+        XCTAssertEqual(reading.chosen?.outcomeID, String(F.france))
+        XCTAssertEqual(reading.chosen?.label, "France")
     }
 }
