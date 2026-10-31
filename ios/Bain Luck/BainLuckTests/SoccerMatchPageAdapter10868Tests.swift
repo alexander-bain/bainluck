@@ -73,7 +73,40 @@ final class SoccerMatchPageAdapter10868Tests: XCTestCase {
         XCTAssertEqual(headline.comparisonText(for: headline.draw), .unavailable(A.Words.drawChanceUnavailable))
         // The served three-way rows on `/game-markets` (Draw 0.4%) are not read.
         XCTAssertNil(headline.draw.primary)
-        XCTAssertNil(headline.away.comparison)
+        // The opening object's own away (0.2278, de-vigged across the full board,
+        // summing 0.7207 with its home) is a sourced earlier reading. It sits in
+        // the away slot under the same Opening chance heading, printed alone.
+        XCTAssertEqual(headline.away.comparison, formatProbability(0.2278))
+        XCTAssertNil(headline.away.primary, "the current away is still never shown")
+    }
+
+    /// CONSTRUCTED: the live body's `opening_odds` with only `away_probability`
+    /// changed: null, then out of range. Neither is printed, and the complement
+    /// is never put in its place.
+    func testAnOpeningObjectWithoutItsOwnUsableAwayPrintsNoAwayChance() throws {
+        for away in [NSNull(), 1.2 as Any, 0.0 as Any] {
+            let body = try F.edited(F.liveDetail, setting: ["opening_odds": [
+                "home_probability": 0.4929, "away_probability": away, "spread": -0.5, "over_under": 2.5,
+                "favorite": "home"] as [String: Any]])
+            let event = try F.detail(body)
+            let headline = A.headline(event, host: F.pageHost(F.liveNow, observedAt: observed(event)))
+            XCTAssertEqual(headline.home.comparison, formatProbability(0.4929))
+            XCTAssertNil(headline.away.comparison, "\(away)")
+            XCTAssertEqual(headline.comparisonText(for: headline.away), .unavailable(A.Words.awayChanceUnavailable))
+        }
+    }
+
+    /// CONSTRUCTED: the final body with `prematch_odds` removed, so the reading
+    /// falls back to `opening_odds`. At the final the opening pair leads; the
+    /// away is the opening object's own, never 1 − home and never the served
+    /// pre-match away.
+    func testAfterTheFinalTheOpeningFallbackKeepsItsOwnAway() throws {
+        let event = try F.detail(try F.edited(F.finalDetail, removing: ["prematch_odds"]))
+        let headline = A.headline(event, host: F.pageHost(F.finalNow, observedAt: observed(event)))
+        XCTAssertEqual(headline.primaryHeading.title, A.Words.openingChance)
+        XCTAssertEqual(headline.home.primary, formatProbability(0.4929))
+        XCTAssertEqual(headline.away.primary, formatProbability(0.2278))
+        XCTAssertNil(headline.draw.primary, "the draw is never computed from the two")
     }
 
     /// CONSTRUCTED: the same live body with delivery interrupted.
@@ -92,8 +125,10 @@ final class SoccerMatchPageAdapter10868Tests: XCTestCase {
         XCTAssertEqual(headline.primaryHeading.context, "Polymarket")
         XCTAssertEqual(headline.home.primary, formatProbability(0.51))
         // `prematch_odds.away_probability` 0.225 is served; a draw-priced sport
-        // never prints it as the away win chance.
+        // never prints it as the away win chance. The body's opening away
+        // (0.2278) is not swapped in beside a served pre-match home.
         XCTAssertNil(headline.away.primary)
+        XCTAssertNotEqual(headline.away.primary, formatProbability(0.2278))
         XCTAssertNil(headline.comparisonHeading)
         // The settled hero 1.0 is a result, never a chance on the headline.
         XCTAssertNotEqual(headline.home.primary, formatProbability(1.0))

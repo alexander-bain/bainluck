@@ -29,7 +29,18 @@ import SwiftUI
 ///                     `current_odds.away_probability` / `prematch_odds` away is
 ///                     a two-way number that absorbs the draw (#5271) — and the
 ///                     event payload carries no draw at all. Both slots keep
-///                     their own absence words. The dependency is named, not
+///                     their own absence words. ONE sourced exception, the
+///                     opening away: when `PrematchReading` falls back to
+///                     `opening_odds` and carries that object's own away
+///                     (`awayIsComplement == false`), the away slot shows it with
+///                     the same Opening chance heading. The producer serves that
+///                     away only when it is the stored de-vigged full-board price
+///                     and never the derived complement (`events.py` writes it
+///                     through `draw_priced_winner.printable_away`, whose
+///                     `away_is_the_complement` refuses `1 − home` on a declared
+///                     draw sport, #6238/#1011). It is printed alone, never forced
+///                     to sum with home, and the draw is never computed. The
+///                     dependency is named, not
 ///                     routed around: a genuine current three-way writer and its
 ///                     price is #1011 (Live owns the forward slice); the served
 ///                     three-way groups on `/game-markets` are not a headline
@@ -260,14 +271,16 @@ enum SoccerMatchPageAdapter10868 {
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)
         let pregame = preMatch(event)
-        let primary: (heading: SoccerReadingHeading11449, home: String?)
-        let comparison: (heading: SoccerReadingHeading11449, home: String?)?
+        let primary: (heading: SoccerReadingHeading11449, home: String?, away: String?)
+        let comparison: (heading: SoccerReadingHeading11449, home: String?, away: String?)?
         switch pagePhase {
         case .before:
-            primary = current(event, host: host)
+            let now = current(event, host: host)
+            primary = (now.heading, now.home, nil)
             comparison = nil
         case .live:
-            primary = current(event, host: host)
+            let now = current(event, host: host)
+            primary = (now.heading, now.home, nil)
             comparison = pregame
         case .final:
             primary = pregame
@@ -282,7 +295,7 @@ enum SoccerMatchPageAdapter10868 {
             label: Words.draw, color: DS.textSecondary, primary: nil, comparison: nil,
             primaryUnavailable: Words.drawChanceUnavailable, comparisonUnavailable: Words.drawChanceUnavailable)
         let away = SoccerOutcomeSlot11449(
-            label: Words.outcome(shown.away), color: tints.away, primary: nil, comparison: nil,
+            label: Words.outcome(shown.away), color: tints.away, primary: primary.away, comparison: comparison?.away,
             primaryUnavailable: Words.awayChanceUnavailable, comparisonUnavailable: Words.awayChanceUnavailable)
         return SoccerThreeOutcomeHeadlineInput11449(
             home: home, draw: draw, away: away,
@@ -310,18 +323,30 @@ enum SoccerMatchPageAdapter10868 {
         return (heading, formatProbability(pair.home))
     }
 
-    /// The last reading before the start, through `PrematchReading`, home only.
-    static func preMatch(_ event: EventDetail) -> (heading: SoccerReadingHeading11449, home: String?) {
+    /// The last reading before the start, through `PrematchReading`: home, plus
+    /// the opening object's own away where the opening fallback carries one.
+    static func preMatch(_ event: EventDetail) -> (heading: SoccerReadingHeading11449, home: String?, away: String?) {
         guard let reading = PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds) else {
-            return (SoccerReadingHeading11449(title: Words.preMatchChance, context: nil), nil)
+            return (SoccerReadingHeading11449(title: Words.preMatchChance, context: nil), nil, nil)
         }
         let title = reading.isServed ? Words.preMatchChance : Words.openingChance
         let venue = reading.isServed ? SourceLabels.label(for: reading.source) : nil
         let heading = SoccerReadingHeading11449(title: title, context: venue)
         guard let pair = DrawPricedWinner.printablePair(
             away: reading.awayProbability, home: reading.homeProbability, sport: event.sport)
-        else { return (heading, nil) }
-        return (heading, formatProbability(pair.home))
+        else { return (heading, nil, nil) }
+        return (heading, formatProbability(pair.home), openingAway(reading))
+    }
+
+    /// The opening object's own away price, alone, or nil. Only the
+    /// `opening_odds` arm, and only when that object carried its own away
+    /// (`awayIsComplement == false`). A served pre-match object is never read
+    /// here: its away has no admitted original-side contract on this screen.
+    static func openingAway(_ reading: PrematchReading) -> String? {
+        guard !reading.isServed, !reading.awayIsComplement,
+              reading.awayProbability.isFinite, (0...1).contains(reading.awayProbability)
+        else { return nil }
+        return formatProbability(reading.awayProbability)
     }
 
     // MARK: - Words
