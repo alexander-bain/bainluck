@@ -1,8 +1,10 @@
 import SwiftUI
 
-// #10868 — the cricket Test-match screen (`cricket-live`): one native
-// presentation composed from the accepted leaves. The three independent
-// original chances lead. A fan sees, in this order: the owner's match title
+// #10868 — the shared cricket match screen: one native presentation composed
+// from the accepted leaves, in the owner's explicit format — the Test match
+// (`cricket-live`, the default, described first) or a limited-over T20 match
+// (`cricket-t20`, see "The T20 format" below). In the Test format the three
+// independent original chances lead. A fan sees, in this order: the owner's match title
 // with its About entry; the headline (each original's pregame chance, its
 // recorded or current chance during play, or the reported match outcome at
 // the finish, with the owner's score, overs and target words under their own
@@ -27,18 +29,26 @@ import SwiftUI
 // `cricketMomentOrder` ranking and its reasons, moment controls, story and
 // reader session state, inspection state, "Aa Larger", sheets, dialogs and
 // focus restoration are NOT ported. The shared
-// `CricketPregameStoryPresentation10868` belongs to the separate
-// `cricket-match` route and is not mounted here. The leaves are the actual
-// accepted Views:
+// `CricketPregameStoryPresentation10868` and
+// `CricketChaseShiftPresentation10868` are mounted in the T20 format only.
+// The leaves are the actual accepted Views:
 //
-//   • `CricketHeadlinePresentation10868` — the three-outcome headline;
+//   • `CricketHeadlinePresentation10868` — the headline, one block per
+//     original the owner supplies;
 //   • `CricketProbabilityHistoryPresentation10868` — the anchor, with the
 //     owner's score-report guides;
 //   • `CricketOutlookPresentation10868` — "Changing expectations" during play
-//     (comparison) and "Expectations and result" at the finish (completed);
+//     (comparison) and "Expectations and result" at the finish (completed),
+//     Test format only;
 //   • `CricketChasePresentation10868` — the chase during play and resolved at
-//     the finish (never before play, and never the limited-over variant);
-//   • `CricketSurvivalPresentation10868` — holding on, during play only;
+//     the finish (never before play; with the owner's limited-over context in
+//     the T20 format only);
+//   • `CricketSurvivalPresentation10868` — holding on, during play only, Test
+//     format only;
+//   • `CricketPregameStoryPresentation10868` — the pregame outlook, before
+//     play only, T20 format only;
+//   • `CricketChaseShiftPresentation10868` — the expectation shift, during
+//     play and at the final, T20 format only;
 //   • `StoryStreamPresentationView10868` — the controlled story stream;
 //   • `OriginalMarketChooserView9483` — the three original markets and the
 //     held original's Details, on the page;
@@ -77,7 +87,8 @@ import SwiftUI
 // owner's unavailable words for an id that names no single story this phase
 // mounts — never a neighbour. A card's own actions — selecting or opening the
 // Details of an original in either outlook card, the chase's Details, a
-// survival checkpoint's selection or Details — first call the stream's
+// survival checkpoint's selection or Details, the expectation shift's
+// Details — first call the stream's
 // activation hook (so the owner can hold) and then the host's exact callback.
 // None of these leaves takes a disclosure binding, so there is no write to
 // gate. Building a card asks for nothing. Full-size content reuses the same
@@ -137,6 +148,31 @@ import SwiftUI
 // navigation of its own. Every callback is the host's own closure handed to
 // the leaf unchanged. With no callback, nothing pretends to act.
 //
+// The T20 format (`cricket-t20`, composed from the approved `T20Match.tsx` /
+// `t20Match.css` over `t20Evidence.ts` and `t20MomentStories.ts`) is this
+// same page with the same full-size, catalogue, Details, sources and About
+// modes, the same callbacks and the same holds — not a second screen. The
+// owner's two independent originals lead; nothing here adds a draw row,
+// complements or normalizes them, and a tie rule's settlement amount is not
+// a probability. Before play the owner's stream may offer the pregame
+// outlook beside the headline, the history and the originals. During play
+// and at the final it offers the chase, with the owner's limited-over
+// context (task, legal-ball budget and scoring rates) handed to the chase
+// leaf beside its input and gated by the chase's own phase, and the
+// expectation shift: each owner checkpoint row against pregame on one shared
+// scale, the owner's rows only — no finish row and no 0%/100% point is added
+// at the final. The expectation shift follows the chasing side, so its marks
+// take the chase's `runsTint`. The format is the owner's explicit choice,
+// never inferred from which inputs are present: the Test-only cards
+// (changing expectations, holding on, expectations and result) are never
+// mounted in the T20 format, and the pregame outlook, the expectation shift
+// and the limited-over context are never mounted in the Test format,
+// whatever the owner supplies. Target and rates are the owner's actual
+// words, never a forecast, and nothing here projects a score. The
+// reference's evidence helper — trade selection, currentness, baseline
+// election, ball and rate arithmetic, its fixed scales — and its
+// `t20MomentOrder` ranking are NOT ported.
+//
 // Host binding still owed — not available at this base: an owner that admits,
 // for one match snapshot, the phase, the headline rows and state words, the
 // history with its segments and score-report guides at or before that
@@ -145,7 +181,13 @@ import SwiftUI
 // held selection with any admitted recorded history, and maps every callback
 // to its existing controls —
 // including from an outlook, chase or survival reference to the Details
-// selection it names.
+// selection it names. For the T20 format also: the format admission itself
+// (which events are limited-over matches), proved two-original membership,
+// the pregame story input, the chase's limited-over task, legal-ball and rate
+// state, each expectation-shift checkpoint's qualified score report and
+// separately recorded reading, the reported match result and each
+// original's independently admitted result, and the shift's Details
+// reference to the selection it names (T20-*-NATIVE-BINDING-MAP.md).
 
 /// One card the page can show full size. `history` is the anchor.
 nonisolated enum CricketEventPageCard10868: String, Hashable, CaseIterable {
@@ -157,6 +199,25 @@ nonisolated enum CricketEventPageCard10868: String, Hashable, CaseIterable {
     case survival
     /// "Expectations and result": the outlook card in completed mode.
     case expectations
+    /// "Pregame outlook": the T20 pregame story, before play only.
+    case pregame
+    /// "Expectation shift": the T20 checkpoints against pregame, during play
+    /// and at the final.
+    case expectationShift
+}
+
+/// Which approved route composition the page draws: the owner's explicit
+/// choice, never inferred from which inputs are present, a sport key, a
+/// title, a score or an over count.
+nonisolated enum CricketEventPageFormat10868: Equatable {
+    /// `cricket-live`, the default: changing expectations, the chase and
+    /// holding on during play; expectations and result and the resolved
+    /// chase at the finish.
+    case test
+    /// `cricket-t20`: the pregame outlook before play; the chase with its
+    /// limited-over context and the expectation shift during play and at the
+    /// final.
+    case t20
 }
 
 /// What the host's container is showing, chosen by the host.
@@ -257,18 +318,31 @@ nonisolated struct CricketEventPageInput10868: Equatable {
     let runsTint: Color
     /// The tint of a remaining wicket, in the chase and survival cards.
     let wicketTint: Color
-    /// The owner's story stream; nil draws no stories. Before play there is
-    /// none: the reference's before page offers only the history.
+    /// The owner's story stream; nil draws no stories. A Test page has none
+    /// before play — its reference's before page offers only the history; a
+    /// T20 page's before stream offers the pregame outlook.
     var stream: StoryStreamPresentation10868? = nil
     var stories: [CricketEventPageStory10868] = []
     /// Opened by the title's About control; nil: no control.
     var about: CricketEventPageAbout10868? = nil
     let copy: CricketEventPageCopy10868
+    /// The owner's explicit composition. `.test` unless the owner says
+    /// otherwise, so every existing Test page is unchanged.
+    var format: CricketEventPageFormat10868 = .test
+    /// T20 format, before play only: the pregame outlook.
+    var pregame: CricketPregameStoryInput10868? = nil
+    /// T20 format, during play and at the final: the expectation shift. Its
+    /// marks take `runsTint` — the card follows the chasing side.
+    var expectationShift: CricketChaseShiftInput10868? = nil
+    /// T20 format only: the chase's limited-over task, legal-ball budget and
+    /// scoring rates, handed to the chase leaf beside its input and gated by
+    /// the chase's own phase. Nil: the chase shows no time or rate budget.
+    var limitedOvers: CricketChaseLimitedOvers10868? = nil
 }
 
-/// The owner's three retained originals, for the page's chooser and the
-/// catalogue and Details modes. Every field reaches the existing leaves
-/// unchanged.
+/// The owner's retained originals (three for a Test match, two for T20), for
+/// the page's chooser and the catalogue and Details modes. Every field
+/// reaches the existing leaves unchanged.
 struct CricketEventPageOriginals10868 {
     /// The latest admitted originals for one scope; nil shows `emptyWords`.
     let catalogue: OriginalMarketDetails9483.Catalogue?
@@ -350,9 +424,9 @@ nonisolated struct CricketEventPageModel10868: Equatable {
         return markers
     }
 
-    /// Changing expectations: during play, in comparison mode.
+    /// Changing expectations: a Test page during play, in comparison mode.
     var shifts: CricketOutlookInput10868? {
-        guard input.phase == .during, let shifts = input.shifts, !shifts.isCompleted else { return nil }
+        guard input.format == .test, input.phase == .during, let shifts = input.shifts, !shifts.isCompleted else { return nil }
         return shifts
     }
 
@@ -362,16 +436,40 @@ nonisolated struct CricketEventPageModel10868: Equatable {
         return chase
     }
 
-    /// Holding on: during play, at that phase.
+    /// Holding on: a Test page during play, at that phase.
     var survival: CricketSurvivalInput10868? {
-        guard input.phase == .during, let survival = input.survival, survival.phase == .during else { return nil }
+        guard input.format == .test, input.phase == .during, let survival = input.survival,
+              survival.phase == .during else { return nil }
         return survival
     }
 
-    /// Expectations and result: at the final, in completed mode.
+    /// Expectations and result: a Test page at the final, in completed mode.
     var expectations: CricketOutlookInput10868? {
-        guard input.phase == .completed, let expectations = input.expectations, expectations.isCompleted else { return nil }
+        guard input.format == .test, input.phase == .completed, let expectations = input.expectations,
+              expectations.isCompleted else { return nil }
         return expectations
+    }
+
+    /// The pregame outlook: a T20 page before play, at that phase.
+    var pregame: CricketPregameStoryInput10868? {
+        guard input.format == .t20, input.phase == .before, let pregame = input.pregame,
+              pregame.phase == .before else { return nil }
+        return pregame
+    }
+
+    /// The expectation shift: a T20 page during play and at the final, at the
+    /// chase phase for the page's — never before play.
+    var expectationShift: CricketChaseShiftInput10868? {
+        guard input.format == .t20, input.phase != .before, let shift = input.expectationShift,
+              shift.phase == Self.chasePhase(input.phase) else { return nil }
+        return shift
+    }
+
+    /// The chase's limited-over context: a T20 page's, beside a mounted chase
+    /// only. The chase leaf gates it by its own phase.
+    var limitedOvers: CricketChaseLimitedOvers10868? {
+        guard input.format == .t20, chase != nil else { return nil }
+        return input.limitedOvers
     }
 
     func isMounted(_ card: CricketEventPageCard10868) -> Bool {
@@ -381,6 +479,8 @@ nonisolated struct CricketEventPageModel10868: Equatable {
         case .chase: chase != nil
         case .survival: survival != nil
         case .expectations: expectations != nil
+        case .pregame: pregame != nil
+        case .expectationShift: expectationShift != nil
         }
     }
 
@@ -591,6 +691,8 @@ struct CricketEventPagePresentation10868: View {
     var onShiftsSelect: ((CricketOutlookRef10868) -> Void)? = nil
     var onShiftsDetails: ((CricketOutlookRef10868) -> Void)? = nil
     var onChaseDetails: ((CricketChaseRef10868) -> Void)? = nil
+    /// The T20 expectation shift's Details, with the owner's exact reference.
+    var onExpectationShiftDetails: ((CricketChaseRef10868) -> Void)? = nil
     var onSurvivalSelect: ((CricketSurvivalTarget10868) -> Void)? = nil
     var onSurvivalDetails: ((CricketSurvivalTarget10868) -> Void)? = nil
     var onExpectationsSelect: ((CricketOutlookRef10868) -> Void)? = nil
@@ -693,10 +795,27 @@ struct CricketEventPagePresentation10868: View {
         }
     }
 
+    /// The chase, with the owner's limited-over context in the T20 format
+    /// only; the Test chase takes none.
     func chaseContent(activation: StoryStreamCardActivation10868? = nil) -> CricketChasePresentation10868? {
         model.chase.map {
             CricketChasePresentation10868(input: $0, runsTint: input.runsTint, wicketTint: input.wicketTint,
-                                          onDetails: Self.relay(onChaseDetails, through: activation))
+                                          onDetails: Self.relay(onChaseDetails, through: activation),
+                                          limitedOvers: model.limitedOvers)
+        }
+    }
+
+    /// The T20 pregame outlook. Static: it has no action, so there is
+    /// nothing to relay, in the stream or full size.
+    func pregameContent() -> CricketPregameStoryPresentation10868? {
+        model.pregame.map { CricketPregameStoryPresentation10868(input: $0) }
+    }
+
+    /// The T20 expectation shift, following the chasing side in `runsTint`.
+    func expectationShiftContent(activation: StoryStreamCardActivation10868? = nil) -> CricketChaseShiftPresentation10868? {
+        model.expectationShift.map {
+            CricketChaseShiftPresentation10868(input: $0, tint: input.runsTint,
+                                               onDetails: Self.relay(onExpectationShiftDetails, through: activation))
         }
     }
 
@@ -979,6 +1098,8 @@ struct CricketEventPagePresentation10868: View {
         case .chase: chaseContent(activation: activation)
         case .survival: survivalContent(activation: activation)
         case .expectations: expectationsContent(activation: activation)
+        case .pregame: pregameContent()
+        case .expectationShift: expectationShiftContent(activation: activation)
         }
     }
 

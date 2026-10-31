@@ -61,6 +61,10 @@ enum CricketPageInputAdapter10868 {
         static let chaseName = "The chase"
         static let survivalName = "Holding on"
         static let historyName = "Win probability"
+        /// T20-format cards: named for exhaustiveness; this Test adapter
+        /// never offers them.
+        static let pregameName = "Pregame outlook"
+        static let expectationShiftName = "Expectation shift"
     }
 
     static func input(_ event: EventDetail, history: CricketHistoryInput10868, originalsCount: Int?,
@@ -160,6 +164,8 @@ enum CricketPageInputAdapter10868 {
         case .chase: Words.chaseName
         case .survival: Words.survivalName
         case .expectations: Words.expectationsName
+        case .pregame: Words.pregameName
+        case .expectationShift: Words.expectationShiftName
         }
     }
 }

@@ -1219,3 +1219,1126 @@ final class CricketEventPagePresentation10868Tests: XCTestCase {
         XCTAssertEqual(CricketEventPagePresentation10868(input: input).historyContent(reader: false).input.plotHeight, 302)
     }
 }
+
+// MARK: - The cricket-t20 composition
+
+/// #10868 — the `cricket-t20` composition of the same shared cricket page
+/// (`format: .t20`). A separate route outcome: nothing here is Test-match
+/// evidence, and no app EventDetail id is joined to the India–West Indies
+/// report evidence by name or date.
+///
+/// PREPARED / NOT RUN. Composition only: which actual leaf Views the page
+/// mounts in each phase for the T20 format, that each receives the owner's
+/// input unchanged, that the default Test format's offer is untouched by
+/// supplied T20 inputs, the stream and full-size parity, the activation and
+/// interaction holds and the exact callbacks. Each leaf's own rules stay with
+/// its own tests; nothing here claims a rendered fit, a native runtime,
+/// VoiceOver behaviour, a production binding or route readiness.
+///
+/// ARCHIVED raw values, from the retained-case receipts in
+/// shipping-adoption-20261027 (T20-BEFORE-STORY-, T20-CHASE-REUSE-,
+/// T20-SHIFT-REUSE- and T20-HISTORY-MARKERS-RETAINED-CASES.json): India v
+/// West Indies, second T20I at Ranchi, Kalshi event
+/// KXT20MATCH-26OCT090930WIIND —
+/// - two independently traded winner markets (-IND, -WI); each one's last
+///   minute close ending 12:57:00Z, before the 12:57:17Z pre-match report:
+///   India 0.78, West Indies 0.23 — sum 1.01, never normalized, and no draw
+///   row (a tie or no result settles at $0.50, a settlement amount);
+/// - India 249/5 after 20 overs (report published 15:24:19Z), target 250;
+/// - four West Indies chase reports (publication clocks, never ball times),
+///   each market's own minute close at or before it: 13.0 overs 170/3 at
+///   16:46:44Z (IND 0.44, WI 0.57; bar 16:46), 15.0 overs 187/4 at 16:57:47Z
+///   (IND 0.67, WI 0.34; bar 16:57), 17.0 overs 223/4 at 17:06:58Z (IND 0.12,
+///   WI 0.89; bar 17:06), 18.0 overs 240/4 at 17:12:01Z (IND 0.01, WI 0.99;
+///   bar 17:12);
+/// - the final report at 17:19:41Z: West Indies 252/4 at 18.3 overs, won by
+///   6 wickets; the closes then (IND 0.01, WI 0.99; bar 17:19) — never a 0/100
+///   point; each contract's own result (IND no, WI yes), settled 17:45:23Z,
+///   later than and separate from the match result.
+///
+/// CONSTRUCTED (owner inputs, not retained facts): every label, figure text,
+/// PDT provenance line, caption, state word, the ball and rate words and
+/// values (15.0 overs is 90 legal balls and 18.3 is 111 only because the
+/// owner says so), the rate ceiling, the stream metadata and card ids, the
+/// history domain, tick words, one-point runs and marker geometry (epoch
+/// seconds already resolved), About text, tints, catalogue identities and
+/// every `constructed.*` reference — no production original or app id is
+/// retained, and no public ticker is used as an action identity.
+final class CricketEventPageT20Composition10868Tests: XCTestCase {
+
+    // MARK: Retained facts
+
+    private enum Frame { case before, over15, final }
+
+    private static let sides = ["IND", "WI"]
+    private static let subjects = ["India", "West Indies"]
+    private static let tickers = ["KXT20MATCH-26OCT090930WIIND-IND", "KXT20MATCH-26OCT090930WIIND-WI"]
+    private static let titles = ["India wins", "West Indies wins"]
+    private static let rules = [
+        "If India wins the India vs West Indies men's professional West Indies Tour of India T20s cricket match originally scheduled for Oct 9, 2026 at 9:30 AM EDT, then the market resolves to Yes.",
+        "If West Indies wins the India vs West Indies men's professional West Indies Tour of India T20s cricket match originally scheduled for Oct 9, 2026 at 9:30 AM EDT, then the market resolves to Yes.",
+    ]
+    /// The first sentence of the retained secondary rule, shared by both.
+    private static let tieRule = "If the India vs West Indies men's professional West Indies Tour of India T20s cricket match originally scheduled for Oct 9, 2026 at 9:30 AM EDT ends in a tie, draw, no result (NR), abandonment, or cancellation, and no official winner is declared, all markets will resolve to $0.50."
+    private static let pregameValues = [0.78, 0.23]
+    private static let pregameTexts = ["78%", "23%"]
+    /// Each market's own close at the 15.0-over report.
+    private static let recordedValues = [0.67, 0.34]
+    private static let recordedTexts = ["67%", "34%"]
+
+    /// Seconds since 1970 (the history's own domain unit).
+    private static let domainLower: Double = 1_791_547_200    // 12:00:00Z
+    private static let pregameBar: Double = 1_791_550_620     // 12:57:00Z
+    private static let inningsReport: Double = 1_791_559_459  // 15:24:19Z
+    private static let report13: Double = 1_791_564_404       // 16:46:44Z
+    private static let report15: Double = 1_791_565_067       // 16:57:47Z
+    private static let report17: Double = 1_791_565_618       // 17:06:58Z
+    private static let report18: Double = 1_791_565_921       // 17:12:01Z
+    private static let domainUpper: Double = 1_791_567_000    // 17:30:00Z
+
+    /// Each market's own retained minute closes: bar end, then India and West Indies.
+    private static let closes: [(x: Double, values: [Double])] = [
+        (1_791_550_620, [0.78, 0.23]),   // 12:57, pregame
+        (1_791_564_360, [0.44, 0.57]),   // 16:46
+        (1_791_565_020, [0.67, 0.34]),   // 16:57
+        (1_791_565_560, [0.12, 0.89]),   // 17:06
+        (1_791_565_920, [0.01, 0.99]),   // 17:12
+        (1_791_566_340, [0.01, 0.99]),   // 17:19
+    ]
+
+    private static func phase(_ frame: Frame) -> CricketHeadlinePhase10868 {
+        switch frame {
+        case .before: .before
+        case .over15: .during
+        case .final: .completed
+        }
+    }
+
+    private static func chasePhase(_ frame: Frame) -> CricketChasePhase10868 {
+        switch frame {
+        case .before: .before
+        case .over15: .during
+        case .final: .final
+        }
+    }
+
+    // MARK: Constructed owner words
+
+    private static let tints: [Color] = [.blue, .orange]
+    private static let outlookShapes: [CricketOutlookShape10868] = [.circle, .diamond]
+    private static let historyShapes: [CricketHistoryShape10868] = [.circle, .diamond]
+    private static let pregameDetail = "Kalshi trade close · minute 5:56–5:57 AM PDT, October 9, 2026"
+    private static let recordedDetail = "Kalshi trade close · minute 9:56–9:57 AM PDT, October 9, 2026"
+    private static let report15Detail = "Score report published 9:57:47 AM PDT, October 9, 2026 · not the exact ball time"
+    private static let finalDetail = "Final score report published 10:19:41 AM PDT, October 9, 2026 · not the exact time of the last ball"
+    private static let settlementDetail = "Contract finalized 10:45:23 AM PDT, October 9, 2026 · not the match finish time"
+    private static let outcomeWords = ["Lost", "Winner"]
+    private static let gradeWords = ["Lost", "Won"]
+    private static let movements = [
+        CricketOutlookMovement10868(text: "↓ 11 points", spoken: "Down 11 percentage points from pregame"),
+        CricketOutlookMovement10868(text: "↑ 11 points", spoken: "Up 11 percentage points from pregame"),
+    ]
+
+    private static func outlookRef(_ index: Int) -> CricketOutlookRef10868 {
+        CricketOutlookRef10868(event: "constructed.event.wiind", market: "constructed.market.\(sides[index])", outcome: "constructed.yes")
+    }
+
+    private static let chaseRef = CricketChaseRef10868(event: "constructed.event.wiind", market: "constructed.market.WI", outcome: "constructed.yes")
+
+    /// One original's row. Its later reading and finish are supplied in EVERY
+    /// frame, so phase gating, not their absence, keeps them off a foreign phase.
+    private static func row(_ index: Int, before: CricketOutlookReading10868? = nil,
+                            comparison: CricketOutlookReading10868? = nil) -> CricketOutlookRow10868 {
+        CricketOutlookRow10868(
+            id: sides[index], subject: subjects[index], shape: outlookShapes[index], tint: tints[index],
+            ref: outlookRef(index),
+            before: before ?? .observed(CricketOutlookObservation10868(probability: pregameValues[index], text: pregameTexts[index],
+                                                                       detail: pregameDetail)),
+            comparison: comparison ?? .observed(CricketOutlookObservation10868(probability: recordedValues[index],
+                                                                               text: recordedTexts[index], detail: recordedDetail)),
+            movement: movements[index],
+            finish: CricketOutlookFinish10868(
+                outcome: .admitted(CricketOutlookFinalWord10868(text: outcomeWords[index], symbolName: nil, detail: finalDetail)),
+                grade: .admitted(CricketOutlookFinalWord10868(text: gradeWords[index], symbolName: nil, detail: settlementDetail))
+            )
+        )
+    }
+
+    private static func rows() -> [CricketOutlookRow10868] { [row(0), row(1)] }
+
+    private static func headlineState(_ frame: Frame) -> CricketHeadlineState10868 {
+        switch frame {
+        case .final:
+            return .reported(CricketHeadlineStateFrame10868(
+                entries: [CricketHeadlineStateEntry10868(label: "West Indies", text: "252/4", spoken: "252 for 4"),
+                          CricketHeadlineStateEntry10868(label: nil, text: "West Indies won by 6 wickets",
+                                                         spoken: "West Indies won by 6 wickets")],
+                detail: finalDetail))
+        case .before, .over15:
+            // Supplied before play too; the headline shows it only during and after.
+            return .reported(CricketHeadlineStateFrame10868(
+                entries: [CricketHeadlineStateEntry10868(label: "West Indies · batting", text: "187/4", spoken: "187 for 4"),
+                          CricketHeadlineStateEntry10868(label: "15 overs", text: "Target 250", spoken: "Target 250 runs")],
+                detail: report15Detail))
+        }
+    }
+
+    private static func headline(_ frame: Frame, rows: [CricketOutlookRow10868]? = nil) -> CricketHeadlineInput10868 {
+        let caption: String = switch frame {
+        case .before: "Pregame chances"
+        case .over15: "Recorded win chances"
+        case .final: "Final · West Indies won by 6 wickets"
+        }
+        return CricketHeadlineInput10868(
+            phase: phase(frame), caption: caption, beforeLabel: "Pregame", comparisonLabel: "Recorded",
+            outcomeLabel: "Match", outcomeMissing: "Not reported", rows: rows ?? Self.rows(), state: headlineState(frame))
+    }
+
+    private static let pregameLabel = "Pregame chance to win"
+    private static let pregameNote = "Two independently traded winner markets. No chase target or projected final is known in this retained pre-match frame."
+
+    private static func pregame(phase: CricketHeadlinePhase10868 = .before,
+                                rows: [CricketOutlookRow10868]? = nil) -> CricketPregameStoryInput10868 {
+        CricketPregameStoryInput10868(phase: phase, eyebrow: "Before the first ball", title: "India starts as favorite",
+                                      beforeLabel: pregameLabel, rows: rows ?? Self.rows(), notes: [pregameNote])
+    }
+
+    // MARK: The chase and its limited-over context
+
+    private static let wiPregame = CricketChaseReading10868.observed(CricketChaseFigure10868(text: "23%", detail: pregameDetail))
+    private static let wiAt15 = CricketChaseReading10868.observed(CricketChaseFigure10868(text: "34%", detail: recordedDetail))
+    private static let wiMatchResult = CricketChaseMatchResult10868.reported(
+        CricketChaseFigure10868(text: "West Indies won by 6 wickets", detail: finalDetail))
+    private static let wiGrade = CricketChaseContractResult10868.graded(CricketChaseFigure10868(text: "Won", detail: settlementDetail))
+
+    private static func wickets(lost: Int) -> [CricketChaseWicket10868] {
+        Array(repeating: .lost, count: lost) + Array(repeating: .remaining, count: 10 - lost)
+    }
+
+    private static func chase(_ frame: Frame) -> CricketChaseInput10868 {
+        switch frame {
+        case .final:
+            return CricketChaseInput10868(
+                phase: .final, subject: "West Indies", eyebrow: "West Indies · chasing 250", headline: nil,
+                pregameLabel: "Pregame win chance", pregame: wiPregame, comparisonLabel: "Recorded win chance",
+                comparison: .withheld("Settled — not a chance"), resultLabel: "Original result",
+                contractResult: wiGrade, matchResult: wiMatchResult,
+                actual: .reported(CricketChaseState10868(
+                    battingSubject: "West Indies", context: "The chase, completed", runs: .reported(text: "252", value: 252),
+                    runsCaption: "runs scored", target: .reported(text: "250", value: 250), targetCaption: "target",
+                    wickets: wickets(lost: 4), wicketsText: "6 wickets left", oversText: "18.3 overs played",
+                    reportDetail: finalDetail)),
+                detailsRef: chaseRef, notes: ["Rates describe the score; they are not predictions."])
+        case .before, .over15:
+            // Supplied before play too, as a during-play chase; never mounted then.
+            return CricketChaseInput10868(
+                phase: .during, subject: "West Indies", eyebrow: "West Indies · chasing 250",
+                headline: "63 runs needed", pregameLabel: "Pregame win chance", pregame: wiPregame,
+                comparisonLabel: "Recorded win chance", comparison: wiAt15,
+                resultLabel: "Original result", contractResult: .unavailable("Not yet confirmed"),
+                matchResult: .unavailable("Not yet reported"),
+                actual: .reported(CricketChaseState10868(
+                    battingSubject: "West Indies", context: "Chase · 15 overs", runs: .reported(text: "187", value: 187),
+                    runsCaption: "runs scored", target: .reported(text: "250", value: 250), targetCaption: "target",
+                    wickets: wickets(lost: 4), wicketsText: "6 wickets left", oversText: "15.0 overs played",
+                    reportDetail: report15Detail)),
+                detailsRef: chaseRef, notes: ["Rates describe the score; they are not predictions."])
+        }
+    }
+
+    private static func task(_ label: String, lead: (String, String), connective: String,
+                             trail: (String, String)) -> CricketChaseTask10868 {
+        CricketChaseTask10868(label: label, reading: .reported(
+            lead: .reported(text: lead.0, caption: lead.1), connective: connective,
+            trail: .reported(text: trail.0, caption: trail.1), detail: nil))
+    }
+
+    private static let liveTask = task("Chase · 15 overs", lead: ("63", "runs needed"), connective: "from", trail: ("30", "balls left"))
+    private static let finishPair = task("The chase, completed", lead: ("252", "runs scored"), connective: "with",
+                                         trail: ("9", "balls to spare"))
+
+    private static func balls(_ used: Int) -> CricketChaseBalls10868 {
+        CricketChaseBalls10868(label: "Legal balls used",
+                               reading: .reported(text: "\(used) of 120", used: Double(used), limit: 120, detail: nil),
+                               notDrawn: "Ball progress not drawn")
+    }
+
+    private static func rates(achieved: (String, Double), required: (String, Double)?) -> CricketChaseRates10868 {
+        CricketChaseRates10868(
+            ceiling: 16, scaleText: "Both bars share one scale, 0 to 16 runs per over",
+            achieved: CricketChaseRateRow10868(label: "Runs per over so far",
+                                               reading: .reported(text: achieved.0, value: achieved.1, detail: nil)),
+            required: required.map {
+                CricketChaseRateRow10868(label: "Needed from here, runs per over", reading: .reported(text: $0.0, value: $0.1, detail: nil))
+            },
+            notDrawn: "Rate not drawn")
+    }
+
+    private static let liveContext = CricketChaseLimitedOvers10868(
+        task: liveTask, finish: nil, balls: balls(90), rates: rates(achieved: ("12.47", 12.47), required: ("12.60", 12.60)))
+    private static let finalContext = CricketChaseLimitedOvers10868(
+        task: nil, finish: finishPair, balls: balls(111), rates: rates(achieved: ("13.62", 13.62), required: nil))
+    /// Every phase's facts at once, for the before-play and wrong-phase cases.
+    private static let everythingContext = CricketChaseLimitedOvers10868(
+        task: liveTask, finish: finishPair, balls: balls(111), rates: rates(achieved: ("13.62", 13.62), required: ("12.60", 12.60)))
+
+    // MARK: The expectation shift
+
+    /// The four retained checkpoints, each with its own report clock and its
+    /// own West Indies minute close.
+    private static let checkpointRows: [CricketChaseShiftRow10868] = [
+        ("constructed:checkpoint:13.0", "13.0 overs", "170/3", "9:46:44", 0.57, "57%", "9:45–9:46"),
+        ("constructed:checkpoint:15.0", "15.0 overs", "187/4", "9:57:47", 0.34, "34%", "9:56–9:57"),
+        ("constructed:checkpoint:17.0", "17.0 overs", "223/4", "10:06:58", 0.89, "89%", "10:05–10:06"),
+        ("constructed:checkpoint:18.0", "18.0 overs", "240/4", "10:12:01", 0.99, "99%", "10:11–10:12"),
+    ].map { id, label, score, reported, value, text, bar in
+        CricketChaseShiftRow10868(
+            id: id, label: label,
+            score: .reported(CricketChaseFigure10868(
+                text: score, detail: "Score report published \(reported) AM PDT, October 9, 2026 · not the exact ball time")),
+            recorded: .observed(CricketChaseFigure10868(text: text, detail: "Kalshi trade close · minute \(bar) AM PDT, October 9, 2026")),
+            position: value)
+    }
+
+    private static let checkpointIDs = checkpointRows.map(\.id)
+
+    /// Before play the four rows are supplied for the leak case; in play only
+    /// the 13.0 and 15.0 rows; at the final all four, and no finish row.
+    private static func shift(_ frame: Frame, pregame: CricketChaseReading10868? = nil, pregamePosition: Double? = 0.23,
+                              rows: [CricketChaseShiftRow10868]? = nil) -> CricketChaseShiftInput10868 {
+        let final = frame == .final
+        return CricketChaseShiftInput10868(
+            phase: chasePhase(frame), subject: "West Indies", eyebrow: "West Indies · expectation shift",
+            title: final ? "From outsider to winner" : "How the chase changed",
+            pregameLabel: "Pregame", pregame: pregame ?? wiPregame, pregamePosition: pregamePosition,
+            comparisonLabel: "Recorded win chance",
+            // The final's settled 99% is supplied; the card must not show it as a chance.
+            comparison: final
+                ? .observed(CricketChaseFigure10868(text: "99%", detail: "Kalshi trade close · minute 10:18–10:19 AM PDT, October 9, 2026"))
+                : wiAt15,
+            resultLabel: "Actual result", matchResult: final ? wiMatchResult : .unavailable("Not yet reported"),
+            originalResultLabel: "Original result", originalResult: final ? wiGrade : nil,
+            recordedLabel: "Last trade before report",
+            checkpointsLabel: "West Indies recorded win chances versus pregame at each captured score report, on a shared zero to 100 percent scale",
+            scale: CricketChaseShiftScale10868(label: "Win chance", ticks: [
+                CricketChaseShiftTick10868(value: 0, words: "0%"), CricketChaseShiftTick10868(value: 0.5, words: "50%"),
+                CricketChaseShiftTick10868(value: 1, words: "100%"),
+            ]),
+            rows: rows ?? (frame == .over15 ? Array(checkpointRows.prefix(2)) : checkpointRows),
+            baselineNotDrawn: "Pregame mark not drawn", rowNotDrawn: "Recorded mark not drawn",
+            detailsRef: chaseRef, notes: ["Historical probabilities paired with separately timed score reports."])
+    }
+
+    // MARK: History and guides
+
+    private static func closeCount(_ frame: Frame) -> Int {
+        switch frame {
+        case .before: 1
+        case .over15: 3
+        case .final: 6
+        }
+    }
+
+    private static func upper(_ frame: Frame) -> Double {
+        switch frame {
+        case .before: pregameBar
+        case .over15: report15
+        case .final: domainUpper
+        }
+    }
+
+    /// Each retained close is its own one-point run: these sparse closes are
+    /// never joined into a synthetic trace.
+    private static func history(_ frame: Frame) -> CricketHistoryInput10868 {
+        let shown = closes.prefix(closeCount(frame))
+        let span = CricketHistoryDomain10868(lower: domainLower, upper: upper(frame))
+        let series = (0..<2).map { index in
+            CricketHistorySeries10868(
+                id: sides[index], name: subjects[index], shape: historyShapes[index], tint: tints[index],
+                segments: shown.map { close in
+                    CricketHistorySegment10868(id: "\(sides[index]).\(Int(close.x))", points: [
+                        CricketHistoryPoint10868(id: "\(sides[index]).\(Int(close.x))", x: close.x,
+                                                 probability: close.values[index], isPregame: close.x == pregameBar),
+                    ])
+                },
+                absentWords: "No recorded trades")
+        }
+        let tickWords: [[String]] = switch frame {
+        case .before: [["Oct 9", "5 AM"], ["5:57 AM", "Pregame"]]
+        case .over15: [["Oct 9", "5 AM"], ["9:57 AM", "15-over report"]]
+        case .final: [["Oct 9", "5 AM"], ["10:30 AM", "After the final report"]]
+        }
+        return CricketHistoryInput10868(
+            title: "Win probability", series: series, domain: span,
+            yTicks: [CricketHistoryTick10868(value: 0, lines: ["0%"]), CricketHistoryTick10868(value: 0.5, lines: ["50%"]),
+                     CricketHistoryTick10868(value: 1, lines: ["100%"])],
+            xTicks: [CricketHistoryTick10868(value: span.lower, lines: tickWords[0]),
+                     CricketHistoryTick10868(value: span.upper, lines: tickWords[1])],
+            context: "Recorded Kalshi trade closes · times in Pacific Daylight Time",
+            pregameKey: "Pregame",
+            summary: "India circles and West Indies diamonds; separately recorded trade closes, never joined.",
+            plotHeight: 302, window: .caption("Recorded trades"), inspection: nil,
+            previous: CricketHistoryControl10868(label: "Previous recorded minute", isAvailable: true),
+            next: CricketHistoryControl10868(label: "Next recorded minute", isAvailable: false),
+            expand: CricketHistoryControl10868(label: "Open T20 probability chart", isAvailable: true))
+    }
+
+    private static let markerKey = "Score-report publication times; not exact ball, innings-boundary or app-arrival times"
+
+    private static let inningsMarker = CricketHistoryMarker10868(
+        id: "constructed:innings-report", x: inningsReport, emphasis: .prominent, label: "Innings report",
+        spoken: "India 249/5 after 20 overs. Score report published 8:24:19 AM PDT, October 9, 2026; not the exact innings end.",
+        absentWords: nil)
+
+    private static let scoreReportMarkers: [CricketHistoryMarker10868] = [
+        ("13.0", report13, "170/3", "13", "9:46:44"), ("15.0", report15, "187/4", "15", "9:57:47"),
+        ("17.0", report17, "223/4", "17", "10:06:58"), ("18.0", report18, "240/4", "18", "10:12:01"),
+    ].map { id, x, score, overs, clock in
+        CricketHistoryMarker10868(
+            id: "constructed:score-report:\(id)", x: x, emphasis: .subtle, label: nil,
+            spoken: "West Indies \(score) after \(overs) overs. Score report published \(clock) AM PDT, October 9, 2026; not the exact ball time.",
+            absentWords: nil)
+    }
+
+    /// The innings report and the four score reports; no extra final guide.
+    private static let allMarkers: [CricketHistoryMarker10868] = [inningsMarker] + scoreReportMarkers
+
+    private static func markers(_ frame: Frame) -> CricketHistoryMarkerContext10868 {
+        switch frame {
+        case .before:
+            // Every later guide supplied before play: the leaf draws none of them.
+            CricketHistoryMarkerContext10868(phase: .before, markers: allMarkers, key: markerKey)
+        case .over15:
+            CricketHistoryMarkerContext10868(phase: .during, markers: Array(allMarkers.prefix(3)), key: markerKey)
+        case .final:
+            CricketHistoryMarkerContext10868(phase: .completed, markers: allMarkers, key: markerKey)
+        }
+    }
+
+    // MARK: Stream and page
+
+    private static func scope(_ frame: Frame) -> String {
+        switch frame {
+        case .before: "cricket-t20:before"
+        case .over15: "cricket-t20:15.0"
+        case .final: "cricket-t20:final"
+        }
+    }
+
+    private static func stream(_ frame: Frame, wide: Bool = false) -> StoryStreamPresentation10868 {
+        let scope = scope(frame)
+        func ref(_ id: String) -> StoryStreamPresentation10868.CardRef { .init(scope: scope, id: id) }
+        typealias Card = StoryStreamPresentation10868.Card
+        switch frame {
+        case .before:
+            return StoryStreamPresentation10868(
+                scope: scope, eyebrow: nil, heading: "Match stories", cards: [Card(id: "pregame", name: "Pregame outlook")],
+                primary: ref("pregame"), companion: nil, companionLabel: nil, wide: wide, position: "1 of 1",
+                previous: nil, next: nil)
+        case .over15:
+            return StoryStreamPresentation10868(
+                scope: scope, eyebrow: nil, heading: "Match stories",
+                cards: [Card(id: "chase", name: "The chase"), Card(id: "shift", name: "Expectation shift")],
+                primary: ref("chase"), companion: ref("shift"), companionLabel: "Next", wide: wide,
+                position: "1 of 2", previous: nil, next: ref("shift"))
+        case .final:
+            return StoryStreamPresentation10868(
+                scope: scope, eyebrow: nil, heading: "After the match",
+                cards: [Card(id: "shift", name: "Expectation shift"), Card(id: "chase", name: "The chase")],
+                primary: ref("shift"), companion: ref("chase"), companionLabel: "Next", wide: wide,
+                position: "1 of 2", previous: nil, next: ref("chase"))
+        }
+    }
+
+    private static func stories(_ frame: Frame) -> [CricketEventPageStory10868] {
+        switch frame {
+        case .before:
+            [CricketEventPageStory10868(cardID: "pregame", card: .pregame)]
+        case .over15:
+            [CricketEventPageStory10868(cardID: "chase", card: .chase),
+             CricketEventPageStory10868(cardID: "shift", card: .expectationShift)]
+        case .final:
+            [CricketEventPageStory10868(cardID: "shift", card: .expectationShift),
+             CricketEventPageStory10868(cardID: "chase", card: .chase)]
+        }
+    }
+
+    private static let title = CricketEventPageTitle10868(eyebrow: "Recorded · Second T20I · Ranchi", title: "India · West Indies")
+
+    private static func reader(_ frame: Frame) -> CricketEventPageReaderHeader10868 {
+        switch frame {
+        case .before: CricketEventPageReaderHeader10868(title: "India · West Indies", state: "Before the first ball · 20 overs per side")
+        case .over15: CricketEventPageReaderHeader10868(title: "West Indies 187/4 · 15 overs", state: "Recorded chase report · target 250")
+        case .final: CricketEventPageReaderHeader10868(title: "West Indies won by 6 wickets", state: "Final · 9 balls to spare")
+        }
+    }
+
+    private static func about(_ frame: Frame) -> CricketEventPageAbout10868 {
+        let common = [
+            "India versus West Indies, second T20I in Ranchi, October 9, 2026.",
+            "Pregame is the last traded minute before the pre-match report, not the market's opening probability.",
+            "The two winner markets are traded independently and may not total 100%. A tie or no-result settlement at $0.50 is a settlement amount, not a third 50% prediction.",
+        ]
+        let later = ["Target 250 follows India’s 249/5. Rates are arithmetic from runs and legal balls, not forecasts."]
+        return CricketEventPageAbout10868(title: "Recorded T20 match", paragraphs: frame == .before ? common : common + later)
+    }
+
+    private static let copy = CricketEventPageCopy10868(
+        storiesLabel: "Match stories", storyUnavailable: "This story is not available in this update.",
+        headlineUnavailable: "Match chances unavailable in this update.", aboutLabel: "About this match",
+        allPropsLabel: "All 2 original markets")
+
+    /// Every T20 leaf input is supplied in every frame — the later chase,
+    /// shift and limited-over facts before play too — so only the format, the
+    /// page phase and each leaf's own phase decide what mounts.
+    private static func page(_ frame: Frame, format: CricketEventPageFormat10868 = .t20, wide: Bool = false,
+                             headline: CricketHeadlineInput10868? = nil) -> CricketEventPageInput10868 {
+        let context: CricketChaseLimitedOvers10868 = switch frame {
+        case .before: everythingContext
+        case .over15: liveContext
+        case .final: finalContext
+        }
+        return CricketEventPageInput10868(
+            phase: phase(frame), title: title, reader: reader(frame), headline: headline ?? Self.headline(frame),
+            secondaryProvenance: true, notice: nil,
+            history: history(frame), historyMarkers: markers(frame), readerPlotHeight: 350,
+            chase: chase(frame == .final ? .final : .over15),
+            runsTint: .orange, wicketTint: .gray,
+            stream: stream(frame, wide: wide), stories: stories(frame), about: about(frame), copy: copy,
+            format: format, pregame: pregame(), expectationShift: shift(frame == .before ? .final : frame),
+            limitedOvers: context)
+    }
+
+    // MARK: Originals
+
+    private static let originalsScope = "constructed.scope.cricket-t20.wiind"
+
+    private static func identity(_ index: Int) -> OriginalMarketDetails9483.Identity {
+        OriginalMarketDetails9483.Identity(source: "kalshi", market: "constructed.market.\(sides[index])", side: "Yes")
+    }
+
+    private static func selection(_ index: Int) -> OriginalMarketDetails9483.Selection {
+        OriginalMarketDetails9483.Selection(scope: originalsScope, identity: identity(index))
+    }
+
+    private static func catalogue(_ frame: Frame) -> OriginalMarketDetails9483.Catalogue {
+        let originals = (0..<2).map { index -> OriginalMarketDetails9483.Original in
+            let mode: OriginalMarketDetails9483.Mode = switch frame {
+            case .before: .pregame
+            case .over15: .comparison(.recorded)
+            case .final: .result
+            }
+            let later: OriginalMarketDetails9483.Reading? = frame == .over15
+                ? .value(recordedTexts[index], placement: recordedValues[index], provenance: recordedDetail)
+                : nil
+            let grade: OriginalMarketDetails9483.Grade? = frame == .final
+                ? OriginalMarketDetails9483.Grade(words: gradeWords[index], provenance: settlementDetail)
+                : nil
+            return OriginalMarketDetails9483.Original(
+                identity: identity(index), title: titles[index], outcome: subjects[index], mode: mode,
+                pregame: .value(pregameTexts[index], placement: pregameValues[index], provenance: pregameDetail),
+                later: later, grade: grade,
+                about: OriginalMarketDetails9483.About(
+                    source: "Kalshi · \(tickers[index])", rules: .verified([rules[index], tieRule]),
+                    provenance: [OriginalMarketDetails9483.Row(label: "Original pregame source time", value: "2026-10-09T12:57:00Z")],
+                    historicalQuote: nil))
+        }
+        return OriginalMarketDetails9483.Catalogue(scope: originalsScope, originals: originals)
+    }
+
+    private static func originals(_ frame: Frame, selected: Int? = 1) -> CricketEventPageOriginals10868 {
+        CricketEventPageOriginals10868(
+            catalogue: catalogue(frame), selection: selected.map { selection($0) },
+            heading: "All 2 original markets", context: "2 retained originals",
+            emptyWords: "No retained originals for this match", unavailableChoice: "Original unavailable", tint: .orange)
+    }
+
+    // MARK: Test-only inputs, for the format cases
+
+    private static func outlook(completed: Bool) -> CricketOutlookInput10868 {
+        if completed {
+            return CricketOutlookInput10868(
+                eyebrow: "Pregame expectations → result", title: "West Indies was 23% pregame", beforeLabel: "Pregame",
+                comparisonLabel: "Recorded", rows: rows(), selectedRowID: nil, notes: [],
+                mode: .completed(CricketOutlookFinalFrame10868(outcomeLabel: "Match", outcomeMissing: "Not reported",
+                                                               gradeLabel: "Original contract", context: [])))
+        }
+        return CricketOutlookInput10868(
+            eyebrow: "Pregame → recorded chance", title: "How the outlook changed", beforeLabel: "Pregame",
+            comparisonLabel: "Recorded", rows: rows(), selectedRowID: nil, notes: [])
+    }
+
+    private static func survival() -> CricketSurvivalInput10868 {
+        CricketSurvivalInput10868(
+            phase: .during, subject: "West Indies · original market", title: "Can they hold on?", pregameLabel: "Pregame",
+            pregame: wiPregame, comparisonLabel: "Recorded win chance", comparison: wiAt15,
+            checkpointsLabel: "Reported wickets remaining", checkpoints: [], selectedCheckpointID: nil, notes: [])
+    }
+
+    private static func activation(_ stream: StoryStreamPresentation10868, _ id: String,
+                                   log: @escaping (String) -> Void) -> StoryStreamCardActivation10868 {
+        let resolved = stream.resolve(reduceMotion: false, actionable: true)
+        let ref = StoryStreamPresentation10868.CardRef(scope: stream.scope, id: id)
+        return StoryStreamCardActivation10868(card: ref, intents: stream.activationIntents(for: ref, resolved: resolved)) { intent in
+            if case .interaction(_, let card) = intent { log("hold:\(card?.id ?? "-")") } else { log("other") }
+        }
+    }
+
+    private static func mounted(_ input: CricketEventPageInput10868) -> [CricketEventPageCard10868] {
+        let model = CricketEventPageModel10868(input)
+        return CricketEventPageCard10868.allCases.filter(model.isMounted)
+    }
+
+    private static func points(_ history: CricketHistoryInput10868) -> [CricketHistoryPoint10868] {
+        history.series.flatMap { $0.segments.flatMap(\.points) }
+    }
+
+    // MARK: Format
+
+    @MainActor
+    func testTheTestFormatStaysTheDefaultAndMountsNoT20LeafEvenWhenSupplied() {
+        // An input built without a format is a Test page with no T20 input.
+        let bare = CricketEventPageInput10868(
+            phase: .during, title: Self.title, reader: Self.reader(.over15), headline: Self.headline(.over15),
+            history: Self.history(.over15), runsTint: .orange, wicketTint: .gray, copy: Self.copy)
+        XCTAssertEqual(bare.format, .test)
+        XCTAssertNil(bare.pregame)
+        XCTAssertNil(bare.expectationShift)
+        XCTAssertNil(bare.limitedOvers)
+
+        for frame in [Frame.before, .over15, .final] {
+            let supplied = Self.page(frame, format: .test)
+            XCTAssertNotNil(supplied.pregame)
+            XCTAssertNotNil(supplied.expectationShift)
+            XCTAssertNotNil(supplied.limitedOvers)
+            var plain = supplied
+            plain.pregame = nil
+            plain.expectationShift = nil
+            plain.limitedOvers = nil
+
+            let model = CricketEventPageModel10868(supplied)
+            XCTAssertNil(model.pregame)
+            XCTAssertNil(model.expectationShift)
+            XCTAssertNil(model.limitedOvers)
+            XCTAssertEqual(Self.mounted(supplied), Self.mounted(plain), "supplying T20 leaves changes nothing on a Test page")
+            XCTAssertEqual(Self.mounted(supplied), frame == .before ? [.history] : [.history, .chase])
+            XCTAssertFalse(model.readerShows(.pregame))
+            XCTAssertFalse(model.readerShows(.expectationShift))
+            for link in supplied.stories where link.card == .pregame || link.card == .expectationShift {
+                XCTAssertNil(model.story(link.cardID), "a T20 story is never a Test story")
+            }
+
+            let view = CricketEventPagePresentation10868(input: supplied, onExpectationShiftDetails: { _ in XCTFail("no shift on a Test page") })
+            XCTAssertNil(view.pregameContent())
+            XCTAssertNil(view.expectationShiftContent())
+            XCTAssertNil(view.chaseContent()?.limitedOvers, "the Test chase never takes the limited-over variant")
+            XCTAssertEqual(view.chaseContent()?.input, CricketEventPagePresentation10868(input: plain).chaseContent()?.input)
+        }
+    }
+
+    // MARK: Phases
+
+    @MainActor
+    func testBeforePlayTheStreamOffersOnlyThePregameOutlookBesideTheHeadlineHistoryAndTwoOriginals() {
+        let input = Self.page(.before)
+        let model = CricketEventPageModel10868(input)
+        let originals = Self.originals(.before)
+        let view = CricketEventPagePresentation10868(input: input, originals: originals)
+
+        XCTAssertEqual(input.format, .t20)
+        XCTAssertEqual(Self.mounted(input), [.history, .pregame])
+        XCTAssertEqual(input.stream?.cards.map(\.id), ["pregame"])
+        XCTAssertEqual(model.storyCard("pregame"), .pregame)
+        XCTAssertTrue(model.readerShows(.pregame))
+
+        // The pregame outlook: both originals' own pregame readings, 78% and
+        // 23%, never normalized, complemented or joined by a draw row.
+        guard let story = view.pregameContent()?.input else { return XCTFail("the pregame outlook mounts before play") }
+        XCTAssertEqual(story, input.pregame)
+        XCTAssertEqual(story.visibleRows.map(\.subject), Self.subjects)
+        XCTAssertEqual(story.visibleRows.map(\.shape), [.circle, .diamond])
+        let fills = story.rows.compactMap { story.fill($0) }
+        XCTAssertEqual(fills, Self.pregameValues)
+        XCTAssertEqual(fills.reduce(0, +), 1.01, accuracy: 1e-9, "two independent readings stay 101%")
+        XCTAssertEqual(story.rows.count, 2, "no draw row is added for a tie rule's settlement amount")
+
+        // The headline: each original's own pregame chance only.
+        XCTAssertEqual(view.headlineContent()?.input, input.headline)
+        XCTAssertEqual(input.headline.slots, [.pregame])
+        XCTAssertEqual(input.headline.sourceInfo.subjects.map { $0.entries.map(\.text) }, [["78%"], ["23%"]])
+
+        // The history: named and shape-keyed, each original's own pregame close.
+        let anchor = view.historyContent(reader: false)
+        XCTAssertEqual(anchor.input, input.history)
+        XCTAssertEqual(anchor.input.series.map(\.name), Self.subjects)
+        XCTAssertEqual(anchor.input.series.map(\.shape), [.circle, .diamond])
+        let last = anchor.input.series.compactMap { $0.segments.last?.points.last?.probability }
+        XCTAssertEqual(last, Self.pregameValues)
+        XCTAssertEqual(last.reduce(0, +), 1.01, accuracy: 1e-9)
+        XCTAssertTrue(Self.points(anchor.input).allSatisfy(\.isPregame))
+
+        // No chase, shift or limited-over context before play, though all are supplied.
+        XCTAssertNotNil(input.chase)
+        XCTAssertNotNil(input.expectationShift)
+        XCTAssertNotNil(input.limitedOvers)
+        XCTAssertNil(view.chaseContent())
+        XCTAssertNil(view.expectationShiftContent())
+        XCTAssertNil(model.limitedOvers)
+
+        // The two original winner markets, with the held original's Details.
+        let choices = OriginalMarketChooser9483.choices(catalogue: originals.catalogue, selection: originals.selection,
+                                                        labels: originals.labels, unavailableChoice: originals.unavailableChoice)
+        XCTAssertEqual(choices.map(\.label), Self.titles)
+        XCTAssertEqual(choices.map(\.isSelected), [false, true])
+        XCTAssertEqual(view.chooserContent()?.catalogue, originals.catalogue)
+        XCTAssertEqual(view.chooserContent()?.heading, "All 2 original markets")
+    }
+
+    @MainActor
+    func testBeforePlayNoLaterTargetScoreBallRateComparisonOrResultIsShownOrSpoken() {
+        let input = Self.page(.before)
+        let originals = Self.originals(.before)
+        let view = CricketEventPagePresentation10868(input: input, originals: originals)
+
+        // Every later fact really is supplied, so the absence below is the
+        // page's and each leaf's gating, not a missing input.
+        XCTAssertEqual(input.headline.rows.map { $0.comparison.observation?.text }, ["67%", "34%"])
+        XCTAssertEqual(input.expectationShift?.phase, .final)
+        XCTAssertEqual(input.expectationShift?.rows.count, 4)
+        XCTAssertNotNil(input.limitedOvers?.task)
+        XCTAssertEqual(input.chase?.phase, .during)
+        XCTAssertEqual(input.historyMarkers?.markers.count, 5)
+
+        var outputs: [String] = [input.title.title, input.reader.title]
+        outputs += [input.title.eyebrow, input.reader.state].compactMap { $0 }
+        outputs += input.about.map { [$0.title] + $0.paragraphs } ?? []
+        outputs += input.stream?.cards.map(\.name) ?? []
+        if let headline = view.headlineContent()?.input {
+            outputs += headline.rows.map { headline.accessibilityRowValue($0) }
+            outputs += [headline.caption, headline.accessibilityState].compactMap { $0 }
+            for subject in headline.sourceInfo.subjects {
+                for entry in subject.entries {
+                    outputs += [entry.label, entry.text] + [entry.detail].compactMap { $0 }
+                }
+            }
+            XCTAssertNil(headline.sourceInfo.state, "the supplied 187/4 state stays hidden before play")
+        } else {
+            XCTFail("the before headline mounts")
+        }
+        if let story = view.pregameContent()?.input {
+            outputs += [story.accessibilityHeader, story.accessibilityNotes].compactMap { $0 }
+            outputs += story.visibleRows.compactMap { story.accessibilityRowValue($0) }
+            for row in story.visibleRows {
+                if let observation = story.reading(row)?.observation { outputs += [observation.text, observation.detail] }
+            }
+            outputs += story.visibleNotes
+        } else {
+            XCTFail("the pregame outlook mounts")
+        }
+        let anchor = view.historyContent(reader: false)
+        XCTAssertEqual(CricketHistoryPlotArrangement10868.visibleMarkers(anchor.markers, domain: anchor.input.domain), [])
+        XCTAssertEqual(CricketHistoryPlotArrangement10868.unavailableMarkerWords(anchor.markers), [])
+        outputs += [anchor.input.title, anchor.input.summary] + [anchor.input.context].compactMap { $0 }
+        outputs += anchor.input.xTicks.flatMap(\.lines)
+        for index in 0..<2 {
+            let content = OriginalMarketDetails9483.content(catalogue: originals.catalogue, selection: Self.selection(index))
+            XCTAssertNil(content?.result, "no contract result before play")
+            outputs += content?.readings.map(\.text) ?? []
+        }
+        XCTAssertNil(view.chaseContent())
+        XCTAssertNil(view.expectationShiftContent())
+
+        let later = ["67%", "34%", "57%", "89%", "99%", "249/5", "170/3", "187/4", "223/4", "240/4", "252/4",
+                     "250", "Won", "Winner", "Lost", "won by", "balls", "12.47", "12.60", "13.62", "runs per over", "needed"]
+        XCTAssertGreaterThan(outputs.count, 10)
+        for output in outputs {
+            for fact in later {
+                XCTAssertFalse(output.contains(fact), "“\(fact)” reached before play: \(output)")
+            }
+        }
+    }
+
+    @MainActor
+    func testDuringPlayTheChaseWithItsLimitedOverContextAndTheExpectationShiftMountAndNoTestOnlyCard() {
+        let input = Self.page(.over15)
+        let model = CricketEventPageModel10868(input)
+        let view = CricketEventPagePresentation10868(input: input)
+
+        XCTAssertEqual(Self.mounted(input), [.history, .chase, .expectationShift])
+        XCTAssertNil(view.pregameContent(), "the pregame outlook is before play only")
+        XCTAssertNil(view.shiftsContent())
+        XCTAssertNil(view.survivalContent())
+        XCTAssertNil(view.expectationsContent())
+        XCTAssertEqual(model.storyCard("chase"), .chase)
+        XCTAssertEqual(model.storyCard("shift"), .expectationShift)
+
+        // Headline: each original's own pregame beside its own recorded close,
+        // 67% and 34% still 101%, with the owner's score words under their own clock.
+        XCTAssertEqual(input.headline.sourceInfo.subjects.map { $0.entries.map(\.text) }, [["78%", "67%"], ["23%", "34%"]])
+        XCTAssertEqual(input.headline.sourceInfo.subjects.map { $0.entries.map(\.detail) },
+                       [[Self.pregameDetail, Self.recordedDetail], [Self.pregameDetail, Self.recordedDetail]])
+        XCTAssertEqual(Self.recordedValues.reduce(0, +), 1.01, accuracy: 1e-9)
+        XCTAssertEqual(input.headline.accessibilityState,
+                       "West Indies · batting: 187 for 4. 15 overs: Target 250 runs. \(Self.report15Detail)")
+
+        // The chase, with the owner's limited-over context beside it.
+        guard let chase = view.chaseContent() else { return XCTFail("the live chase mounts") }
+        XCTAssertEqual(chase.input, input.chase)
+        XCTAssertEqual(chase.limitedOvers, Self.liveContext)
+        XCTAssertEqual(chase.input.visibleState?.runs, .reported(text: "187", value: 187))
+        XCTAssertEqual(chase.input.visibleState?.target, .reported(text: "250", value: 250))
+        XCTAssertEqual(chase.input.visibleState?.reportDetail, Self.report15Detail)
+        XCTAssertNotEqual(chase.input.visibleState?.reportDetail, Self.recordedDetail,
+                          "the report clock and the close's own clock stay separate facts")
+        XCTAssertNil(chase.input.visibleContractResult, "no result while live")
+        let limited = CricketChaseLimitedOversVisible10868(phase: chase.input.phase, context: chase.limitedOvers)
+        XCTAssertEqual(limited?.accessibilityTask, "Chase · 15 overs: 63 runs needed from 30 balls left")
+        XCTAssertEqual(limited?.ballFraction ?? -1, 0.75, accuracy: 1e-9)
+        XCTAssertEqual(limited?.rateRows.map(\.label), ["Runs per over so far", "Needed from here, runs per over"])
+
+        // The expectation shift: the 13.0 and 15.0 checkpoints against pregame on one scale.
+        guard let shift = view.expectationShiftContent() else { return XCTFail("the live expectation shift mounts") }
+        XCTAssertEqual(shift.input, input.expectationShift)
+        XCTAssertEqual(shift.tint, input.runsTint, "the card follows the chasing side")
+        XCTAssertEqual(shift.input.visibleRows.map(\.id), Array(Self.checkpointIDs.prefix(2)))
+        XCTAssertEqual(shift.input.visibleRows.map { shift.input.rowPosition($0) }, [0.57, 0.34])
+        XCTAssertEqual(shift.input.baselinePosition, 0.23)
+        XCTAssertEqual(shift.input.visibleComparison, Self.wiAt15, "the owner's headline reading, not the last row's")
+        XCTAssertNil(shift.input.visibleMatchResult)
+        XCTAssertNil(shift.input.visibleOriginalResult)
+
+        // History: only closes at or before the 15-over report, each its own
+        // run, and the innings report plus two score-report guides.
+        let anchor = view.historyContent(reader: false)
+        XCTAssertTrue(Self.points(anchor.input).allSatisfy { $0.x <= Self.report15 })
+        XCTAssertTrue(anchor.input.series.allSatisfy { $0.segments.allSatisfy { $0.points.count == 1 } },
+                      "sparse closes are never joined into a trace")
+        let guides = ["constructed:innings-report", "constructed:score-report:13.0", "constructed:score-report:15.0"]
+        XCTAssertEqual(anchor.markers?.markers.map(\.id), guides)
+        XCTAssertEqual(CricketHistoryPlotArrangement10868.visibleMarkers(anchor.markers, domain: anchor.input.domain).map(\.id), guides)
+    }
+
+    @MainActor
+    func testAtTheFinalPregameMeetsTheReportedFinishBesideFourHistoricalCheckpointsAndEachOriginalsOwnGrade() {
+        let input = Self.page(.final)
+        let model = CricketEventPageModel10868(input)
+        let originals = Self.originals(.final)
+        let view = CricketEventPagePresentation10868(input: input, originals: originals)
+
+        XCTAssertEqual(Self.mounted(input), [.history, .chase, .expectationShift])
+        XCTAssertEqual(model.storyCard("shift"), .expectationShift)
+        XCTAssertEqual(model.storyCard("chase"), .chase)
+
+        // Headline: pregame beside the reported match finish — never a later
+        // chance and never a contract grade.
+        XCTAssertEqual(input.headline.sourceInfo.subjects.map { $0.entries.map(\.slot) },
+                       Array(repeating: [.pregame, .outcome], count: 2))
+        XCTAssertEqual(input.headline.sourceInfo.subjects.map { $0.entries.map(\.text) }, [["78%", "Lost"], ["23%", "Winner"]])
+        XCTAssertFalse(input.headline.sourceInfo.subjects.flatMap { $0.entries.map(\.text) }.contains("Won"))
+
+        // The expectation shift: exactly the four historical rows at
+        // 57/34/89/99, no fifth finish row, no 0% or 100% point.
+        guard let shift = view.expectationShiftContent()?.input else { return XCTFail("the final expectation shift mounts") }
+        XCTAssertEqual(shift.visibleRows.map(\.id), Self.checkpointIDs)
+        XCTAssertEqual(shift.visibleRows.map(\.label), ["13.0 overs", "15.0 overs", "17.0 overs", "18.0 overs"])
+        XCTAssertEqual(shift.visibleRows.map { shift.rowPosition($0) }, [0.57, 0.34, 0.89, 0.99])
+        XCTAssertTrue(shift.visibleRows.allSatisfy { row in row.position.map { $0 > 0 && $0 < 1 } ?? false })
+        XCTAssertEqual(shift.baselinePosition, 0.23)
+        XCTAssertNil(shift.visibleComparison, "the supplied settled 99% is not a final chance")
+
+        // The reported match result and the contract's own result stay two facts.
+        XCTAssertEqual(shift.visibleMatchResult, Self.wiMatchResult)
+        XCTAssertEqual(shift.visibleOriginalResult, Self.wiGrade)
+        guard case .reported(let match)? = shift.visibleMatchResult,
+              case .graded(let grade)? = shift.visibleOriginalResult
+        else { return XCTFail("both final results are supplied") }
+        XCTAssertNotEqual(match.text, grade.text)
+        XCTAssertNotEqual(match.detail, grade.detail, "the match report and the contract settlement keep their own clocks")
+
+        // The resolved chase with its completed limited-over pair; no live task or required rate.
+        guard let chase = view.chaseContent() else { return XCTFail("the resolved chase mounts") }
+        XCTAssertEqual(chase.input.visibleHeading, "West Indies won by 6 wickets")
+        XCTAssertEqual(chase.input.visibleHeadingDetail, Self.finalDetail)
+        XCTAssertNil(chase.input.visibleComparison, "a settled price is not a final chance")
+        XCTAssertEqual(chase.input.visibleContractResult, Self.wiGrade)
+        XCTAssertEqual(chase.input.visibleState?.runs, .reported(text: "252", value: 252))
+        XCTAssertEqual(chase.limitedOvers, Self.finalContext)
+        let limited = CricketChaseLimitedOversVisible10868(phase: chase.input.phase, context: chase.limitedOvers)
+        XCTAssertEqual(limited?.accessibilityTask, "The chase, completed: 252 runs scored with 9 balls to spare")
+        XCTAssertEqual(limited?.rateRows.map(\.label), ["Runs per over so far"])
+
+        // Each original's own grade in its Details, with its own settlement clock.
+        for index in 0..<2 {
+            let content = OriginalMarketDetails9483.content(catalogue: originals.catalogue, selection: Self.selection(index))
+            XCTAssertEqual(content?.result?.words, Self.gradeWords[index])
+            XCTAssertEqual(content?.result?.provenance, Self.settlementDetail)
+            XCTAssertNotEqual(content?.result?.words, "West Indies won by 6 wickets")
+        }
+
+        // The history keeps the last retained closes (1% and 99%) and the
+        // five report guides; no 0/100 point and no extra final guide.
+        let anchor = view.historyContent(reader: false)
+        XCTAssertTrue(Self.points(anchor.input).allSatisfy { $0.probability > 0 && $0.probability < 1 })
+        XCTAssertEqual(anchor.markers?.markers.map(\.id),
+                       ["constructed:innings-report", "constructed:score-report:13.0", "constructed:score-report:15.0",
+                        "constructed:score-report:17.0", "constructed:score-report:18.0"])
+        XCTAssertEqual(CricketHistoryPlotArrangement10868.visibleMarkers(anchor.markers, domain: anchor.input.domain).count, 5)
+    }
+
+    // MARK: Gating and links
+
+    @MainActor
+    func testALeafFromAnotherPhaseOrTheOtherFormatIsNotMounted() {
+        // During play: the before-phase pregame outlook, a final shift and a
+        // final chase are not coerced into live play.
+        var live = Self.page(.over15)
+        live.expectationShift = Self.shift(.final)
+        live.chase = Self.chase(.final)
+        XCTAssertEqual(live.pregame?.phase, .before)
+        let liveModel = CricketEventPageModel10868(live)
+        XCTAssertNil(liveModel.pregame, "the pregame outlook is before play only")
+        XCTAssertNil(liveModel.expectationShift, "a final shift is not live play")
+        XCTAssertNil(liveModel.chase, "a final chase is not live play")
+        XCTAssertNil(liveModel.limitedOvers, "no limited-over context without a mounted chase")
+        XCTAssertEqual(Self.mounted(live), [.history])
+
+        // At the final: a live shift and a live chase are not the resolved ones.
+        var final = Self.page(.final)
+        final.expectationShift = Self.shift(.over15)
+        final.chase = Self.chase(.over15)
+        final.limitedOvers = Self.everythingContext
+        let finalModel = CricketEventPageModel10868(final)
+        XCTAssertNil(finalModel.expectationShift)
+        XCTAssertNil(finalModel.chase)
+        XCTAssertNil(finalModel.limitedOvers)
+        XCTAssertEqual(Self.mounted(final), [.history])
+
+        // Before play: an outlook the owner marked for another phase, or a
+        // shift of any phase, is not shown.
+        var before = Self.page(.before)
+        before.pregame = Self.pregame(phase: .during)
+        before.expectationShift = Self.shift(.before)
+        let beforeModel = CricketEventPageModel10868(before)
+        XCTAssertNil(beforeModel.pregame)
+        XCTAssertNil(beforeModel.expectationShift)
+        XCTAssertEqual(Self.mounted(before), [.history])
+
+        // The Test-only cards are never mounted in the T20 format, whatever is supplied …
+        var testOnly = Self.page(.over15)
+        testOnly.shifts = Self.outlook(completed: false)
+        testOnly.survival = Self.survival()
+        XCTAssertNil(CricketEventPageModel10868(testOnly).shifts)
+        XCTAssertNil(CricketEventPageModel10868(testOnly).survival)
+        XCTAssertNil(CricketEventPagePresentation10868(input: testOnly).survivalContent())
+        var testOnlyFinal = Self.page(.final)
+        testOnlyFinal.expectations = Self.outlook(completed: true)
+        XCTAssertNil(CricketEventPageModel10868(testOnlyFinal).expectations)
+        // … while the same inputs on a Test page do mount: the format decides, not the inputs.
+        testOnly.format = .test
+        XCTAssertNotNil(CricketEventPageModel10868(testOnly).shifts)
+        XCTAssertNotNil(CricketEventPageModel10868(testOnly).survival)
+        testOnlyFinal.format = .test
+        XCTAssertNotNil(CricketEventPageModel10868(testOnlyFinal).expectations)
+    }
+
+    @MainActor
+    func testOnlyOneExactLinkToAStoryThisPhaseMountsResolves() {
+        var links = Self.page(.over15)
+        links.stories = [
+            CricketEventPageStory10868(cardID: "pregame", card: .pregame),
+            CricketEventPageStory10868(cardID: "shift", card: .expectationShift),
+            CricketEventPageStory10868(cardID: "shift", card: .chase),
+            CricketEventPageStory10868(cardID: "history", card: .history),
+            CricketEventPageStory10868(cardID: "holding", card: .survival),
+            CricketEventPageStory10868(cardID: "chase", card: .chase),
+        ]
+        let linked = CricketEventPageModel10868(links)
+        XCTAssertNil(linked.story("pregame"), "the pregame outlook is not mounted during play")
+        XCTAssertNil(linked.story("shift"), "two links for one id name no single story")
+        XCTAssertNil(linked.story("history"), "the anchor is never a stream story")
+        XCTAssertNil(linked.story("holding"), "a Test-only card is never a T20 story")
+        XCTAssertNil(linked.story("unknown"))
+        XCTAssertEqual(linked.storyCard("chase"), .chase)
+
+        // Before play a link to a later card is unavailable; the pregame link resolves.
+        var early = Self.page(.before)
+        early.stories = [CricketEventPageStory10868(cardID: "shift", card: .expectationShift),
+                         CricketEventPageStory10868(cardID: "chase", card: .chase),
+                         CricketEventPageStory10868(cardID: "pregame", card: .pregame)]
+        let earlyModel = CricketEventPageModel10868(early)
+        XCTAssertNil(earlyModel.story("shift"))
+        XCTAssertNil(earlyModel.story("chase"))
+        XCTAssertEqual(earlyModel.storyCard("pregame"), .pregame)
+        XCTAssertFalse(earlyModel.readerShows(.expectationShift))
+        XCTAssertFalse(earlyModel.readerShows(.chase))
+
+        // At the final a pregame link is unavailable too.
+        var late = Self.page(.final)
+        late.stories = [CricketEventPageStory10868(cardID: "pregame", card: .pregame)]
+        XCTAssertNil(CricketEventPageModel10868(late).story("pregame"))
+        XCTAssertFalse(CricketEventPageModel10868(late).readerShows(.pregame))
+    }
+
+    @MainActor
+    func testAMissingValueKeepsItsValidNeighbourAndItsOwnWords() {
+        // The pregame outlook: India's reading missing, West Indies keeps its 23%.
+        var before = Self.page(.before)
+        before.pregame = Self.pregame(rows: [Self.row(0, before: .unavailable("Pregame chance unavailable")), Self.row(1)])
+        guard let story = CricketEventPagePresentation10868(input: before).pregameContent()?.input
+        else { return XCTFail("the pregame outlook stays mounted") }
+        XCTAssertNil(story.fill(story.rows[0]), "unknown is never a 0% rail")
+        XCTAssertEqual(story.fill(story.rows[1]), 0.23)
+        XCTAssertEqual(story.accessibilityRowValue(story.rows[0]), "\(Self.pregameLabel): Pregame chance unavailable")
+        XCTAssertEqual(story.accessibilityRowValue(story.rows[1]), "\(Self.pregameLabel): 23%, \(Self.pregameDetail)")
+
+        // The expectation shift: a missing pregame keeps every row …
+        var live = Self.page(.over15)
+        live.expectationShift = Self.shift(.over15, pregame: .unavailable("Pregame chance unavailable"), pregamePosition: nil)
+        guard let noBaseline = CricketEventPagePresentation10868(input: live).expectationShiftContent()?.input
+        else { return XCTFail("the shift stays mounted") }
+        XCTAssertNil(noBaseline.baselinePosition)
+        XCTAssertEqual(noBaseline.visibleRows.map { noBaseline.rowPosition($0) }, [0.57, 0.34])
+        // … and a missing row reading keeps the pregame, its neighbour and its own report.
+        let gap = CricketChaseShiftRow10868(id: Self.checkpointIDs[1], label: "15.0 overs", score: Self.checkpointRows[1].score,
+                                            recorded: .unavailable("No trade before this report"), position: nil)
+        live.expectationShift = Self.shift(.over15, rows: [Self.checkpointRows[0], gap])
+        guard let oneGap = CricketEventPagePresentation10868(input: live).expectationShiftContent()?.input
+        else { return XCTFail("the shift stays mounted") }
+        XCTAssertEqual(oneGap.baselinePosition, 0.23)
+        XCTAssertEqual(oneGap.visibleRows.map { oneGap.rowPosition($0) }, [0.57, nil])
+        XCTAssertEqual(oneGap.rowSegment(oneGap.visibleRows[0]), CricketChaseShiftSegment10868(lower: 0.23, upper: 0.57))
+        XCTAssertNil(oneGap.rowSegment(oneGap.visibleRows[1]), "never a neighbour's value or 0%")
+        XCTAssertEqual(oneGap.visibleRows[1].score, Self.checkpointRows[1].score)
+
+        // The chase: without the owner's limited-over context the actual chase
+        // stands, and no ball limit or rate is invented.
+        var bare = Self.page(.over15)
+        bare.limitedOvers = nil
+        let bareView = CricketEventPagePresentation10868(input: bare)
+        guard let chase = bareView.chaseContent() else { return XCTFail("the chase stays mounted") }
+        XCTAssertNil(chase.limitedOvers)
+        XCTAssertEqual(chase.input.visibleState?.runs, .reported(text: "187", value: 187))
+        XCTAssertNotNil(bareView.expectationShiftContent(), "the shift stands without the chase's context")
+
+        // The headline: one original's recorded reading missing keeps the other's.
+        let partial = Self.page(.over15, headline: Self.headline(
+            .over15, rows: [Self.row(0, comparison: .unavailable("Current probability unavailable")), Self.row(1)]))
+        XCTAssertEqual(CricketEventPagePresentation10868(input: partial).headlineContent()?.input, partial.headline)
+        XCTAssertEqual(partial.headline.sourceInfo.subjects.map { $0.entries.map(\.text) },
+                       [["78%", "Current probability unavailable"], ["23%", "34%"]])
+    }
+
+    // MARK: Parity and holds
+
+    @MainActor
+    func testTheStreamAndTheFullSizeReaderShowTheSameLeafInputsWithExactCallbacksAndOneHoldPerPageAction() {
+        var log: [String] = []
+        // Wide, so the owner displays the chase AND its companion shift: the
+        // stream's activation applies only to a card it displays.
+        let input = Self.page(.over15, wide: true)
+        XCTAssertEqual(input.stream?.wide, true)
+        func view(_ mode: CricketEventPageMode10868 = .page, hook: Bool = true) -> CricketEventPagePresentation10868 {
+            CricketEventPagePresentation10868(
+                input: input, mode: mode, originals: Self.originals(.over15),
+                onAbout: { log.append("about") },
+                onSourceInfo: { log.append("sources:\($0.subjects.count)") },
+                onAllProps: { log.append("allProps") },
+                onOriginalSelect: { log.append("original:\($0.identity.market)") },
+                onStoryIntent: { _ in log.append("stream") },
+                onHistoryPrevious: { log.append("previous") },
+                onHistoryNext: { log.append("next") },
+                onHistoryExpand: { log.append("expand") },
+                onHistoryWindowChoice: { log.append("window:\($0)") },
+                onHistoryPlotPosition: { log.append("plot:\(Int($0))") },
+                onChaseDetails: { log.append("chase.details:\($0.market)") },
+                onExpectationShiftDetails: { log.append("shift.details:\($0.market)") },
+                onInteraction: hook ? { log.append("hold") } : nil)
+        }
+        guard let stream = input.stream else { return XCTFail("the live stream is supplied") }
+        let page = view()
+        let chaseHook = Self.activation(stream, "chase") { log.append($0) }
+        let shiftHook = Self.activation(stream, "shift") { log.append($0) }
+        let streamChase = page.chaseContent(activation: chaseHook)
+        let streamShift = page.expectationShiftContent(activation: shiftHook)
+        let readerChase = view(.reader(.chase)).chaseContent()
+        let readerShift = view(.reader(.expectationShift)).expectationShiftContent()
+        _ = page.headlineContent()
+        _ = page.historyContent(reader: false)
+        _ = page.chooserContent()
+        _ = view(.original).originalDetailsContent()
+        XCTAssertEqual(log, [], "building and reading calls nothing")
+
+        // Parity: the stream card and the full-size reader are the same leaf with the same input.
+        XCTAssertEqual(streamChase?.input, readerChase?.input)
+        XCTAssertEqual(streamChase?.limitedOvers, readerChase?.limitedOvers)
+        XCTAssertEqual(readerChase?.limitedOvers, Self.liveContext)
+        XCTAssertEqual(streamShift?.input, readerShift?.input)
+        XCTAssertEqual(streamShift?.tint, readerShift?.tint)
+        XCTAssertTrue(CricketEventPageModel10868(input).readerShows(.chase))
+        XCTAssertTrue(CricketEventPageModel10868(input).readerShows(.expectationShift))
+
+        // A stream card's action: the stream's activation once, then the exact
+        // owner callback — never the page hook as well.
+        streamChase?.onDetails?(Self.chaseRef)
+        streamShift?.onDetails?(Self.chaseRef)
+        XCTAssertEqual(log, ["hold:chase", "chase.details:constructed.market.WI",
+                             "hold:shift", "shift.details:constructed.market.WI"])
+
+        // Full-size content: the exact callbacks, no hold — its host already holds.
+        log = []
+        readerChase?.onDetails?(Self.chaseRef)
+        readerShift?.onDetails?(Self.chaseRef)
+        view(.reader(.expectationShift)).openReaderAbout()
+        XCTAssertEqual(log, ["chase.details:constructed.market.WI", "shift.details:constructed.market.WI", "about"])
+
+        // Page, catalogue and Details actions: the hook once, then the exact
+        // owner callback with its exact value.
+        log = []
+        page.openTitleAbout()
+        page.headlineContent()?.openSourceInfo()
+        let anchor = page.historyContent(reader: false)
+        anchor.onPrevious?()
+        anchor.onExpand?()
+        anchor.onWindowChoice?("match")
+        anchor.onPlotPosition?(Self.report13)
+        page.chooserContent()?.onSelect?(Self.selection(0))
+        page.openAllProps()
+        view(.catalogue).catalogueContent()?.onSelect?(Self.selection(1))
+        XCTAssertEqual(log, ["hold", "about", "hold", "sources:2", "hold", "previous", "hold", "expand",
+                             "hold", "window:match", "hold", "plot:\(Int(Self.report13))",
+                             "hold", "original:constructed.market.IND", "hold", "allProps",
+                             "hold", "original:constructed.market.WI"])
+        XCTAssertEqual(view(.original).originalDetailsContent()?.selection, Self.selection(1), "the held original's Details")
+
+        // Full-card entry: the stream's own Open full card names the shift,
+        // which this phase shows full size.
+        let resolved = stream.resolve(reduceMotion: false, actionable: true)
+        let shiftRef = StoryStreamPresentation10868.CardRef(scope: stream.scope, id: "shift")
+        XCTAssertEqual(stream.intents(for: .open(shiftRef), resolved: resolved),
+                       [.interaction(scope: stream.scope, card: shiftRef), .open(shiftRef)])
+        XCTAssertEqual(CricketEventPageModel10868(input).storyCard(shiftRef.id), .expectationShift)
+
+        // No owner callback: no action anywhere and no hold.
+        log = []
+        let silent = CricketEventPagePresentation10868(input: input, onInteraction: { log.append("hold") })
+        XCTAssertNil(silent.expectationShiftContent()?.onDetails)
+        XCTAssertNil(silent.expectationShiftContent(activation: shiftHook)?.onDetails)
+        XCTAssertNil(silent.chaseContent(activation: chaseHook)?.onDetails)
+        XCTAssertNil(silent.expectationShiftContent()?.input.detailsAction(canOpenDetails: false))
+        XCTAssertEqual(log, [])
+
+        // Before play: the pregame outlook is the same static leaf in the
+        // stream and full size, has no action, and its full card is reachable.
+        let before = Self.page(.before)
+        let beforePage = CricketEventPagePresentation10868(input: before, onInteraction: { log.append("hold") })
+        let beforeReader = CricketEventPagePresentation10868(input: before, mode: .reader(.pregame))
+        XCTAssertEqual(beforePage.pregameContent()?.input, beforeReader.pregameContent()?.input)
+        XCTAssertNotNil(beforeReader.pregameContent())
+        XCTAssertTrue(CricketEventPageModel10868(before).readerShows(.pregame))
+        guard let beforeStream = before.stream else { return XCTFail("the before stream is supplied") }
+        let pregameRef = StoryStreamPresentation10868.CardRef(scope: beforeStream.scope, id: "pregame")
+        XCTAssertEqual(beforeStream.intents(for: .open(pregameRef), resolved: beforeStream.resolve(reduceMotion: false, actionable: true)),
+                       [.interaction(scope: beforeStream.scope, card: pregameRef), .open(pregameRef)])
+        XCTAssertEqual(log, [], "a static card asks for nothing")
+    }
+}
