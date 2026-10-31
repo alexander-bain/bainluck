@@ -202,7 +202,7 @@ def _owed_budget_env(name, default, cast, low, high):
         value = cast(raw.strip())
     except (TypeError, ValueError):
         value = None
-    if value is None or not math.isfinite(value):
+    if value is None or (not isinstance(value, int) and not math.isfinite(value)):
         logger.warning(
             "live_blend_refresh: %s=%r is not a valid %s; using %r",
             name, raw, cast.__name__, default,
@@ -615,7 +615,8 @@ STAMP_WAIT_REASON_ENV = "STAMP_WAIT_REASON_LOG"
 STAMP_WAIT_BUDGET_S = 5.0
 STAMP_WAIT_LINE_INTERVAL_S = 60.0
 #: What an attempted read did with the event (`_dispositions`), as a reason.
-#: `stamped` ends the wait; the rest say why the read did not.
+#: A raw `stamped` read ends an input wait only after receipt coverage.
+#: A successful write without that coverage is READ_UNCOVERED.
 STAMP_WAIT_DISPOSITIONS = {
     "stamped": "STAMPED",
     "no_reading": "NO_VALID_READING",
@@ -638,7 +639,7 @@ class StampWaitLog:
     """#10090 — the `stamp_wait_reason` lines' rate limit, per event.
 
     An episode is one oldest-unstamped input (its `seq`); it ends when a read
-    stamps the event or that input stops being the oldest owed one. `seen`
+    covers that input or the input stops being the oldest owed one. `seen`
     counts every reason noted since the episode's last line, so a line names
     each cause the wait passed through, not only the latest. Pure bookkeeping.
     """
@@ -1060,7 +1061,7 @@ class _StampTx:
     __slots__ = (
         "spans", "events", "slots", "spent", "started", "cpu_started",
         "body_started", "body_ended", "compute", "ended", "cpu_ended",
-        "slots_in_use", "probe",
+        "slots_in_use", "slot_full_at_start", "probe",
     )
 
     def __init__(self, spans: Optional[StampSpans], events: int, slots) -> None:
@@ -1073,6 +1074,7 @@ class _StampTx:
         self.compute = 0.0
         self.ended = self.cpu_ended = None
         self.slots_in_use = None
+        self.slot_full_at_start = False
         self.probe = None
 
     def span(self, bucket: str) -> _StampSpan:
@@ -1089,7 +1091,7 @@ class _StampTx:
         if spans is not None and callable(locked):
             with contextlib.suppress(Exception):
                 if locked():
-                    spans.slot_full += 1
+                    self.slot_full_at_start = True
         return self
 
     async def __aexit__(self, *_exc) -> bool:
@@ -1100,6 +1102,7 @@ class _StampTx:
             return False
         spans.transactions += 1
         spans.events += self.events
+        spans.slot_full += self.slot_full_at_start
         spent = spans.spent
         wall = self.ended - self.started
         if self.body_started is None:  # never got a session: all slot
@@ -3525,6 +3528,45 @@ class LiveBlendRefresher:
             for event_id, obligation in aged.items():
                 disposition = dispositions.get(event_id) or ("no_market",)
                 reason = STAMP_WAIT_DISPOSITIONS.get(disposition[0], "READ_ERROR")
+                if reason == "STAMPED":
+                    # A committed stamp is not necessarily input coverage.
+                    continue
+                self._stamp_wait_noted(waits, event_id, reason, obligation, mono, "read")
+        except Exception:
+            self._stamp_wait_failed(waits)
+
+    def _resolve_receipt_wait(self, receipts, due, *args):
+        """Resolve receipts as before; close a wait only when its input leaves.
+
+        A queued fresh reread carries no staged-input proof; an ordinary stamp
+        can precede a newer uncommitted input too. Neither ends that input's wait.
+        """
+        waits = getattr(self, "stamp_waits", None)
+        aged = {}
+        if waits is not None and stamp_wait_reason_on():
+            try:
+                aged = receipts.aged_obligations(_wall(), STAMP_WAIT_BUDGET_S, due)
+            except Exception:
+                self._stamp_wait_failed(waits)
+        self._receipt_call(receipts.resolve, due, *args)
+        if not aged:
+            return
+        try:
+            dispositions = args[0]
+            mono = _mono()
+            for event_id, obligation in aged.items():
+                if dispositions.get(event_id, ("",))[0] != "stamped":
+                    continue
+                disposition = dispositions[event_id]
+                pending = receipts._uncovered.get(event_id)
+                committed = obligation[3]
+                input_proof = len(disposition) <= 6 or disposition[6] is not False
+                covered = (input_proof and committed is not None
+                           and committed[0] >= obligation[0]
+                           and (not pending or pending[0][0] > obligation[0]))
+                closed = len(disposition) > 5 and disposition[5] not in (None, "live")
+                reason = ("STAMPED" if covered else
+                          "CATALOG_CLOSED" if closed else "READ_UNCOVERED")
                 self._stamp_wait_noted(waits, event_id, reason, obligation, mono, "read")
         except Exception:
             self._stamp_wait_failed(waits)
@@ -3539,10 +3581,11 @@ class LiveBlendRefresher:
     def _stamp_wait_failed(self, waits) -> None:
         waits.errors += 1
         if waits.errors == 1 or waits.errors % 1000 == 0:
-            logger.warning(
-                "live_blend_refresh[%s]: stamp_wait_reason failed (%d)",
-                self.source, waits.errors, exc_info=True,
-            )
+            with contextlib.suppress(Exception):
+                logger.warning(
+                    "live_blend_refresh[%s]: stamp_wait_reason failed (%d)",
+                    self.source, waits.errors, exc_info=True,
+                )
 
     def _record_stamp_clock(self, event_ids: Iterable[int], now: float) -> None:
         """#10090 — the current clock as these events' stamp starts (`_due`'s
@@ -3827,8 +3870,8 @@ class LiveBlendRefresher:
                 if event_id in reread_events and disposition[:1] == ("stamped",):
                     self._dispositions[event_id] = disposition[:6] + (False,)
             if receipts is not None:
-                self._receipt_call(
-                    receipts.resolve,
+                self._resolve_receipt_wait(
+                    receipts,
                     group_ids,
                     self._dispositions,
                     staged,
@@ -3911,8 +3954,8 @@ class LiveBlendRefresher:
                 else:
                     completed.update(due)
                     if receipts is not None:
-                        self._receipt_call(
-                            receipts.resolve,
+                        self._resolve_receipt_wait(
+                            receipts,
                             due,
                             self._dispositions,
                             staged,
@@ -5111,8 +5154,8 @@ class LiveBlendRefresher:
         def committed(ids):
             window.completed.update(ids)
             if receipts is not None:
-                self._receipt_call(
-                    receipts.resolve, ids, self._dispositions, staged,
+                self._resolve_receipt_wait(
+                    receipts, ids, self._dispositions, staged,
                     stored_wall, _mono(),
                 )
 
@@ -6357,8 +6400,9 @@ class LiveBlendRefresher:
         # Session closed and committed — only now is the pushed number a number
         # the database actually kept, and only now is it "written".
         self._stage_trace("attempt_committed", event_ids, self._dispositions)
-        # Before `on_committed` resolves the receipts: the stamped input is
-        # still the oldest owed one, so its wait closes as STAMPED.
+        # Note raw non-stamp read outcomes before receipt resolution.
+        # A committed write may leave this input uncovered; _resolve_receipt_wait
+        # closes STAMPED only after the receipt actually covers that input.
         self._stamp_wait_read(event_ids, {
             eid: self._dispositions.get(eid, ("error",))
             for eid in event_ids if eid in grouped

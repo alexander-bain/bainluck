@@ -142,7 +142,6 @@ async def test_nothing_owed_on_a_quiet_flush_is_not_owed(clocks, info):
 
 
 @pytest.mark.parametrize("disposition, reason", [
-    (("stamped", 0.5, "t", None, 42, "live"), "STAMPED"),
     (("no_reading",), "NO_VALID_READING"),
     (("stale", 0.5), "NO_VALID_READING"),
     (("lock",), "ROW_LOCK_SKIPPED"),
@@ -158,12 +157,26 @@ def test_each_read_reason_fires_on_its_disposition(clocks, info, disposition, re
     assert _reason(line) == reason and _field(line, "site") == "read"
 
 
+def test_a_successful_raw_read_does_not_close_an_input_wait(clocks, info):
+    r = _refresher()
+    _owe_input(r, 7, age=9.0)
+    r._throttle_deferred.add(7)
+    r._stamp_wait_sweep("admit", 1000.0, due_reason="LIVE_DEBT_SLOT_BUSY")
+    r._stamp_wait_read([7], {7: ("stamped", 0.5, "t", None, 42, "live")})
+    assert [_reason(line) for line in _lines(info)] == ["LIVE_DEBT_SLOT_BUSY"]
+    assert 7 in r.stamp_waits._episodes
+    assert "STAMPED" not in r.stamp_spans.wait_reasons
+
+
 async def test_a_real_refresh_logs_admitted_then_stamped_for_an_aged_live_input(
     monkeypatch, clocks, info,
 ):
     x = rig(monkeypatch, count=1, statuses={1: "live"})
     x.r.receipts = module.TailReceipts("polymarket")
     _owe_input(x.r, 1, age=40.0, seq=9, outcome=10)
+    x.r.receipts.stage([module.InputMark(
+        9, 1, 10, 0.5, "price", module._wall() - 40.0, 960.0, None, 1,
+    )])
     await x.r.refresh([1], flush_started=1000.0)
     assert x.published == [1]
     lines = _lines(info)
@@ -221,18 +234,31 @@ def test_one_line_per_event_per_minute_and_seen_counts_every_reason(clocks, info
     assert _field(lines[1], "age_s") == "66.000"
 
 
-def test_the_stamp_that_ends_a_printed_wait_is_always_logged(clocks, info):
-    r = _refresher()
+async def test_the_stamp_that_ends_a_printed_wait_is_always_logged(
+    monkeypatch, clocks, info,
+):
+    x = rig(monkeypatch, count=7, statuses=dict.fromkeys(range(1, 8), "live"))
+    r = x.r
+    r.receipts = module.TailReceipts("polymarket")
+    r.unchanged_restamp_interval_s = 0.0
     _owe_input(r, 7, age=6.0)
     r._throttle_deferred.add(7)
     r._stamp_wait_sweep("admit", 1000.0, due_reason="LIVE_DEBT_SLOT_BUSY")
     _advance(clocks, 3.0)
-    r._stamp_wait_read([7], {7: ("stamped", 0.5, "t", None, 42, "live")})
+    r.receipts.stage([module.InputMark(
+        5, 7, 50, 0.5, "price", module._wall() - 9.0, 994.0, None, 1,
+    )])
+    await r.refresh([7], flush_started=clocks["mono"])
+    assert not r.receipts._uncovered[7]
     assert [_reason(line) for line in _lines(info)] == ["LIVE_DEBT_SLOT_BUSY", "STAMPED"]
-    # The NEXT input's episode is rate-limited from that stamp's line.
+    # The NEXT genuinely covered input is rate-limited from that stamp's line.
     _owe_input(r, 7, age=6.0, seq=11)
     r._stamp_wait_sweep("admit", clocks["mono"], due_reason="LIVE_DEBT_SLOT_BUSY")
-    r._stamp_wait_read([7], {7: ("stamped", 0.5, "t", None, 43, "live")})
+    r.receipts.stage([module.InputMark(
+        11, 7, 50, 0.6, "price", module._wall() - 6.0, clocks["mono"] - 6.0, None, 2,
+    )])
+    await r.refresh([7], flush_started=clocks["mono"])
+    assert not r.receipts._uncovered[7]
     assert len(_lines(info)) == 2
     assert r.stamp_waits._episodes == {}
 
@@ -290,12 +316,77 @@ def test_the_due_check_changes_nothing(clocks):
     assert 7 not in r._failed_hold_until  # `_due` itself still drops it
 
 
+async def test_a_queued_fresh_reread_keeps_its_uncovered_wait(monkeypatch, clocks, info):
+    x = rig(monkeypatch, count=4, statuses=dict.fromkeys(range(1, 5), "live"))
+    x.r.receipts = module.TailReceipts("polymarket")
+    _owe_input(x.r, 4, age=20.0, seq=4, outcome=40)
+    x.r.receipts.stage([module.InputMark(
+        4, 4, 40, 0.5, "price", module._wall() - 20.0, 980.0, None, 1,
+    )])
+    await x.r.refresh(range(1, 5), flush_started=1000.0)
+    assert x.r._dispositions[4][6] is False
+    assert list(x.r.receipts._uncovered[4]) == [(4, WALL - 20.0, 40)]
+    assert [_reason(line) for line in _lines(info)] == ["ADMITTED"]
+    assert 4 in x.r.stamp_waits._episodes
+    assert x.r.stamp_spans.wait_reasons["READ_UNCOVERED"] == {4}
+
+
+async def test_a_newer_uncommitted_input_keeps_waiting_after_an_older_stamp(
+    monkeypatch, clocks, info,
+):
+    x = rig(monkeypatch, count=1, statuses={1: "live"})
+    x.r.receipts = module.TailReceipts("polymarket")
+    _owe_input(x.r, 1, age=20.0, seq=5, outcome=10)
+    x.r.receipts.stage([module.InputMark(
+        4, 1, 10, 0.5, "price", module._wall() - 30.0, 970.0, None, 1,
+    )])
+    await x.r.refresh([1], flush_started=1000.0)
+    assert list(x.r.receipts._uncovered[1]) == [(5, WALL - 20.0, 10)]
+    assert [_reason(line) for line in _lines(info)] == ["ADMITTED"]
+    assert 1 in x.r.stamp_waits._episodes
+    assert x.r.stamp_spans.wait_reasons["READ_UNCOVERED"] == {1}
+
+
+async def test_a_broken_wait_sink_cannot_drop_a_due_input(monkeypatch, clocks):
+    x = rig(monkeypatch, count=1, statuses={1: "live"})
+    x.r.receipts = module.TailReceipts("polymarket")
+    _owe_input(x.r, 1, age=20.0, seq=1, outcome=10)
+    x.r.adopt_pending({1})
+
+    class BrokenWaitSink(logging.Handler):
+        def emit(self, record):
+            if "stamp_wait_reason" in record.getMessage():
+                raise OSError("diagnostic sink unavailable")
+
+    logger = logging.getLogger(LOGGER)
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    handler = BrokenWaitSink()
+    logger.addHandler(handler)
+    raised = None
+    try:
+        try:
+            await x.r.refresh_pending(flush_started=1000.0)
+        except Exception as exc:
+            raised = exc
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+    assert raised is None, (raised, x.r.pending_event_ids(), x.published)
+    assert x.published == [1] or 1 in x.r.pending_event_ids()
+
+
 async def _scenario(monkeypatch, clocks):
     x = rig(monkeypatch, count=3, failure="lock",
             statuses={1: "live", 2: "live", 3: "live"})
     x.r.receipts = module.TailReceipts("polymarket")
     for event_id in (1, 2, 3):
         _owe_input(x.r, event_id, age=30.0, seq=event_id, outcome=event_id * 10)
+    x.r.receipts.stage([
+        module.InputMark(eid, eid, eid * 10, 0.5, "price", module._wall() - 30.0,
+                         970.0, None, 1)
+        for eid in (1, 2, 3)
+    ])
     x.r._failed_hold_until[3] = 1005.0
     await x.r.refresh([1, 2, 3], flush_started=1000.0)
     _advance(clocks, 2.0)
