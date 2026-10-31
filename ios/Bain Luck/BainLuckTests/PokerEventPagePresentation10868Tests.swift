@@ -695,8 +695,10 @@ final class PokerEventPagePresentation10868Tests: XCTestCase {
         } else {
             pregame = .missing("No earlier captured trade")
         }
+        // The provider's own grade, by its own source: the capture holds no settlement clock for it, and the
+        // physical standings report time is never borrowed.
         let grade = Originals.Grade(words: side.resolved ? "Happened" : "Didn’t happen",
-                                    provenance: "Reported \(clockTime(resultReportAt))")
+                                    provenance: "Polymarket result · settlement time unavailable")
         let about = Originals.About(
             source: "Polymarket", rules: rules ?? .verified(paragraphs(market.rules)),
             provenance: [Originals.Row(label: "Condition", value: market.condition),
@@ -2166,6 +2168,17 @@ final class PokerEventPagePresentation10868Tests: XCTestCase {
                 }
             }
         }
+        // The provider's grade keeps its own source and no settlement clock; it never borrows the physical
+        // standings report clock, and the separately reported finish keeps its own report.
+        let report = Self.clockTime(Self.resultReportAt)
+        let graded = Originals.content(catalogue: Self.originalsCatalogue(.final),
+                                       selection: Self.selection(Self.mizrachi, Self.mizrachi.yes))?.result
+        XCTAssertEqual(graded, Originals.ShownResult(words: "Happened", provenance: "Polymarket result · settlement time unavailable"))
+        XCTAssertFalse((graded?.provenance ?? report).contains(report))
+        XCTAssertEqual(HistoricalChanceModel10868(Self.result(phase: .final)).actual,
+                       .reading(FieldChooserReading10868(label: "Reported finish",
+                                                         value: .recorded(text: "1st", detail: "PokerNews report"))))
+        XCTAssertNotEqual(graded?.provenance, "PokerNews report")
         // Rules the owner cannot prove are shown as its own unavailable words, verbatim.
         let unproved = Self.original(Self.mizrachi, Self.mizrachi.yes, .final, rules: .unavailable("Rules not verified for this outcome"))
         let catalogue = Originals.Catalogue(scope: Self.originalsScope, originals: [unproved])
