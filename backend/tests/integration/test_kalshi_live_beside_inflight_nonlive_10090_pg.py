@@ -360,6 +360,7 @@ def _rig(engine, side, ids, source=None):
     nodes = [n for n in ast.walk(tree)
              if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef)) and n.name in wanted]
     assert sorted(n.name for n in nodes) == sorted(wanted)
+    ns["repeat_skip_s"] = 0.0  # #10090: KALSHI_WS_REPEAT_SKIP_MS=0, today's path
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), ns)
     prices.input_wake = ns["flush_wake"]  # as the consumer points it
     return ns, record
