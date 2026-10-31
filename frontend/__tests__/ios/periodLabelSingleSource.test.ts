@@ -341,6 +341,9 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   // #10868. The soccer match screen's clock (`SoccerMatchPageAdapter10868.clock`) delegates the
   // join and adds no rule of its own.
   [join(IOS_ROOT, "Utilities/SoccerMatchPageAdapter10868.swift"), "the soccer match screen's clock"],
+  // #10868. The baseball game screen's live inning (`BaseballGamePageAdapter10868.stateWords`)
+  // delegates the join and adds no rule of its own.
+  [join(IOS_ROOT, "Utilities/BaseballGamePageAdapter10868.swift"), "the baseball game screen's live inning"],
 ];
 
 /**
