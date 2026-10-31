@@ -4438,6 +4438,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
     catalog_boundary.bridges.receipts = tail_receipts
+    # #10090 held-first stamps: games a reader holds open stamp before the
+    # rest when stamps queue (`STAMP_READER_FIRST`); receipts tag them.
+    from app.utils.reader_presence import held_event_cache
+    blend_refresher.reader_held = held_event_cache().event_ids
+    tail_receipts.reader_held = held_event_cache().event_ids
     # #10090 decision J: `confirmed_at` for this venue's events. A buffered
     # withdrawal whose book prices a published leg out is a pending change
     # (the rule `flush_withdrawals` applies to the stored price).

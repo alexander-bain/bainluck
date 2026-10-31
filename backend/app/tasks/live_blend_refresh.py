@@ -652,7 +652,7 @@ class StampWaitLog:
         self.errors = 0
 
     def note(self, event_id: int, reason: str, obligation: tuple, now: float, *,
-             run: str, site: str) -> None:
+             run: str, site: str, held_tag: str = "") -> None:
         seq, outcome_id, age, committed = obligation
         episode = self._episodes.get(event_id)
         if episode is None or episode["seq"] != seq:
@@ -678,13 +678,13 @@ class StampWaitLog:
         logger.info(
             "live_blend_refresh[%s]: stamp_wait_reason=%s run=%s venue=%s event=%s "
             "outcome=%s seq=%s age_s=%.3f committed_seq=%s committed_age_s=%s "
-            "admitted_age_s=%s seen=%s site=%s",
+            "admitted_age_s=%s seen=%s site=%s%s",
             self.source, reason, run, self.source, event_id, outcome_id, seq, age,
             "-" if committed is None else committed[0],
             "-" if committed is None else f"{committed[1]:.3f}",
             "-" if episode["admitted_age"] is None else f"{episode['admitted_age']:.3f}",
             ",".join(f"{name}:{count}" for name, count in sorted(seen.items())),
-            site,
+            site, held_tag,
         )
         episode["seen"] = {}
 
@@ -766,6 +766,35 @@ OPTIONAL_DB_HELD_MAX = max(0, min(FRESH_STAMP_WORKERS - 2, 1))
 # occupied worker. After this many live stamps in a row, a waiting non-live
 # event goes next, so pre-game prices keep progressing while live ones lead.
 ADMITTED_LIVE_RUN = 3
+
+# #10090 held-first stamps — a live game a reader holds open (its
+# `live:event:<id>` stream, `reader_presence.HeldEventCache`) is stamped
+# before live games nobody is watching when stamps are queued. Production
+# 15:35-15:40Z 2026-10-31 (Polymarket, G4F13, ~150 live events): hold -> stamp
+# took 9-21 s, `stamp_wait_reason` QUEUED_OR_RUNNING 348, at ~14 stamps/s,
+# and the queue was FIFO among live games, so an open page waited every other
+# game's turn. Only the ORDER among queued events changes: one attempt per
+# event, its cohort, clock, supersession and fences as before. After
+# READER_FIRST_RUN held stamps in a row while an unheld live game waited, the
+# oldest unheld one goes next, so unheld games keep at least one turn in
+# READER_FIRST_RUN + 1. ``STAMP_READER_FIRST=0`` restores the old order; an
+# unreadable or stale held set is empty, which is the old order too.
+STAMP_READER_FIRST_ENV = "STAMP_READER_FIRST"
+READER_FIRST_RUN = 3
+
+
+def stamp_reader_first_on() -> bool:
+    return os.getenv(STAMP_READER_FIRST_ENV, "1").strip() != "0"
+
+
+def _reader_held_tag(source, event_id) -> str:
+    """` reader_held=0|1` for a log line; empty with no source or a failing one."""
+    if source is None:
+        return ""
+    try:
+        return f" reader_held={int(event_id in source())}"
+    except Exception:  # noqa: BLE001 — a log tag never fails its line
+        return ""
 
 # #10090 (Argon flush-loop Rank 2) — a due throttle-deferred LIVE event rides
 # a running call's door outside its debt slots, at most this many at a time.
@@ -1335,6 +1364,9 @@ class TailReceipts:
         #: the consumer, which also hands it each headline input's mark).
         #: Fed every resolution below.
         self.confirmed = None
+        #: #10090 held-first stamps: the event ids a reader holds (wired by
+        #: the consumer); a line then says ` reader_held=0|1`, switch on or off.
+        self.reader_held: Optional[Callable[[], Container[int]]] = None
 
     # ── the socket's side ────────────────────────────────────────────────────
 
@@ -1897,7 +1929,7 @@ class TailReceipts:
             "held_wall=%s stamp_rev_seq=%s stamped_at=%s value=%s previous=%s "
             "later_inputs=%d later_committed=%d last_input_seq=%s "
             "lock_retries=%d commit_failures=%d batch_failures=%d held_s=%.3f "
-            "recv_to_close_s=%.3f coalesced=%d error=%s%s%s",
+            "recv_to_close_s=%.3f coalesced=%d error=%s%s%s%s",
             self.source, self.run, event_id, result, quiet, moved, chain.origin,
             rev.seq, rev.outcome_id, rev.probability, rev.kind,
             _iso(rev.recv_wall), rev.venue_ts_ms, _iso(chain.stored_wall),
@@ -1912,6 +1944,7 @@ class TailReceipts:
             f" price_commit_ack_wall={_iso(chain.commit_ack_wall)}"
             if price_commit_ack_log_on() else "",
             _switch_tags(event_id),
+            _reader_held_tag(self.reader_held, event_id),
         )
 
 
@@ -2985,6 +3018,9 @@ class _FreshAdmission:
         self.queue: deque = deque()
         self.live_queue: deque = deque()
         self.live_run = 0
+        #: #10090 held-first: held live stamps started in a row while an
+        #: unheld live game waited (READER_FIRST_RUN).
+        self.held_run = 0
         self.workers: set = set()
         self.admitted: set[int] = set()
         self.retry: set[int] = set()
@@ -3034,16 +3070,42 @@ class _FreshAdmission:
         riding = self.debts | self.live_debts
         return min(riding) if riding else None
 
-    def next_queued(self) -> int:
+    def next_queued(self, held: Container[int] = frozenset()) -> int:
         """The admitted event the next free worker stamps: the oldest live
         one, unless ADMITTED_LIVE_RUN live stamps in a row have started while
-        a non-live one waited — then that oldest non-live one."""
+        a non-live one waited — then that oldest non-live one. Among live
+        ones, the oldest a reader holds (``held``) goes first, unless
+        READER_FIRST_RUN of those in a row have started while an unheld one
+        waited — then the oldest unheld one."""
         if self.live_queue and (not self.queue or self.live_run < ADMITTED_LIVE_RUN):
             if self.queue:
                 self.live_run += 1
-            return self.live_queue.popleft()
+            return self._next_live(held)
         self.live_run = 0
         return self.queue.popleft()
+
+    def _next_live(self, held: Container[int]) -> int:
+        live_queue = self.live_queue
+        if not held:
+            return live_queue.popleft()
+        first_held = next((i for i, eid in enumerate(live_queue) if eid in held), None)
+        if first_held is None:
+            self.held_run = 0
+            return live_queue.popleft()
+        unheld_waiting = first_held > 0 or any(eid not in held for eid in live_queue)
+        if not unheld_waiting:
+            self.held_run = 0
+            return live_queue.popleft()
+        if self.held_run >= READER_FIRST_RUN:
+            self.held_run = 0
+            first_unheld = next(i for i, eid in enumerate(live_queue) if eid not in held)
+            event_id = live_queue[first_unheld]
+            del live_queue[first_unheld]
+            return event_id
+        self.held_run += 1
+        event_id = live_queue[first_held]
+        del live_queue[first_held]
+        return event_id
 
     def release(self, event_ids) -> None:
         """These events' stamps returned, or went back to debt unstamped."""
@@ -3369,6 +3431,12 @@ class LiveBlendRefresher:
         #: #10090 — events whose latest stamp read said live: admitted ones
         #: are stamped ahead of the rest (`_FreshAdmission.next_queued`).
         self._live_event_ids: set[int] = set()
+        #: #10090 held-first stamps (STAMP_READER_FIRST_ENV): the event ids a
+        #: reader holds open, installed by a consumer
+        #: (`reader_presence.held_event_cache().event_ids`); None keeps the
+        #: old order.
+        self.reader_held: Optional[Callable[[], Container[int]]] = None
+        self._held_debt_run = 0
         #: #10090 — the running call's same-event fence (`holding_event_ids`).
         #: None from a call's first turn until it opens its door.
         self._holding: Optional[set[int]] = None
@@ -3469,6 +3537,17 @@ class LiveBlendRefresher:
         if high is not None and now <= high[0]:
             current = max(now, high[0] + max(0.0, _mono() - high[1]))
         return self._floor_passed(event_id, now, current)
+
+    def _reader_held_ids(self) -> Container[int]:
+        """#10090 held-first: the held event ids, or empty (the old order)
+        with the switch off, no source installed, or a failing one."""
+        source = self.reader_held
+        if source is None or not stamp_reader_first_on():
+            return frozenset()
+        try:
+            return source()
+        except Exception:  # noqa: BLE001 — ordering never fails a stamp
+            return frozenset()
 
     # ── #10090 `stamp_wait_reason`: why a live game's input still waits ──────
 
@@ -3576,7 +3655,8 @@ class LiveBlendRefresher:
         if spans is not None:
             spans.wait_reasons.setdefault(reason, set()).add(event_id)
         waits.note(event_id, reason, obligation, mono,
-                   run=getattr(self.receipts, "run", "-"), site=site)
+                   run=getattr(self.receipts, "run", "-"), site=site,
+                   held_tag=_reader_held_tag(self.reader_held, event_id))
 
     def _stamp_wait_failed(self, waits) -> None:
         waits.errors += 1
@@ -4111,11 +4191,18 @@ class LiveBlendRefresher:
 
                 # Preserve live-first order within each population and numeric
                 # tie-breaking; missing prepared rows remain due as non-live.
-                def stamp_order(event_id: int) -> tuple[bool, int]:
+                # #10090 held-first: within each, events a reader holds first.
+                held = self._reader_held_ids() if prepared is not None else frozenset()
+
+                def stamp_order(event_id: int) -> tuple[bool, bool, int]:
                     if prepared is None:
-                        return (False, event_id)
+                        return (False, False, event_id)
                     context = prepared.get(event_id)
-                    return (context is None or context[0].status != "live", event_id)
+                    return (
+                        context is None or context[0].status != "live",
+                        event_id not in held,
+                        event_id,
+                    )
 
                 ordered = sorted(population, key=stamp_order)
                 if pending_only:
@@ -4942,8 +5029,21 @@ class LiveBlendRefresher:
             debt_excluded = excluded.difference(
                 self._past_withdrawal(withdrawing_event_ids, event_ids)
             )
+            live_order = [eid for eid in order if eid in live_owed]
+            if len(live_order) > live_free > 0:
+                # #10090 held-first: a held live game takes the live
+                # allowance before unheld ones, each keeping its turn order;
+                # after READER_FIRST_RUN such admissions the rotation order
+                # alone decides one, so unheld debt keeps its turns.
+                held = self._reader_held_ids()
+                if held and any(eid not in held for eid in live_order):
+                    if self._held_debt_run < READER_FIRST_RUN:
+                        live_order.sort(key=lambda eid: eid not in held)
+                        self._held_debt_run += 1
+                    else:
+                        self._held_debt_run = 0
             passes = (
-                (window.live_debts, live_free, [eid for eid in order if eid in live_owed]),
+                (window.live_debts, live_free, live_order),
                 (window.debts, free, order),
             )
             for riding, room, candidates in passes:
@@ -5102,7 +5202,9 @@ class LiveBlendRefresher:
             # Read before the pick: a non-live head taken while a live game
             # waits (ADMITTED_LIVE_RUN) is stamped alone, as today.
             live_waiting = bool(window.live_queue)
-            event_id = window.next_queued()
+            event_id = window.next_queued(
+                self._reader_held_ids() if live_waiting else frozenset()
+            )
             group_ids = [event_id]
             if not live_waiting and window.queue:
                 group_ids = self._admitted_batch(window, event_id)
