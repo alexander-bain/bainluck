@@ -4,14 +4,16 @@ import SwiftUI
 /// mount for a soccer match, with one line, once Native adopts it.
 ///
 /// PILLARS: FORMATTING / DISCOVER. SHIP: a soccer event page opens on the three
-/// named outcomes, the win probability history and the goal, both-teams,
-/// first-team and half-by-half stories the match has content for, and every
-/// full-size card, the All props catalogue and an original's Details open over
-/// it and close back to the same place.
+/// named outcomes, the win probability history and the stories its phase
+/// offers — before kickoff the total goal outlook and the exact-score map;
+/// during play and after the final the goal, both-teams, first-team and
+/// half-by-half stories — and every full-size card, the All props catalogue
+/// and an original's Details open over it and close back to the same place.
 ///
 /// What it owns is only the screen's own reading state: which mode is shown,
-/// which story is held, which milestone or outcome each story is on, the held
-/// original and the timing disclosures. It builds the page input from the
+/// which story is held, which milestone or outcome each story is on, the
+/// exact-score map's held scope and held score per scope, the held original and
+/// the timing disclosures. It builds the page input from the
 /// values the page already holds — passed in; it reads no view model, opens no
 /// network, subscribes to nothing, runs no timer and ranks nothing.
 ///
@@ -28,16 +30,22 @@ import SwiftUI
 /// Native's call. The story markets are the owner's admission and are still
 /// owed (see `SoccerPropReadingAdapter10868.Markets`): no owner types them yet,
 /// so a host without it passes none and the page shows its headline, history
-/// and All props with no prop stories. The half-by-half card follows the
-/// approved route-phase membership by default — after the final only
-/// (`SoccerPageInputAdapter10868.HalvesAdmission.routeDefault`); the journey and
-/// replay hosts pass `.explicit`, which is owner-supplied context, not a rank.
+/// and All props with no prop stories. The same admission carries the
+/// exact-score descriptor and the goal rows' own-clock proof
+/// (`Markets.exactScore`, `Markets.ownClockGoals`) — both still owed, both
+/// accepted the moment an owner supplies them. Every card follows the approved
+/// route-phase membership by default (`SoccerPageInputAdapter10868.routeCards`:
+/// before kickoff the goal outlook and the exact-score map only); the journey
+/// and replay hosts pass `halvesAdmission: .explicit`, and any other
+/// owner-supplied context may pass `admittedCards` — context, not a rank.
 /// ```swift
 /// if ReleaseSurfaces.soccerMatchPageEnabled, SoccerEventPageHost10868.applies(event) {
 ///     SoccerEventPageHost10868(
 ///         event: vm.headline(event), history: vm.history, markets: vm.gameMarkets,
-///         admitted: /* the owner's typed story markets — still owed */ .init(),
+///         admitted: /* the owner's typed story markets, exact-score descriptor
+///                      and goal own-clock proof — still owed */ .init(),
 ///         // halvesAdmission: .explicit — journey and replay routes only
+///         // admittedCards: [...] — other owner-supplied context only
 ///         probabilityObservedAt: vm.displayedProbabilityObservedAt(event),
 ///         deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
 ///         ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
@@ -57,7 +65,9 @@ import SwiftUI
 /// history are offered unavailable until their owner contracts exist. The
 /// presenter has no About content mode, so `onAbout` is nil (no button that
 /// does nothing). The cards' own Details callbacks are nil until a card-to-
-/// original route exists; every original is reachable through All props.
+/// original route exists; every original is reachable through All props. The
+/// exact-score map's scope and score choices hold the reader's place; its
+/// recovery is offered only when the selected scope has a score to recover to.
 struct SoccerEventPageHost10868: View {
     let event: EventDetail
     let history: EventHistoryResponse?
@@ -67,6 +77,9 @@ struct SoccerEventPageHost10868: View {
     /// Where the half-by-half card may be offered: the approved default is
     /// after the final only; the journey and replay hosts pass `.explicit`.
     var halvesAdmission: SoccerPageInputAdapter10868.HalvesAdmission = .routeDefault
+    /// Other cards the owner admits beyond the route's own. Empty: the approved
+    /// membership alone.
+    var admittedCards: Set<SoccerEventPageCard10868> = []
     let probabilityObservedAt: Date?
     var deliveryInterrupted: Bool = false
     var ladderHome: Double? = nil
@@ -107,6 +120,10 @@ struct SoccerEventPageHost10868: View {
         var both: String? = nil
         var first: String? = nil
         var half: String? = nil
+        /// The exact-score map's held scope id; nil shows the owner's first scope.
+        var exactScope: String? = nil
+        /// The exact-score map's held original id, per scope id.
+        var exactOriginals: [String: String] = [:]
         var selection: OriginalMarketDetails9483.Selection? = nil
         var readerOpen = false
         var wide = false
@@ -118,6 +135,8 @@ struct SoccerEventPageHost10868: View {
     @State private var both: String?
     @State private var first: String?
     @State private var half: String?
+    @State private var exactScope: String?
+    @State private var exactOriginals: [String: String] = [:]
     @State private var selection: OriginalMarketDetails9483.Selection?
     @State private var goalTiming = false
     @State private var bothTiming = false
@@ -164,9 +183,27 @@ struct SoccerEventPageHost10868: View {
             onFirstDetails: nil,
             onHalfSelect: { half = $0 },
             onHalfDetails: nil,
+            onExactSelectScope: { exactScope = $0 },
+            onExactSelectOriginal: { scope, original in
+                exactScope = scope
+                exactOriginals[scope] = original
+            },
+            onExactDetails: nil,
+            onExactRecover: Self.recovery(built.input.exact).map { target -> () -> Void in
+                { exactOriginals[target.scope] = target.original }
+            },
             goalTimingExpanded: $goalTiming,
             bothTimingExpanded: $bothTiming,
             firstTimingExpanded: $firstTiming)
+    }
+
+    /// The score the map's recovery selects: the selected scope's first
+    /// original an action can name, in the owner's order — only while no held
+    /// score resolves there. Nil: no recovery control.
+    static func recovery(_ map: ExactScoreMapInput10868?) -> (scope: String, original: String)? {
+        guard let map, let scope = map.scopeSelection.scope, map.originalSelection(in: scope).original == nil,
+              let first = map.actionableIDs(in: scope).first else { return nil }
+        return (scope.id, first)
     }
 
     /// The hold first, then the exact mode — never the reverse.
@@ -190,10 +227,11 @@ struct SoccerEventPageHost10868: View {
 
     private func make() -> Built {
         Self.build(event: event, history: history, markets: markets, admitted: admitted,
-                   halvesAdmission: halvesAdmission,
+                   halvesAdmission: halvesAdmission, admittedCards: admittedCards,
                    probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
                    ladderHome: ladderHome, ladderAway: ladderAway, now: now,
                    reading: Reading(story: story, goal: goal, both: both, first: first, half: half,
+                                    exactScope: exactScope, exactOriginals: exactOriginals,
                                     selection: selection, readerOpen: presented != nil,
                                     wide: sizeClass == .regular))
     }
@@ -201,10 +239,12 @@ struct SoccerEventPageHost10868: View {
     /// The page input and originals from the passed values alone — pure, so
     /// every changed value reaches the screen on the next pass. A missing
     /// history response leaves only the chart slot unavailable. The admitted
-    /// half markets also tell All props which rows are about one half.
+    /// half markets, and the descriptor's period exact-score markets, also tell
+    /// All props which rows are about one half.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
                       admitted: SoccerPropReadingAdapter10868.Markets,
                       halvesAdmission: SoccerPageInputAdapter10868.HalvesAdmission = .routeDefault,
+                      admittedCards: Set<SoccerEventPageCard10868> = [],
                       probabilityObservedAt: Date?,
                       deliveryInterrupted: Bool = false, ladderHome: Double? = nil, ladderAway: Double? = nil,
                       now: Date, reading: Reading = Reading(),
@@ -224,8 +264,12 @@ struct SoccerEventPageHost10868: View {
                 host: SoccerHistoryAdapter10868.Host(now: now, calendar: calendar, locale: locale))
         } ?? SoccerHistoryAdapter10868.unavailable(event: event, phase: phase)
         let props = SoccerPropReadingAdapter10868.Host(now: now, calendar: calendar, locale: locale)
-        let goals = SoccerGoalsAdapter10868.input(event, markets: markets, admitted: admitted.goals, host: props,
+        let goals = SoccerGoalsAdapter10868.input(event, markets: markets, admitted: admitted.goals,
+                                                  ownClock: admitted.ownClockGoals, host: props,
                                                   selectedMilestoneID: reading.goal)
+        let exact = SoccerExactScoreAdapter10868.input(event, markets: markets, descriptor: admitted.exactScore,
+                                                       host: props, selectedScopeID: reading.exactScope,
+                                                       selectedOriginals: reading.exactOriginals)
         let both = SoccerBothTeamsAdapter10868.input(event, markets: markets, admitted: admitted.both, host: props,
                                                      selectedOutcomeID: reading.both)
         let first = SoccerFirstTeamAdapter10868.input(event, markets: markets, history: history,
@@ -236,10 +280,11 @@ struct SoccerEventPageHost10868: View {
                                                 homeHex: event.homeTeamData?.primaryColor)
         let originals = SoccerOriginalsAdapter10868.originals(
             event, markets: markets, host: props, tint: tints.home, selection: reading.selection,
-            periodMarketIDs: Set(admitted.halves.map(\.marketID)))
+            periodMarketIDs: Set(admitted.halves.map(\.marketID))
+                .union(admitted.exactScore?.periodMarketIDs(for: event) ?? []))
         let input = SoccerPageInputAdapter10868.input(
-            event, history: historyInput, goals: goals, both: both, first: first, halves: halves,
-            halvesAdmission: halvesAdmission,
+            event, history: historyInput, goals: goals, both: both, first: first, halves: halves, exact: exact,
+            halvesAdmission: halvesAdmission, admittedCards: admittedCards,
             originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)

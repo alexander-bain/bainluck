@@ -26,6 +26,8 @@ import SwiftUI
 //   • `BothTeamsScorePresentation10868` — both teams to score;
 //   • `FirstScorerComparisonPresentation10868` — first team to score;
 //   • `PeriodOutcomeComparisonPresentation10868` — half by half;
+//   • `ExactScoreMapPresentation10868` — the full-match / first-half
+//     exact-score map (accepted package 26, unchanged);
 //   • `StoryStreamPresentationView10868` — the controlled story stream.
 //
 // The only thing built here is the compact header around the headline: the
@@ -44,6 +46,15 @@ import SwiftUI
 // phase is the owner's explicit soccer phase; a prop leaf whose own phase is
 // not the page's is not mounted — never coerced to appear — and half by half
 // is mounted only when the owner supplies it.
+//
+// The exact-score map is an optional slot (`SoccerEventPageInput10868.exact`,
+// nil by default, so every existing caller is unchanged). When the owner
+// supplies it at the page's phase, the page and the full-size reader mount the
+// same leaf with the same input; its scope choice, score choice, Details and
+// recovery are the host's exact callbacks, relayed through the stream's
+// activation hook only for the card in the stream. Which cards a phase offers
+// (before kickoff: the goal outlook and this map) is the owner's stream, not a
+// rule here.
 //
 // The story stream is the owner's: its cards, order, primary, companion,
 // position, status, pending, playback, progress, previous/next, scope and
@@ -116,6 +127,8 @@ nonisolated enum SoccerEventPageCard10868: String, Hashable, CaseIterable {
     case both
     case first
     case halves
+    /// The full-match / first-half exact-score map.
+    case exact
 }
 
 /// What the host's container is showing, chosen by the host.
@@ -163,6 +176,14 @@ nonisolated enum SoccerEventPagePhase10868: Equatable {
     }
 
     var periodPhase: PeriodOutcomePhase10868 {
+        switch self {
+        case .before: .before
+        case .live: .during
+        case .final: .final
+        }
+    }
+
+    var exactPhase: ExactScoreMapPhase10868 {
         switch self {
         case .before: .before
         case .live: .during
@@ -241,6 +262,9 @@ nonisolated struct SoccerEventPageInput10868: Equatable {
     let first: FirstScorerComparisonInput10868?
     /// Mounted only when supplied.
     let halves: PeriodOutcomeComparisonInput10868?
+    /// The exact-score map. Optional and nil by default: mounted only when
+    /// supplied at the page's phase.
+    var exact: ExactScoreMapInput10868? = nil
     let stream: StoryStreamPresentation10868
     let stories: [SoccerEventPageStory10868]
     let copy: SoccerEventPageCopy10868
@@ -331,6 +355,11 @@ nonisolated struct SoccerEventPageModel10868: Equatable {
         return halves
     }
 
+    var exact: ExactScoreMapInput10868? {
+        guard let exact = input.exact, exact.phase == input.phase.exactPhase else { return nil }
+        return exact
+    }
+
     func isMounted(_ card: SoccerEventPageCard10868) -> Bool {
         switch card {
         case .history: true
@@ -338,6 +367,7 @@ nonisolated struct SoccerEventPageModel10868: Equatable {
         case .both: both != nil
         case .first: first != nil
         case .halves: halves != nil
+        case .exact: exact != nil
         }
     }
 
@@ -426,6 +456,14 @@ struct SoccerEventPagePresentation10868: View {
     var onFirstDetails: ((String) -> Void)? = nil
     var onHalfSelect: ((String) -> Void)? = nil
     var onHalfDetails: ((String) -> Void)? = nil
+    /// The exact-score map's scope choice, by the scope's exact id.
+    var onExactSelectScope: ((String) -> Void)? = nil
+    /// The exact-score map's score choice: (scope id, original id), exactly as supplied.
+    var onExactSelectOriginal: ((String, String) -> Void)? = nil
+    /// (scope id, original id), exactly as supplied.
+    var onExactDetails: ((String, String) -> Void)? = nil
+    /// The owner's recovery for a held score that is no longer listed.
+    var onExactRecover: (() -> Void)? = nil
     /// Page-owned timing disclosures. Full-size content gets them unchanged;
     /// a card in the stream gets them through `relay(_:through:)`.
     var goalTimingExpanded: Binding<Bool>? = nil
@@ -468,6 +506,28 @@ struct SoccerEventPagePresentation10868: View {
                 binding.wrappedValue = expanded
             }
         )
+    }
+
+    /// `relay(_:through:)` for a two-value action (scope id, original id).
+    static func relayPair(_ action: ((String, String) -> Void)?,
+                          through activation: StoryStreamCardActivation10868?) -> ((String, String) -> Void)? {
+        guard let action else { return nil }
+        guard let activation else { return action }
+        return { scope, original in
+            activation.request()
+            action(scope, original)
+        }
+    }
+
+    /// `relay(_:through:)` for an action that carries no value.
+    static func relayCall(_ action: (() -> Void)?,
+                          through activation: StoryStreamCardActivation10868?) -> (() -> Void)? {
+        guard let action else { return nil }
+        guard let activation else { return action }
+        return {
+            activation.request()
+            action()
+        }
     }
 
     var body: some View {
@@ -538,6 +598,19 @@ struct SoccerEventPagePresentation10868: View {
                 input: $0,
                 onSelect: Self.relay(onHalfSelect, through: activation),
                 onDetails: Self.relay(onHalfDetails, through: activation)
+            )
+        }
+    }
+
+    /// The accepted exact-score leaf, unchanged, with the host's callbacks.
+    func exactContent(activation: StoryStreamCardActivation10868? = nil) -> ExactScoreMapPresentation10868? {
+        model.exact.map {
+            ExactScoreMapPresentation10868(
+                input: $0,
+                onSelectScope: Self.relay(onExactSelectScope, through: activation),
+                onSelectOriginal: Self.relayPair(onExactSelectOriginal, through: activation),
+                onDetails: Self.relayPair(onExactDetails, through: activation),
+                onRecoverSelection: Self.relayCall(onExactRecover, through: activation)
             )
         }
     }
@@ -843,6 +916,7 @@ struct SoccerEventPagePresentation10868: View {
         case .both: bothContent(activation: activation)
         case .first: firstContent(activation: activation)
         case .halves: halvesContent(activation: activation)
+        case .exact: exactContent(activation: activation)
         }
     }
 

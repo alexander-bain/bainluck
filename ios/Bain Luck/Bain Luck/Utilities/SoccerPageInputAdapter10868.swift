@@ -12,6 +12,7 @@ import Foundation
 ///   - header, headline   part one (`SoccerMatchPageAdapter10868`)
 ///   - history            part two (`SoccerHistoryAdapter10868`), passed in
 ///   - goals, both, first, halves   parts four to seven, passed in
+///   - exact              part ten (`SoccerExactScoreAdapter10868`), passed in
 ///   - originals count    part eight's catalogue size, for the All props entry
 ///
 /// THE STREAM IS MANUAL, exactly as hockey's (H5): the only owner that ranks and
@@ -29,6 +30,22 @@ import Foundation
 /// only after the final, whatever content the halves adapter has. The journey
 /// and replay hosts — or any other owner-supplied context — admit it explicitly
 /// (`.explicit`); nothing here ranks cards or infers a route.
+///
+/// EVERY CARD FOLLOWS THAT MEMBERSHIP BY DEFAULT (Design, SOCCER BEFORE
+/// exact-map and goal-outlook reuse; `routeCards`):
+///   - before kickoff   the total goal outlook and the full-match / first-half
+///                      exact-score map — and nothing else. Both teams to score,
+///                      first team to score and half by half are not automatic,
+///                      whatever content their adapters have;
+///   - during play      goal milestones, both teams to score, first team to score;
+///   - after the final  those three and half by half.
+/// The owner may admit any other card explicitly (`admittedCards`, or
+/// `HalvesAdmission.explicit` for half by half) — owner-supplied context, never
+/// a rank, a title or a time. A card that is offered still needs its own
+/// content; a card that is not offered reaches neither the stream nor the page
+/// input. Every original stays in All props either way. Filtering is not the
+/// whole screen: the outlook and the map are composed by parts four and ten
+/// from the event's own served rows and the owner's admission.
 enum SoccerPageInputAdapter10868 {
 
     /// Where the half-by-half card may be offered.
@@ -46,6 +63,24 @@ enum SoccerPageInputAdapter10868 {
         case .routeDefault: phase == .final
         case .explicit: true
         }
+    }
+
+    /// The approved route-phase membership (route-tracker
+    /// SOCCER-CARD-RECONCILIATION.json): the prop stories each phase offers
+    /// without any owner admission.
+    static func routeCards(_ phase: SoccerEventPagePhase10868) -> Set<SoccerEventPageCard10868> {
+        switch phase {
+        case .before: [.goals, .exact]
+        case .live: [.goals, .both, .first]
+        case .final: [.goals, .both, .first, .halves]
+        }
+    }
+
+    /// Whether `card` is offered in `phase`: the route's own card, or one the
+    /// owner admitted explicitly.
+    static func offers(_ card: SoccerEventPageCard10868, phase: SoccerEventPagePhase10868,
+                       admitted: Set<SoccerEventPageCard10868>) -> Bool {
+        card != .history && (routeCards(phase).contains(card) || admitted.contains(card))
     }
 
     /// The host's own stream state — what the reader is looking at.
@@ -71,6 +106,9 @@ enum SoccerPageInputAdapter10868 {
         static let storiesLabel = "Match stories"
         static let storyUnavailable = "This story isn’t available for this match state. Every original is still in All props."
         static let goals = "Goal milestones"
+        /// The goal card's name before kickoff, where it is the outlook.
+        static let goalOutlook = "Total goal outlook"
+        static let exact = "Exact final score"
         static let both = "Both teams to score"
         static let first = "First team to score"
         static let halves = "Half-by-half expectations"
@@ -78,21 +116,34 @@ enum SoccerPageInputAdapter10868 {
         static let allProps = "All props"
     }
 
+    /// `admittedCards` is the owner's explicit admission of cards beyond the
+    /// route's own; `.explicit` half-by-half admission counts as one.
     static func input(
         _ event: EventDetail,
         history: FieldHistoryInput10868,
-        goals: TotalMilestoneInput10868?,
-        both: BothTeamsScoreInput10868?,
-        first: FirstScorerComparisonInput10868?,
+        goals suppliedGoals: TotalMilestoneInput10868?,
+        both suppliedBoth: BothTeamsScoreInput10868?,
+        first suppliedFirst: FirstScorerComparisonInput10868?,
         halves suppliedHalves: PeriodOutcomeComparisonInput10868?,
+        exact suppliedExact: ExactScoreMapInput10868? = nil,
         halvesAdmission: HalvesAdmission = .routeDefault,
+        admittedCards: Set<SoccerEventPageCard10868> = [],
         originalsCount: Int?,
         stream state: StreamState,
         host: SoccerMatchPageAdapter10868.Host
     ) -> SoccerEventPageInput10868 {
         let phase = SoccerMatchPageAdapter10868.phase(event, now: host.now)
-        let halves = offersHalves(phase: phase, admission: halvesAdmission) ? suppliedHalves : nil
-        let offered = offeredCards(goals: goals, both: both, first: first, halves: halves)
+        var admitted = admittedCards
+        if halvesAdmission == .explicit { admitted.insert(.halves) }
+        func offered<Input>(_ card: SoccerEventPageCard10868, _ input: Input?) -> Input? {
+            offers(card, phase: phase, admitted: admitted) ? input : nil
+        }
+        let goals = offered(.goals, suppliedGoals)
+        let exact = offered(.exact, suppliedExact)
+        let both = offered(.both, suppliedBoth)
+        let first = offered(.first, suppliedFirst)
+        let halves = offered(.halves, suppliedHalves)
+        let cards = offeredCards(goals: goals, exact: exact, both: both, first: first, halves: halves)
         return SoccerEventPageInput10868(
             phase: phase,
             header: SoccerMatchPageAdapter10868.header(event, host: host),
@@ -102,8 +153,9 @@ enum SoccerPageInputAdapter10868 {
             both: both,
             first: first,
             halves: halves,
-            stream: stream(scope: scope(event, phase: phase), offered: offered, state: state),
-            stories: stories(offered),
+            exact: exact,
+            stream: stream(scope: scope(event, phase: phase), offered: cards, state: state, phase: phase),
+            stories: stories(cards),
             copy: copy(originalsCount: originalsCount))
     }
 
@@ -112,12 +164,15 @@ enum SoccerPageInputAdapter10868 {
         "soccer:\(event.id):\(phase)"
     }
 
-    /// The stories this phase has content for, in the screen's fixed order.
-    static func offeredCards(goals: TotalMilestoneInput10868?, both: BothTeamsScoreInput10868?,
+    /// The stories this phase has content for, in the screen's fixed order:
+    /// goals, the exact-score map, both teams, first team, half by half.
+    static func offeredCards(goals: TotalMilestoneInput10868?, exact: ExactScoreMapInput10868? = nil,
+                             both: BothTeamsScoreInput10868?,
                              first: FirstScorerComparisonInput10868?,
                              halves: PeriodOutcomeComparisonInput10868?) -> [SoccerEventPageCard10868] {
         var cards: [SoccerEventPageCard10868] = []
         if goals != nil { cards.append(.goals) }
+        if exact != nil { cards.append(.exact) }
         if both != nil { cards.append(.both) }
         if first != nil { cards.append(.first) }
         if halves != nil { cards.append(.halves) }
@@ -125,7 +180,7 @@ enum SoccerPageInputAdapter10868 {
     }
 
     static func stream(scope: String, offered: [SoccerEventPageCard10868],
-                       state: StreamState) -> StoryStreamPresentation10868 {
+                       state: StreamState, phase: SoccerEventPagePhase10868? = nil) -> StoryStreamPresentation10868 {
         func ref(_ card: SoccerEventPageCard10868) -> StoryStreamPresentation10868.CardRef {
             .init(scope: scope, id: card.rawValue)
         }
@@ -141,7 +196,7 @@ enum SoccerPageInputAdapter10868 {
         }()
         return StoryStreamPresentation10868(
             scope: scope, eyebrow: nil, heading: Words.streamHeading,
-            cards: offered.map { StoryStreamPresentation10868.Card(id: $0.rawValue, name: name($0)) },
+            cards: offered.map { StoryStreamPresentation10868.Card(id: $0.rawValue, name: name($0, phase: phase)) },
             primary: shown.map(ref), companion: neighbour.map(ref),
             companionLabel: neighbour == nil ? nil : Words.companionLabel,
             wide: state.wide,
@@ -171,7 +226,13 @@ enum SoccerPageInputAdapter10868 {
         case .both: Words.both
         case .first: Words.first
         case .halves: Words.halves
+        case .exact: Words.exact
         case .history: Words.history
         }
+    }
+
+    /// The card's name in `phase`: before kickoff the goal card is the outlook.
+    static func name(_ card: SoccerEventPageCard10868, phase: SoccerEventPagePhase10868?) -> String {
+        card == .goals && phase == .before ? Words.goalOutlook : name(card)
     }
 }

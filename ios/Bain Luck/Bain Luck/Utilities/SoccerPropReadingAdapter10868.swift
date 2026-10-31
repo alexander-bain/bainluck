@@ -134,12 +134,25 @@ enum SoccerPropReadingAdapter10868 {
         var first: Int?
         /// In period order.
         var halves: [Half]
+        /// Markets of `goals` whose served row clock the owner has proved is
+        /// that row's own observation — the producer's `observed_at_basis`
+        /// absent, not `capped_to_sibling`. `GameMarketOutcome` does not decode
+        /// that key yet (Models/FuturesModels.swift, #9483), so no owner can
+        /// supply this today and none is assumed: empty keeps every totals
+        /// row's clock unproven (part four).
+        var ownClockGoals: Set<Int>
+        /// The owner's exact-score descriptor (part ten,
+        /// `SoccerExactScoreAdapter10868`); nil offers no exact-score map.
+        var exactScore: SoccerExactScoreAdapter10868.Descriptor?
 
-        init(goals: [Int] = [], both: Int? = nil, first: Int? = nil, halves: [Half] = []) {
+        init(goals: [Int] = [], both: Int? = nil, first: Int? = nil, halves: [Half] = [],
+             ownClockGoals: Set<Int> = [], exactScore: SoccerExactScoreAdapter10868.Descriptor? = nil) {
             self.goals = goals
             self.both = both
             self.first = first
             self.halves = halves
+            self.ownClockGoals = ownClockGoals
+            self.exactScore = exactScore
         }
     }
 

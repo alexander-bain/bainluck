@@ -23,6 +23,24 @@ import Foundation
 ///                  `observed_at_basis`, not decoded), so a totals quote is never
 ///                  this card's in-play chance, nor its pre-match chance before
 ///                  the start; once started, the stored pre-match pin is.
+///   - own clock    the ONE way a totals row's clock counts as its own: the
+///                  owner names its market in `ownClock`
+///                  (`SoccerPropReadingAdapter10868.Markets.ownClockGoals`) from
+///                  the producer's decoded `observed_at_basis`. Then, and only
+///                  then, part three reads it like any own-clock row — still
+///                  recent-only before kickoff, still at or after the start and
+///                  recent during play. Nothing here infers it from a value, a
+///                  title or a time. MISSING OWNER INPUT: `GameMarketOutcome`
+///                  does not decode `observed_at_basis` (Models/FuturesModels.swift,
+///                  #9483, Native), so today no host can supply it.
+///
+/// Before kickoff this card is the soccer page's TOTAL GOAL OUTLOOK (Design's
+/// approved route membership): hollow at-least stems (`.stems`), one per
+/// admitted original, each with its own clock — never a fitted curve, a
+/// distribution, a projected final or a complementary Under. A market the
+/// venue serves only as an Under leg adds no stem (`QuestionCatalog9483`'s one
+/// over-side rule, gotcha #17) — the reference's 7+/8+/9+ stems are such rows,
+/// an explicit unpaid producer-contract question, not a gap filled here.
 ///   - reached      `PlayerPropsCardView.rungVerdict` on the goals so far —
 ///                  performance, never 100% and never a settlement.
 ///   - counts       `EventDetail.homeScore + awayScore`, dated only by
@@ -59,7 +77,8 @@ enum SoccerGoalsAdapter10868 {
     ]
 
     /// The card, or nil when no admitted market serves an over-side milestone.
-    static func input(_ event: EventDetail, markets: GameMarketsResponse?, admitted: [Int], host: R.Host,
+    static func input(_ event: EventDetail, markets: GameMarketsResponse?, admitted: [Int],
+                      ownClock: Set<Int> = [], host: R.Host,
                       selectedMilestoneID: String? = nil) -> TotalMilestoneInput10868? {
         let phase = SoccerMatchPageAdapter10868.phase(event, now: host.now)
         let goals = R.goals(event)
@@ -70,7 +89,8 @@ enum SoccerGoalsAdapter10868 {
                 QuestionCatalog9483.lineSide($0.row) == .over && ($0.threshold?.isFinite ?? false)
             }
             // One original line per market; two over rows is not one milestone.
-            guard overs.count == 1, let leg = overs.first, let threshold = leg.threshold else { continue }
+            guard overs.count == 1, let served = overs.first, let threshold = served.threshold else { continue }
+            let leg = ownClock.contains(marketID) ? owningClock(served) : served
             rows.append(row(leg, threshold: threshold, event: event, phase: phase, goals: goals, host: host))
             legs.append(leg)
         }
@@ -96,6 +116,14 @@ enum SoccerGoalsAdapter10868 {
             chanceTicks: chanceTicks,
             timing: chosen.flatMap { id in timing(id, rows: rows, legs: legs, event: event, phase: phase, host: host) },
             markStyle: .stems)
+    }
+
+    /// The same leg with its clock counted as its own — only for a market the
+    /// owner proved (`ownClock`). Every other field is the served leg's.
+    static func owningClock(_ leg: R.Leg) -> R.Leg {
+        R.Leg(marketID: leg.marketID, id: leg.id, label: leg.label, row: leg.row, contributors: leg.contributors,
+              isWinner: leg.isWinner, resolutionSource: leg.resolutionSource, threshold: leg.threshold,
+              clockIsOwn: true, option: leg.option)
     }
 
     // MARK: - One milestone

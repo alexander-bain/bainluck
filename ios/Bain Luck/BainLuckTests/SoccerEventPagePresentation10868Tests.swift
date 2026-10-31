@@ -639,11 +639,14 @@ final class SoccerEventPagePresentation10868Tests: XCTestCase {
         XCTAssertNil(ambiguous.storyCard("goals"))
         XCTAssertNil(ambiguous.storyCard("chart"))
 
-        // Full-size content is the same leaf with the same input.
+        // Full-size content is the same leaf with the same input. This final
+        // page supplies no exact-score map (the optional slot stays nil), so
+        // that card alone has no full-size content.
         let input = Self.page(.final)
-        for card in SoccerEventPageCard10868.allCases {
+        for card in SoccerEventPageCard10868.allCases where card != .exact {
             XCTAssertTrue(SoccerEventPageModel10868(input).readerShows(card), "\(card)")
         }
+        XCTAssertFalse(SoccerEventPageModel10868(input).readerShows(.exact))
         XCTAssertEqual(SoccerEventPagePresentation10868(input: input, mode: .reader(.goals)).goalsContent()?.input, input.goals)
         XCTAssertEqual(SoccerEventPagePresentation10868(input: input, mode: .reader(.both)).bothContent()?.input, input.both)
         XCTAssertEqual(SoccerEventPagePresentation10868(input: input, mode: .reader(.first)).firstContent()?.input, input.first)
