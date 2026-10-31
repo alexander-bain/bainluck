@@ -90,7 +90,9 @@ enum HockeyJourneyPageAdapter10868 {
         static let noScore = "Score unavailable"
         static let noPregameForecast = "No pregame forecast"
         static let noInGameForecast = "No in-game forecast"
-        static let forecastWithheld = "Forecast withheld"
+        /// The live projection exists but fails the page's own admission (stale or unbacked); the reader
+        /// sees availability words, never the machinery (Design copy principle 2026-10-31).
+        static let forecastWithheld = "Forecast unavailable"
         static let won = "Won"
         static let lost = "Lost"
         static let spokenLabel = "Hockey win chances, score and forecast"

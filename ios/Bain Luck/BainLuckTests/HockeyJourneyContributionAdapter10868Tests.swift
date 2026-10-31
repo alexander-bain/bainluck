@@ -357,9 +357,9 @@ final class HockeyJourneyContributionAdapter10868Tests: XCTestCase {
         }
         XCTAssertEqual(points.player?.actual, .count(PlayerContributionCount10868(
             count: "2", unit: "points so far", breakdown: "2 goals + 0 assists",
-            accessibilityDetail: "box score · update time not served")))
+            accessibilityDetail: "box score · update time not recorded")))
         XCTAssertEqual(points.timing?.lines, ["Pregame chance: Unavailable", "In-game chance: No in-game reading",
-                                              "Count so far: box score · update time not served"])
+                                              "Count so far: box score · update time not recorded"])
     }
 
     // MARK: Chooser and selection

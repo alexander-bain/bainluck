@@ -116,8 +116,10 @@ enum HockeyJourneyOriginalsAdapter10868 {
         /// Part three's words for a quote observed before the start.
         static let noInGameReading = HockeyJourneyContributionAdapter10868.Words.noInGameReading
         static let notYetConfirmed = "Not yet confirmed"
-        static let noSettlement = "No settlement served"
-        static let disputed = "Served settlement and grade disagree"
+        /// No settlement on the served row (`isWinner` / `resolutionSource` absent).
+        static let noSettlement = "Result not recorded yet"
+        /// The served settlement and the grade disagree; neither is shown as the result.
+        static let disputed = "Result sources disagree"
         static let rulesUnavailable = "Rules unavailable"
         static let marketID = "Market ID"
         static let outcomeID = "Outcome ID"

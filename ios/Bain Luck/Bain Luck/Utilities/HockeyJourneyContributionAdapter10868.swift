@@ -132,7 +132,9 @@ enum HockeyJourneyContributionAdapter10868 {
         static let assistsDefinition = "An assist credits a player who helped create a goal."
         static let chartTitle = "Pregame chances · at least this many"
         static let unavailable = "Unavailable"
-        static let notPriced = "Not priced"
+        /// A ladder whose rungs fail the props card's own ordering check: both rungs are withheld. Same
+        /// words as web `CONTRIBUTION_WORDS.notPriced`.
+        static let notPriced = "Chance unavailable"
         /// `AllMarketsCatalogView9483.noRecentPrice`, the page's one spelling.
         static let noRecentUpdate = "No recent probability update"
         static let noInGameReading = "No in-game reading"
@@ -145,7 +147,7 @@ enum HockeyJourneyContributionAdapter10868 {
         static let finalCountUnavailable = "Final count unavailable"
         static let savedBeforeStart = "saved before the start"
         /// The box carries no observation clock on either served channel.
-        static let boxSoFar = "box score · update time not served"
+        static let boxSoFar = "box score · update time not recorded"
         static let boxFinal = "box score after the final"
         static let timingSuffix = "probability timing"
     }

@@ -194,7 +194,7 @@ final class HockeyJourneyOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertEqual(originals.count, 10)
         for o in originals {
             XCTAssertEqual(o.mode, .result)
-            XCTAssertEqual(o.grade, Originals.Grade(words: "Not yet confirmed", provenance: "No settlement served"), o.outcome)
+            XCTAssertEqual(o.grade, Originals.Grade(words: "Not yet confirmed", provenance: "Result not recorded yet"), o.outcome)
         }
         // After the start an over-side player prop keeps its served mark; other rows have none.
         let eichel = try XCTUnwrap(pregame.playerProps?.first { $0.outcomeName == "Jack Eichel: 1+" })
@@ -215,10 +215,10 @@ final class HockeyJourneyOriginalsAdapter10868Tests: XCTestCase {
         }
         XCTAssertEqual(try kaprizovGrade { _ in }?.words, "Won")
         XCTAssertEqual(try kaprizovGrade { $0.isWinner = nil },
-                       Originals.Grade(words: "Not yet confirmed", provenance: "No settlement served"))
+                       Originals.Grade(words: "Not yet confirmed", provenance: "Result not recorded yet"))
         XCTAssertEqual(try kaprizovGrade { $0.resolutionSource = "ungradeable_result" }?.words, "Not yet confirmed")
         XCTAssertEqual(try kaprizovGrade { $0.isWinner = false },
-                       Originals.Grade(words: "Not yet confirmed", provenance: "Served settlement and grade disagree"),
+                       Originals.Grade(words: "Not yet confirmed", provenance: "Result sources disagree"),
                        "a served loss beside a served hit is not picked either way")
         XCTAssertNil(A.settlement(isWinner: false, resolutionSource: nil))
         XCTAssertEqual(A.settlement(isWinner: false, resolutionSource: "api_settlement"), false)

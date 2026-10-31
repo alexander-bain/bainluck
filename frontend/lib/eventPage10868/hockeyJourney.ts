@@ -137,7 +137,8 @@ export const MATRIX_WORDS = {
   noScore: "Score unavailable",
   noPregameForecast: "No pregame forecast",
   noInGameForecast: "No in-game forecast",
-  forecastWithheld: "Forecast withheld",
+  // The live projection exists but fails admission (stale or unbacked): availability words, not machinery.
+  forecastWithheld: "Forecast unavailable",
   // The TEAM's result after the final — not a prop verdict, so not lib/propGrade's
   // vocabulary. Web has no exported team-result word: the settled event hero
   // spells "Won" inline (SettledOutcomeHero.tsx) and prints no loser word, and
