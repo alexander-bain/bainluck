@@ -1806,4 +1806,253 @@ final class RugbyMatchEventPagePresentation10868Tests: XCTestCase {
         XCTAssertFalse(RugbyMatchEventPageModel10868(ownHidden.input).presentedHistory.showsKey)
         XCTAssertFalse(RugbyMatchEventPageModel10868(ownHidden.input).readerHistory.showsKey)
     }
+
+    // MARK: - Shared control targets (prepared for the 44pt correction; NOT RUN)
+
+    func testEveryRugbyControlTargetIsFlooredAt44AndGrowsWithLargerText() {
+        typealias Target = RugbyMatchEventPageControlTarget10868
+        XCTAssertEqual(Target.minimum, 44)
+        // The hit length: never below 44, the scaled metric above it, 44 when not finite.
+        let scaled: [CGFloat] = [30, 44, 62, 0, -4, .nan, .infinity, -.infinity]
+        XCTAssertEqual(scaled.map { Target.length($0) }, [44, 44, 62, 44, 44, 44, 44, 44])
+
+        func fitted<V: View>(_ view: V, at size: DynamicTypeSize) -> CGSize {
+            hostForMeasurement(view.fixedSize(), at: size)
+                .sizeThatFits(in: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude))
+        }
+        var heights: [CGFloat] = []
+        for size in [DynamicTypeSize.xSmall, .large, .accessibility3] {
+            // Both axes: at least 44 by 44 with a one-letter label at every text size.
+            let both = fitted(Text("X").font(.caption2).modifier(Target()), at: size)
+            XCTAssertTrue(both.width.isFinite && both.height.isFinite, "\(size)")
+            XCTAssertGreaterThanOrEqual(both.width, 44, "\(size)")
+            XCTAssertGreaterThanOrEqual(both.height, 44, "\(size)")
+            heights.append(both.height)
+            // Height only: the width stays the label's own.
+            let tall = fitted(Text("X").font(.caption2).modifier(Target(width: false)), at: size)
+            XCTAssertGreaterThanOrEqual(tall.height, 44, "\(size)")
+            XCTAssertLessThan(tall.width, 44, "\(size)")
+            // Width only: the height stays the label's own.
+            let wide = fitted(Text("X").font(.caption2).modifier(Target(height: false)), at: size)
+            XCTAssertGreaterThanOrEqual(wide.width, 44, "\(size)")
+            XCTAssertLessThan(wide.height, 44, "\(size)")
+        }
+        // The default size is exactly the old 44; larger text still grows the target.
+        XCTAssertEqual(heights[1], 44, accuracy: 0.5)
+        XCTAssertGreaterThan(heights[2], heights[0] + 1)
+
+        // Filling the width spans what is offered; without it the label keeps its own width.
+        let offered = CGSize(width: 200, height: CGFloat.greatestFiniteMagnitude)
+        let spanning = hostForMeasurement(Text("X").modifier(Target(width: false, fillsWidth: true, alignment: .topLeading)),
+                                          at: .xSmall).sizeThatFits(in: offered)
+        XCTAssertEqual(spanning.width, 200, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(spanning.height, 44)
+        let own = hostForMeasurement(Text("X").modifier(Target(width: false)), at: .xSmall).sizeThatFits(in: offered)
+        XCTAssertLessThan(own.width, 44)
+        XCTAssertGreaterThanOrEqual(own.height, 44)
+    }
+
+    func testInfoSourceAndLinkControlsKeep44PointTargetsWithShortLabelsAtEveryTextSize() {
+        var log: [String] = []
+        let link = RugbyMatchEventPageLink10868(id: "x", label: "X", url: URL(string: Self.espnURL)!)
+        func content(source: Bool = false, linked: Bool = false, callbacks: Bool = true) -> RugbyMatchEventPageSectionsContent10868 {
+            RugbyMatchEventPageSectionsContent10868(
+                title: "",
+                sections: [RugbyMatchEventPageSection10868(title: "", paragraphs: ["W"], link: linked ? link : nil,
+                                                           sourceID: source ? "rules.R" : nil)],
+                sourceIDs: ["rules.R"], sourceLabel: "R",
+                onLink: callbacks ? { log.append("link:\($0.id):\($0.url.absoluteString)") } : nil,
+                onSource: callbacks ? { log.append("source:\($0)") } : nil)
+        }
+        func height(_ view: RugbyMatchEventPageSectionsContent10868, at size: DynamicTypeSize) -> CGFloat {
+            hostForMeasurement(view.frame(width: 320), at: size)
+                .sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)).height
+        }
+        func width(_ view: RugbyMatchEventPageSectionsContent10868, at size: DynamicTypeSize) -> CGFloat {
+            hostForMeasurement(view.fixedSize(), at: size)
+                .sizeThatFits(in: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)).width
+        }
+
+        // A one-letter source or link label still gives a 44pt-wide control at the smallest size.
+        XCTAssertGreaterThanOrEqual(width(content(source: true), at: .xSmall), 44)
+        XCTAssertGreaterThanOrEqual(width(content(linked: true), at: .xSmall), 44)
+        // Words only without callbacks: the same short labels stay narrower than a control.
+        XCTAssertLessThan(width(content(source: true, linked: true, callbacks: false), at: .xSmall), 44)
+
+        // Each control adds at least its 44pt target plus the section's 6pt spacing, growing with larger text.
+        var sourceAdded: [CGFloat] = []
+        var linkAdded: [CGFloat] = []
+        for size in [DynamicTypeSize.xSmall, .large, .accessibility3] {
+            let base = height(content(), at: size)
+            XCTAssertTrue(base.isFinite && base > 0, "\(size)")
+            sourceAdded.append(height(content(source: true), at: size) - base)
+            linkAdded.append(height(content(linked: true), at: size) - base)
+            XCTAssertGreaterThanOrEqual(sourceAdded.last!, 44 + 6 - 0.5, "source \(size)")
+            XCTAssertGreaterThanOrEqual(linkAdded.last!, 44 + 6 - 0.5, "link \(size)")
+            // No callback: no source control at all, and the link is its own words, not a dead 44pt row.
+            XCTAssertEqual(height(content(source: true, callbacks: false), at: size), base, accuracy: 0.5, "\(size)")
+        }
+        XCTAssertGreaterThan(sourceAdded[2], sourceAdded[0] + 1)
+        XCTAssertGreaterThan(linkAdded[2], linkAdded[0] + 1)
+        let wordsAdded = height(content(linked: true, callbacks: false), at: .xSmall) - height(content(), at: .xSmall)
+        XCTAssertGreaterThan(wordsAdded, 0)
+        XCTAssertLessThan(wordsAdded, 44 + 6 - 0.5)
+        // Building and laying out called nothing.
+        XCTAssertEqual(log, [])
+
+        // The exact payloads, unchanged: the same link and the same resolving source id.
+        let live = content(source: true, linked: true)
+        live.linkAction(link)?()
+        live.sourceAction("rules.R")?()
+        XCTAssertNil(live.linkAction(nil))
+        XCTAssertNil(live.sourceAction(nil))
+        XCTAssertNil(live.sourceAction("rules.other"))
+        XCTAssertNil(content(source: true, linked: true, callbacks: false).linkAction(link))
+        XCTAssertNil(content(source: true, linked: true, callbacks: false).sourceAction("rules.R"))
+        XCTAssertEqual(log, ["link:x:\(link.url.absoluteString)", "source:rules.R"])
+    }
+
+    func testChartEntryCatalogueAndReaderInfoKeepTheirExactHoldsAndPayloadsWithTheFlooredTargets() throws {
+        var log: [String] = []
+        let input = Self.page(.final)
+        let originals = Self.originals(.final)
+        func view(_ mode: RugbyMatchEventPageMode10868 = .page) -> RugbyMatchEventPagePresentation10868 {
+            RugbyMatchEventPagePresentation10868(
+                input: input, mode: mode, originals: originals,
+                onAbout: { log.append("about") },
+                onSource: { log.append("source:\($0)") },
+                onLink: { log.append("link:\($0.id)") },
+                onCatalogue: { log.append("catalogue") },
+                onInspect: { log.append("inspect:\($0.observation ?? "none")") },
+                onHistoryAction: { log.append("chart:\($0)") },
+                onInteraction: { log.append("hold") })
+        }
+        func fitted<V: View>(_ view: V, width: CGFloat) -> CGSize {
+            hostForMeasurement(view.frame(width: width), at: .xSmall)
+                .sizeThatFits(in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
+        }
+        func line<V: View>(_ view: V) -> CGFloat {
+            hostForMeasurement(view.fixedSize(), at: .xSmall)
+                .sizeThatFits(in: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)).height
+        }
+
+        // Every mode hosts at the smallest size with finite geometry, and laying out calls nothing.
+        for mode in [RugbyMatchEventPageMode10868.page, .reader(.history), .reader(.story), .catalogue, .about] {
+            let host = hostForMeasurement(view(mode).environment(\.horizontalSizeClass, .compact), at: .xSmall)
+            host.view.frame = CGRect(x: 0, y: 0, width: 393, height: 2000)
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            let size = host.sizeThatFits(in: CGSize(width: 393, height: CGFloat.greatestFiniteMagnitude))
+            XCTAssertTrue(size.width.isFinite && size.height.isFinite && size.height > 0, "\(mode)")
+            XCTAssertLessThanOrEqual(size.width, 393.5, "\(mode)")
+        }
+        XCTAssertEqual(log, [])
+
+        // Chart: the header row is the 44pt target, not the shorter result line beside it.
+        let model = RugbyMatchEventPageModel10868(input)
+        let finalContext = Self.context(.final)
+        let resultLine = line(Text(finalContext.result).font(.subheadline.weight(.semibold)))
+        XCTAssertLessThan(resultLine, 44)
+        let withChart = fitted(RugbyMatchEventPageContextPresentation10868(model: model, context: finalContext,
+                                                                            onChart: { log.append("chart") }), width: 393)
+        let withoutChart = fitted(RugbyMatchEventPageContextPresentation10868(model: model, context: finalContext), width: 393)
+        XCTAssertGreaterThanOrEqual(withChart.height - withoutChart.height + resultLine, 44 - 0.5)
+
+        // Reader Info: the full-size header is the 44pt target, not the one-line title beside it.
+        let titleLine = line(Text(input.reader.title).font(.headline))
+        XCTAssertLessThan(titleLine, 44)
+        let withInfo = fitted(RugbyMatchEventPagePresentation10868(input: input, mode: .reader(.history), originals: originals,
+                                                                    onAbout: { log.append("about") }), width: 393)
+        let withoutInfo = fitted(RugbyMatchEventPagePresentation10868(input: input, mode: .reader(.history), originals: originals),
+                                 width: 393)
+        XCTAssertGreaterThanOrEqual(withInfo.height - withoutInfo.height + titleLine, 44 - 0.5)
+
+        // Catalogue entry: at least 44pt plus the 16pt spacing above it in the stacked page.
+        let withCatalogue = fitted(RugbyMatchEventPagePresentation10868(input: input, originals: originals,
+                                                                         onCatalogue: { log.append("catalogue") })
+                                       .environment(\.horizontalSizeClass, .compact), width: 393)
+        let withoutCatalogue = fitted(RugbyMatchEventPagePresentation10868(input: input, originals: originals)
+                                          .environment(\.horizontalSizeClass, .compact), width: 393)
+        XCTAssertGreaterThanOrEqual(withCatalogue.height - withoutCatalogue.height, 44 + 16 - 0.5)
+        XCTAssertEqual(log, [])
+
+        // Each action, unchanged: the page hook once, then the exact payload; full-size and About exact, no hold.
+        let page = view()
+        let context = try XCTUnwrap(page.contextContent())
+        context.onChart?()
+        let entry = try XCTUnwrap(input.context?.entries.first)
+        let inspect = try XCTUnwrap(page.model.contextInspect(entry, canInspect: true))
+        context.onInspect?(inspect)
+        page.catalogueAction?()
+        view(.reader(.history)).openReaderAbout()
+        let about = try XCTUnwrap(view(.about).aboutContent())
+        about.sourceAction("rules.FRA")?()
+        about.linkAction(Self.espnLink)?()
+        XCTAssertEqual(log, [
+            "hold", "chart:history.expand",
+            "hold", "inspect:\(Self.key(Self.france, Self.france.baseline))",
+            "hold", "catalogue",
+            "about", "source:rules.FRA", "link:espn",
+        ])
+
+        // No callbacks: still no control anywhere.
+        log = []
+        let bare = RugbyMatchEventPagePresentation10868(input: input, originals: originals, onInteraction: { log.append("hold") })
+        XCTAssertNil(bare.contextContent()?.onChart)
+        XCTAssertNil(bare.contextContent()?.onInspect)
+        XCTAssertNil(bare.catalogueAction)
+        XCTAssertNil(bare.aboutOpener())
+        XCTAssertNil(bare.aboutContent()?.linkAction(Self.espnLink))
+        XCTAssertNil(bare.aboutContent()?.sourceAction("rules.FRA"))
+        bare.openReaderAbout()
+        XCTAssertEqual(log, [])
+
+        // A STATIC entry is not a control and is not floored: at the smallest size it keeps its raw scaled frame,
+        // below 44pt, whether or not the page can inspect. Its height is isolated by swapping its one-line words for
+        // words long enough to set their own height: everything else in the two contexts is identical.
+        let column: CGFloat = 240
+        let words = "Outcome unavailable in this update"
+        let longWords = Array(repeating: words, count: 6).joined(separator: " ")
+        func unresolved(_ unavailable: String) -> RugbyMatchEventPageContext10868 {
+            RugbyMatchEventPageContext10868(
+                label: finalContext.label, result: finalContext.result, caption: finalContext.caption,
+                chartLabel: finalContext.chartLabel, chartSpokenLabel: finalContext.chartSpokenLabel,
+                entries: [RugbyMatchEventPageContextEntry10868(seriesID: "series.none", inspect: nil)],
+                unavailableWords: unavailable, inspectHint: finalContext.inspectHint)
+        }
+        func contextHeight(_ context: RugbyMatchEventPageContext10868, inspects: Bool, width: CGFloat) -> CGFloat {
+            fitted(RugbyMatchEventPageContextPresentation10868(
+                model: model, context: context,
+                onInspect: inspects ? { log.append("inspect:\($0.observation ?? "none")") } : nil), width: width).height
+        }
+        func wordsHeight<V: View>(_ text: V) -> CGFloat {
+            hostForMeasurement(text, at: .xSmall).sizeThatFits(in: CGSize(width: column, height: CGFloat.greatestFiniteMagnitude)).height
+        }
+        let oneLine = wordsHeight(Text(words).font(.footnote).fixedSize(horizontal: false, vertical: true))
+        let manyLines = wordsHeight(Text(longWords).font(.footnote).fixedSize(horizontal: false, vertical: true))
+        XCTAssertLessThan(oneLine, 44)
+        XCTAssertGreaterThan(manyLines, 50)
+        XCTAssertNil(model.contextInspect(unresolved(words).entries[0], canInspect: true))
+        var staticEntries: [CGFloat] = []
+        for inspects in [false, true] {
+            let staticEntry = manyLines - (contextHeight(unresolved(longWords), inspects: inspects, width: column)
+                                           - contextHeight(unresolved(words), inspects: inspects, width: column))
+            XCTAssertGreaterThanOrEqual(staticEntry, oneLine - 0.5, "inspects: \(inspects)")
+            XCTAssertLessThan(staticEntry, 44 - 0.5, "a static entry is not floored; inspects: \(inspects)")
+            staticEntries.append(staticEntry)
+        }
+        XCTAssertEqual(contextHeight(unresolved(words), inspects: true, width: column),
+                       contextHeight(unresolved(words), inspects: false, width: column), accuracy: 0.5)
+        // Entries already taller than 44pt measure the same static and inspectable: the floor moves nothing there.
+        XCTAssertEqual(contextHeight(finalContext, inspects: true, width: 393),
+                       contextHeight(finalContext, inspects: false, width: 393), accuracy: 0.5)
+        XCTAssertEqual(log, [])
+
+        // Final positive control: the inspect path's floor on the same one-line words, measured the same way, is 44pt
+        // or more, so the static entry's smaller height above is the unfloored frame and not the measurement.
+        let floored = wordsHeight(Text(words).font(.footnote).fixedSize(horizontal: false, vertical: true)
+            .modifier(RugbyMatchEventPageControlTarget10868(width: false, fillsWidth: true, alignment: .topLeading)))
+        XCTAssertGreaterThanOrEqual(floored, 44)
+        XCTAssertGreaterThan(floored, (staticEntries.max() ?? 44) + 0.5)
+    }
 }

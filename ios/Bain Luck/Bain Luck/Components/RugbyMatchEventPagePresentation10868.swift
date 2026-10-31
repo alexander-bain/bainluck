@@ -663,6 +663,40 @@ struct RugbyMatchEventPageComparisonPresentation10868: View {
     }
 }
 
+/// A control's hit frame: the scaled 44pt metric, never below 44pt at any text
+/// size and still growing with larger text, on the axes the control needs.
+/// Geometry only — labels, glyphs, wrapping and actions are the control's own.
+struct RugbyMatchEventPageControlTarget10868: ViewModifier {
+    var width: Bool
+    var height: Bool
+    var fillsWidth: Bool
+    var alignment: Alignment
+
+    @ScaledMetric(relativeTo: .body) private var scaled: CGFloat = 44
+
+    static let minimum: CGFloat = 44
+
+    init(width: Bool = true, height: Bool = true, fillsWidth: Bool = false, alignment: Alignment = .center) {
+        self.width = width
+        self.height = height
+        self.fillsWidth = fillsWidth
+        self.alignment = alignment
+    }
+
+    /// The hit length for a scaled metric: floored at 44pt; not finite → 44pt.
+    static func length(_ scaled: CGFloat) -> CGFloat {
+        guard scaled.isFinite else { return minimum }
+        return max(minimum, scaled)
+    }
+
+    func body(content: Content) -> some View {
+        content.frame(minWidth: width ? Self.length(scaled) : nil,
+                      maxWidth: fillsWidth ? .infinity : nil,
+                      minHeight: height ? Self.length(scaled) : nil,
+                      alignment: alignment)
+    }
+}
+
 /// Each outcome's pre-match slot exactly as the history resolves it, each
 /// inspecting its own exact observation, and Chart to the full history. The
 /// host mounts or pins it; it keeps no selection of its own.
@@ -692,7 +726,7 @@ struct RugbyMatchEventPageContextPresentation10868: View {
                             Image(systemName: "arrow.up.right").font(.caption.weight(.semibold)).accessibilityHidden(true)
                         }
                         .foregroundStyle(DS.blue)
-                        .frame(minWidth: controlSize, minHeight: controlSize)
+                        .modifier(RugbyMatchEventPageControlTarget10868())
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -730,7 +764,9 @@ struct RugbyMatchEventPageContextPresentation10868: View {
             Button {
                 onInspect(inspect)
             } label: {
-                content
+                entryContent(entry)
+                    .modifier(RugbyMatchEventPageControlTarget10868(width: false, fillsWidth: true, alignment: .topLeading))
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(model.contextEntrySummary(entry))
@@ -792,8 +828,6 @@ struct RugbyMatchEventPageSectionsContent10868: View {
     let sourceLabel: String
     var onLink: ((RugbyMatchEventPageLink10868) -> Void)? = nil
     var onSource: ((String) -> Void)? = nil
-
-    @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = 44
 
     /// The section's exact link for the host to open, or nothing.
     func linkAction(_ link: RugbyMatchEventPageLink10868?) -> (() -> Void)? {
@@ -859,7 +893,7 @@ struct RugbyMatchEventPageSectionsContent10868: View {
                 Image(systemName: symbol).font(.body.weight(.semibold)).accessibilityHidden(true)
             }
             .foregroundStyle(DS.blue)
-            .frame(minHeight: controlSize)
+            .modifier(RugbyMatchEventPageControlTarget10868(alignment: .leading))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -907,7 +941,6 @@ struct RugbyMatchEventPagePresentation10868: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .body) private var anchorMinWidth: CGFloat = 440
     @ScaledMetric(relativeTo: .body) private var secondaryMinWidth: CGFloat = 320
-    @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = 44
 
     var model: RugbyMatchEventPageModel10868 { RugbyMatchEventPageModel10868(input) }
 
@@ -1203,7 +1236,7 @@ struct RugbyMatchEventPagePresentation10868: View {
                 }
                 .foregroundStyle(DS.blue)
                 .padding(.horizontal, 16)
-                .frame(minHeight: controlSize)
+                .modifier(RugbyMatchEventPageControlTarget10868(width: false))
                 .modifier(RugbyMatchEventPageCardSurface10868())
                 .contentShape(Rectangle())
             }
@@ -1257,7 +1290,7 @@ struct RugbyMatchEventPagePresentation10868: View {
                     Image(systemName: "info.circle")
                         .font(.title3)
                         .foregroundStyle(DS.textPrimary)
-                        .frame(minWidth: controlSize, minHeight: controlSize)
+                        .modifier(RugbyMatchEventPageControlTarget10868())
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
