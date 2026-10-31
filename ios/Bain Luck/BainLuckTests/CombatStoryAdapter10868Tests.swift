@@ -73,7 +73,9 @@ final class CombatStoryAdapter10868Tests: XCTestCase {
         ]))
     }
 
-    private let unrecorded = "Pre-match chance not recorded"
+    /// The retained matrix omits every pin and says `not_quoted`: omission proves
+    /// nothing, so a missing pre-match chance is "unavailable".
+    private let unrecorded = "Pre-match chance unavailable"
 
     // MARK: - Production today
 
@@ -160,7 +162,7 @@ final class CombatStoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(card.selectedOriginalID, "240262496")
         XCTAssertEqual(card.timing, CombatMethodTiming10868(
             originalID: "240262496", title: "Yes · timing",
-            lines: ["Pre-match chance: Pre-match chance not recorded", "Contract result: Won · settled by Polymarket"]))
+            lines: ["Pre-match chance: Pre-match chance unavailable", "Contract result: Won · settled by Polymarket"]))
     }
 
     func testAHeldOriginalThatIsNotReadHasNoTiming() throws {

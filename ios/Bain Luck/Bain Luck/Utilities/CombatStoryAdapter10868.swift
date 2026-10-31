@@ -154,7 +154,8 @@ enum CombatStoryAdapter10868 {
         static let inFightTitle = "In-fight chance"
         static let resultTitle = "Contract result"
         static let timingSuffix = "timing"
-        static let noPreMatch = "Pre-match chance not recorded"
+        static let preMatchNotRecorded = "Pre-match chance not recorded"
+        static let preMatchUnavailable = "Pre-match chance unavailable"
         static let inFightUnavailable = "In-fight chance unavailable"
         static let noRecentUpdate = AllMarketsCatalogView9483.noRecentPrice
         static let unconfirmed = "Result unconfirmed"
@@ -247,25 +248,37 @@ enum CombatStoryAdapter10868 {
                         optionKey: option.optionKey, venue: SourceLabels.label(for: option.published.source))
     }
 
+    /// The producer's reason for a missing pin on this exact option.
+    static let noPregamePinReason = "no_pregame_pin"
+
+    /// The words for a missing pre-match chance: "not recorded" ONLY when the
+    /// producer says so for this exact option (`comparison.reason ==
+    /// "no_pregame_pin"`); otherwise "unavailable". An omitted pin, an option the
+    /// app cannot read, or no current quote before the start does not prove a
+    /// recording never existed (TennisOriginalsAdapter10868's rule).
+    static func preMatchAbsence(_ option: QuestionMatrixOption?) -> String {
+        option?.comparison?.reason == noPregamePinReason ? Words.preMatchNotRecorded : Words.preMatchUnavailable
+    }
+
     /// Before the start: the published quote on its own recent clock. From the
     /// start on: the producer's pin only.
     static func preMatch(_ option: QuestionMatrixOption, event: EventDetail, phase: CombatEventPagePhase10868,
                          host: Host) -> (observation: Observation?, missing: String) {
         let venue = SourceLabels.label(for: option.published.source)
         if phase == .before {
-            guard let quoted = option.published.quotedValue else { return (nil, Words.noPreMatch) }
+            guard let quoted = option.published.quotedValue else { return (nil, Words.preMatchUnavailable) }
             guard NFLMilestoneCard9483.isRecent(option.published.observedAt, now: host.now),
                   let at = option.published.observedAt?.asDate
             else { return (nil, Words.noRecentUpdate) }
             let clock = CombatBoutPageAdapter10868.clockWords(at, host: host.words)
             return (Observation(probability: quoted, text: formatProbability(quoted), time: timeWords(at, host: host),
-                                detail: joined(["\(Words.recorded) \(clock)", venue]) ?? clock), Words.noPreMatch)
+                                detail: joined(["\(Words.recorded) \(clock)", venue]) ?? clock), Words.preMatchUnavailable)
         }
-        guard let pin = NBALadderCard9483.pin(option), let at = pin.at.asDate else { return (nil, Words.noPreMatch) }
+        guard let pin = NBALadderCard9483.pin(option), let at = pin.at.asDate else { return (nil, preMatchAbsence(option)) }
         let clock = CombatBoutPageAdapter10868.clockWords(at, host: host.words)
         return (Observation(probability: pin.probability, text: formatProbability(pin.probability),
                             time: timeWords(at, host: host),
-                            detail: joined([Words.lastBeforeStart, clock, venue]) ?? clock), Words.noPreMatch)
+                            detail: joined([Words.lastBeforeStart, clock, venue]) ?? clock), preMatchAbsence(option))
     }
 
     /// During play: the published quote, only when the app would call it current.

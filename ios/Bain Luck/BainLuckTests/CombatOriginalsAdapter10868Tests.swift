@@ -162,10 +162,13 @@ final class CombatOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertNil(built.recorded)
     }
 
+    /// The retained body omits every `pregame_reading` and each option's comparison
+    /// says `not_quoted`. That does not prove a recording never existed, so each
+    /// original's pre-match chance is "unavailable", never "not recorded".
     func testDuringNoOriginalPrintsAPreMatchChanceWithoutItsOwnPin() throws {
         let event = try Fixtures.detail(Fixtures.mmaDetail)
         let originals = try XCTUnwrap(build(event, try Self.markets(), Fixtures.readAt).catalogue).originals
-        XCTAssertTrue(originals.allSatisfy { $0.pregame == .missing("Pre-match chance not recorded") },
+        XCTAssertTrue(originals.allSatisfy { $0.pregame == .missing("Pre-match chance unavailable") },
                       "a settled or current price is never relabelled pre-match")
         XCTAssertTrue(originals.allSatisfy { $0.mode == .comparison(.current) && $0.grade == nil })
     }
@@ -201,7 +204,7 @@ final class CombatOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertEqual(grade(decisionYes), lost)
         XCTAssertEqual(grade(decisionNo), won)
         XCTAssertTrue(originals.allSatisfy { $0.mode == .result && $0.later == nil })
-        XCTAssertTrue(originals.allSatisfy { $0.pregame == .missing("Pre-match chance not recorded") })
+        XCTAssertTrue(originals.allSatisfy { $0.pregame == .missing("Pre-match chance unavailable") })
         XCTAssertEqual(try XCTUnwrap(build(event, try Self.markets(), Fixtures.readAt).catalogue).scope,
                        "combat:15318681:final:originals")
     }
@@ -240,14 +243,46 @@ final class CombatOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertEqual(originals[knockoutYes].pregame, .value(
             "41%", placement: 0.41,
             provenance: "Last recorded before start · \(clock("2026-10-04T00:12:00+00:00", reader)) · Polymarket"))
-        XCTAssertEqual(originals[knockoutNo].pregame, .missing("Pre-match chance not recorded"))
+        XCTAssertEqual(originals[knockoutNo].pregame, .missing("Pre-match chance unavailable"))
 
         // CONSTRUCTED: the same reading naming the No outcome instead.
         let foreign = try Self.editingOption(question: "m:63786874", option: "o:240262496",
                                              ["pregame_reading": Self.pin(0.41, at: "2026-10-04T00:12:00+00:00", outcome: 240262497)])
         let refused = try XCTUnwrap(build(event, foreign, Fixtures.readAt).catalogue).originals
-        XCTAssertEqual(refused[knockoutYes].pregame, .missing("Pre-match chance not recorded"))
-        XCTAssertEqual(refused[knockoutNo].pregame, .missing("Pre-match chance not recorded"))
+        XCTAssertEqual(refused[knockoutYes].pregame, .missing("Pre-match chance unavailable"))
+        XCTAssertEqual(refused[knockoutNo].pregame, .missing("Pre-match chance unavailable"))
+    }
+
+    /// "Not recorded" only where the producer says so for this exact option.
+    func testOnlyTheProducersNoPregamePinReasonReadsNotRecorded() throws {
+        let event = try Fixtures.detail(Fixtures.mmaDetail)
+        let noPin: [String: Any] = ["state": "unavailable", "reason": "no_pregame_pin", "baseline": NSNull(),
+                                    "latest": NSNull(), "delta_points": NSNull()]
+        // CONSTRUCTED: option o:240262496's comparison reason set to `no_pregame_pin`.
+        let explicit = try Self.editingOption(question: "m:63786874", option: "o:240262496", ["comparison": noPin])
+        let originals = try XCTUnwrap(build(event, explicit, Fixtures.readAt).catalogue).originals
+        XCTAssertEqual(originals[knockoutYes].pregame, .missing("Pre-match chance not recorded"))
+        XCTAssertEqual(originals[knockoutNo].pregame, .missing("Pre-match chance unavailable"),
+                       "the sibling option's own comparison still says not_quoted")
+
+        // CONSTRUCTED: the same edit under an unknown matrix contract. The existing
+        // guard refuses the whole matrix, so no option speaks: "unavailable".
+        var body = try Self.object(Self.mmaMarkets)
+        var matrix = try XCTUnwrap(body["game_question_matrix"] as? [String: Any])
+        matrix["contract"] = "10238.v2"
+        body["game_question_matrix"] = matrix
+        let unknownBody = try Self.decoded(body)
+        let unknown = try XCTUnwrap(build(event, unknownBody, Fixtures.readAt).catalogue).originals
+        XCTAssertEqual(unknown[knockoutYes].pregame, .missing("Pre-match chance unavailable"))
+        XCTAssertEqual(unknown.count, originals.count, "every original is still listed")
+
+        // CONSTRUCTED: a valid exact-original pin beside the same reason is the pre-match chance.
+        let pinned = try Self.editingOption(question: "m:63786874", option: "o:240262496",
+                                            ["comparison": noPin,
+                                             "pregame_reading": Self.pin(0.41, at: "2026-10-04T00:12:00+00:00",
+                                                                         outcome: 240262496)])
+        let withPin = try XCTUnwrap(build(event, pinned, Fixtures.readAt).catalogue).originals
+        XCTAssertEqual(withPin[knockoutYes].pregame.figure, .value("41%"), "an own exact pin is the pre-match chance")
     }
 
     // MARK: - Before (constructed)

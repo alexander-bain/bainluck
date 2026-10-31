@@ -36,9 +36,13 @@ import SwiftUI
 ///                        one matrix option whose contributor ids equal the row's
 ///                        — the comparison baseline or its own `pregame_reading`,
 ///                        #11125) — the channel the hockey screen leaves unread.
-///                        No pin is "Pre-match chance not recorded": a current or
-///                        settled price is never relabelled pre-match. (The
-///                        retained body predates #11125: no option carries one.)
+///                        No pin: "Pre-match chance not recorded" ONLY where the
+///                        server says so for this option (`comparison.reason ==
+///                        "no_pregame_pin"`); every other missing pin is "Pre-match
+///                        chance unavailable", because omission does not prove no
+///                        recording existed (TennisOriginalsAdapter10868's rule). A
+///                        current or settled price is never relabelled pre-match.
+///                        (The retained body predates #11125: no option carries one.)
 ///   - later reading      during play only: the catalogue's price as the current
 ///                        chance only when dated, observed at or after the listed
 ///                        start, recent, and the fight is not suspended (the
@@ -86,7 +90,8 @@ enum CombatOriginalsAdapter10868 {
         static let heading = "All props"
         static let emptyWords = "No retained originals for this fight"
         static let unavailableChoice = "Unnamed original"
-        static let noPreMatch = "Pre-match chance not recorded"
+        static let preMatchNotRecorded = "Pre-match chance not recorded"
+        static let preMatchUnavailable = "Pre-match chance unavailable"
         static let lastBeforeStart = "Last recorded before start"
         static let recorded = "Recorded"
         static let noCurrentChance = "No current chance"
@@ -168,9 +173,10 @@ enum CombatOriginalsAdapter10868 {
                                 matrix: EventQuestionMatrix?, host: Host) -> Details.Reading {
         let venue = SourceLabels.label(for: match.source.row.source)
         if started {
-            guard let served = Self.option(for: match.source, in: matrix), let pin = NBALadderCard9483.pin(served),
-                  let at = pin.at.asDate
-            else { return .missing(Words.noPreMatch) }
+            let candidate = Self.option(for: match.source, in: matrix)
+            guard let served = candidate, let pin = NBALadderCard9483.pin(served), let at = pin.at.asDate else {
+                return .missing(CombatStoryAdapter10868.preMatchAbsence(candidate))
+            }
             return .value(formatProbability(pin.probability), placement: pin.probability,
                           provenance: joined([Words.lastBeforeStart, clock(at, host), venue]))
         }
