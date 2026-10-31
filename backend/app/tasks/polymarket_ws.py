@@ -5669,6 +5669,34 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                     elif any(catalog_boundary.observation_ack[oid][1] != observation_continuity[oid][1]
                                              for oid, _ in legs):
                                         changed_events.add(eid)
+                # #10090 held-first price writes: a live game a reader holds
+                # open (STAMP_READER_FIRST, the stamp order's own held set)
+                # goes first beside the changed preview cohorts. Order only:
+                # every admitted row is still written in this flush, units stay
+                # whole, and a lock-retried event keeps its isolation. A game
+                # whose stamp is queued or running is left where it was: written
+                # first it would meet the sticky fence sooner. Unknown stamp
+                # debt, the switch off or no held set: the old order.
+                held_first = set()
+                reader_held = getattr(blend_refresher, "_reader_held_ids", None)
+                held_ids = reader_held() if callable(reader_held) else ()
+                if held_ids:
+                    live_ids = getattr(blend_refresher, "_live_event_ids", None) or ()
+                    async with buffer_lock:
+                        stamping = (
+                            stamp_owner.held_events()
+                            if stamp_owner.task is not None and not stamp_owner.task.done()
+                            else set()
+                        )
+                    if stamping is not None:
+                        held_first = {
+                            eid for eid in event_ids_for_outcomes(
+                                event_id_by_outcome,
+                                (oid for chunk in chunks for oid in chunk),
+                            )
+                            if eid in held_ids and eid in live_ids
+                        } - stamping
+                changed_events |= held_first
                 # A known unchanged cohort need not share an unrelated SQL
                 # wait. This is a scheduling hint only: every admitted row still
                 # reaches write_chunk, including heartbeat/held-return forcing.

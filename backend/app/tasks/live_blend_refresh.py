@@ -5036,7 +5036,8 @@ class LiveBlendRefresher:
                 # after READER_FIRST_RUN such admissions the rotation order
                 # alone decides one, so unheld debt keeps its turns.
                 held = self._reader_held_ids()
-                if held and any(eid not in held for eid in live_order):
+                if (held and any(eid in held for eid in live_order)
+                        and any(eid not in held for eid in live_order)):
                     if self._held_debt_run < READER_FIRST_RUN:
                         live_order.sort(key=lambda eid: eid not in held)
                         self._held_debt_run += 1
