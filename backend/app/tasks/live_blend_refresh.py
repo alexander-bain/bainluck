@@ -3822,6 +3822,7 @@ class LiveBlendRefresher:
             self._past_withdrawal(withdrawing_event_ids, fresh, retry, deferred)
         )
         due = [eid for eid in wanted if eid not in excluded and self._due(eid, clock)]
+        handed_over = frozenset()
         if self._carried_fresh:
             # #10090 `handover_fresh`: a committed cohort a hand-over carried
             # over is this call's fresh, not old debt. One not due yet stays
@@ -3830,6 +3831,7 @@ class LiveBlendRefresher:
             carried = self._carried_fresh.intersection(due)
             self._carried_fresh.difference_update(carried)
             fresh |= carried
+            handed_over = frozenset(carried)
         self._pending_continuation = [
             eid for eid in self._pending_continuation if eid in wanted
         ]
@@ -4195,6 +4197,7 @@ class LiveBlendRefresher:
                 # rather than every stamp first waiting on a separate session's
                 # read of all of them. A read failure stays with its own event.
                 prepared = None
+                own_read = None
                 try:
                     if early_failure is not None:
                         raise early_failure
@@ -4206,7 +4209,20 @@ class LiveBlendRefresher:
                     elif not head_only and (
                         pending_only or len(population) > FRESH_STAMP_WORKERS
                     ):
-                        prepared = await self._prepare_groups(list(population))
+                        if pending_only or population.isdisjoint(handed_over):
+                            prepared = await self._prepare_groups(list(population))
+                        else:
+                            # #10090 `handover_fresh`: carried hand-over events
+                            # (a shed of ~115-244) take their live flag from the
+                            # set the door routes by, not from a shared read of
+                            # every event. That read is order only (each queued
+                            # stamp rereads its own group) and `_read_groups`
+                            # builds all its rows in one synchronous pass: ~14k
+                            # rows, ~1-1.7 s of venue loop CPU at production's
+                            # ~5-7 ms per event read. This call's own events are
+                            # read as before; no stamp is handed this read.
+                            own = population.difference(handed_over)
+                            own_read = await self._prepare_groups(list(own)) if own else {}
                 except Exception as exc:
                     self.stats["errors"] += 1
                     logger.exception(
@@ -4223,9 +4239,19 @@ class LiveBlendRefresher:
                 # Preserve live-first order within each population and numeric
                 # tie-breaking; missing prepared rows remain due as non-live.
                 # #10090 held-first: within each, events a reader holds first.
-                held = self._reader_held_ids() if prepared is not None else frozenset()
+                held = (
+                    self._reader_held_ids()
+                    if prepared is not None or own_read is not None else frozenset()
+                )
 
                 def stamp_order(event_id: int) -> tuple[bool, bool, int]:
+                    if own_read is not None:
+                        if event_id in handed_over:
+                            live = event_id in self._live_event_ids
+                        else:
+                            context = own_read.get(event_id)
+                            live = context is not None and context[0].status == "live"
+                        return (not live, event_id not in held, event_id)
                     if prepared is None:
                         return (False, False, event_id)
                     context = prepared.get(event_id)
