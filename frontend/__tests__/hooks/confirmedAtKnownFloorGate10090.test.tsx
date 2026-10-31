@@ -63,8 +63,12 @@ const CALLBACK = new vm.Script(ts.transpileModule(`(${callbackText})`, {
 test("the page feeds the hook's confirmedAt to the age clock, the words and the details row", () => {
   expect(PAGE).toContain("confirmedAt: streamConfirmedAt");
   expect(PAGE).toContain("priceStamp: priceAgeClock(freshestSourceStamp, streamConfirmedAt)");
-  expect(PAGE).toContain('priceConfirmed: Boolean(acceptedPriceClock) && typeof streamConfirmedAt === "string"');
-  expect(PAGE).toContain("priceConfirmedAt={streamConfirmedAt}");
+  // Under a preview the words and the details row take the printed-pair gate
+  // (`confirmationOfDisplayed`, pinned on the real page in
+  // `confirmedAtUnderPreviewPage10090.test.tsx`); with no preview it is this value.
+  expect(PAGE).toContain("const confirmedAtShown = confirmationOfDisplayed(streamConfirmedAt, ");
+  expect(PAGE).toContain('priceConfirmed: Boolean(acceptedPriceClock) && typeof confirmedAtShown === "string"');
+  expect(PAGE).toContain("priceConfirmedAt={confirmedAtShown}");
   expect(PAGE).toMatch(/useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event\?\.blend_fold_revision\)/);
 });
 

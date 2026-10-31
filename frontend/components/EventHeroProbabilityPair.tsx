@@ -266,6 +266,64 @@ function useChangeCue(
  * observable. Testing this function exhaustively tests the real decision;
  * asserting it through the DOM would only ever re-test the settled state.
  */
+type PrintedParts = ProbabilityParts & { decimal: string };
+
+/** One frame's two printed sides: the one place the hero decides its digits. */
+function heroSideParts(
+  homeProb: number | null,
+  awayProb: number | null,
+  shownHome: number | null,
+  shownAway: number | null,
+  tenthsOn: boolean,
+  venueSettled: boolean,
+  awayWithheld: boolean,
+): { homeParts: PrintedParts; awayParts: PrintedParts } {
+  // #6064 — the clamp the whole rest of the site applies, finally applied here.
+  const homeWhole = sideParts(homeProb, shownHome);
+  const awayWhole = sideParts(awayProb, shownAway);
+  // #10090 — tenths from the adopted probability, when the page asks for them.
+  // Off, every value below is today's: the whole parts, no decimal span, no
+  // added style and the numeral class unchanged.
+  const tenths =
+    tenthsOn && !venueSettled ? tenthsPair(homeProb, awayWithheld ? null : awayProb) : null;
+  // A side today's pair prints as no reading stays no reading: tenths add a
+  // digit to a number, they never supply one.
+  const toParts = (t: TenthsParts | null, fallback: ProbabilityParts): PrintedParts =>
+    t && fallback.digits !== NO_READING
+      ? { marker: t.marker, digits: t.whole, decimal: t.decimal }
+      : { ...fallback, decimal: '' };
+  return {
+    homeParts: toParts(tenths?.home ?? null, homeWhole),
+    awayParts: toParts(tenths?.away ?? null, awayWhole),
+  };
+}
+
+/**
+ * #10090 decision J — the pair this hero prints for these props, as text
+ * (`60.4%`, `>99%`), or null for a side with no reading or a withheld away.
+ * The page compares a preview's printed pair with the committed one through
+ * this, so "the same number" means the same digits the reader sees, at the
+ * precision they see (tenths on or off).
+ */
+export function heroPrintedPair({
+  homeProb,
+  awayProb,
+  homePct,
+  awayPct,
+  awayWithheld = false,
+  venueSettled = false,
+  tenths = false,
+}: Pick<EventHeroProbabilityPairProps,
+  'homeProb' | 'awayProb' | 'homePct' | 'awayPct' | 'awayWithheld' | 'venueSettled' | 'tenths'>,
+): { home: string | null; away: string | null } {
+  const { homeParts, awayParts } = heroSideParts(
+    homeProb, awayProb, homePct, awayPct, tenths, venueSettled, awayWithheld,
+  );
+  const text = (parts: PrintedParts) =>
+    parts.digits === NO_READING ? null : `${parts.marker ?? ''}${parts.digits}${parts.decimal}%`;
+  return { home: text(homeParts), away: awayWithheld ? null : text(awayParts) };
+}
+
 export function shownPair(
   homePct: number | null,
   awayPct: number | null,
@@ -323,22 +381,9 @@ export default function EventHeroProbabilityPair({
     homePct, awayPct, homePct, animate,
   );
 
-  // #6064 — the clamp the whole rest of the site applies, finally applied here.
-  const homeWhole = sideParts(homeProb, shownHome);
-  const awayWhole = sideParts(awayProb, shownAway);
-  // #10090 — tenths from the adopted probability, when the page asks for them.
-  // Off, every value below is today's: the whole parts, no decimal span, no
-  // added style and the numeral class unchanged.
-  const tenths =
-    tenthsOn && !venueSettled ? tenthsPair(homeProb, awayWithheld ? null : awayProb) : null;
-  // A side today's pair prints as no reading stays no reading: tenths add a
-  // digit to a number, they never supply one.
-  const toParts = (t: TenthsParts | null, fallback: ProbabilityParts) =>
-    t && fallback.digits !== NO_READING
-      ? { marker: t.marker, digits: t.whole, decimal: t.decimal }
-      : { ...fallback, decimal: '' };
-  const homeParts = toParts(tenths?.home ?? null, homeWhole);
-  const awayParts = toParts(tenths?.away ?? null, awayWhole);
+  const { homeParts, awayParts } = heroSideParts(
+    homeProb, awayProb, shownHome, shownAway, tenthsOn, venueSettled, awayWithheld,
+  );
   // Two numeral widths are reserved while a decimal prints, so 9.8 -> 10.2
   // does not shift the pair. A band (`<1`) prints no decimal and reserves
   // nothing, so no gap opens after its marker.
