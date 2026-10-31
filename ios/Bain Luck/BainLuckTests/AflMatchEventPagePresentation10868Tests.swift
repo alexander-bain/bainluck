@@ -732,6 +732,15 @@ B 1790407440 99
         let contractYes: Bool
 
         var ticker: String { "KXAFLGAME-26SEP260030BRIFRE-\(key)" }
+
+        /// The same identity shape on the history's own shape type.
+        var historyShape: FieldHistoryShape10868 {
+            switch shape {
+            case .circle: .circle
+            case .diamond: .diamond
+            case .square: .square
+            }
+        }
     }
 
     private static let brisbane = Team(key: "BRI", letter: "B", name: "Brisbane Lions", short: "Brisbane", shape: .circle,
@@ -805,7 +814,8 @@ B 1790407440 99
     /// minutes joined, no settled endpoint. `inspecting` is a minute the host
     /// holds; `minutesOverride` is the hostile control that hands another
     /// phase's minutes to this one.
-    private static func history(_ phase: Phase, inspecting: Int? = nil, minutesOverride: Phase? = nil) -> FieldHistoryInput10868 {
+    private static func history(_ phase: Phase, inspecting: Int? = nil, minutesOverride: Phase? = nil,
+                                choosing: Bool = false, keyContext: FieldHistoryKeyContext10868? = nil) -> FieldHistoryInput10868 {
         let source = minutesOverride ?? phase
         let times = minutes(source)
         func series(_ team: Team) -> FieldHistorySeries10868 {
@@ -813,7 +823,7 @@ B 1790407440 99
             let base = baseline(team)
             let shown = inspecting.flatMap { at in mine.first { $0.at == at } } ?? mine.last!
             return FieldHistorySeries10868(
-                id: team.key, name: team.name, shape: team.shape, tint: team.tint,
+                id: team.key, name: team.name, shape: team.historyShape, tint: team.tint,
                 runs: runs(mine).enumerated().map { number, run in
                     FieldHistoryRun10868(id: "\(team.key)#run-\(number)", points: run.map { close in
                         FieldHistoryPoint10868(id: pointID(team, close.at), x: Double(close.at - listedStart),
@@ -824,7 +834,10 @@ B 1790407440 99
                 links: [], labelPointID: pointID(team, mine.last!.at),
                 before: .observation(pointID: pointID(team, base.at), figure: figure(base), provenance: minute(base.at)),
                 recorded: .observation(pointID: pointID(team, shown.at), figure: figure(shown), provenance: minute(shown.at)),
-                absentWords: "No recorded trades", choose: nil)
+                absentWords: "No recorded trades",
+                choose: choosing && team.key == brisbane.key
+                    ? FieldHistoryAction10868(id: "history.choose.BRI", label: team.name, spokenLabel: nil, isAvailable: true) : nil,
+                keyContext: team.key == brisbane.key ? keyContext : nil)
         }
         let inspection = inspecting.map { at -> FieldHistoryInspection10868 in
             var selections: [String: FieldHistorySelection10868] = [:]
@@ -1236,7 +1249,8 @@ B 1790407440 99
             doneLabel: "Done", previousLabel: "Previous card", nextLabel: "Next card",
             historyName: "Win probability history",
             scoringName: phase == .final ? "Four unanswered goals" : "Scoring story",
-            periodsName: phase == .final ? "The comeback, quarter by quarter" : "Quarter story")
+            periodsName: phase == .final ? "The comeback, quarter by quarter" : "Quarter story",
+            comparisonLabel: "Pre-match and recorded chance comparison")
     }
 
     private static func stream() -> StoryStreamPresentation10868 {
@@ -1260,15 +1274,16 @@ B 1790407440 99
     private static func input(_ phase: Phase, headline: FieldHeadlineInput10868? = nil, history: FieldHistoryInput10868? = nil,
                               scoring: AflMatchScoringStory10868? = nil, quarters: AflMatchPeriodStory10868? = nil,
                               chance: HistoricalChanceInput10868? = nil, withFinal: Bool? = nil,
-                              stream: StoryStreamPresentation10868? = nil) -> AflMatchEventPageInput10868 {
+                              stream: StoryStreamPresentation10868? = nil, copy: AflMatchEventPageCopy10868? = nil,
+                              readerHeight: CGFloat? = 380) -> AflMatchEventPageInput10868 {
         let admitsFinal = withFinal ?? (phase == .final)
         return AflMatchEventPageInput10868(
             phase: phase, reader: readerHeader(phase), headline: headline ?? Tests.headline(phase), notice: notice(phase),
-            history: history ?? Tests.history(phase), readerPlotHeight: 380,
+            history: history ?? Tests.history(phase), readerPlotHeight: readerHeight,
             scoring: admitsFinal ? (scoring ?? Tests.scoring()) : nil,
             periods: admitsFinal ? (quarters ?? Tests.quarters()) : nil,
             chance: admitsFinal ? (chance ?? Tests.chance()) : nil,
-            stream: stream, stories: storyLinks, about: about(phase), copy: pageCopy(phase))
+            stream: stream, stories: storyLinks, about: about(phase), copy: copy ?? pageCopy(phase))
     }
 
     // MARK: Originals
@@ -1369,6 +1384,12 @@ B 1790407440 99
         for history in [input.history, model.readerHistory] {
             texts += historyText(history)
         }
+        // The actual composed comparison and history copy, inline and full size.
+        for reader in [false, true] {
+            let page = Page(input: input, mode: reader ? .reader(.history) : .page)
+            texts += historyText(page.historyContent(reader: reader).input)
+            texts += comparisonText(page.comparisonContent(reader: reader))
+        }
         for scoring in [model.scoringModel, model.readerScoringModel].compactMap({ $0 }) {
             texts += scoringText(scoring)
         }
@@ -1442,6 +1463,22 @@ B 1790407440 99
             }
         }
         texts.append(Readout.spokenValue(history))
+        return texts
+    }
+
+    /// Every string the accepted comparison View draws or speaks.
+    private static func comparisonText(_ comparison: RugbyMatchEventPageComparisonPresentation10868) -> [String] {
+        var texts = [comparison.label]
+        for entry in comparison.entries {
+            texts += [entry.series.name, RugbyMatchEventPageComparisonPresentation10868.spoken(entry)] + [entry.note].compactMap { $0 }
+            for slot in entry.slots {
+                texts.append(slot.label)
+                switch slot.display {
+                case .figure(let figure, let provenance): texts += [figure, provenance]
+                case .words(let words): texts.append(words)
+                }
+            }
+        }
         return texts
     }
 
@@ -2367,6 +2404,187 @@ B 1790407440 99
                                          admittedThrough: Self.bound(.before)).isEmpty)
         XCTAssertFalse(Self.payloadLeaks(["history.choice:minute@\(1_790_407_020)"], admittedThrough: Self.bound(.during)).isEmpty)
         XCTAssertEqual(Self.payloadLeaks(["history.choice:minute@\(Self.constructedLiveCut)"], admittedThrough: Self.bound(.during)), [])
+    }
+
+    // MARK: - Readable comparison (26pt correction)
+
+    func testTheAcceptedComparisonMountsAboveTheHistoryInlineAndFullSizeFromTheExactPresentedCopy() {
+        let held: [Phase: [Int?]] = [
+            .before: [nil, Self.baseline(Self.brisbane).at, Self.baseline(Self.fremantle).at],
+            .during: [nil, Self.cutClose(Self.brisbane).at, Self.cutClose(Self.fremantle).at],
+            .final: [nil, Self.lowAt, Self.lastClose(Self.brisbane).at, Self.lastClose(Self.fremantle).at],
+        ]
+        for phase in Phase.allCases {
+            for minute in held[phase] ?? [] {
+                let input = Self.input(phase, history: Self.history(phase, inspecting: minute))
+                let model = Model(input)
+                let page = Page(input: input), reader = Page(input: input, mode: .reader(.history))
+                let inline = page.comparisonContent(reader: false), full = reader.comparisonContent(reader: true)
+                let words = "\(phase) \(String(describing: minute))"
+                // The comparison and the history read the EXACT same presented copy.
+                XCTAssertEqual(inline.history, model.presentedHistory, words)
+                XCTAssertEqual(page.historyContent(reader: false).input, inline.history, words)
+                XCTAssertEqual(full.history, model.readerHistory, words)
+                XCTAssertEqual(reader.historyContent(reader: true).input, full.history, words)
+                XCTAssertEqual([inline.label, full.label], ["Pre-match and recorded chance comparison",
+                                                            "Pre-match and recorded chance comparison"], words)
+                // The owner's series stay whole: complete names, shapes, tints, runs and readings.
+                XCTAssertEqual(inline.entries.map(\.series), input.history.series, words)
+                XCTAssertEqual(full.entries.map(\.series), input.history.series, words)
+                // Exactly the owner-resolved slots, the same inline and full size.
+                XCTAssertEqual(inline.entries.map(\.slots), input.history.series.map { FieldHistoryGeometry10868.readoutSlots($0, in: input.history) }, words)
+                XCTAssertEqual(full.entries.map(\.slots), inline.entries.map(\.slots), words)
+                XCTAssertEqual(inline.entries.map(RugbyMatchEventPageComparisonPresentation10868.spoken), inline.history.series.map { series in
+                    ([series.name] + [FieldHistoryGeometry10868.keyNote(series, in: inline.history)].compactMap { $0 }
+                        + FieldHistoryGeometry10868.readoutSlots(series, in: inline.history).map(FieldHistoryGeometry10868.spokenSlot))
+                        .joined(separator: ". ")
+                }, words)
+            }
+        }
+        // Complete names, history shapes and each slot's own date.
+        let finished = Page(input: Self.input(.final)).comparisonContent(reader: false)
+        XCTAssertEqual(finished.entries.map(\.series.name), ["Brisbane Lions", "Fremantle Dockers"])
+        XCTAssertEqual(finished.entries.map(\.series.shape), [.circle, .diamond])
+        XCTAssertEqual(finished.entries.map { $0.slots.map(\.label) }, [["Pre-match", "Last recorded"], ["Pre-match", "Last recorded"]])
+        XCTAssertEqual(finished.entries.map { $0.slots.map(\.display) }, [
+            [.figure("56%", provenance: Self.minute(1_790_396_940)), .figure("99%", provenance: Self.minute(1_790_407_440))],
+            [.figure("45%", provenance: Self.minute(1_790_396_880)), .figure("1%", provenance: Self.minute(1_790_407_020))],
+        ])
+        XCTAssertEqual(Page(input: Self.input(.before)).comparisonContent(reader: false).entries.map { $0.slots.map(\.display) }, [
+            [.figure("56%", provenance: Self.minute(1_790_396_940))], [.figure("45%", provenance: Self.minute(1_790_396_880))],
+        ])
+        // Explicit missingness: an inspected minute one team did not trade keeps that team's own words.
+        let fremantleOnly = Self.closes(Self.fremantle).first { close in
+            close.at > Self.listedStart && !Self.closes(Self.brisbane).contains { $0.at == close.at }
+        }
+        if let only = fremantleOnly {
+            let absent = Page(input: Self.input(.final, history: Self.history(.final, inspecting: only.at))).comparisonContent(reader: false)
+            XCTAssertEqual(absent.entries.map { $0.slots.last?.display }, [
+                .words("No trade in this minute"), .figure(Self.figure(only), provenance: Self.minute(only.at)),
+            ])
+        } else {
+            XCTFail("the retained closes include a minute only Fremantle traded")
+        }
+        // An owner history whose plot is withheld keeps its slots as words, never figures.
+        var withheld = Self.history(.final)
+        withheld.plotAbsence = FieldHistoryPlotAbsence10868(title: "No retained trades", words: nil)
+        XCTAssertTrue(Page(input: Self.input(.final, history: withheld)).comparisonContent(reader: false).entries
+            .allSatisfy { $0.slots.allSatisfy { $0.display == .words("Not recorded at this minute") } })
+    }
+
+    func testTheComparisonKeepsOneObservationBoundOnceAndEqualValuesAtDistinctMinutesApart() throws {
+        // The same observation: the held minute is the baseline minute, so both slots bind one point.
+        let base = Self.baseline(Self.brisbane)
+        let same = Page(input: Self.input(.final, history: Self.history(.final, inspecting: base.at))).comparisonContent(reader: false)
+        XCTAssertEqual(same.entries[0].slots.map(\.display), [
+            .figure("56%", provenance: Self.minute(base.at)), .figure("56%", provenance: Self.minute(base.at)),
+        ])
+        guard case .observation(let beforeID, _, _) = same.history.series[0].before,
+              case .point(let heldID, _)? = same.history.inspection?.selections["BRI"] else { return XCTFail("both slots bound") }
+        XCTAssertEqual(beforeID, heldID)
+        // Equal values at distinct minutes stay distinct slots with their own dates.
+        let nineNine = Self.closes(Self.brisbane).filter { $0.cents == 99 }.map(\.at)
+        XCTAssertGreaterThanOrEqual(nineNine.count, 2)
+        let first = Page(input: Self.input(.final, history: Self.history(.final, inspecting: nineNine[0]))).comparisonContent(reader: false)
+        let second = Page(input: Self.input(.final, history: Self.history(.final, inspecting: nineNine[1]))).comparisonContent(reader: false)
+        XCTAssertEqual(first.entries[0].slots.last?.display, .figure("99%", provenance: Self.minute(nineNine[0])))
+        XCTAssertEqual(second.entries[0].slots.last?.display, .figure("99%", provenance: Self.minute(nineNine[1])))
+        XCTAssertNotEqual(first.entries[0].slots.last, second.entries[0].slots.last, "never merged because the figures match")
+        guard case .point(let firstID, _)? = first.history.inspection?.selections["BRI"],
+              case .point(let secondID, _)? = second.history.inspection?.selections["BRI"] else { return XCTFail("bound slots") }
+        XCTAssertNotEqual(firstID, secondID)
+        XCTAssertEqual(Set(first.history.series[0].runs.flatMap(\.points).filter { $0.probability == 0.99 }.map(\.id)).count,
+                       nineNine.count, "every equal-valued close stays its own point")
+    }
+
+    func testTheComparisonStandsInForTheSharedKeyOnlyWhileNoChooseOrKeyContextWouldBeLost() {
+        let input = Self.input(.final)
+        let model = Model(input)
+        XCTAssertTrue(model.hidesSharedKey)
+        XCTAssertTrue(input.history.showsKey, "the owner's history input is never changed")
+        XCTAssertEqual([model.presentedHistory.showsKey, model.readerHistory.showsKey], [false, false])
+        // Only key visibility differs from the owner's history: readings, ids,
+        // actions, windows, scales, runs and inspection stay whole.
+        XCTAssertEqual(Model.presentationCopy(model.presentedHistory, plotHeight: input.history.plotHeight,
+                                              expand: input.history.expand, showsKey: true), input.history)
+        XCTAssertEqual(FieldHistoryGeometry10868.actions(model.presentedHistory), FieldHistoryGeometry10868.actions(input.history))
+        XCTAssertEqual(model.presentedHistory.windows, input.history.windows)
+        // A choose control keeps the owner's key, and it still acts exactly.
+        var log: [String] = []
+        let choosing = Self.input(.final, history: Self.history(.final, choosing: true))
+        XCTAssertFalse(Model(choosing).hidesSharedKey)
+        XCTAssertEqual([Model(choosing).presentedHistory.showsKey, Model(choosing).readerHistory.showsKey], [true, true])
+        let page = Page(input: choosing, onHistoryAction: { log.append("history:\($0)") }, onInteraction: { log.append("hold") })
+        XCTAssertEqual(page.historyContent(reader: false).input.series[0].choose?.id, "history.choose.BRI")
+        page.historyContent(reader: false).onAction?("history.choose.BRI")
+        XCTAssertEqual(log, ["hold", "history:history.choose.BRI"])
+        // An owner key context keeps the owner's key.
+        let context = FieldHistoryKeyContext10868(label: "Contract", words: "Brisbane to win", spoken: nil)
+        let keyed = Model(Self.input(.final, history: Self.history(.final, keyContext: context)))
+        XCTAssertFalse(keyed.hidesSharedKey)
+        XCTAssertTrue(keyed.presentedHistory.showsKey)
+        XCTAssertEqual(keyed.presentedHistory.series[0].keyContext, context)
+    }
+
+    func testTheFullHistoryHeightIsValidatedAndNeverShorterThanInline() {
+        // (owner full-size height, full-size history height); inline is 302.
+        let cases: [(CGFloat?, CGFloat)] = [
+            (nil, 302), (0, 302), (-40, 302), (CGFloat.nan, 302), (CGFloat.infinity, 302), (-CGFloat.infinity, 302),
+            (100, 302), (302, 302), (380, 380),
+        ]
+        for (owner, expected) in cases {
+            let words = owner.map { "\($0)" } ?? "nil"
+            let input = Self.input(.final, readerHeight: owner)
+            let model = Model(input)
+            XCTAssertEqual(model.readerHistory.plotHeight, expected, words)
+            XCTAssertTrue(model.readerHistory.plotHeight.isFinite, words)
+            XCTAssertGreaterThanOrEqual(model.readerHistory.plotHeight, input.history.plotHeight, words)
+            XCTAssertEqual(model.presentedHistory.plotHeight, 302, "the inline chart keeps the owner's height")
+            let reader = Page(input: input, mode: .reader(.history))
+            XCTAssertEqual(reader.historyContent(reader: true).input.plotHeight, expected, words)
+            XCTAssertEqual(reader.comparisonContent(reader: true).history.plotHeight, expected, words)
+        }
+        XCTAssertEqual(RugbyMatchEventPageModel10868.readerPlotHeight(nil, history: 302), 302)
+    }
+
+    func testTheComparisonAddsNoActionNoHoldNoLeakAndKeepsTheOwnerLabel() {
+        var log: [String] = []
+        let input = Self.input(.final)
+        func page(_ mode: AflMatchEventPageMode10868) -> Page {
+            Page(input: input, mode: mode, onAbout: { log.append("about") },
+                 onHistoryAction: { log.append("history:\($0)") },
+                 onHistoryInspectionChoice: { log.append("choice:\($0)") },
+                 onInteraction: { log.append("hold") })
+        }
+        _ = (page(.page).comparisonContent(reader: false), page(.reader(.history)).comparisonContent(reader: true))
+        XCTAssertEqual(log, [], "building the comparison calls nothing; it has no control")
+        page(.page).historyContent(reader: false).onAction?("history.details")
+        page(.page).historyContent(reader: false).onInspectionChoice?("minute@\(Self.lowAt)")
+        page(.reader(.history)).historyContent(reader: true).onAction?("history.details")
+        page(.reader(.history)).openReaderAbout()
+        XCTAssertEqual(log, ["hold", "history:history.details", "hold", "choice:minute@\(Self.lowAt)",
+                             "history:history.details", "about"], "once-only holds on the page; exact callbacks full size")
+        // Phase-safe: each phase's composed comparison reaches only its own facts.
+        for phase in Phase.allCases {
+            let shown = Self.input(phase)
+            let texts = [false, true].flatMap { reader in
+                Self.comparisonText(Page(input: shown, mode: reader ? .reader(.history) : .page).comparisonContent(reader: reader))
+            }
+            switch phase {
+            case .before: XCTAssertEqual(Self.leaks(texts, Self.beforeForbidden), [])
+            case .during: XCTAssertEqual(Self.leaks(texts, Self.duringForbidden), [])
+            case .final: XCTAssertTrue(Self.reaches(texts, "(^|[^0-9.])99%"), "the final comparison reaches its own last close")
+            }
+        }
+        // Positive control: a final minute's inspection handed to the before page is caught in the comparison text.
+        let hostile = Self.input(.before, history: Self.history(.before, inspecting: Self.lowAt, minutesOverride: .final))
+        let caught = Self.leaks(Self.comparisonText(Page(input: hostile).comparisonContent(reader: false)), Self.beforeForbidden)
+        XCTAssertTrue(caught.contains { $0.hasPrefix("(^|[^0-9.])3% ⟵") })
+        XCTAssertTrue(caught.contains { $0.hasPrefix("\(NSRegularExpression.escapedPattern(for: Self.clock(Self.lowAt))) ⟵") })
+        // Without the owner's comparison label the existing history name is reused.
+        var unlabelled = Self.pageCopy(.final)
+        unlabelled.comparisonLabel = nil
+        XCTAssertEqual(Page(input: Self.input(.final, copy: unlabelled)).comparisonContent(reader: false).label, "Win probability history")
     }
 
     // MARK: - Rules fidelity

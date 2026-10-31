@@ -32,6 +32,13 @@ import SwiftUI
 //
 //   • `FieldPhaseHeadlinePresentation10868` — the two named teams;
 //   • `FieldProbabilityHistoryPresentation10868` — the anchor;
+//   • `RugbyMatchEventPageComparisonPresentation10868` — the accepted paired,
+//     dated comparison above the anchor, inline and full size: each team's
+//     readout slots exactly as `FieldHistoryGeometry10868.readoutSlots`
+//     resolves them and `spokenSlot` speaks them, every figure at one scaled
+//     size, the whole name and history shape, a missing slot as its own
+//     words, separate dates, the same observation bound the same way. It
+//     reads the exact history copy the anchor beside it draws;
 //   • `HistoricalChanceResultPresentation10868` — the final chance-to-result
 //     portion of the quarter story: the subject's pre-match chance and the
 //     owner's later checkpoint, each with its own clock, beside the separately
@@ -41,6 +48,14 @@ import SwiftUI
 //   • `OriginalMarketCatalogueView9483` / `OriginalMarketDetailsView9483` —
 //     "All markets" and the held original's Details;
 //   • `AussieRulesEventPageAboutContent10868` — the owner's About with sources.
+//
+// While every history original has no choose control and no key context, the
+// comparison stands in for the shared key: a presentation copy of the history
+// hides that key, and the owner's history input — every series, run, reading,
+// id, action, scale and inspection — is never changed. Otherwise the owner's
+// key stays. The full-size history uses the accepted
+// `RugbyMatchEventPageModel10868.readerPlotHeight`: a usable owner height,
+// never shorter than inline; any other height keeps the inline one.
 //
 // Two small immutable presentations are drawn here, because no accepted leaf
 // carries their grammar, on the accepted Australian-rules result-story axis
@@ -110,7 +125,9 @@ import SwiftUI
 // Without a callback there is no control and no hook call.
 //
 // LAYOUT. Phone and accessibility sizes stack the headline above the history,
-// then the cards and the originals. A regular or unspecified width (a Mac
+// then the cards and the originals. The comparison sits directly above the
+// history in every arrangement and at full size, keeping its accepted
+// equal-share columns or full-width rows. A regular or unspecified width (a Mac
 // window) places the headline beside the history while both keep their minimum
 // widths, otherwise it stacks. The scoring readout and the chance links sit
 // side by side while both fit and stack at accessibility sizes. Quarter bars
@@ -352,6 +369,8 @@ nonisolated struct AflMatchEventPageCopy10868: Equatable {
     let historyName: String
     let scoringName: String
     let periodsName: String
+    /// Spoken name of the paired comparison; nil reuses `historyName`.
+    var comparisonLabel: String? = nil
 }
 
 struct AflMatchEventPageInput10868: Equatable {
@@ -801,29 +820,62 @@ struct AflMatchEventPageModel10868: Equatable {
 
     func readerShows(_ card: AflMatchEventPageCard10868) -> Bool { isMounted(card) }
 
-    /// The full-size history: the same input without its expand control and
-    /// at the owner's reader plot height when taller. Every other field is the
-    /// owner's, unchanged.
-    var readerHistory: FieldHistoryInput10868 {
-        let history = input.history
-        let height = max(history.plotHeight, input.readerPlotHeight ?? history.plotHeight)
-        return FieldHistoryInput10868(
+    /// Whether the comparison stands in for the shared key: only while the key
+    /// would show nothing but the readouts the comparison shows — no original's
+    /// choose control and no owner key context. Otherwise the owner's key stays.
+    var hidesSharedKey: Bool {
+        input.history.series.allSatisfy { $0.choose == nil && FieldHistoryGeometry10868.keyContext($0) == nil }
+    }
+
+    /// A presentation copy of the owner's history: every series, run, reading,
+    /// key word, action, window, scale and inspection exactly as supplied, with
+    /// only the given height, expand control and key visibility. The owner's
+    /// input is never changed.
+    static func presentationCopy(_ history: FieldHistoryInput10868, plotHeight: CGFloat,
+                                 expand: FieldHistoryAction10868?, showsKey: Bool) -> FieldHistoryInput10868 {
+        FieldHistoryInput10868(
             title: history.title, caption: history.caption, series: history.series,
             selection: history.selection, domain: history.domain, ceiling: history.ceiling,
             yTicks: history.yTicks, xTicks: history.xTicks, guides: history.guides, breaks: history.breaks,
             readout: history.readout, markKey: history.markKey,
             comparisonExplanation: history.comparisonExplanation, notes: history.notes,
-            summary: history.summary, plotHeight: height,
+            summary: history.summary, plotHeight: plotHeight,
             unboundReadingWords: history.unboundReadingWords, plotUnavailableWords: history.plotUnavailableWords,
             windows: history.windows, scale: history.scale, moreOriginals: history.moreOriginals,
-            details: history.details, expand: nil, inspect: history.inspect,
+            details: history.details, expand: expand, inspect: history.inspect,
             previous: history.previous, next: history.next, inspection: history.inspection,
             layout: history.layout,
             probabilityLowerBound: history.probabilityLowerBound,
             probabilityRangeExplanation: history.probabilityRangeExplanation,
             selectedReadout: history.selectedReadout, inspectionRingShape: history.inspectionRingShape,
-            plotAbsence: history.plotAbsence, showsKey: history.showsKey
+            plotAbsence: history.plotAbsence, showsKey: showsKey
         )
+    }
+
+    /// The key's visibility in both history copies.
+    private var presentedKey: Bool { hidesSharedKey ? false : input.history.showsKey }
+
+    /// The history on the page: the owner's input with the duplicate key
+    /// hidden. The anchor and the comparison above it both read this copy.
+    var presentedHistory: FieldHistoryInput10868 {
+        let history = input.history
+        return Self.presentationCopy(history, plotHeight: history.plotHeight, expand: history.expand, showsKey: presentedKey)
+    }
+
+    /// The full-size history: the same input without its expand control, at
+    /// the owner's full-size height while usable and never shorter than
+    /// inline (any other height keeps the inline one), with the page's key
+    /// visibility. The full-size history and its comparison both read this copy.
+    var readerHistory: FieldHistoryInput10868 {
+        let history = input.history
+        return Self.presentationCopy(
+            history, plotHeight: RugbyMatchEventPageModel10868.readerPlotHeight(input.readerPlotHeight, history: history.plotHeight),
+            expand: nil, showsKey: presentedKey)
+    }
+
+    /// The comparison's spoken name: the owner's own label, else its history name.
+    var comparisonLabel: String {
+        Self.readable(input.copy.comparisonLabel) ?? input.copy.historyName
     }
 
     /// The full-size scoring story: the same story at the owner's reader plot
@@ -1907,11 +1959,18 @@ struct AflMatchEventPagePresentation10868: View {
     func historyContent(reader: Bool) -> FieldProbabilityHistoryPresentation10868 {
         let interaction = reader ? nil : onInteraction
         return FieldProbabilityHistoryPresentation10868(
-            input: reader ? model.readerHistory : input.history,
+            input: reader ? model.readerHistory : model.presentedHistory,
             onAction: Self.held(onHistoryAction, by: interaction),
             onInspectionChoice: Self.held(onHistoryInspectionChoice, by: interaction),
             onPlotPosition: Self.held(onHistoryPlotPosition, by: interaction)
         )
+    }
+
+    /// The accepted comparison View over the exact history copy the anchor
+    /// beside it draws: the same readouts inline and full size. No action.
+    func comparisonContent(reader: Bool) -> RugbyMatchEventPageComparisonPresentation10868 {
+        RugbyMatchEventPageComparisonPresentation10868(
+            history: reader ? model.readerHistory : model.presentedHistory, label: model.comparisonLabel)
     }
 
     /// The scoring story mounted directly on the page: every action after the
@@ -2121,12 +2180,16 @@ struct AflMatchEventPagePresentation10868: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// The paired comparison directly above the history, both from one copy.
     private var anchor: some View {
-        historyContent(reader: false)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .contain)
-            .accessibilitySortPriority(AflMatchEventPageModel10868.sortPriority(.anchor))
-            .accessibilityIdentifier(AflMatchEventPageAccessibilityID10868.anchor)
+        VStack(alignment: .leading, spacing: 16) {
+            comparisonContent(reader: false)
+            historyContent(reader: false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilitySortPriority(AflMatchEventPageModel10868.sortPriority(.anchor))
+        .accessibilityIdentifier(AflMatchEventPageAccessibilityID10868.anchor)
     }
 
     /// The owner's stream when it supplies one; otherwise the mounted cards
@@ -2269,6 +2332,7 @@ struct AflMatchEventPagePresentation10868: View {
                 readerNavigation(card)
                 switch card {
                 case .history:
+                    comparisonContent(reader: true)
                     historyContent(reader: true)
                 case .scoring:
                     readerScoringContent()
