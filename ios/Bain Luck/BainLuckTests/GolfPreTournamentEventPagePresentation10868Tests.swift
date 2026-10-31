@@ -709,19 +709,75 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
         }
     }
 
-    /// The owner's twelve-item pages: chances, movers, then every last-name
-    /// band. Ranked once at the last recorded hour and held, so inspecting an
+    /// One mode (and, for All, one last-name band) with its twelve-item pages.
+    private struct Section {
+        let mode: String
+        let band: String?
+        let members: Int
+        let groups: [FieldChooserGroup10868]
+    }
+
+    /// The owner's sections: chances, movers, then every last-name band.
+    /// Ranked once at the last recorded hour and held, so inspecting an
     /// earlier hour never reranks the chooser.
-    private static let groups: [FieldChooserGroup10868] = {
-        var groups = pages(ranked(at: lastHour), id: "chances", label: "Top chances")
-        groups += pages(movers(at: lastHour).filter { change($0, at: lastHour) != 0 }, id: "movement", label: "Big movers")
+    private static let sections: [Section] = {
+        let chances = ranked(at: lastHour)
+        let moving = movers(at: lastHour).filter { change($0, at: lastHour) != 0 }
+        var sections = [
+            Section(mode: "chances", band: nil, members: chances.count, groups: pages(chances, id: "chances", label: "Top chances")),
+            Section(mode: "movement", band: nil, members: moving.count, groups: pages(moving, id: "movement", label: "Big movers")),
+        ]
         for label in bandLabels {
             let members = golfers.filter { band($0.name) == label }
                 .sorted { (surname($0.name), $0.name) < (surname($1.name), $1.name) }
-            groups += pages(members, id: "band.\(label)", label: label)
+            sections.append(Section(mode: "all", band: label, members: members.count, groups: pages(members, id: "band.\(label)", label: label)))
         }
-        return groups
+        return sections
     }()
+
+    /// The owner's full group list: every page of every section.
+    private static let groups: [FieldChooserGroup10868] = sections.flatMap { $0.groups }
+
+    private typealias Target = GolfPreTournamentChooserTarget10868
+
+    /// The owner's hierarchy for the selected group (this check's own owner):
+    /// three modes, the bands only under All, the page words and the adjacent
+    /// pages of the same section.
+    private static func navigation(for groupID: String?) -> GolfPreTournamentChooserNavigation10868 {
+        let section = sections.first { entry in entry.groups.contains { $0.id == groupID } }
+        let mode = section?.mode
+        let modes = [
+            Target(label: "Top chances", groupID: "chances.1", isSelected: mode == "chances"),
+            Target(label: "Big movers", groupID: "movement.1", isSelected: mode == "movement"),
+            Target(label: "All golfers", groupID: "band.A–D.1", isSelected: mode == "all"),
+        ]
+        var context: String?
+        if mode == "chances" { context = "Highest chances recorded at this hour" }
+        if mode == "movement" { context = "Biggest changes with trades 24 hours apart" }
+        var bands: [Target] = []
+        if mode == "all" {
+            for entry in sections where entry.mode == "all" {
+                bands.append(Target(label: entry.band ?? "", countText: "\(entry.members)", groupID: entry.groups[0].id,
+                                    isSelected: entry.band == section?.band))
+            }
+        }
+        var page: String?
+        var previous: Target?
+        var next: Target?
+        if let section, let index = section.groups.firstIndex(where: { $0.id == groupID }) {
+            let start = index * 12 + 1
+            page = "\(start)–\(start + section.groups[index].refs.count - 1) of \(section.members)"
+            if index > 0 {
+                previous = Target(label: "Previous", spokenLabel: "Previous golfers", groupID: section.groups[index - 1].id)
+            }
+            if index + 1 < section.groups.count {
+                next = Target(label: "Next", spokenLabel: "Next golfers", groupID: section.groups[index + 1].id)
+            }
+        }
+        return GolfPreTournamentChooserNavigation10868(
+            modesLabel: "Explore golfers by", modes: modes, context: context, bandsLabel: "Browse by last name",
+            bands: bands, page: page, previous: previous, next: next)
+    }
 
     private static func chooserPreview(_ golfer: Golfer, at t: Int) -> FieldChooserPreview10868 {
         let all = points(golfer)
@@ -835,11 +891,12 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
         var movementFrame: GolfEventPageCardFrame10868
         var chooser: FieldChooserInput10868?
         var about: FieldEventPageAbout10868?
+        var chooserNavigation: GolfPreTournamentChooserNavigation10868?
 
         var input: GolfPreTournamentEventPageInput10868 {
             GolfPreTournamentEventPageInput10868(
                 copy: copy, reader: reader, history: history, readerPlotHeight: readerPlotHeight, movement: movement,
-                movementFrame: movementFrame, chooser: chooser, about: about)
+                movementFrame: movementFrame, chooser: chooser, about: about, chooserNavigation: chooserNavigation)
         }
     }
 
@@ -849,7 +906,7 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
             reader: FieldEventPageReaderHeader10868(title: "Dunhill · Before tournament", state: "Historical trades · not a live quote"),
             history: history(at: t), readerPlotHeight: 380, movement: movement(at: t),
             movementFrame: GolfEventPageCardFrame10868(eyebrow: "Win chance · change over 24 hours", openLabel: "Expand pre-tournament movement"),
-            chooser: chooser(at: t), about: about)
+            chooser: chooser(at: t), about: about, chooserNavigation: navigation(for: "chances.1"))
     }
 
     private static func page(at t: Int = Tests.lastHour) -> GolfPreTournamentEventPageInput10868 { parts(at: t).input }
@@ -913,6 +970,13 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
             texts += chooser.browse?.groups.map { "\($0.label) \($0.countText ?? "")" } ?? []
             texts += chooser.catalogue.map(model.cardSummary)
             texts += chooser.catalogue.map(model.browseSummary)
+        }
+        if let navigation = GolfPreTournamentEventPageModel10868(input).chooserNavigation?.navigation {
+            let targets = navigation.modes + navigation.bands + [navigation.previous, navigation.next].compactMap { $0 }
+            texts += targets.map { GolfPreTournamentChooserNavigationModel10868.spoken($0) }
+            texts += targets.map { $0.label }
+            let navigationWords: [String?] = [navigation.modesLabel, navigation.bandsLabel, navigation.context, navigation.page]
+            texts += navigationWords.compactMap { $0 }
         }
         if let originals {
             texts += [originals.heading, originals.context, originals.emptyWords].compactMap { $0 }
@@ -1067,6 +1131,27 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
             plotUnavailableWords: history.plotUnavailableWords, windows: history.windows, scale: history.scale,
             moreOriginals: history.moreOriginals, details: history.details, expand: history.expand, inspect: history.inspect,
             previous: history.previous, next: history.next, inspection: history.inspection, layout: history.layout)
+    }
+
+    /// The owner's chooser with only its browse groups replaced (this check's own rebuild).
+    private static func withGroups(_ chooser: FieldChooserInput10868, _ groups: [FieldChooserGroup10868]) -> FieldChooserInput10868 {
+        let browse = chooser.browse!
+        let replaced = FieldChooserBrowse10868(
+            id: browse.id, title: browse.title, expanded: browse.expanded, note: browse.note, groupsLabel: browse.groupsLabel,
+            groups: groups, selectedGroupID: browse.selectedGroupID, noGroupWords: browse.noGroupWords,
+            groupUnavailableWords: browse.groupUnavailableWords, emptyGroupWords: browse.emptyGroupWords)
+        return FieldChooserInput10868(
+            scope: chooser.scope, intro: chooser.intro, featured: chooser.featured, context: chooser.context, more: chooser.more,
+            browse: replaced, catalogue: chooser.catalogue, frame: chooser.frame, selected: chooser.selected,
+            unavailableWords: chooser.unavailableWords, chooseHint: chooser.chooseHint)
+    }
+
+    /// The page with the chooser on one owner group and the owner's hierarchy for it.
+    private static func paged(_ group: String?) -> Parts {
+        var parts = Self.parts()
+        parts.chooser = chooser(group: group)
+        parts.chooserNavigation = navigation(for: group)
+        return parts
     }
 
     private static let fitzpatrick = golfer("Matt Fitzpatrick")
@@ -1742,7 +1827,7 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
     func testThisPageHasNoPhaseAndHostileLaterResultAndCurrentnessInputsAreRefusedOrCaught() {
         // The input carries no phase at all.
         XCTAssertEqual(Mirror(reflecting: Self.page()).children.compactMap { $0.label },
-                       ["copy", "reader", "history", "readerPlotHeight", "movement", "movementFrame", "chooser", "about"])
+                       ["copy", "reader", "history", "readerPlotHeight", "movement", "movementFrame", "chooser", "about", "chooserNavigation"])
         let model = GolfPreTournamentEventPageModel10868(Self.page())
         XCTAssertEqual(model.stories, [.movement])
         XCTAssertTrue(model.readerShows(.history))
@@ -1832,7 +1917,13 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
         let movementReader = GolfPreTournamentEventPagePresentation10868(input: input, mode: .reader(.movement), onChoose: { _ in })
         XCTAssertEqual(page.movementContent(reader: false)?.input, movementReader.movementContent(reader: true)?.input)
         XCTAssertEqual(page.movementContent(reader: false)?.input, input.movement)
-        XCTAssertEqual(GolfPreTournamentEventPagePresentation10868(input: input, mode: .chooser).chooserContent()?.input, input.chooser)
+        // The chooser leaf draws the owner's chooser with only its browse groups narrowed to the selected group (D2);
+        // every other field is the owner's and the owner's full input is unchanged.
+        let shownChooser = GolfPreTournamentEventPagePresentation10868(input: input, mode: .chooser).chooserContent()!.input
+        XCTAssertEqual(shownChooser.browse?.groups, input.chooser?.browse?.groups.filter { $0.id == "chances.1" })
+        XCTAssertEqual(shownChooser, Self.withGroups(input.chooser!, shownChooser.browse!.groups))
+        XCTAssertEqual(input.chooser, Self.chooser(at: Self.equalHour))
+        XCTAssertEqual(input.chooser?.browse?.groups.count, 22)
         var noChooser = Self.parts()
         noChooser.chooser = nil
         XCTAssertNil(GolfPreTournamentEventPagePresentation10868(input: noChooser.input, mode: .chooser).chooserContent())
@@ -1933,5 +2024,233 @@ final class GolfPreTournamentEventPagePresentation10868Tests: XCTestCase {
         XCTAssertEqual(arrangements(empty, canOpenAllProps: false), [.anchorAlone])
         // Withdrawing the card is the only change: the same hour, history and chooser now stand alone.
         XCTAssertEqual(Self.payloadViolations(empty.input), [])
+    }
+
+    // MARK: - D2 chooser hierarchy
+
+    func testTheChooserShowsThreeModesTheRelevantBandsAndBoundedPagesInsteadOfEveryGroup() {
+        let bandLabels = ["A–D", "E–H", "I–L", "M–P", "Q–T", "U–Z"]
+        // (group, selected mode, band count, page words, previous, next): first, middle, last and single pages.
+        let cases: [(String, Int, Int, String, String?, String?)] = [
+            ("chances.1", 0, 0, "1–12 of 46", nil, "chances.2"),
+            ("chances.2", 0, 0, "13–24 of 46", "chances.1", "chances.3"),
+            ("chances.4", 0, 0, "37–46 of 46", "chances.3", nil),
+            ("movement.1", 1, 0, "1–10 of 10", nil, nil),
+            ("band.A–D.1", 2, 6, "1–12 of 34", nil, "band.A–D.2"),
+            ("band.Q–T.3", 2, 6, "25–36 of 40", "band.Q–T.2", "band.Q–T.4"),
+            ("band.E–H.3", 2, 6, "25–25 of 25", "band.E–H.2", nil),
+            ("band.U–Z.2", 2, 6, "13–16 of 16", "band.U–Z.1", nil),
+        ]
+        for (group, mode, bandCount, page, previous, next) in cases {
+            let parts = Self.paged(group)
+            let view = GolfPreTournamentEventPagePresentation10868(input: parts.input, mode: .chooser, onChooserControl: { _ in })
+            let controls = view.chooserNavigationContent(.controls)!
+            let pages = view.chooserNavigationContent(.pages)!
+            XCTAssertEqual(controls.part, .controls)
+            XCTAssertEqual(pages.part, .pages)
+            let navigation = controls.model.navigation
+            // Exactly three modes, the owner's one selected, each naming its exact group.
+            XCTAssertEqual(navigation.modes.map(\.label), ["Top chances", "Big movers", "All golfers"], group)
+            XCTAssertEqual(navigation.modes.map(\.isSelected), (0..<3).map { $0 == mode }, group)
+            XCTAssertEqual(navigation.modes.compactMap { controls.action($0) }, [
+                FieldChooserControl10868.chooseGroup(id: "chances.1"), .chooseGroup(id: "movement.1"), .chooseGroup(id: "band.A–D.1"),
+            ])
+            // The owner's mode words outside All; the last-name bands only under All.
+            XCTAssertEqual(controls.model.context != nil, mode != 2, group)
+            XCTAssertEqual(navigation.bands.count, bandCount, group)
+            if bandCount > 0 {
+                XCTAssertEqual(navigation.bands.map(\.label), bandLabels)
+                XCTAssertEqual(navigation.bands.map(\.countText), ["34", "25", "24", "32", "40", "16"])
+                XCTAssertEqual(navigation.bands.filter(\.isSelected).count, 1)
+                XCTAssertEqual(navigation.bands.compactMap { controls.action($0) },
+                               bandLabels.map { FieldChooserControl10868.chooseGroup(id: "band.\($0).1") })
+            }
+            // The owner's page words and exactly the adjacent pages of the same section.
+            XCTAssertEqual(pages.model.page, page, group)
+            XCTAssertEqual(pages.action(navigation.previous), previous.map { FieldChooserControl10868.chooseGroup(id: $0) }, group)
+            XCTAssertEqual(pages.action(navigation.next), next.map { FieldChooserControl10868.chooseGroup(id: $0) }, group)
+            // Only the hierarchy is drawn: the leaf gets the selected group alone and resolves exactly as from the full list.
+            let shown = view.chooserContent()!.input
+            XCTAssertEqual(shown.browse?.groups.map(\.id), [group])
+            XCTAssertEqual(FieldChooserModel10868(shown).groupSelection, FieldChooserModel10868(parts.chooser!).groupSelection)
+            XCTAssertEqual(FieldChooserModel10868(shown).groupRows, FieldChooserModel10868(parts.chooser!).groupRows)
+            XCTAssertEqual(shown, Self.withGroups(parts.chooser!, shown.browse!.groups))
+            XCTAssertEqual(parts.chooser?.browse?.groups, Self.groups)
+            let drawn = navigation.modes.count + navigation.bands.count
+                + [navigation.previous, navigation.next].compactMap { $0 }.count + shown.browse!.groups.count
+            XCTAssertLessThanOrEqual(drawn, 3 + 6 + 2 + 1)
+            // Cards, previews, choose actions and current-hour words are the shared chooser's own.
+            XCTAssertEqual(shown.catalogue, parts.chooser?.catalogue)
+            XCTAssertEqual(shown.featured, parts.chooser?.featured)
+        }
+
+        // Every one of the 171 identities — the 15 without history included — is reached through All, its bands and Next alone.
+        var reached: [FieldChooserOriginalRef10868] = []
+        var visited: [String] = []
+        let first = Self.paged("chances.1")
+        guard case .chooseGroup(let allID)? = GolfPreTournamentEventPageModel10868(first.input).chooserNavigation?
+            .control(first.chooserNavigation?.modes[2], canControl: true) else { return XCTFail("All golfers acts") }
+        let allPage = Self.paged(allID)
+        for band in allPage.chooserNavigation?.bands ?? [] {
+            var shownOn = allPage
+            var target: Target? = band
+            while let current = target,
+                  case .chooseGroup(let id)? = GolfPreTournamentEventPageModel10868(shownOn.input).chooserNavigation?.control(current, canControl: true) {
+                shownOn = Self.paged(id)
+                visited.append(id)
+                let leaf = FieldChooserModel10868(GolfPreTournamentEventPageModel10868(shownOn.input).chooserPresentation!)
+                for row in leaf.groupRows {
+                    guard let original = row.resolution.original else { return XCTFail("\(row.ref.outcomeID) resolves") }
+                    XCTAssertEqual(original.ref, row.ref)
+                    XCTAssertNotNil(leaf.chooseAction(row, canChoose: true))
+                    if Self.points(Self.golfers.first { Self.ref($0) == row.ref }!).isEmpty {
+                        XCTAssertEqual(original.plan, .single(FieldChooserReading10868(label: "Selected hour", value: .missing("Not recorded"))))
+                        XCTAssertEqual(leaf.browseSummary(original), "No captured history")
+                    }
+                }
+                reached += leaf.groupRows.map(\.ref)
+                target = shownOn.chooserNavigation?.next
+            }
+        }
+        XCTAssertEqual(visited.count, 17)
+        XCTAssertEqual(reached.count, 171)
+        XCTAssertEqual(Set(reached), Set(Self.golfers.map(Self.ref)))
+        let withoutHistory = Self.golfers.filter { Self.points($0).isEmpty }.map(Self.ref)
+        XCTAssertEqual(withoutHistory.count, 15)
+        XCTAssertTrue(Set(withoutHistory).isSubset(of: Set(reached)))
+    }
+
+    func testChooserTargetsActOnlyOnOneExactCanonicalGroupOnceAndStayStaticOtherwise() {
+        var log: [String] = []
+        let parts = Self.paged("chances.2")
+        let record: (FieldChooserControl10868) -> Void = { log.append("control:\($0)") }
+        func view(hook: Bool = true, control: Bool = true) -> GolfPreTournamentEventPagePresentation10868 {
+            GolfPreTournamentEventPagePresentation10868(input: parts.input, mode: .chooser, onChooserControl: control ? record : nil,
+                                                        onInteraction: hook ? { log.append("hold") } : nil)
+        }
+
+        // Building and reading the mounted hierarchy calls nothing.
+        let chooserView = view()
+        let controls = chooserView.chooserNavigationContent(.controls)!
+        let pages = chooserView.chooserNavigationContent(.pages)!
+        _ = controls.model.navigation.modes.map { controls.action($0) }
+        _ = pages.action(pages.model.navigation.next)
+        _ = chooserView.chooserContent()
+        XCTAssertEqual(log, [])
+
+        // Each control: the hook once, then the chooser's own exact control.
+        controls.choose(controls.model.navigation.modes[1])
+        pages.choose(pages.model.navigation.previous)
+        pages.choose(pages.model.navigation.next)
+        XCTAssertEqual(log, ["hold", "control:chooseGroup(id: \"movement.1\")",
+                             "hold", "control:chooseGroup(id: \"chances.1\")",
+                             "hold", "control:chooseGroup(id: \"chances.3\")"])
+
+        // No hook: the owner's own callback alone.
+        log = []
+        view(hook: false).chooserNavigationContent(.pages)!.choose(parts.chooserNavigation?.next)
+        XCTAssertEqual(log, ["control:chooseGroup(id: \"chances.3\")"])
+
+        // No callback: still mounted as static content — labels and page words — with no action and no hook.
+        log = []
+        let inert = view(control: false)
+        let inertControls = inert.chooserNavigationContent(.controls)!
+        let inertPages = inert.chooserNavigationContent(.pages)!
+        XCTAssertNil(inertControls.onControl)
+        XCTAssertTrue(inertControls.model.navigation.modes.allSatisfy { inertControls.action($0) == nil })
+        XCTAssertNil(inertPages.action(parts.chooserNavigation?.next))
+        inertControls.choose(inertControls.model.navigation.modes[0])
+        inertPages.choose(parts.chooserNavigation?.next)
+        XCTAssertEqual(inertPages.model.page, "13–24 of 46")
+        XCTAssertEqual(log, [])
+
+        // Absent, wrong, foreign, blank and differently written targets hand back nothing — never a neighbouring page.
+        let model = GolfPreTournamentEventPageModel10868(parts.input).chooserNavigation!
+        XCTAssertNil(model.control(nil, canControl: true))
+        XCTAssertNil(model.control(Target(label: "Next", groupID: "chances.5"), canControl: true))
+        XCTAssertNil(model.control(Target(label: "A–Z", groupID: "band.A–Z.1"), canControl: true))
+        XCTAssertNil(model.control(Target(label: "Blank", groupID: " "), canControl: true))
+        XCTAssertNil(model.control(Target(label: "Top chances", groupID: "Chances.1"), canControl: true))
+        XCTAssertNil(model.control(Target(label: "Next", groupID: "chances.3"), canControl: false))
+        XCTAssertEqual(model.control(Target(label: "Next", groupID: "chances.3"), canControl: true), FieldChooserControl10868.chooseGroup(id: "chances.3"))
+
+        // A duplicated group is no target, and the leaf copy keeps both so it says unavailable exactly as the full list does.
+        var duplicated = parts
+        duplicated.chooser = Self.chooser(group: "chances.3", groups: Self.groups + [Self.groups[2]])
+        duplicated.chooserNavigation = Self.navigation(for: "chances.3")
+        let twice = GolfPreTournamentEventPageModel10868(duplicated.input)
+        XCTAssertNil(twice.chooserNavigation!.control(Target(label: "Next", groupID: "chances.3"), canControl: true))
+        XCTAssertNotNil(twice.chooserNavigation!.control(Target(label: "Previous", groupID: "chances.2"), canControl: true))
+        XCTAssertEqual(twice.chooserPresentation?.browse?.groups.map(\.id), ["chances.3", "chances.3"])
+        XCTAssertEqual(FieldChooserModel10868(twice.chooserPresentation!).groupSelection,
+                       FieldChooserGroupSelection10868.unavailable("This page is not available in this update"))
+        XCTAssertEqual(FieldChooserModel10868(twice.chooserPresentation!).groupSelection, FieldChooserModel10868(duplicated.chooser!).groupSelection)
+
+        // A missing selected group: no group drawn, unavailable as from the full list. No selection: not chosen.
+        var missing = parts
+        missing.chooser = Self.chooser(group: "chances.9")
+        let gone = GolfPreTournamentEventPageModel10868(missing.input)
+        XCTAssertEqual(gone.chooserPresentation?.browse?.groups, [])
+        XCTAssertEqual(FieldChooserModel10868(gone.chooserPresentation!).groupSelection, FieldChooserModel10868(missing.chooser!).groupSelection)
+        XCTAssertEqual(FieldChooserModel10868(gone.chooserPresentation!).groupRows, [])
+        var unchosen = parts
+        unchosen.chooser = Self.chooser(group: nil)
+        XCTAssertEqual(FieldChooserModel10868(GolfPreTournamentEventPageModel10868(unchosen.input).chooserPresentation!).groupSelection,
+                       FieldChooserGroupSelection10868.notChosen("Choose a view or a last-name group"))
+
+        // A group colliding with the chooser's own control id is kept, so the leaf's control rules are unchanged.
+        var colliding = parts
+        let clash = FieldChooserGroup10868(id: "golfers.browse", label: "Clash", countText: nil, refs: [])
+        colliding.chooser = Self.chooser(group: "chances.2", groups: Self.groups + [clash])
+        let collided = GolfPreTournamentEventPageModel10868(colliding.input)
+        XCTAssertEqual(collided.chooserPresentation?.browse?.groups.map(\.id), ["chances.2", "golfers.browse"])
+        XCTAssertNil(FieldChooserModel10868(colliding.chooser!).browseAction(canControl: true))
+        XCTAssertEqual(FieldChooserModel10868(collided.chooserPresentation!).browseAction(canControl: true),
+                       FieldChooserModel10868(colliding.chooser!).browseAction(canControl: true))
+        XCTAssertNil(collided.chooserNavigation!.control(Target(label: "Clash", groupID: "golfers.browse"), canControl: true))
+
+        // An empty group is a real target; the leaf shows the owner's empty words.
+        var empty = parts
+        let nobody = FieldChooserGroup10868(id: "band.X.1", label: "X", countText: "0", refs: [])
+        empty.chooser = Self.chooser(group: "band.X.1", groups: Self.groups + [nobody])
+        empty.chooserNavigation = GolfPreTournamentChooserNavigation10868(
+            modesLabel: "Explore golfers by", modes: Self.navigation(for: "band.A–D.1").modes, bandsLabel: "Browse by last name",
+            bands: [Target(label: "X", countText: "0", groupID: "band.X.1", isSelected: true)], page: "No golfers")
+        let none = GolfPreTournamentEventPageModel10868(empty.input)
+        XCTAssertEqual(none.chooserNavigation!.control(none.chooserNavigation!.navigation.bands[0], canControl: true),
+                       FieldChooserControl10868.chooseGroup(id: "band.X.1"))
+        XCTAssertEqual(FieldChooserModel10868(none.chooserPresentation!).groupSelection, FieldChooserGroupSelection10868.group(nobody))
+        XCTAssertEqual(FieldChooserModel10868(none.chooserPresentation!).groupRows, [])
+        XCTAssertEqual(none.chooserPresentation?.browse?.emptyGroupWords, "No golfers on this page")
+        XCTAssertNil(none.chooserNavigation?.navigation.previous)
+        XCTAssertNil(none.chooserNavigation?.navigation.next)
+
+        // Without the owner's hierarchy the owner's chooser is drawn unchanged; without a chooser there is no hierarchy.
+        var plain = parts
+        plain.chooserNavigation = nil
+        XCTAssertNil(GolfPreTournamentEventPagePresentation10868(input: plain.input, mode: .chooser).chooserNavigationContent(.controls))
+        XCTAssertEqual(GolfPreTournamentEventPagePresentation10868(input: plain.input, mode: .chooser).chooserContent()?.input, plain.chooser)
+        var noChooser = parts
+        noChooser.chooser = nil
+        XCTAssertNil(GolfPreTournamentEventPageModel10868(noChooser.input).chooserNavigation)
+        XCTAssertNil(GolfPreTournamentEventPagePresentation10868(input: noChooser.input, mode: .chooser).chooserNavigationContent(.pages))
+
+        // Focus ids, spoken words, 44-point targets and accessibility reflow.
+        let allNavigation = Self.navigation(for: "band.A–D.1")
+        XCTAssertEqual(Set(allNavigation.modes.map { GolfPreTournamentAccessibilityID10868.chooserMode($0.label) }).count, 3)
+        XCTAssertEqual(Set(allNavigation.bands.map { GolfPreTournamentAccessibilityID10868.chooserBand($0.label) }).count, 6)
+        XCTAssertEqual(GolfPreTournamentAccessibilityID10868.chooserMode("Top chances"), "golfPreTournament10868.chooser.mode.Top chances")
+        XCTAssertEqual(Set([GolfPreTournamentAccessibilityID10868.chooserPrevious, GolfPreTournamentAccessibilityID10868.chooserNext,
+                            GolfPreTournamentAccessibilityID10868.chooserPage, GolfPreTournamentAccessibilityID10868.chooserModes,
+                            GolfPreTournamentAccessibilityID10868.chooserBands]).count, 5)
+        XCTAssertEqual(GolfPreTournamentChooserNavigationModel10868.spoken(parts.chooserNavigation!.next!), "Next golfers")
+        XCTAssertEqual(GolfPreTournamentChooserNavigationModel10868.spoken(allNavigation.bands[0]), "A–D, 34")
+        XCTAssertEqual(GolfPreTournamentChooserNavigationModel10868.spoken(allNavigation.modes[0]), "Top chances")
+        XCTAssertEqual(GolfPreTournamentChooserNavigationPresentation10868.minimumTarget, 44)
+        XCTAssertTrue(GolfPreTournamentChooserNavigationPresentation10868.stacks(accessibilitySize: true))
+        XCTAssertFalse(GolfPreTournamentChooserNavigationPresentation10868.stacks(accessibilitySize: false))
+        // Claims stay neutral with the hierarchy's words reachable.
+        XCTAssertEqual(Self.claims(Self.paged("band.Q–T.3").input, originals: nil), [])
+        XCTAssertEqual(Self.claims(Self.paged("movement.1").input, originals: nil), [])
     }
 }

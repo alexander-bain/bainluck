@@ -28,7 +28,8 @@ import SwiftUI
 //     choose action;
 //   • `GolfBeforeMovementPresentation10868` — the 24-hour movement card, on its
 //     own before-phase gate, pinning through the owner's choose action;
-//   • `FieldContenderChooserPresentation10868` — the golfer chooser content;
+//   • `FieldContenderChooserPresentation10868` — the golfer chooser content,
+//     under the owner's own chooser hierarchy (below);
 //   • `OriginalMarketCatalogueView9483` / `OriginalMarketDetailsView9483` —
 //     every original and the held original's Details;
 //   • `GolfEventPageCard10868`, `GolfEventPageCardFrame10868`, the golf page's
@@ -57,6 +58,17 @@ import SwiftUI
 //
 // Heights: the page uses the history's own plot height; full size uses the
 // owner's full-size height only when it is finite, positive and taller.
+//
+// Chooser hierarchy: when the owner supplies it, the chooser shows the owner's
+// modes, the bands the owner finds relevant, and the current page words with
+// Previous and Next — never one button per group. Each control names one exact
+// group id of the owner's full group list and acts through the chooser's own
+// `chooseGroup(id:)`, under the chooser's own control-id rule; nothing here
+// parses an id, counts a page, sorts or ranks. The shared chooser then draws a
+// presentation copy whose browse groups are only those whose id is the selected
+// group's or one of the chooser's own control ids, so it resolves the selection,
+// a missing or duplicated group and every id collision exactly as from the full
+// list. Every other chooser field, and the owner's input, are unchanged.
 //
 // Actions: on the page, in the chooser, the catalogue and Details, each action
 // calls the owner's interaction hook once, then the owner's exact callback with
@@ -138,6 +150,77 @@ nonisolated struct GolfPreTournamentEventPageInput10868: Equatable {
     let movementFrame: GolfEventPageCardFrame10868
     let chooser: FieldChooserInput10868?
     let about: FieldEventPageAbout10868?
+    /// The owner's chooser hierarchy; nil keeps the chooser's own group list.
+    var chooserNavigation: GolfPreTournamentChooserNavigation10868? = nil
+}
+
+/// One owner control that selects one exact existing browse group.
+nonisolated struct GolfPreTournamentChooserTarget10868: Equatable {
+    /// The owner's words on the control ("Top chances", "A–D", "Next").
+    let label: String
+    /// Spoken instead of `label` when supplied ("Next golfers").
+    var spokenLabel: String? = nil
+    /// The owner's count words beside a band; nil draws none.
+    var countText: String? = nil
+    /// The exact id of one group in the owner's full browse list — never parsed or built here.
+    let groupID: String
+    /// The owner's current mode or band.
+    var isSelected: Bool = false
+}
+
+/// The owner's chooser hierarchy: modes, the relevant bands and bounded pages.
+nonisolated struct GolfPreTournamentChooserNavigation10868: Equatable {
+    /// Spoken name of the modes ("Explore golfers by").
+    let modesLabel: String
+    /// The owner's modes, in the owner's order.
+    let modes: [GolfPreTournamentChooserTarget10868]
+    /// The owner's words for the current mode; nil draws none.
+    var context: String? = nil
+    /// Spoken name of the bands ("Browse by last name").
+    let bandsLabel: String
+    /// Only the bands the owner finds relevant now; empty draws none.
+    var bands: [GolfPreTournamentChooserTarget10868] = []
+    /// The owner's current page words; nil draws none.
+    var page: String? = nil
+    /// The owner's earlier page; nil draws none.
+    var previous: GolfPreTournamentChooserTarget10868? = nil
+    /// The owner's later page; nil draws none.
+    var next: GolfPreTournamentChooserTarget10868? = nil
+}
+
+/// Which part of the hierarchy a view draws: above or below the chooser.
+nonisolated enum GolfPreTournamentChooserNavigationPart10868: Equatable {
+    /// The modes, the owner's mode words and the relevant bands.
+    case controls
+    /// Previous, the current page words and Next.
+    case pages
+}
+
+/// The hierarchy's rules on the owner's full chooser.
+nonisolated struct GolfPreTournamentChooserNavigationModel10868: Equatable {
+    let navigation: GolfPreTournamentChooserNavigation10868
+    /// The owner's chooser with every group, for exact target resolution.
+    let chooser: FieldChooserInput10868
+
+    /// The exact control a target hands back: the chooser's own group action
+    /// for the one group of the owner's full list carrying the target's id,
+    /// only with a callback. A wrong, foreign, blank, duplicated or colliding
+    /// id hands back nothing — never a neighbouring group.
+    func control(_ target: GolfPreTournamentChooserTarget10868?, canControl: Bool) -> FieldChooserControl10868? {
+        guard canControl, let target,
+              let group = chooser.browse?.groups.first(where: { $0.id == target.groupID }),
+              case .control(let control)? = FieldChooserModel10868(chooser).groupAction(group, canControl: true)
+        else { return nil }
+        return control
+    }
+
+    var context: String? { FieldEventPageModel10868.readable(navigation.context) }
+    var page: String? { FieldEventPageModel10868.readable(navigation.page) }
+
+    /// The control's spoken words: the owner's spoken label or label, then its count.
+    static func spoken(_ target: GolfPreTournamentChooserTarget10868) -> String {
+        ([target.spokenLabel ?? target.label] + [target.countText].compactMap { $0 }).joined(separator: ", ")
+    }
 }
 
 nonisolated enum GolfPreTournamentAccessibilityID10868 {
@@ -152,6 +235,13 @@ nonisolated enum GolfPreTournamentAccessibilityID10868 {
     static let catalogue = "golfPreTournament10868.catalogue"
     static let original = "golfPreTournament10868.original"
     static let aboutContent = "golfPreTournament10868.aboutContent"
+    static let chooserModes = "golfPreTournament10868.chooser.modes"
+    static let chooserBands = "golfPreTournament10868.chooser.bands"
+    static let chooserPage = "golfPreTournament10868.chooser.page"
+    static let chooserPrevious = "golfPreTournament10868.chooser.previous"
+    static let chooserNext = "golfPreTournament10868.chooser.next"
+    static func chooserMode(_ label: String) -> String { "golfPreTournament10868.chooser.mode.\(label)" }
+    static func chooserBand(_ label: String) -> String { "golfPreTournament10868.chooser.band.\(label)" }
     static func card(_ card: GolfEventPageCard10868) -> String { "golfPreTournament10868.card.\(card)" }
     static func open(_ card: GolfEventPageCard10868) -> String { "golfPreTournament10868.open.\(card)" }
 }
@@ -231,6 +321,33 @@ nonisolated struct GolfPreTournamentEventPageModel10868: Equatable {
 
     func allPropsAvailable(canOpen: Bool) -> Bool {
         canOpen && FieldEventPageModel10868.readable(input.copy.allPropsLabel) != nil
+    }
+
+    /// The owner's chooser hierarchy on the owner's full chooser, while both exist.
+    var chooserNavigation: GolfPreTournamentChooserNavigationModel10868? {
+        guard let chooser = input.chooser, let navigation = input.chooserNavigation else { return nil }
+        return GolfPreTournamentChooserNavigationModel10868(navigation: navigation, chooser: chooser)
+    }
+
+    /// The chooser the shared leaf draws. With the owner's hierarchy, a copy
+    /// whose browse groups are only those whose id is the selected group's or
+    /// one of the chooser's own control ids — the selection, a missing or
+    /// duplicated group and every id collision resolve exactly as from the
+    /// full list, and no wall of group buttons is drawn. Every other field is
+    /// the owner's. Without the hierarchy, the owner's chooser unchanged.
+    var chooserPresentation: FieldChooserInput10868? {
+        guard let chooser = input.chooser else { return nil }
+        guard input.chooserNavigation != nil, let browse = chooser.browse else { return chooser }
+        let kept = Set([browse.selectedGroupID, browse.id, chooser.more?.id].compactMap { $0 })
+        let shown = FieldChooserBrowse10868(
+            id: browse.id, title: browse.title, expanded: browse.expanded, note: browse.note,
+            groupsLabel: browse.groupsLabel, groups: browse.groups.filter { kept.contains($0.id) },
+            selectedGroupID: browse.selectedGroupID, noGroupWords: browse.noGroupWords,
+            groupUnavailableWords: browse.groupUnavailableWords, emptyGroupWords: browse.emptyGroupWords)
+        return FieldChooserInput10868(
+            scope: chooser.scope, intro: chooser.intro, featured: chooser.featured, context: chooser.context,
+            more: chooser.more, browse: shown, catalogue: chooser.catalogue, frame: chooser.frame,
+            selected: chooser.selected, unavailableWords: chooser.unavailableWords, chooseHint: chooser.chooseHint)
     }
 
     /// Whether the stories column has anything to show: the mounted movement
@@ -313,9 +430,16 @@ struct GolfPreTournamentEventPagePresentation10868: View {
     }
 
     func chooserContent() -> FieldContenderChooserPresentation10868? {
-        input.chooser.map {
+        model.chooserPresentation.map {
             FieldContenderChooserPresentation10868(input: $0, onChoose: held(onChoose, reader: false),
                                                    onControl: held(onChooserControl, reader: false))
+        }
+    }
+
+    /// The owner's hierarchy above or below the chooser, with the same held control callback.
+    func chooserNavigationContent(_ part: GolfPreTournamentChooserNavigationPart10868) -> GolfPreTournamentChooserNavigationPresentation10868? {
+        model.chooserNavigation.map {
+            GolfPreTournamentChooserNavigationPresentation10868(model: $0, part: part, onControl: held(onChooserControl, reader: false))
         }
     }
 
@@ -585,7 +709,13 @@ struct GolfPreTournamentEventPagePresentation10868: View {
         if let chooser = chooserContent() {
             VStack(alignment: .leading, spacing: 12) {
                 compactHeader
+                if let controls = chooserNavigationContent(.controls) {
+                    controls
+                }
                 chooser
+                if let pages = chooserNavigationContent(.pages) {
+                    pages
+                }
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(GolfPreTournamentAccessibilityID10868.chooser)
@@ -619,6 +749,159 @@ struct GolfPreTournamentEventPagePresentation10868: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(GolfPreTournamentAccessibilityID10868.aboutContent)
+        }
+    }
+}
+
+/// The owner's chooser hierarchy: the modes, the owner's mode words and the
+/// relevant bands above the chooser; Previous, the page words and Next below
+/// it. Every control is a 44-point target that hands the host one exact
+/// `chooseGroup(id:)` once, or is static content when it cannot act. The
+/// modes and bands wrap and the pages row stacks at accessibility sizes.
+struct GolfPreTournamentChooserNavigationPresentation10868: View {
+    let model: GolfPreTournamentChooserNavigationModel10868
+    let part: GolfPreTournamentChooserNavigationPart10868
+    /// The host's chooser control callback; nil: every control is static.
+    var onControl: ((FieldChooserControl10868) -> Void)? = nil
+
+    /// Every control's minimum target before Dynamic Type scaling.
+    static let minimumTarget: CGFloat = 44
+
+    /// The modes and bands stack, and the pages row stacks, at accessibility sizes.
+    static func stacks(accessibilitySize: Bool) -> Bool { accessibilitySize }
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = GolfPreTournamentChooserNavigationPresentation10868.minimumTarget
+
+    private var navigation: GolfPreTournamentChooserNavigation10868 { model.navigation }
+
+    /// The exact control a target hands back here, only while it acts.
+    func action(_ target: GolfPreTournamentChooserTarget10868?) -> FieldChooserControl10868? {
+        model.control(target, canControl: onControl != nil)
+    }
+
+    /// Hands the target's exact control to the host, only while it acts.
+    func choose(_ target: GolfPreTournamentChooserTarget10868?) {
+        guard let control = action(target), let onControl else { return }
+        onControl(control)
+    }
+
+    var body: some View {
+        switch part {
+        case .controls: controls
+        case .pages: pages
+        }
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !navigation.modes.isEmpty {
+                targets(navigation.modes, label: navigation.modesLabel,
+                        id: GolfPreTournamentAccessibilityID10868.chooserMode,
+                        groupID: GolfPreTournamentAccessibilityID10868.chooserModes)
+            }
+            if let context = model.context {
+                Text(context)
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !navigation.bands.isEmpty {
+                targets(navigation.bands, label: navigation.bandsLabel,
+                        id: GolfPreTournamentAccessibilityID10868.chooserBand,
+                        groupID: GolfPreTournamentAccessibilityID10868.chooserBands)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func targets(_ targets: [GolfPreTournamentChooserTarget10868], label: String,
+                                      id: @escaping (String) -> String, groupID: String) -> some View {
+        let buttons = ForEach(Array(targets.enumerated()), id: \.offset) { _, target in
+            self.target(target, id: id(target.label))
+        }
+        Group {
+            if Self.stacks(accessibilitySize: typeSize.isAccessibilitySize) {
+                VStack(alignment: .leading, spacing: 8) { buttons }
+            } else {
+                FlowLayout(spacing: 8) { buttons }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(groupID)
+    }
+
+    private func target(_ target: GolfPreTournamentChooserTarget10868, id: String) -> some View {
+        control(target) {
+            HStack(spacing: 6) {
+                if target.isSelected {
+                    Image(systemName: "checkmark").font(.caption2.weight(.bold))
+                }
+                Text(target.label)
+                    .font(.subheadline.weight(target.isSelected ? .semibold : .regular))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let count = target.countText {
+                    Text(count).font(.caption).foregroundStyle(DS.textSecondary)
+                }
+            }
+            .foregroundStyle(target.isSelected ? DS.blue : DS.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(minWidth: controlSize, minHeight: controlSize)
+            .overlay(RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(target.isSelected ? DS.blue : DS.border, lineWidth: target.isSelected ? 2 : 1))
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel(GolfPreTournamentChooserNavigationModel10868.spoken(target))
+        .accessibilityAddTraits(target.isSelected ? .isSelected : [])
+        .accessibilityIdentifier(id)
+    }
+
+    private var pages: some View {
+        let layout = Self.stacks(accessibilitySize: typeSize.isAccessibilitySize)
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        return layout {
+            if let previous = navigation.previous {
+                pageControl(previous, id: GolfPreTournamentAccessibilityID10868.chooserPrevious)
+            }
+            if let page = model.page {
+                Text(page)
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier(GolfPreTournamentAccessibilityID10868.chooserPage)
+            }
+            if let next = navigation.next {
+                pageControl(next, id: GolfPreTournamentAccessibilityID10868.chooserNext)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func pageControl(_ target: GolfPreTournamentChooserTarget10868, id: String) -> some View {
+        control(target) {
+            Text(target.label)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(action(target) == nil ? DS.textSecondary : DS.blue)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .frame(minWidth: controlSize, minHeight: controlSize)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(GolfPreTournamentChooserNavigationModel10868.spoken(target))
+        .accessibilityIdentifier(id)
+    }
+
+    /// A button only while the target acts; otherwise static content.
+    @ViewBuilder private func control<Content: View>(_ target: GolfPreTournamentChooserTarget10868,
+                                                     @ViewBuilder content: () -> Content) -> some View {
+        if action(target) != nil {
+            Button { choose(target) } label: { content() }
+                .buttonStyle(.plain)
+        } else {
+            content().accessibilityElement(children: .ignore)
         }
     }
 }
