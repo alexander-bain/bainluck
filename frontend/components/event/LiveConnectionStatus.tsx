@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 
 import type { HeroFact } from '@/lib/event/heroFreshness';
 import {
@@ -26,8 +26,12 @@ import { formatAgeFromSeconds } from '@/lib/sourceAge';
 
 export type ObservationDelivery = 'dnpl' | 'committed' | 'unknown';
 
-interface LiveConnectionStatusProps {
-  presentation: ConnectionPresentation;
+/**
+ * The exact clocks behind a tap. ONE model, opened from the chart status and,
+ * since Alex 67, from the hero's EKG — the same panel, never a second copy
+ * (#8336, #4469).
+ */
+export interface ConnectionTimes {
   observation?: { eventId: number; count: number; delivery: ObservationDelivery };
   /** The accepted price clock — the same one the tracker keys receipts on. */
   priceObservedAt: string | null | undefined;
@@ -43,11 +47,22 @@ interface LiveConnectionStatusProps {
   scoreConfirmedAt: string | null | undefined;
   /** `heroFreshness`'s answer: which visible fact is the oldest. */
   oldestFact: HeroFact | null;
+}
+
+interface LiveConnectionStatusProps extends ConnectionTimes {
+  presentation: ConnectionPresentation;
   /**
    * Whether this copy speaks to screen readers. The fullscreen copy sits over
    * the inline one, which stays mounted; two live regions would say it twice.
    */
   announces?: boolean;
+  /**
+   * #10090 Alex 67 — the EKG is showing and the connection is healthy, so the
+   * status draws nothing. The live region stays mounted (empty until there is
+   * something to say), so an interruption is still announced the moment it
+   * happens rather than appearing inside a region the reader never heard.
+   */
+  quiet?: boolean;
   /** Injected for tests; the page re-renders every second, so `Date.now()` is fresh. */
   now?: number;
 }
@@ -92,24 +107,17 @@ function Clock({ iso, now, milliseconds = false }: { iso: string | null | undefi
   );
 }
 
-export default function LiveConnectionStatus({
-  presentation,
-  observation,
-  priceObservedAt,
-  priceConfirmedAt = null,
-  scoreShown,
-  scoreConfirmedAt,
-  oldestFact,
-  announces = true,
-  now = Date.now(),
-}: LiveConnectionStatusProps) {
+/**
+ * Open/close for a button that shows the exact times. Escape and an outside tap
+ * close; Escape returns focus to the button. Listening only while open, so a
+ * closed button costs the page nothing.
+ */
+export function useTimesDisclosure() {
   const [open, setOpen] = useState(false);
-  const detailsId = useId();
+  const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
 
-  // Escape and an outside tap close the details. Listening only while open, so
-  // a closed status costs the page nothing.
   useEffect(() => {
     if (!open || typeof document === 'undefined') return;
     const onKey = (e: KeyboardEvent) => {
@@ -130,23 +138,110 @@ export default function LiveConnectionStatus({
     };
   }, [open]);
 
-  const { label, tone, breathes, announcement } = presentation;
+  // Stable, so a caller can subscribe it to window events without churn.
+  const close = useCallback(() => setOpen(false), []);
+  return { open, id, root, button, toggle: () => setOpen((v) => !v), close };
+}
+
+/**
+ * The exact-times panel. By default it hangs from the caller's `relative` row
+ * (see above); a caller with no room for that row passes its own `placement`
+ * classes and `style` (the EKG's, which sits in a clipped hero).
+ */
+export function ConnectionTimesPanel({
+  id,
+  open,
+  now,
+  placement = 'absolute inset-x-3 top-full',
+  style,
+  observation,
+  priceObservedAt,
+  priceConfirmedAt = null,
+  scoreShown,
+  scoreConfirmedAt,
+  oldestFact,
+}: ConnectionTimes & { id: string; open: boolean; now: number; placement?: string; style?: CSSProperties }) {
   const confirmedClock = priceAgeClock(priceObservedAt, priceConfirmedAt);
   const priceConfirmedShown = confirmedClock !== null && confirmedClock !== priceObservedAt;
+  return (
+    <div
+      id={id}
+      hidden={!open}
+      style={style}
+      className={`${placement} z-20 rounded-lg border border-surface-border bg-surface-card p-3 text-left text-xs text-text-secondary shadow-card`}
+    >
+      <dl className="space-y-1.5">
+        <div>
+          <dt className="font-medium text-text-primary">Probability observed</dt>
+          <dd>
+            <Clock iso={priceObservedAt} now={now} milliseconds />
+          </dd>
+        </div>
+        {priceConfirmedShown ? (
+          <div>
+            <dt className="font-medium text-text-primary">Probability confirmed</dt>
+            <dd>
+              <Clock iso={confirmedClock} now={now} />
+            </dd>
+          </div>
+        ) : null}
+        {observation ? (
+          <>
+            <div>
+              <dt className="font-medium text-text-primary">Readings shown this visit</dt>
+              <dd>{observation.count} · first reading plus newer updates</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-text-primary">Current probability delivery</dt>
+              <dd>{observation.delivery === 'dnpl' ? 'Live preview' : observation.delivery === 'committed' ? 'Published update' : 'Delivery unknown'}</dd>
+            </div>
+          </>
+        ) : null}
+        {scoreShown ? (
+          <div>
+            <dt className="font-medium text-text-primary">Score confirmed</dt>
+            <dd>
+              <Clock iso={scoreConfirmedAt} now={now} />
+            </dd>
+          </div>
+        ) : null}
+        {scoreShown && oldestFact ? (
+          <div>
+            <dt className="font-medium text-text-primary">Oldest on screen</dt>
+            <dd>{oldestFact === 'score' ? 'The score' : 'The probability'}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
+  );
+}
+
+export default function LiveConnectionStatus({
+  presentation,
+  announces = true,
+  quiet = false,
+  now = Date.now(),
+  ...times
+}: LiveConnectionStatusProps) {
+  const { open, id: detailsId, root, button, toggle } = useTimesDisclosure();
+  const { label, tone, breathes, announcement } = presentation;
+  const { observation, priceObservedAt } = times;
 
   return (
     <div ref={root} className="min-w-0" data-testid="live-connection-status" data-status={label}
+      data-quiet={quiet ? 'true' : undefined}
       data-observation-at={typeof priceObservedAt === 'string' && Number.isFinite(Date.parse(priceObservedAt)) ? priceObservedAt : ''}
       data-observation-count={observation?.count ?? 0}
       data-observation-delivery={observation?.delivery ?? 'unknown'}
       data-observation-event-id={observation?.eventId ?? ''}
     >
+      {quiet ? null : (
       <button
         ref={button}
         type="button"
         aria-expanded={open}
         aria-controls={detailsId}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         className={`flex max-w-full items-start gap-1.5 rounded-xl px-2 py-0.5 text-left text-[11px] font-medium hover:bg-surface-elevated focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-brand ${TEXT_TONE[tone]}`}
       >
         <span
@@ -163,59 +258,13 @@ export default function LiveConnectionStatus({
         <span className="min-w-0 leading-4">{label}</span>
         <span className="sr-only">, show update times</span>
       </button>
+      )}
       {announces ? (
         <span className="sr-only" role="status" aria-live="polite">
           {announcement}
         </span>
       ) : null}
-      <div
-        id={detailsId}
-        hidden={!open}
-        className="absolute inset-x-3 top-full z-20 rounded-lg border border-surface-border bg-surface-card p-3 text-xs text-text-secondary shadow-card"
-      >
-        <dl className="space-y-1.5">
-          <div>
-            <dt className="font-medium text-text-primary">Probability observed</dt>
-            <dd>
-              <Clock iso={priceObservedAt} now={now} milliseconds />
-            </dd>
-          </div>
-          {priceConfirmedShown ? (
-            <div>
-              <dt className="font-medium text-text-primary">Probability confirmed</dt>
-              <dd>
-                <Clock iso={confirmedClock} now={now} />
-              </dd>
-            </div>
-          ) : null}
-          {observation ? (
-            <>
-              <div>
-                <dt className="font-medium text-text-primary">Readings shown this visit</dt>
-                <dd>{observation.count} · first reading plus newer updates</dd>
-              </div>
-              <div>
-                <dt className="font-medium text-text-primary">Current probability delivery</dt>
-                <dd>{observation.delivery === 'dnpl' ? 'Live preview' : observation.delivery === 'committed' ? 'Published update' : 'Delivery unknown'}</dd>
-              </div>
-            </>
-          ) : null}
-          {scoreShown ? (
-            <div>
-              <dt className="font-medium text-text-primary">Score confirmed</dt>
-              <dd>
-                <Clock iso={scoreConfirmedAt} now={now} />
-              </dd>
-            </div>
-          ) : null}
-          {scoreShown && oldestFact ? (
-            <div>
-              <dt className="font-medium text-text-primary">Oldest on screen</dt>
-              <dd>{oldestFact === 'score' ? 'The score' : 'The probability'}</dd>
-            </div>
-          ) : null}
-        </dl>
-      </div>
+      {quiet ? null : <ConnectionTimesPanel id={detailsId} open={open} now={now} {...times} />}
     </div>
   );
 }

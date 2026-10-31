@@ -245,6 +245,21 @@ export function presentConnectionStatus(
 }
 
 /**
+ * #10090 Alex 67 — while the EKG is showing, the chart's status speaks only
+ * when something is wrong. Healthy is a socket that is open, quiet, or rolling
+ * over on schedule (the model above calls a rollover "never an interruption"),
+ * with no terminal words and neither old-evidence warning. Everything else —
+ * reconnecting, connecting, checking, finished, a price or score that may be
+ * old — keeps its words. The caller asks only where the EKG is on screen.
+ */
+export function connectionStatusIsHealthy(
+  input: Pick<ConnectionPresentationInput, 'status' | 'terminalLabel' | 'priceMayBeOld' | 'scoreMayBeOld'>,
+): boolean {
+  if (input.terminalLabel || input.priceMayBeOld || input.scoreMayBeOld) return false;
+  return input.status === 'open' || input.status === 'quiet' || input.status === 'rollover';
+}
+
+/**
  * #10090 decision J = A — the clock the reader's "seconds ago" counts from:
  * the later of the adopted price clock and the stream's `confirmed_at` (the
  * newest venue input that agreed with what was published; the server never

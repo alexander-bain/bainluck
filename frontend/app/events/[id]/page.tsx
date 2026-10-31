@@ -69,14 +69,16 @@ import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp"
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import { newestServedScore } from "@/lib/event/newestServedScore";
 import LiveSparkline from "@/components/event/LiveSparkline";
-import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
+import LiveConnectionStatus, { type ConnectionTimes } from "@/components/event/LiveConnectionStatus";
 import EkgHeartbeat from "@/components/event/EkgHeartbeat";
+import EkgTimesButton from "@/components/event/EkgTimesButton";
 import { EMPTY_EKG_TRACKER, ekgDraws, stepEkgTracker, type EkgTracker } from "@/lib/event/ekgHeartbeat";
 import { useObservationCount } from "@/hooks/useObservationCount";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
   EMPTY_CONNECTION_TRACKER,
   confirmationOfDisplayed,
+  connectionStatusIsHealthy,
   presentConnectionStatus,
   priceAgeClock,
   stepConnectionTracker,
@@ -2468,20 +2470,24 @@ export default function EventPage({ params }: EventPageProps) {
     Date.now(),
   );
   const ekgVisible = ekgDraws({ optIn: ekgOptIn, quoteEligible, isLive, terminalLabel: connectionTerminalLabel });
+  // What the hero actually draws: the row below also refuses a finished match.
+  const ekgShowing = ekgVisible && !isFinished;
   // The warnings are the header badge's own `stale` branch, asked where that
   // badge would have drawn — never a threshold of this status's own (#4469).
   const ageAdmissionIsStale =
     showsAge &&
     heroStamp.stamp !== null &&
     (liveClaimUnbacked || heroStampIsStale(heroStamp.stamp, heroStamp.fact));
+  // A withdrawn claim is about the price, whichever fact is older (#5459).
+  const priceMayBeOld = ageAdmissionIsStale && (liveClaimUnbacked || heroStamp.fact !== "score");
+  const scoreMayBeOld = ageAdmissionIsStale && !liveClaimUnbacked && heroStamp.fact === "score";
   const connectionPresentation = presentConnectionStatus(
     connectionTrackerRef.current,
     {
       status: streamStatus,
       terminalLabel: connectionTerminalLabel,
-      // A withdrawn claim is about the price, whichever fact is older (#5459).
-      priceMayBeOld: ageAdmissionIsStale && (liveClaimUnbacked || heroStamp.fact !== "score"),
-      scoreMayBeOld: ageAdmissionIsStale && !liveClaimUnbacked && heroStamp.fact === "score",
+      priceMayBeOld,
+      scoreMayBeOld,
       // #10090 decision J = A. A stream double that predates the field reports
       // `undefined`: unconfirmed.
       priceConfirmed: Boolean(acceptedPriceClock) && typeof confirmedAtShown === "string",
@@ -2507,16 +2513,31 @@ export default function EventPage({ params }: EventPageProps) {
     committedRevision: event?.blend_fold_revision,
     observedAt: acceptedPriceClock,
   });
-  const connectionStatus = (announces: boolean) => (
+  // The exact times behind a tap: one model, opened from the chart status and
+  // from the EKG (#10090 Alex 67; #8336/#4469).
+  const connectionTimes: ConnectionTimes = {
+    observation: { eventId, count: observationCount, delivery: observationDelivery },
+    priceObservedAt: acceptedPriceClock,
+    priceConfirmedAt: confirmedAtShown,
+    scoreShown: Boolean(liveGamesLine) || heroScorePairPresent,
+    scoreConfirmedAt: heroStampInputs.scoreStamp,
+    oldestFact: displayedOldestFact,
+  };
+  // #10090 Alex 67 — while the EKG is on screen it is the one calm signal; the
+  // chart's status speaks only when something is wrong. The fullscreen view
+  // covers the EKG, so its copy always speaks.
+  const connectionStatusQuiet = ekgShowing && connectionStatusIsHealthy({
+    status: streamStatus,
+    terminalLabel: connectionTerminalLabel,
+    priceMayBeOld,
+    scoreMayBeOld,
+  });
+  const connectionStatus = (announces: boolean, quiet = false) => (
     <LiveConnectionStatus
       presentation={connectionPresentation}
-      observation={{ eventId, count: observationCount, delivery: observationDelivery }}
-      priceObservedAt={acceptedPriceClock}
-      priceConfirmedAt={confirmedAtShown}
-      scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
-      scoreConfirmedAt={heroStampInputs.scoreStamp}
-      oldestFact={displayedOldestFact}
+      {...connectionTimes}
       announces={announces}
+      quiet={quiet}
     />
   );
   // The header keeps its age badge only where no chart card carries the status.
@@ -3216,10 +3237,14 @@ export default function EventPage({ params }: EventPageProps) {
               />
               )}
               {/* #10090 — the heartbeat, under the pair so it adds height, never
-                  width, to a block measured at −0.1px headroom (above). */}
-              {ekgVisible && !isFinished ? (
-                <div className="mt-1 flex justify-center" data-testid="ekg-row">
-                  <EkgHeartbeat tracker={ekgTrackerRef.current} status={streamStatus} />
+                  width, to a block measured at −0.1px headroom (above). Alex 67:
+                  tap it for the exact times (the panel places itself; this card
+                  clips, see `EkgTimesButton`). */}
+              {ekgShowing ? (
+                <div className="mt-0.5 flex justify-center" data-testid="ekg-row">
+                  <EkgTimesButton {...connectionTimes}>
+                    <EkgHeartbeat tracker={ekgTrackerRef.current} status={streamStatus} />
+                  </EkgTimesButton>
                 </div>
               ) : null}
 
@@ -3601,7 +3626,7 @@ export default function EventPage({ params }: EventPageProps) {
             <h2 className="shrink-0 text-[13px] font-semibold text-text-primary">Win Probability</h2>
             {/* #10200 — the page's one freshness answer now lives here, beside
                 the chart it describes: a state, never a ticker (#8336). */}
-            {connectionStatusVisible && connectionStatus(true)}
+            {connectionStatusVisible && connectionStatus(true, connectionStatusQuiet)}
             {/* L2-112 Item 1: chart-card "Final" removed — the hero phase badge +
                 winner chip already mark the game final (killed the "Final … Final"
                 dup Alex flagged). The fullscreen modal keeps its own label. */}

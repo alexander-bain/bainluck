@@ -210,7 +210,8 @@ describe("#8336 a live event page shows one freshness status", () => {
     expect(modalHeader).toContain("connectionStatus(false)");
     expect(modalHeader).not.toContain("{ageBadge}");
     const cardHeader = source.slice(source.indexOf("{/* Chart Header — v2: title + freshness."));
-    expect(cardHeader.slice(0, cardHeader.indexOf('title="Open fullscreen chart"'))).toContain("connectionStatus(true)");
+    // #10090 Alex 67: the card copy also takes the quiet-while-the-EKG-shows answer.
+    expect(cardHeader.slice(0, cardHeader.indexOf('title="Open fullscreen chart"'))).toContain("connectionStatus(true, connectionStatusQuiet)");
   });
 
   it("both header rows are positioned, so the tap details hang from the row and fit a phone", () => {
