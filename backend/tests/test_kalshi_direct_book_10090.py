@@ -105,8 +105,10 @@ async def test_book_quote_reaches_the_price_callback_before_the_summary(monkeypa
         sid = book["id"]
 
         await wire.frame(_snapshot(1, sid=sid))
+        # No trade invented. #10090: a snapshot's quote says so, for the
+        # consumer's repeat skip (`KALSHI_WS_REPEAT_SKIP_MS`).
         assert seen[-1] == {"market_ticker": ZVE, "yes_bid_dollars": "0.84",
-                            "yes_ask_dollars": "0.85"}  # no trade invented
+                            "yes_ask_dollars": "0.85", "_book_snapshot": True}
         # A summary: its genuine trade stands, its BBO is the book's.
         await wire.deliver("ticker", {"market_ticker": ZVE, "price_dollars": "0.84",
                                       "yes_bid_dollars": "0.84", "yes_ask_dollars": "0.85"})

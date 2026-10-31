@@ -22,6 +22,7 @@ def consumer(s=None,*,ticker_ids=None,event_ids=None,refresher=None):
     # Extract the real observation helpers with their shared closure state;
     # default DNPL exercises these on every accepted/refused ticker.
     ns['observation_continuity']={}
+    ns['repeat_skip_s']=0.0  # #10090: KALSHI_WS_REPEAT_SKIP_MS=0, today's path
     for name in ('steady_book_signature','observation_signature','note_observation_continuity'):
         old.nested(name,ns)
     handle=old.nested('handle_ticker',ns);proof=old.nested('steady_primary_input',ns)

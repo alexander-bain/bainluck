@@ -275,6 +275,7 @@ def handler(trace, mapped=True, non_blend=()):
         # #10090: a refresher with no #11138 overlay installed (no fast path).
         blend_refresher=SimpleNamespace(),
     )
+    ns["repeat_skip_s"] = 0.0  # #10090: KALSHI_WS_REPEAT_SKIP_MS=0, today's path
     exec(compile(ast.Module(body=nodes, type_ignores=[]), task.__file__, "exec"), ns)
     return ns
 

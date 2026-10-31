@@ -807,6 +807,7 @@ def _lift_pm(*names, **ns):
     nodes = [n for n in ast.walk(tree)
              if isinstance(n, ast.AsyncFunctionDef) and n.name in names]
     assert sorted(n.name for n in nodes) == sorted(names)
+    ns["repeat_skip_s"] = 0.0  # #10090: KALSHI_WS_REPEAT_SKIP_MS=0, today's path
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), ns)
     return ns
 

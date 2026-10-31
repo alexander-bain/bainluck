@@ -815,6 +815,40 @@ def kalshi_book_max_tickers() -> int:
 QUOTE_PRIORITY_EVIDENCE_SECONDS = 90.0
 
 
+#: #10090: how long a repeated, unchanged reading stays skippable.
+KALSHI_WS_REPEAT_SKIP_DEFAULT_MS = 250
+
+
+def _repeat_skip_window_s() -> float:
+    """#10090 — env `KALSHI_WS_REPEAT_SKIP_MS`, read at each consumer start.
+
+    A book observation (an order-book delta that left the best prices where
+    they were) or a ticker whose reading repeats what this process last fully
+    handled for the ticker, on the same connection and inside this window,
+    changes nothing a reader sees except "confirmed at", which the skip still
+    feeds. Production 2026-10-30: the Kalshi loop's cpu was 0.94 at ~3,000
+    msgs/s with ~806 stamps per 455,815 messages; on seven in-play captures
+    82-94 % of the messages were book observations, and a 250 ms window skips
+    87-95 % of them.
+
+    Missing or blank is the default (250 ms); `0` (or any value <= 0) is off,
+    today's path exactly; anything unparseable is off with one warning.
+    """
+    raw = os.environ.get("KALSHI_WS_REPEAT_SKIP_MS")
+    if raw is None or not raw.strip():
+        return KALSHI_WS_REPEAT_SKIP_DEFAULT_MS / 1000.0
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        logger.warning(
+            "Kalshi WS: KALSHI_WS_REPEAT_SKIP_MS=%r is not a number; repeat skip off", raw,
+        )
+        return 0.0
+    if not math.isfinite(value) or value <= 0:
+        return 0.0
+    return value / 1000.0
+
+
 def _kalshi_quote_priority_window(starting_within_seconds: float = 0.0):
     """#10090 — the events a recent winner quote may lift to live priority.
 
@@ -1398,6 +1432,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # because another transaction held one of their rows, while the rest
         # of the phase committed. Retried by the next flush, never dropped.
         "price_rows_skipped_locked": 0,
+        # #10090: repeated readings skipped below the raw count
+        # (`KALSHI_WS_REPEAT_SKIP_MS`); each still fed "confirmed at".
+        "repeats_skipped": 0,
+        "observations_skipped": 0,
     }
 
     # -- Buffered price updates --
@@ -1508,6 +1546,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # Optional DNPL observations only: same quote retains continuity, while
     # changes/invalidity/reconnection end it. Never durable write debt.
     observation_continuity = {}
+    # #10090 repeat skip: ticker -> what the last fully handled ticker input
+    # (`ticker_memo`) or accepted book observation (`observation_memo`) read,
+    # on which connection and when. A repeat inside the window with nothing
+    # it would touch changed since feeds only "confirmed at". Cleared per
+    # ticker by a snapshot, an accepted price input (observations) and a
+    # lifecycle frame; wholly by a re-scope and a new client.
+    repeat_skip_s = _repeat_skip_window_s()
+    ticker_memo: dict[str, tuple] = {}
+    observation_memo: dict[str, tuple] = {}
+    stats["repeat_skip_ms"] = int(round(repeat_skip_s * 1000))
     # One disposable same-BBO observation per eligible outcome. These never
     # enter price_buffer, primary quote custody, held quotes or final-drain debt.
     book_observation_pending = {}
@@ -3111,6 +3159,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:
+            if repeat_skip_s > 0:
+                _forget_repeats(ticker)
             if getattr(blend_refresher, "preview_events", ()):
                 note_observation_continuity(outcome_id, ticker, None)
             if exact_trace is not None:
@@ -3123,6 +3173,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         event=event_id_by_outcome.get(outcome_id), probability=prob,
                     )
             return
+
+        # #10090: nothing awaited since the routing read, so the check and the
+        # state it reads are one instant. A snapshot (every subscribe, resync
+        # and reconnect) is always handled, and so is the first input after it.
+        if repeat_skip_s > 0:
+            if msg.get("_book_snapshot"):
+                ticker_memo.pop(ticker, None)
+            elif exact_trace is None and _skip_ticker_repeat(
+                ticker, client, ids, msg, (prob, yes_bid, yes_ask),
+            ):
+                return
 
         async with buffer_lock:
             primary_quote_custody.receive(outcome_id, msg)
@@ -3164,12 +3225,97 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         or now - previous > QUOTE_PRIORITY_EVIDENCE_SECONDS
                     ):
                         admission_wake.set()
+            if repeat_skip_s > 0:
+                from app.tasks.live_blend_refresh import _mono
+
+                # A price input re-dates what an observation would confirm.
+                observation_memo.pop(ticker, None)
+                if not msg.get("_book_snapshot"):
+                    ticker_memo[ticker] = (
+                        _connection_epoch(client), ids, (prob, yes_bid, yes_ask),
+                        (msg.get("_primary_quote_identity"),
+                         msg.get("_primary_quote_probability")),
+                        _mono(), bool(getattr(blend_refresher, "preview_events", ())),
+                        observation_continuity.get(outcome_id),
+                    )
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.decided(
                         msg, reason="ACCEPTED", market=market_id, outcome=outcome_id,
                         event=event_id_by_outcome.get(outcome_id), probability=prob, mark=mark,
                     )
+
+    def _forget_repeats(ticker):
+        """#10090: the next input and observation for ``ticker`` take the
+        full path (a refused price, a lifecycle frame)."""
+        ticker_memo.pop(ticker, None)
+        observation_memo.pop(ticker, None)
+
+    def _connection_epoch(client):
+        """#10090: one connection of one client; a reconnect is a new epoch."""
+        if client is None:
+            return None
+        return client, getattr(client.sock, "_connected_at", None)
+
+    def _same_connection(epoch, client) -> bool:
+        """#10090: ``epoch`` is ``client``'s current connection — the client
+        by identity, never by value."""
+        if epoch is None or client is None:
+            return epoch is None and client is None
+        return epoch[0] is client and epoch[1] == getattr(client.sock, "_connected_at", None)
+
+    def _skip_ticker_repeat(ticker, client, ids, msg, reading) -> bool:
+        """#10090: is this ticker input a repeat that changes nothing a reader
+        sees?
+
+        Only when it repeats the reading and primary-quote identity this
+        process last fully handled for the ticker, on the same connection, for
+        the same contract, inside the window, the market is not settled, the
+        buffered price is still this one (or written and gone), primary-quote
+        custody and the observation-continuity token are the ones that
+        handling left. Then the buffer, custody, mark, receipts, held-quote
+        bound, observation token and flush wake it would produce are the ones
+        already in place, so only "confirmed at" and the winner-quote
+        evidence are fed — as the full path would, at this receipt."""
+        from app.tasks.live_blend_refresh import _mono, _wall
+
+        entry = ticker_memo.get(ticker)
+        if entry is None:
+            return False
+        epoch, memo_ids, memo_reading, identity, handled_at, preview, continuity = entry
+        if (memo_reading != reading or memo_ids != ids
+                or not _same_connection(epoch, client)
+                or identity != (msg.get("_primary_quote_identity"),
+                                msg.get("_primary_quote_probability"))
+                or _mono() - handled_at >= repeat_skip_s):
+            return False
+        market_id, outcome_id = ids
+        if (market_id in prices.settled_market_ids
+                or price_buffer.get(outcome_id, reading) != reading
+                or primary_quote_custody.received.get(outcome_id)
+                != (None if identity[0] is None else identity)
+                or preview != bool(getattr(blend_refresher, "preview_events", ()))
+                or observation_continuity.get(outcome_id) is not continuity):
+            return False
+        stats["repeats_skipped"] += 1
+        event_id = event_id_by_outcome.get(outcome_id)
+        if outcome_id not in non_blend_outcome_ids:
+            confirmed = getattr(tail_receipts, "confirmed", None)
+            if confirmed is not None:
+                with contextlib.suppress(Exception):
+                    confirmed.note_input(event_id, outcome_id, reading[0], _wall())
+            if ticker in ticker_to_ids and event_id is not None:
+                # The winner-quote evidence, without the flush wake: the
+                # buffered price (if any) already woke the flush.
+                now = time.monotonic()
+                previous = winner_quoted_at.get(event_id)
+                winner_quoted_at[event_id] = now
+                if event_id not in live_event_ids and (
+                    previous is None
+                    or now - previous > QUOTE_PRIORITY_EVIDENCE_SECONDS
+                ):
+                    admission_wake.set()
+        return True
 
     async def handle_book_observation(msg, client):
         ticker = (msg.get("market_ticker") or "").upper()
@@ -3181,6 +3327,27 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if (eid not in blend_refresher.preview_events or eid not in live_event_ids
                 or oid in non_blend_outcome_ids or market_id in prices.settled_market_ids):
             return
+        if repeat_skip_s > 0:
+            from app.tasks.live_blend_refresh import _mono, _wall
+
+            # #10090: the same best prices this connection's last accepted
+            # observation of the ticker carried, inside the window, with no
+            # price input since (which clears the memo). The midpoint check,
+            # both signature reads, the mark, the pending entry and both wakes
+            # would re-observe what is already pending or just flushed, so only
+            # "confirmed at" is fed — the note the mark would make, at this
+            # receipt.
+            entry = observation_memo.get(ticker)
+            if (entry is not None and _same_connection(entry[0], client)
+                    and entry[1] == (msg.get("yes_bid_dollars"), msg.get("yes_ask_dollars"))
+                    and entry[2] == eid and _mono() - entry[3] < repeat_skip_s
+                    and not getattr(client.sock, "_retiring", False)):
+                stats["observations_skipped"] += 1
+                confirmed = getattr(tail_receipts, "confirmed", None)
+                if confirmed is not None:
+                    with contextlib.suppress(Exception):
+                        confirmed.note_input(eid, oid, entry[4], _wall())
+                return
         bid, ask = _parse_dollar(msg.get("yes_bid_dollars")), _parse_dollar(msg.get("yes_ask_dollars"))
         value = _kalshi_yes_probability(bid, ask, None)
         midpoint = client.sock.current_book_midpoint(ticker)
@@ -3208,6 +3375,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 book_observation_pending[oid] = (eid, value, bound, mark, ticker, signature)
                 book_observation_wake.set()
                 flush_wake.set()
+                if repeat_skip_s > 0:
+                    from app.tasks.live_blend_refresh import _mono
+
+                    observation_memo[ticker] = (
+                        _connection_epoch(client),
+                        (msg.get("yes_bid_dollars"), msg.get("yes_ask_dollars")),
+                        eid, _mono(), value,
+                    )
 
     async def flush_book_observations():
         async with buffer_lock:
@@ -3353,6 +3528,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     async def handle_shard_lifecycle(msg: dict, *, client=None, ids=_UNCAPTURED):
         """An open-contract connection grades its own legs and nothing else: a
         linked-slate frame is the game socket's to handle, exactly once."""
+        if repeat_skip_s > 0:
+            # #10090: a settle, close or status change is never skipped past.
+            _forget_repeats((msg.get("market_ticker") or "").upper())
         if client is not None:
             if not lifecycle_admitted(client, msg):
                 return
@@ -3425,6 +3603,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         msg: dict, *, closing_price=_UNCAPTURED, client=None, route=_UNCAPTURED,
     ):
         ticker = (msg.get("market_ticker") or "").upper()
+        if repeat_skip_s > 0:
+            # #10090: a settle, close or status change is never skipped past.
+            _forget_repeats(ticker)
         # #10022: an open contract is never in the lifecycle map (its event
         # ticker is not the linked slate's), so it is routed before the
         # two-sided handler can see it. `open_contract_ids` already excludes
@@ -3583,6 +3764,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         sock = KalshiWebSocket()
         sock.exact_trace = exact_trace
         client = _KalshiClient(sock, tickers, kind)
+        # #10090: a handover or new connection re-reads every ticker in full.
+        ticker_memo.clear()
+        observation_memo.clear()
         if kind == "game":
             sock.book_tickers = client.tickers & book_population()
         sock.on_ticker = functools.partial(handle_ticker, client=client)
@@ -3804,7 +3988,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
                 "resnapshots=%d quote_priority=%d probe_refused=%d "
-                "bundled_refused=%d parked=%d skipped_locked=%d",
+                "bundled_refused=%d parked=%d skipped_locked=%d repeats_skipped=%d "
+                "observations_skipped=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -3832,6 +4017,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090: price rows a row lock elsewhere held back (with their
                 # unit) while the rest of their phase committed.
                 stats.get("price_rows_skipped_locked", 0),
+                # #10090: repeated readings skipped below the raw count
+                # (`KALSHI_WS_REPEAT_SKIP_MS`); the receipt's `inputs` and
+                # repeats no longer see them.
+                stats.get("repeats_skipped", 0), stats.get("observations_skipped", 0),
             )
             flush_timings.reset()
             _report_liveness(
@@ -3971,6 +4160,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         ):
             target.clear()
             target.update(value)
+        # #10090: a re-scope is a new routing generation for the repeat skip.
+        ticker_memo.clear()
+        observation_memo.clear()
         market_tickers[:] = list(new_ids)
         current["linked"] = linked
         current["bridge"] = dict(bridge)
