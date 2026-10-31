@@ -566,6 +566,52 @@ class TestTheResolvedSliceIsReachedNotJustSelected:
             "its selector is the cost without the benefit"
         )
 
+    @pytest.mark.asyncio
+    async def test_the_sweep_waits_while_the_database_is_busy(self, rail, monkeypatch):
+        """#10090: BUSY_DB_DEFER_HEAVY_SCANS=1 inside the busy window skips the
+        ~1 GB resolved-row scan and leaves the row for an evening beat; the rest
+        of Phase 1.5 still runs. TIE_DATE + 2h is 21:20 UTC, inside 15-05."""
+        from app.models.models import FuturesMarket
+        from app.utils import busy_db_defer
+
+        monkeypatch.setenv(busy_db_defer.SWITCH_ENV, "1")
+        monkeypatch.delenv(busy_db_defer.HOURS_ENV, raising=False)
+        session = rail["session"]
+        stats, _ = await _run_phase15_with_clock(
+            session, TIE_DATE + timedelta(hours=2), lambda: 600.0,
+        )
+
+        funnel = stats["funnel"]
+        assert funnel["phase15_resolved_sweep_skipped_busy_db"] is True
+        assert funnel["phase15_resolved_cross_sport_scanned"] == 0
+        assert funnel["phase15_resolved_sweep_skipped_budget"] is False, (
+            "a busy-db deferral is not a budget skip; the funnel keeps both keys"
+        )
+        assert funnel["phase15_skipped_budget"] is False
+        wrong = session.get(FuturesMarket, rail["wrong_market_id"])
+        session.refresh(wrong)
+        assert wrong.event_id == rail["misfiled_id"], (
+            "a deferred sweep must not reach the resolved row this beat"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_sweep_runs_outside_the_busy_window(self, rail, monkeypatch):
+        from app.models.models import FuturesMarket
+        from app.utils import busy_db_defer
+
+        monkeypatch.setenv(busy_db_defer.SWITCH_ENV, "1")
+        monkeypatch.setenv(busy_db_defer.HOURS_ENV, "23-05")
+        session = rail["session"]
+        stats, _ = await _run_phase15_with_clock(
+            session, TIE_DATE + timedelta(hours=2), lambda: 600.0,
+        )
+
+        assert stats["funnel"]["phase15_resolved_sweep_skipped_busy_db"] is False
+        assert stats["funnel"]["phase15_resolved_cross_sport_scanned"] > 0
+        wrong = session.get(FuturesMarket, rail["wrong_market_id"])
+        session.refresh(wrong)
+        assert wrong.event_id == rail["twin_id"]
+
     def test_the_floor_is_ordered_against_the_guards_it_sits_between(self):
         """Pin the three numbers' RELATIONSHIP, so a future edit to one shows.
 
