@@ -83,6 +83,11 @@ import Foundation
 /// `/game-markets`, the per-player box, now, the reader's calendar, and the
 /// reader's own player and milestone choices. A chosen id that is no longer
 /// served gets no substitute.
+///
+/// WHOSE BODY (#10868 F1b): `/game-markets` is this game's only when its
+/// `eventId` is exactly `event.id` (`ownMarkets`) — no name or time matching.
+/// Another game's body reads as no body: no ladder, so no card. The host decides
+/// this once; `ladders` checks it again itself.
 enum HockeyJourneyContributionAdapter10868 {
 
     /// The two stories. Points keep columns; assists keep bars.
@@ -161,6 +166,14 @@ enum HockeyJourneyContributionAdapter10868 {
     ]
 
     // MARK: - Inputs
+
+    /// The game markets, only when they are this game's by their served id —
+    /// `eventId` exactly `event.id`, no name or time matching. A foreign or
+    /// absent body is none. The hockey readers that open a body (`ladders`
+    /// here, `HockeyJourneyOriginalsAdapter10868.originals`) check it themselves.
+    static func ownMarkets(_ markets: GameMarketsResponse?, for event: EventDetail) -> GameMarketsResponse? {
+        markets.flatMap { $0.eventId == event.id ? $0 : nil }
+    }
 
     static func points(_ event: EventDetail, markets: GameMarketsResponse?, host: Host,
                        selectedPlayerID: String? = nil,
@@ -245,12 +258,13 @@ enum HockeyJourneyContributionAdapter10868 {
     /// market names are two ladders and are never blended; when a player has
     /// more than one, the longer wins, then the market name, then the source
     /// (`PlayerPropsOrder.statGroupPrecedes`' shape), so a relaunch deals the
-    /// same card.
+    /// same card. Only from this game's own body (`ownMarkets`).
     static func ladders(_ stat: Stat, event: EventDetail, markets: GameMarketsResponse?) -> [Ladder] {
         var servedSide: [String: String] = [:]
         var order: [String] = []
         var groups: [String: Group] = [:]
-        for prop in markets?.playerProps ?? [] {
+        // A missing body and another game's body read the same: no ladder, so no card.
+        for prop in ownMarkets(markets, for: event)?.playerProps ?? [] {
             guard let name = subject(prop),
                   !PlayerPropsFamily.isTeamSubject(name, teams: [event.homeTeam, event.awayTeam])
             else { continue }

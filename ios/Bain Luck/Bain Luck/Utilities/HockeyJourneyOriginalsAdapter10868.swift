@@ -81,6 +81,12 @@ import SwiftUI
 /// The host passes the event, `/game-markets`, now, the reader's calendar, the
 /// tint, and its held selection, which is passed through unchanged for the
 /// leaf to resolve by exact scope and identity. Nothing here fetches.
+///
+/// WHOSE BODY (#10868 F1b): `originals` lists only this game's own body
+/// (`HockeyJourneyContributionAdapter10868.ownMarkets`: `eventId` exactly
+/// `event.id`). Another game's body lists nothing — no original, id, grade,
+/// Details or count. `sources` and `matched` know no event: they describe the
+/// body they are given, and their event-aware caller establishes ownership.
 enum HockeyJourneyOriginalsAdapter10868 {
     typealias Details = OriginalMarketDetails9483
 
@@ -133,12 +139,14 @@ enum HockeyJourneyOriginalsAdapter10868 {
     // MARK: - The page's originals
 
     /// The originals group for the page at `host.now`. No served outcome is no
-    /// catalogue, which draws `emptyWords`.
+    /// catalogue, which draws `emptyWords`; another game's body is no body.
     static func originals(_ event: EventDetail, markets: GameMarketsResponse?, host: Host, tint: Color,
                           selection: Details.Selection? = nil) -> HockeyJourneyPageOriginals10868 {
         let pagePhase = HockeyJourneyPageAdapter10868.phase(event, now: host.now)
         let started = HockeyJourneyContributionAdapter10868.hasStarted(event, now: host.now)
-        let found = markets.map { matched($0, status: event.status, now: host.now) } ?? []
+        // A missing body and another game's body read the same: an empty catalogue.
+        let found = HockeyJourneyContributionAdapter10868.ownMarkets(markets, for: event)
+            .map { matched($0, status: event.status, now: host.now) } ?? []
         let built = found.map { original($0, event: event, phase: pagePhase, started: started, host: host) }
         var labels: [Details.Identity: String] = [:]
         for (match, made) in zip(found, built) {
@@ -183,7 +191,8 @@ enum HockeyJourneyOriginalsAdapter10868 {
 
     /// Every served outcome row, in the order `QuestionCatalog9483.build` reads
     /// them: totals, spreads, team totals, periods, closed periods, player props,
-    /// matchups, other.
+    /// matchups, other. Describes the body it is given and knows no event; the
+    /// event-aware caller establishes whose body it is.
     static func sources(_ data: GameMarketsResponse) -> [Source] {
         func outcome(_ family: QuestionCatalog9483.Family, _ o: GameMarketOutcome,
                      row: QuestionCatalog9483.Row) -> Source {
@@ -256,7 +265,11 @@ enum HockeyJourneyOriginalsAdapter10868 {
         let source: Source
     }
 
-    /// Every outcome `build` lists, in its order, with its served row.
+    /// Every outcome `build` lists, in its order, with its served row. Describes
+    /// the body it is given and knows no event, so it cannot tell whose body that
+    /// is: the event-aware caller establishes ownership first (`originals` here,
+    /// through `HockeyJourneyContributionAdapter10868.ownMarkets`). A caller that
+    /// skips that check gets the given body's catalogue.
     static func matched(_ data: GameMarketsResponse, status: String?, now: Date) -> [Match] {
         var buckets: [String: [Source]] = [:]
         for source in sources(data) {

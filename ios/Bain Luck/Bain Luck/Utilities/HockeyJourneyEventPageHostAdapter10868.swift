@@ -53,6 +53,13 @@ import SwiftUI
 /// cannot come from another game. The legacy `ladderHome` / `ladderAway`
 /// parameters stay for compatibility only and are not read.
 ///
+/// WHOSE MARKETS (#10868 F1b): the held `markets` are this game's only when
+/// their `eventId` is exactly `event.id`
+/// (`HockeyJourneyContributionAdapter10868.ownMarkets`), decided once in
+/// `build`; the ladders and the originals each check it again. Another game's
+/// body is treated as no body: no points or assists story, no original, no
+/// All props count. The reader's own held choices pass through unchanged.
+///
 /// History controls: only Full chart opens anything (the full-size history
 /// reader). The history adapter offers Details and Inspect as unavailable
 /// until their owner contracts exist, so the shared callback never enables a
@@ -203,7 +210,8 @@ struct HockeyJourneyEventPageHost10868: View {
     /// game's body (`eventId` not exactly `event.id`) is decided here, once, to
     /// be no body at all. The forecast's ladder pair is the own body's
     /// `pmSpreadData.projectedFinal`; the legacy `ladderHome` / `ladderAway`
-    /// arguments are accepted for compatibility and ignored.
+    /// arguments are accepted for compatibility and ignored. Another game's
+    /// `markets` are likewise decided here, once, to be no markets.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
                       boxScore: [String: [String: Double]]?, probabilityObservedAt: Date?,
                       deliveryInterrupted: Bool = false, ladderHome: Double? = nil, ladderAway: Double? = nil,
@@ -220,18 +228,19 @@ struct HockeyJourneyEventPageHost10868: View {
                 $0, event: event, phase: phase,
                 host: HockeyJourneyHistoryAdapter10868.Host(now: now, calendar: calendar, locale: locale))
         } ?? HockeyJourneyHistoryAdapter10868.unavailable(event: event, phase: phase)
+        let ownMarkets = HockeyJourneyContributionAdapter10868.ownMarkets(markets, for: event)
         let people = HockeyJourneyContributionAdapter10868.Host(
             boxScore: boxScore, now: now, calendar: calendar, locale: locale)
         let points = HockeyJourneyContributionAdapter10868.points(
-            event, markets: markets, host: people,
+            event, markets: ownMarkets, host: people,
             selectedPlayerID: reading.pointsPlayer, selectedMilestoneID: reading.pointsMilestone)
         let assists = HockeyJourneyContributionAdapter10868.assists(
-            event, markets: markets, host: people,
+            event, markets: ownMarkets, host: people,
             selectedPlayerID: reading.assistsPlayer, selectedMilestoneID: reading.assistsMilestone)
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)
         let originals = HockeyJourneyOriginalsAdapter10868.originals(
-            event, markets: markets,
+            event, markets: ownMarkets,
             host: HockeyJourneyOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
             tint: tints.home, selection: reading.selection)
         let input = HockeyJourneyPageInputAdapter10868.input(

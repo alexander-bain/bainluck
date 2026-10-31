@@ -57,6 +57,13 @@
  *                     body reads exactly as a missing one: "History unavailable",
  *                     no borrowed point, series id, note or control. No name or
  *                     time matching.
+ *   - props           the held `/game-markets` body (stories and All props), only
+ *                     when its `event_id` is exactly this game's id
+ *                     (`ownHockeyMarkets`, #10868 F1b), decided once in
+ *                     `buildHockeyJourney`; the points/assists ladders and the
+ *                     originals each check it again. Another game's body reads
+ *                     as a missing one: no card, story, original, id, grade or
+ *                     count.
  *   - result          `servedOutcome` — the served verdict, else the scores.
  *   - names / tints   `teamShortNames` (teamShortName.ts:1220), `teamTextColor`
  *                     (teamColors.ts:140).
@@ -109,6 +116,7 @@ import { hockeyJourneyHistory, ownHockeyHistory, type HockeyJourneyHistory } fro
 import {
   hockeyJourneyContribution,
   hockeyJourneyOriginals,
+  ownHockeyMarkets,
   type HockeyJourneyContribution,
   type HockeyJourneyOriginals,
 } from "./hockeyJourneyProps";
@@ -606,7 +614,10 @@ export interface HockeyJourneyInput {
    * only when its `event_id` is exactly `event.id`; any other body reads as missing.
    */
   history: EventHistoryResponse | null | undefined;
-  /** The `/game-markets` body the page already holds (its `gameMarkets` memo). */
+  /**
+   * The `/game-markets` body the page already holds (its `gameMarkets` memo).
+   * Used only when its `event_id` is exactly `event.id`; any other body reads as missing.
+   */
   gameMarkets: GameMarketsResponse | null | undefined;
   host: HockeyJourneyHost;
 }
@@ -617,16 +628,19 @@ export interface HockeyJourneyInput {
  * unavailable: the matrix, stories and All props compose from their own inputs
  * (native `HockeyJourneyEventPageHostAdapter10868.build`). A body for another
  * game is decided here, once, to be no body at all: the chart reads "History
- * unavailable" and no forecast is read from it.
+ * unavailable" and no forecast is read from it. The same holds for another
+ * game's `/game-markets` body: no points or assists story, no original, no
+ * All props count.
  */
 export function buildHockeyJourney({ event, history, gameMarkets, host }: HockeyJourneyInput): HockeyJourneyViewModel {
   const phase = hockeyJourneyPhase(event, host.nowMs);
   const own = ownHockeyHistory(history, event);
+  const ownMarkets = ownHockeyMarkets(gameMarkets, event);
   const headline = hockeyJourneyHeadline(event, own, host);
   const historyModel = hockeyJourneyHistory(own, event, phase, host.nowMs);
-  const points = hockeyJourneyContribution("points", event, gameMarkets, host.nowMs);
-  const assists = hockeyJourneyContribution("assists", event, gameMarkets, host.nowMs);
-  const originals = hockeyJourneyOriginals(event, gameMarkets, host.nowMs);
+  const points = hockeyJourneyContribution("points", event, ownMarkets, host.nowMs);
+  const assists = hockeyJourneyContribution("assists", event, ownMarkets, host.nowMs);
+  const originals = hockeyJourneyOriginals(event, ownMarkets, host.nowMs);
   const stories: HockeyJourneyStory[] = [];
   if (points) stories.push({ id: "points", name: points.title, exploreLabel: "Explore points" });
   if (assists) stories.push({ id: "assists", name: assists.title, exploreLabel: "Explore assists" });

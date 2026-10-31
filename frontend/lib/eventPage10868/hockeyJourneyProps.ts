@@ -48,6 +48,15 @@
  *   - catalogue             `buildQuestionCatalog` (questionCatalog.ts:113) —
  *                           membership and order; each listed outcome is mapped
  *                           back to its served row by the catalogue's own keys.
+ *   - whose body            a held `/game-markets` body is this game's ONLY when
+ *                           its `event_id` is exactly `event.id`
+ *                           (`ownHockeyMarkets`, #10868 F1b) — no name or time
+ *                           matching, no coercion of a non-number id. Another
+ *                           game's body reads as no body: no card, story,
+ *                           original, id, grade or count. The page decides this
+ *                           once (`buildHockeyJourney`); the two readers that
+ *                           open a body here (`contributionLadders`,
+ *                           `hockeyJourneyOriginals`) check it again themselves.
  *   - words                 `formatProbabilityPercent`, `sourceLabel`,
  *                           `teamShortNames`, `clockWords` (formatSourceStamp).
  *   - original, later       during play only, always the CURRENT slot (native
@@ -104,6 +113,23 @@ import {
 } from "./hockeyJourneyCore";
 
 // ─── Shared ────────────────────────────────────────────────────────────────
+
+declare const OWN_HOCKEY_MARKETS: unique symbol;
+
+/**
+ * A held `/game-markets` body PROVEN to be this game's: its `event_id` is exactly
+ * `event.id`. Only {@link ownHockeyMarkets} makes one.
+ */
+export type OwnHockeyMarkets = GameMarketsResponse & { readonly [OWN_HOCKEY_MARKETS]: true };
+
+/** The one ownership check: exact numeric `event_id`, no name or time matching. Null for a missing or foreign body. */
+export function ownHockeyMarkets(
+  markets: GameMarketsResponse | null | undefined,
+  event: EventDetailResponse,
+): OwnHockeyMarkets | null {
+  if (!markets || typeof markets.event_id !== "number" || markets.event_id !== event.id) return null;
+  return markets as OwnHockeyMarkets;
+}
 
 /** One served market row, as much of it as these parts read. */
 export interface HockeyJourneyMarketRow {
@@ -344,12 +370,18 @@ export interface HockeyJourneyLadder {
   rows: HockeyJourneyMarketRow[];
 }
 
-/** One ladder per player for `stat`: over-side rows, distinct finite lines, ascending. */
+/**
+ * One ladder per player for `stat`: over-side rows, distinct finite lines,
+ * ascending. Only from this game's own body (`ownHockeyMarkets`); another game's
+ * body gives no ladder.
+ */
 export function contributionLadders(
   stat: HockeyJourneyStat,
   event: EventDetailResponse,
-  markets: GameMarketsResponse | null | undefined,
+  held: GameMarketsResponse | null | undefined,
 ): HockeyJourneyLadder[] {
+  // A missing body and another game's body read the same: no ladder, so no card.
+  const markets = ownHockeyMarkets(held, event);
   const servedSide = new Map<string, string>();
   const order: string[] = [];
   const groups = new Map<string, { playerId: string; name: string; market: string; source: string; rows: HockeyJourneyMarketRow[] }>();
@@ -837,7 +869,11 @@ function catalogGroupKey(family: string, row: HockeyJourneyMarketRow): string {
   return JSON.stringify([family, row.source ?? null, question, row.period ?? null, row._market_id ?? null]);
 }
 
-/** Every served outcome row, in the order `buildQuestionCatalog` reads them. */
+/**
+ * Every served outcome row, in the order `buildQuestionCatalog` reads them.
+ * Describes the body it is given and knows no event: whose body it is, is
+ * established by its event-aware caller.
+ */
 function catalogSources(data: GameMarketsResponse): HockeyJourneyCatalogueSource[] {
   const out: HockeyJourneyCatalogueSource[] = [];
   const add = (family: string, rows: readonly HockeyJourneyMarketRow[] | null | undefined, closed = false, isPlayerProp = false) => {
@@ -900,7 +936,13 @@ export interface HockeyJourneyCatalogueMatch {
   source: HockeyJourneyCatalogueSource;
 }
 
-/** Every outcome the catalogue lists, in its order, with the served row it came from. */
+/**
+ * Every outcome the catalogue lists, in its order, with the served row it came
+ * from. Describes the body it is given and knows no event, so it cannot tell
+ * whose body that is: the event-aware caller establishes ownership first
+ * (`hockeyJourneyOriginals` through `ownHockeyMarkets`). A caller that skips
+ * that check gets the given body's catalogue.
+ */
 export function catalogueMatches(
   data: GameMarketsResponse,
   status: string | null | undefined,
@@ -1059,7 +1101,11 @@ function originalLabel(source: HockeyJourneyCatalogueSource, event: EventDetailR
   return `${subject} ${target} ${stat.toLowerCase()}`;
 }
 
-/** "All props": every original the page's catalogue lists, with its readings and grade. */
+/**
+ * "All props": every original the page's catalogue lists, with its readings and
+ * grade — only from this game's own body (`ownHockeyMarkets`). Another game's
+ * body lists nothing: no original, id, grade, Details or count.
+ */
 export function hockeyJourneyOriginals(
   event: EventDetailResponse,
   markets: GameMarketsResponse | null | undefined,
@@ -1067,7 +1113,9 @@ export function hockeyJourneyOriginals(
 ): HockeyJourneyOriginals {
   const phase = hockeyJourneyPhase(event, nowMs);
   const started = propsHaveStarted(event, nowMs);
-  const matches = markets ? catalogueMatches(markets, event.status, nowMs) : [];
+  // A missing body and another game's body read the same: an empty catalogue.
+  const own = ownHockeyMarkets(markets, event);
+  const matches = own ? catalogueMatches(own, event.status, nowMs) : [];
   const originals = matches.map((match): HockeyJourneyOriginal => {
     const identity = identityOf(match.source.row);
     let mode: HockeyJourneyOriginal["mode"] = "pregame";
