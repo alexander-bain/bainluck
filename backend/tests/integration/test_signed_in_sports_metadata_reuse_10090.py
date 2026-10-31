@@ -894,3 +894,30 @@ async def test_warm_signed_in_sports_keeps_the_empty_offset_end_state(rig):
     assert warm["offset"] == 1000 and warm["total"] > 0
     assert _outcome_reads(sql), "the empty page still reads current candidate truth"
     assert not _wide_markets(sql)
+
+
+async def test_a_failing_helper_statement_falls_back_in_a_clean_transaction(
+    rig, monkeypatch
+):
+    """An SQL error inside the reuse helper must not poison the fallback read.
+
+    Without the savepoint (or with a narrower except), the aborted transaction
+    makes the original loader fail too and signed-in Sports loses its futures.
+    """
+    from sqlalchemy import literal_column
+
+    from app.utils import sports_market_metadata_reuse as reuse
+
+    await rig.read(limit=200)
+    control, _ = await rig.read(ACTOR_A, reuse=False, limit=200)
+    original = reuse._proof_columns
+    monkeypatch.setattr(
+        reuse,
+        "_proof_columns",
+        lambda: (*original(), literal_column("(1/0)").label("task10_boom")),
+    )
+    warm, sql = await rig.read(ACTOR_A, limit=200)
+    assert _public(warm) == _public(control)
+    assert _wide_markets(sql), "the original loader must run after the SQL error"
+    assert rig.last_headers is not None
+    assert "sports_metadata" not in rig.last_headers.get("x-feed-shared", "").split(",")
