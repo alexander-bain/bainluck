@@ -17,6 +17,7 @@ from itertools import count
 from typing import Any, Callable, Optional
 
 from app.utils.kalshi_orderbook import KalshiOrderBook
+from app.utils import ws_json
 
 logger = logging.getLogger(__name__)
 
@@ -496,7 +497,8 @@ class KalshiWebSocket:
                             async for raw in _cooperative_messages(ws):
                                 self._message_count += 1
                                 try:
-                                    data = json.loads(raw)
+                                    # #10090: the fast parser, same contract.
+                                    data = ws_json.loads(raw)
                                 except (json.JSONDecodeError, TypeError):
                                     continue
                                 finally:
