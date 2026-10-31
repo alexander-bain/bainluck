@@ -11,6 +11,7 @@ Events:
 
 import asyncio
 import contextlib
+import contextvars
 import itertools
 import json
 import logging
@@ -18,7 +19,7 @@ import math
 import os
 import time
 from collections.abc import Collection, Iterable, Iterator, Mapping
-from functools import lru_cache
+from functools import lru_cache, wraps
 from typing import Any, NamedTuple, Optional
 from datetime import datetime, timezone
 
@@ -29,6 +30,7 @@ from app.tasks.kalshi_ws import (
     FINAL_FLUSH_ATTEMPTS,
     PRICE_FLUSH_SECONDS,
     SUBSCRIPTION_REFRESH_SECONDS,
+    _FlushTimings,
 )
 from app.tasks.polymarket import _poly_book_is_untradeable
 from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
@@ -281,6 +283,10 @@ class _PMCatalogFlushBoundary:
         try:
             # No maps change beneath a stamp left running by an earlier batch.
             timing.enter("stamps")
+            if self.stamps is not None and _handover_shed_queued_enabled():
+                # #10090: every game flush is held from here, so wait only for
+                # the attempts already running; queued ones go back to debt.
+                self.stamps.shed_queued()
             await self.join_stamps()
             if self.stamps is not None:
                 # Committed bridged cohorts no game flush has stamped yet become
@@ -297,6 +303,20 @@ class _PMCatalogFlushBoundary:
                     self.condition.notify_all()
             finally:
                 timing.finish(outcome)
+
+
+def _handover_shed_queued_enabled() -> bool:
+    """#10090 — env `PM_HANDOVER_SHED_QUEUED`, read at each catalog handover.
+
+    On (missing, blank, anything but an off word), the handover's `stamps`
+    phase, which holds every game flush, waits only for the stamp attempts
+    already running: queued ones go back to debt (`shed_queued`). Production
+    2026-10-31 00:46-01:36Z: `stamps` was 1.37-3.96 s of `blocked` 1.49-4.15 s,
+    and PM's worst stamps came in same-second clusters across games at the
+    handovers. "0"/"false"/"off"/"no" is today's join of the whole queue.
+    """
+    raw = os.environ.get("PM_HANDOVER_SHED_QUEUED")
+    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
 
 
 def _handover_outcome(exc: BaseException) -> str:
@@ -390,6 +410,68 @@ class _PMCatalogHandoverTiming:
         return "Polymarket WS catalog handover: " + " ".join(parts)
 
 
+class _PMGameFlushTimings(_FlushTimings):
+    """#10090 — where the Polymarket GAME flush time went, per minute line.
+
+    The Kalshi socket's `_FlushTimings` buckets, for the PM game loop only
+    (`flush_loop`; never the standalone, prop or bridged writers, nor the
+    final drain). `total`/`max`/`n` are the game flushes themselves; a flush
+    that waited on a catalog handover includes that wait. `save` is the game
+    chunks' price statements (their lock waits included), one phase each;
+    `publish` the market-invalidation sends a game flush started (inline, or
+    the shared sender task it started); `stamp` the blend refreshes a game
+    flush started, start to end on their task. `rank_commit` is the floored
+    remainder: session checkout, the lock-timeout SETs, re-rank, commit,
+    withdrawals, observation previews and bookkeeping.
+
+    Publish and stamp run on tasks beside the flush, and a task may outlive
+    the flush that started it: its time joins whichever game flush returns
+    after it ends (Kalshi's cross-flush rule). So the buckets can sum past
+    `total`, `rank_commit` then reads low, and neither is a per-flush stage
+    time. The flushes' own waits on a running stamp are `stamp_wait_s` on
+    the same line. Log only: monotonic deltas, no await, no query.
+    """
+
+    def line(self):
+        rank_commit = max(0.0, self.total - sum(self.spent.values()))
+        return (
+            f"game_flush n={self.flushes} total={self.total:.1f}s "
+            f"max={self.longest:.1f}s phases={self.phases} "
+            f"save={self.spent['save']:.1f}s rank_commit={rank_commit:.1f}s "
+            f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s"
+        )
+
+
+def _pm_flush_clock() -> float:
+    """#10090 — the game-flush timings' clock: monotonic, one seam for rigs."""
+    return time.monotonic()
+
+
+#: #10090 — the running game flush's timings, for it and the tasks it starts
+#: (a task copies this at creation). None everywhere else.
+_PM_GAME_FLUSH_TIMINGS: contextvars.ContextVar[Optional[_PMGameFlushTimings]] = (
+    contextvars.ContextVar("pm_game_flush_timings", default=None)
+)
+
+
+@contextlib.contextmanager
+def _pm_game_flush_span(bucket: str, *, phase: bool = False, on: bool = True):
+    """#10090 — time the body into the running game flush's ``bucket``.
+
+    A no-op outside a game flush or when ``on`` is false. Never raises past
+    the body and adds no await: wrap the existing await in it.
+    """
+    timings = _PM_GAME_FLUSH_TIMINGS.get() if on else None
+    if timings is None:
+        yield
+        return
+    started = _pm_flush_clock()
+    try:
+        yield
+    finally:
+        timings.add(bucket, _pm_flush_clock() - started, phase=phase)
+
+
 class _PMStampOwner:
     """One consumer's refresh task and committed cohorts, across price batches.
 
@@ -423,6 +505,13 @@ class _PMStampOwner:
         self._task = value
         if value is not None and hasattr(value, "add_done_callback"):
             value.add_done_callback(self._on_task_done)
+            # #10090: a game flush's stamp, start to end (`_PMGameFlushTimings`).
+            timings = _PM_GAME_FLUSH_TIMINGS.get()
+            if timings is not None:
+                started = _pm_flush_clock()
+                value.add_done_callback(
+                    lambda _task: timings.add("stamp", _pm_flush_clock() - started)
+                )
 
     def note_fenced(self, event_ids: Iterable[int]) -> None:
         if self._task is None or self._task.done():
@@ -476,6 +565,25 @@ class _PMStampOwner:
         if holding is None:
             return self.events
         return set(holding)
+
+    def shed_queued(self) -> int:
+        """#10090 — close the running call's door and hand its queued, not yet
+        started attempts back to debt (`LiveBlendRefresher.shed_queued`), so a
+        join that holds every flush waits only for the running ones. The
+        number shed; 0 with no running call or a refresher without it."""
+        if self._task is None or self._task.done():
+            return 0
+        shed = getattr(self.refresher, "shed_queued", None)
+        if shed is None:
+            return 0
+        events = shed()
+        self.fresh.difference_update(events)
+        if events:
+            logger.info(
+                "Polymarket WS handover shed: %d queued stamp attempts back to "
+                "debt before the stamp join", len(events),
+            )
+        return len(events)
 
     async def join(self, *, cancel=False) -> None:
         if self._task is None:
@@ -1339,7 +1447,9 @@ class PMWithdrawalMarketPublisher:
         while self.pending:
             changes, self.pending = self.pending, []
             try:
-                await refresher.publish_market_frames(changes)
+                # #10090: timed for a sender a game flush started.
+                with _pm_game_flush_span("publish"):
+                    await refresher.publish_market_frames(changes)
             except BaseException as exc:
                 # A canceled sender still owns its detached committed batch.
                 # Newer pending observations win the ordinary coalescing rule.
@@ -3197,7 +3307,10 @@ def _format_by_shard(ws_stats: dict) -> str:
     )
 
 
-def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
+def _log_stats_line(
+    stats: dict, ws_stats: dict, blend: dict, *, game_flush: str = "game_flush -",
+    stamp_tx: str = "stamp_tx -",
+) -> None:
     """The once-a-minute socket line, including #837's coverage ratio.
 
     Module-level rather than inline in the consumer's `stats_loop` for one
@@ -3222,13 +3335,23 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     which was previously being read AS coverage. It is also the only
     served-shaped number the shadow consumer has, since that one subscribes to
     everything and so has no subscription to intersect against.
+
+    ``game_flush`` (#10090) is the minute's `_PMGameFlushTimings.line()`, its
+    own `|` segment before `held`, so every existing field keeps its place and
+    `repeats_skipped=` still ends the line. A caller without one prints
+    `game_flush -`.
+
+    ``stamp_tx`` (#10090) is the minute's `live_blend_refresh.StampSpans.line()`
+    (every stamp transaction of this refresher, not only the game flush's),
+    its own `|` segment right after `game_flush`. A caller without one prints
+    `stamp_tx -`.
     """
     logger.info(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
-        "| held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
+        "| %s | %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
         "lock_timeouts=%d skipped_locked=%d repeats_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
@@ -3250,6 +3373,10 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         # and, until this line, never emitted.
         stats.get("trades_below_min_order", 0),
         stats.get("trades_outside_wide_book", 0),
+        # #10090: this minute's game flushes and where their time went.
+        game_flush,
+        # #10090: this minute's stamp transactions and where their time went.
+        stamp_tx,
         # #9934: held prices a wide book priced out, withdrawn.
         stats.get("held_prices_withdrawn", 0),
         # #10090: still-held NOWAIT probes, kept out of `errors`.
@@ -3363,7 +3490,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     from app.models.models import (
         Event, FuturesMarket, FuturesOutcome,
     )
-    from app.services.polymarket_ws import PolymarketWebSocket
+    from app.services.polymarket_ws import (
+        PolymarketWebSocket,
+        stable_drop_retry_base_seconds,
+    )
     from app.tasks.live_blend_refresh import (
         DEFAULT_MIN_REFRESH_INTERVAL_S, HeldRowQuotes, LiveBlendRefresher, TailReceipts,
         OwedChartCustody, adopt_handed_off,
@@ -3615,6 +3745,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # when the venue sends no later move. The shared snapshot switch is the undo.
     ws = PolymarketWebSocket(
         price_book_snapshots=book_snapshot_prices_enabled(),
+        # #10090: a stable game socket that drops abruptly re-dials sooner.
+        stable_drop_retry_base=stable_drop_retry_base_seconds(),
     )
 
     async def load_game_slate(*, stored_live_only=False):
@@ -4163,7 +4295,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.polymarket_ws import (
             _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
             DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
-            is_price_statement_timeout,
+            is_price_statement_timeout, _pm_game_flush_span,
         )
         from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
@@ -4289,7 +4421,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         if skip_units is None else
                         chunk_price_update_execution(chunk, force_ids=forced, skip_units=skip_units)
                     )
-                    result = await session.execute(statement, parameters)
+                    # #10090: the game flush's `save` (`_PMGameFlushTimings`).
+                    with _pm_game_flush_span("save", phase=True, on=game_chunk):
+                        result = await session.execute(statement, parameters)
                 except Exception as exc:
                     # Only the probe's own statement, and only PostgreSQL's
                     # NOWAIT row refusal by its message — never elapsed time: a
@@ -4520,7 +4654,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # event stamping can proceed while this separate notification awaits
         # Redis. Standalone writes retain their inline publication contract.
         if start_market_publish is None:
-            await blend_refresher.publish_market_changes(session)
+            with _pm_game_flush_span("publish", on=game_chunk):
+                await blend_refresher.publish_market_changes(session)
         else:
             start_market_publish(session)
 
@@ -4846,6 +4981,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.live_blend_refresh import _mono
         from app.tasks.polymarket_ws import (
             _PMHeadlineEvents, _pm_lock_isolated_chunks, _pm_pure_bridged_legs,
+            _pm_game_flush_span,
         )
 
         stamp_owner = catalog_boundary.stamp_owner(blend_refresher)
@@ -4892,10 +5028,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # caller without the argument is called exactly as before.
             extra = {"withdrawing_event_ids": withdrawing_events} if withdrawing_events else {}
             if final or flush_started is None or owed_events == set():
-                await blend_refresher.refresh_pending(
-                    flush_started=flush_started, defer_event_ids=unfinished_events,
-                    **extra,
-                )
+                with _pm_game_flush_span("stamp"):
+                    await blend_refresher.refresh_pending(
+                        flush_started=flush_started, defer_event_ids=unfinished_events,
+                        **extra,
+                    )
                 return
             # Capture BEFORE the call consumes the debt, as the fresh chunk's
             # owner start does. Existing debt, so nothing is fresh.
@@ -6833,9 +6970,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # a flush still ends the loop at its next turn (`run_flush_cadence`).
     loops_stop = asyncio.Event()
 
+    # #10090: the game flushes' own time, beside Kalshi's (`_PMGameFlushTimings`).
+    game_flush_timings = _PMGameFlushTimings()
+
+    @wraps(flush_prices)  # still the game flush to its cadence and readers
+    async def timed_game_flush(flush_started):
+        token = _PM_GAME_FLUSH_TIMINGS.set(game_flush_timings)
+        started = _pm_flush_clock()
+        try:
+            return await flush_prices(flush_started)
+        finally:
+            game_flush_timings.flushed(_pm_flush_clock() - started)
+            _PM_GAME_FLUSH_TIMINGS.reset(token)
+
     async def flush_loop():
         await run_flush_cadence(
-            flush_prices, game_period, stop=loops_stop,
+            timed_game_flush, game_period, stop=loops_stop,
             failed_retry_interval_s=PRICE_FLUSH_SECONDS,
             wake=catalog_boundary.flush_wake,
             work_count=lambda: catalog_boundary.flush_work,
@@ -6874,7 +7024,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             ws_stats = ws.stats
             owner = catalog_boundary.stamps
             stats["stamp_wait_s"] = owner.waited_s if owner is not None else 0.0
-            _log_stats_line(stats, ws_stats, blend)
+            stamp_spans = getattr(blend_refresher, "stamp_spans", None)
+            _log_stats_line(
+                stats, ws_stats, blend, game_flush=game_flush_timings.line(),
+                **({"stamp_tx": stamp_spans.line()} if stamp_spans is not None else {}),
+            )
+            game_flush_timings.reset()
+            if stamp_spans is not None:
+                stamp_spans.reset()
             open_connected = any(s.is_connected for s in open_sockets)
             if open_sockets:
                 stats.update(catalog_boundary.bridges.take_timing())

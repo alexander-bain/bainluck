@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 import math
+import os
 import random
 import ssl
 from typing import Any, Callable, Optional
@@ -229,6 +230,53 @@ INITIAL_BACKOFF_SECONDS = 1.0
 MAX_BACKOFF_SECONDS = 60.0
 STABLE_CONNECTION_SECONDS = 60.0
 CLEAN_CLOSE_FLOOR_SECONDS = 1.0
+
+# #10090 — a STABLE socket that dies abruptly (no Close frame received or
+# sent; 408 of 410 game-socket drops at the 10/30 evening peak) re-dials once
+# from this base instead of the reset 1 s, still jittered. Only that one sleep:
+# `backoff` is untouched, so a drop after an unstable connection escalates as
+# before. The game client opts in (`stable_drop_retry_base=`); env
+# `PM_WS_STABLE_RETRY_BASE_S` is the switch, and `1` is today's sleep exactly.
+PM_WS_STABLE_RETRY_BASE_DEFAULT_S = 0.25
+
+
+def stable_drop_retry_base_seconds() -> float:
+    """#10090 — env `PM_WS_STABLE_RETRY_BASE_S`, read when the client is built.
+
+    Missing or blank is the default (0.25 s). A value at or above
+    INITIAL_BACKOFF_SECONDS is today's sleep; zero, negative, non-finite or
+    unparseable is also today's sleep, the junk with one warning.
+    """
+    raw = os.environ.get("PM_WS_STABLE_RETRY_BASE_S")
+    if raw is None or not raw.strip():
+        return PM_WS_STABLE_RETRY_BASE_DEFAULT_S
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        logger.warning(
+            "Polymarket WS: PM_WS_STABLE_RETRY_BASE_S=%r is not a number; "
+            "stable-drop retry off",
+            raw,
+        )
+        return INITIAL_BACKOFF_SECONDS
+    if not math.isfinite(value) or value <= 0:
+        return INITIAL_BACKOFF_SECONDS
+    return min(value, INITIAL_BACKOFF_SECONDS)
+
+
+def _dropped_without_close_frame(exc: BaseException) -> bool:
+    """The socket died with no Close frame either way.
+
+    websockets' "no close frame received or sent". A received code (1013 slow
+    consumer, any other) or one we sent is an explicit close and not this.
+    """
+    from websockets.exceptions import ConnectionClosed
+
+    return (
+        isinstance(exc, ConnectionClosed)
+        and exc.rcvd is None
+        and exc.sent is None
+    )
 
 #: How long a handshake permit (see `PolymarketWebSocket(max_concurrent_
 #: handshakes=...)`) is held after the subscribe is sent, waiting for the
@@ -592,8 +640,12 @@ class PolymarketWebSocket:
         max_concurrent_handshakes: Optional[int] = None,
         max_queue: int = DEFAULT_MAX_QUEUE_MESSAGES,
         price_book_snapshots: bool = False,
+        stable_drop_retry_base: Optional[float] = None,
     ):
         self._message_count = 0
+        # #10090: None keeps every reconnect on the backoff as before; see
+        # PM_WS_STABLE_RETRY_BASE_DEFAULT_S. The game client sets it.
+        self._stable_drop_retry_base = stable_drop_retry_base
         # #9733: hand each book in a snapshot frame to `on_price` as a quote.
         # Off by default, so the game socket and the shadow consumer keep
         # their behaviour; the open-contract client turns it on.
@@ -1005,6 +1057,7 @@ class PolymarketWebSocket:
         while True:
             permit = _HandshakePermit(self._handshake_gate)
             connected_at: Optional[float] = None
+            abrupt = False
             try:
                 await permit.acquire()
                 async with websockets.connect(
@@ -1213,6 +1266,7 @@ class PolymarketWebSocket:
                 self._mark_shard_down(shard)
                 reason = f"{type(e).__name__}: {str(e)[:100]}"
                 floor = 0.0
+                abrupt = _dropped_without_close_frame(e)
             else:
                 # #9484: a CLEAN close used to re-dial with no sleep at all.
                 reason = "closed cleanly"
@@ -1222,17 +1276,24 @@ class PolymarketWebSocket:
 
             # #9484: only a connection that held earns the backoff its reset;
             # one that drops straight after its handshake keeps backing off.
-            if (
+            stable = (
                 connected_at is not None
                 and loop.time() - connected_at >= STABLE_CONNECTION_SECONDS
-            ):
+            )
+            if stable:
                 backoff = INITIAL_BACKOFF_SECONDS
-            delay = _jittered(max(backoff, floor))
+            base = max(backoff, floor)
+            # #10090: this one sleep only; `backoff` below moves as before.
+            if stable and abrupt and self._stable_drop_retry_base is not None:
+                base = self._stable_drop_retry_base
+            delay = _jittered(base)
             logger.warning(
-                "Polymarket WS shard %d disconnected (%s), reconnecting in %.1fs",
+                "Polymarket WS shard %d disconnected (%s), reconnecting in %.1fs"
+                " (base %.2fs)",
                 shard,
                 reason,
                 delay,
+                base,
             )
             await asyncio.sleep(delay)
             backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)

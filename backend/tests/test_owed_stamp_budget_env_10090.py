@@ -138,7 +138,8 @@ def test_effective_values_are_logged_once_per_process(monkeypatch, caplog):
         f"FRESH_FLUSH_PENDING_ATTEMPTS={lbr.FRESH_FLUSH_PENDING_ATTEMPTS} "
         f"PENDING_STAMP_BUDGET_S={lbr.PENDING_STAMP_BUDGET_S:.3g} "
         f"ADMITTED_DEBT_SLOTS={lbr.ADMITTED_DEBT_SLOTS} "
-        f"ADMITTED_STAMP_BATCH={lbr.ADMITTED_STAMP_BATCH}"
+        f"ADMITTED_STAMP_BATCH={lbr.ADMITTED_STAMP_BATCH} "
+        f"FRESH_STAMP_WORKERS={lbr.FRESH_STAMP_WORKERS}"
     ]
 
 
