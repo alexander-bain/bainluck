@@ -739,6 +739,9 @@ class _Session:
         # these through the slate replay loses both the timeout and a batch.
         if any(stmt is control for control in (
             poly_task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            # #10090 (6cbd058e): the fused lock+statement arm and its restore.
+            poly_task.ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            poly_task.RESTORE_DNPL_PRICE_TIMEOUTS_SQL,
             SET_STATEMENT_TIMEOUT_SQL,
             SET_LOCK_TIMEOUT_SQL,
         )):

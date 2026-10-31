@@ -80,6 +80,11 @@ SPECS = {
     # turn that could batch: queued non-live events of one cohort stamped in one
     # transaction. Its "today" is the worker's own setting, `today()`.
     "admitted_stamp_batch": {"modes": ("alternate",), "values": (1, 8), "today": 1},
+    # `live_blend_refresh.ADMITTED_LIVE_BATCH`, read once per admitted worker
+    # turn whose pick is a live game with live games queued behind it: the head
+    # live events of its cohort stamped in one transaction. Its "today" is the
+    # worker's own setting, `today()`.
+    "admitted_live_batch": {"modes": ("alternate",), "values": (1, 8), "today": 1},
     # `live_blend_refresh.OWED_PAST_WITHDRAWAL_SWITCH`, read once per debt drain
     # deferred only by a buffered withdrawal: whether the drain stamps past it.
     "owed_past_withdrawal": {"modes": ("alternate",), "values": (0, 1), "today": 0},
@@ -154,6 +159,7 @@ _TODAY_SETTINGS = {
     "pending_attempts": "FRESH_FLUSH_PENDING_ATTEMPTS",
     "admitted_debt_slots": "ADMITTED_DEBT_SLOTS",
     "admitted_stamp_batch": "ADMITTED_STAMP_BATCH",
+    "admitted_live_batch": "ADMITTED_LIVE_BATCH",
 }
 #: Any other switch's "today" may be set by ``SPEED_SWITCH_TODAY_<NAME>`` (the
 #: name upper-cased), so a switch an A/B shows safe can be left on by one config

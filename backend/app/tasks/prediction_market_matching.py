@@ -6601,7 +6601,18 @@ async def _phase15_revalidate(
     # fresh slice is delayed by at most a fifth of a beat's work, never dropped.
     resolved_rows: list = []
     resolved_scanned = 0
-    if _time_remaining() < _PHASE15_RESOLVED_SWEEP_FLOOR:
+    from app.utils import busy_db_defer
+
+    # #10090: ~1 GB read a call on 2026-10-31 for a population that only changes
+    # when a cup settles. It waits for the evening while the database is busy;
+    # the rest of Phase 1.5 runs as normal.
+    resolved_deferred = busy_db_defer.should_defer(
+        "phase15_resolved_cross_sport_sweep", now
+    )
+    stats["funnel"]["phase15_resolved_sweep_skipped_busy_db"] = resolved_deferred
+    if resolved_deferred:
+        stats["funnel"]["phase15_resolved_sweep_skipped_budget"] = False
+    elif _time_remaining() < _PHASE15_RESOLVED_SWEEP_FLOOR:
         # The selector cannot use an index — a prefix `ilike` is unindexable
         # under this database's en_US collation, and the range rewrite that
         # would be indexable does not mean the same thing there (it returns

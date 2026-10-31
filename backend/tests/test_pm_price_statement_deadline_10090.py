@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.exc import DBAPIError
 
 from app.tasks import polymarket_ws as pm
-from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL
 from tests.test_pm_quote_lock_bound_10090 import writer_rig, LockHeld
 from tests.test_ws_flush_cadence_10090 import _FakeTime
 
@@ -46,6 +46,14 @@ def test_diagnostic_and_code_must_belong_to_same_exception():
     assert not pm.is_price_statement_timeout(outer)
 
 
+@pytest.fixture(autouse=True, params=[True, False], ids=['fused', 'separate'])
+def fuse(request, monkeypatch):
+    # #10090: every case holds with the arm/restore pairs fused (the default)
+    # and with `PM_FUSE_PRICE_TIMEOUT_SETS=0` (four separate statements).
+    monkeypatch.setattr(pm, 'PM_FUSE_PRICE_TIMEOUT_SETS', request.param)
+    return request.param
+
+
 def configured_writer(monkeypatch, failure=None, scope='game'):
     r, state = writer_rig(_FakeTime(monkeypatch, t=1000), books={})
     state.held = False
@@ -72,6 +80,21 @@ def configured_writer(monkeypatch, failure=None, scope='game'):
                 raise LockHeld()
 
         async def execute(self, stmt, params=None):
+            if stmt is pm.ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
+                # The fused arm: the lock budget's SET rides inside it.
+                events.append('arm')
+                if failure == 'config':
+                    raise PGError()
+                assert params == {'lock_ms': '50ms', 'ms': '250ms'}
+                await self.original.execute(SET_LOCK_TIMEOUT_SQL, {'ms': params['lock_ms']})
+                return NS(scalar_one=lambda: '2s')
+            if stmt is pm.RESTORE_DNPL_PRICE_TIMEOUTS_SQL:
+                events.append(('restore', params['ms']))
+                if failure == 'restore':
+                    raise PGError()
+                assert params['lock_ms'] == '500ms'
+                await self.original.execute(SET_LOCK_TIMEOUT_SQL, {'ms': params['lock_ms']})
+                return NS()
             if stmt is pm.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
                 events.append('arm')
                 if failure == 'config':

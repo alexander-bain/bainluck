@@ -1265,6 +1265,12 @@ async def _repair_openings_from_first_snapshot(
     import time as _t
 
     from app.tasks.redis_state import get_redis_client
+    from app.utils import busy_db_defer
+
+    # #10090: the id walk reads ~20k blocks a call; the cursor is durable, so a
+    # deferred run loses nothing and the evening runs resume where it stopped.
+    if busy_db_defer.should_defer("repair_openings_from_first_snapshot"):
+        return busy_db_defer.deferred_result("repair_openings_from_first_snapshot")
 
     stats = {
         "examined": 0,

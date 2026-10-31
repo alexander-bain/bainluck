@@ -920,6 +920,13 @@ def file_findings(findings: list[dict], open_issues=None) -> list[dict]:
 
 async def _run_matching_reconciliation(file_issues: bool = True) -> dict[str, Any]:
     """Run every check; file or resolve one issue per subject."""
+    from app.utils import busy_db_defer
+
+    # #10090: the count(DISTINCT event_id) censuses are full-table reads. A
+    # deferred run files nothing and resolves nothing — not run is not GREEN.
+    if busy_db_defer.should_defer("matching_reconciliation"):
+        return busy_db_defer.deferred_result("matching_reconciliation")
+
     findings: list[dict] = []
     errors: list[str] = []
 

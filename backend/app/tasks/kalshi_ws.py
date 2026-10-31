@@ -2739,6 +2739,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     held_quotes.release(phase)
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
+                # #10090 `price_commit_ack_wall`, the PM parity column: the
+                # phase's frozen marks for the rows it returned.
+                from app.tasks.live_blend_refresh import (
+                    _wall, note_price_commit_ack, price_commit_ack_log_on,
+                )
+
+                if written_outcome_ids and price_commit_ack_log_on():
+                    note_price_commit_ack(
+                        tail_receipts,
+                        [batch_marks.get(oid) for oid in written_outcome_ids],
+                        _wall(),
+                    )
                 prices.committed_outcome_ids.update(written_outcome_ids)
                 primary_quote_custody.committed(batch_primary_inputs, primary_observations)
                 for oid in phase:
@@ -3798,13 +3810,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # 10,098 prices into `futures_outcomes` while every tennis event's
             # last mile returned None, invisibly, for hours.
             blend = blend_refresher.stats
+            stamp_spans = getattr(blend_refresher, "stamp_spans", None)
             logger.info(
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
                 "resnapshots=%d quote_priority=%d probe_refused=%d "
-                "bundled_refused=%d parked=%d skipped_locked=%d",
+                "bundled_refused=%d parked=%d skipped_locked=%d | %s",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -3832,8 +3845,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090: price rows a row lock elsewhere held back (with their
                 # unit) while the rest of their phase committed.
                 stats.get("price_rows_skipped_locked", 0),
+                # #10090: this minute's stamp transactions and where their time
+                # went (`live_blend_refresh.StampSpans`), last on the line.
+                stamp_spans.line() if stamp_spans is not None else "stamp_tx -",
             )
             flush_timings.reset()
+            if stamp_spans is not None:
+                stamp_spans.reset()
             _report_liveness(
                 "kalshi", "streaming" if game_connected() else "disconnected",
                 legs=len(market_tickers),

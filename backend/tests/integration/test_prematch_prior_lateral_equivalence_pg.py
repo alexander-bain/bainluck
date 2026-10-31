@@ -69,6 +69,7 @@ from app.models.models import Event, Sport, WinProbSnapshot
 from app.utils.prematch_reading import (
     PREDICTION_MARKET_SOURCES,
     PREMATCH_PRIOR_SQL,
+    PREMATCH_PRIOR_TOP1_SQL,
     prematch_prior_binds,
 )
 
@@ -368,3 +369,433 @@ async def test_a_misaligned_cutoff_array_changes_the_answer(seeded_db):
     assert _key(
         (await session.execute(text(PREMATCH_PRIOR_SQL), rotated)).all()
     ) != _key(await _live(session, candidates))
+
+
+async def test_the_cached_read_returns_the_statements_rows_cold_warm_and_mixed(
+    seeded_db, monkeypatch
+):
+    """#10090 — the per-game cache is the statement's output, on a real server.
+
+    Cold (nothing held), warm (everything held, no read) and mixed (one game
+    held, the others re-bound beside their own cutoffs) must all equal the
+    statement run directly — real `Row`s, real `Decimal`s, real positional
+    pairing in the miss read.
+    """
+    import app.utils.prematch_reading as pr
+
+    monkeypatch.delenv("PREMATCH_READING_CACHE", raising=False)
+    # gotcha #44: a fixed clock every seeded kickoff is behind.
+    monkeypatch.setattr(pr, "_utcnow", lambda: _T0 + timedelta(days=30))
+    pr._reset_prematch_cache_for_tests()
+    session, candidates = seeded_db
+    binds = prematch_prior_binds(candidates)
+    direct = _key(await _live(session, candidates))
+
+    reads = []
+    real_execute = session.execute
+
+    async def counting_execute(stmt, params=None, *a, **k):
+        reads.append(params)
+        return await real_execute(stmt, params, *a, **k)
+
+    monkeypatch.setattr(session, "execute", counting_execute)
+
+    def cached_key(rows):
+        return _key(
+            [
+                (r.event_id, r.source, r.home_win_probability, r.away_win_probability)
+                for r in rows
+            ]
+        )
+
+    # cold
+    assert cached_key(await pr.fetch_prematch_prior_rows(session, binds)) == direct
+    assert len(reads) == 1 and len(pr._prematch_cache) == len(binds["ids"])
+    # warm: no read at all
+    assert cached_key(await pr.fetch_prematch_prior_rows(session, binds)) == direct
+    assert len(reads) == 1
+
+    # mixed: one game held, the rest read beside their own kickoffs
+    pr._reset_prematch_cache_for_tests()
+    await pr.fetch_prematch_prior_rows(session, prematch_prior_binds(candidates[1:2]))
+    assert cached_key(await pr.fetch_prematch_prior_rows(session, binds)) == direct
+    miss = reads[-1]
+    pairs = dict(zip(binds["ids"], binds["cutoffs"]))
+    assert candidates[1].id not in miss["ids"]
+    assert miss["cutoffs"] == [pairs[i] for i in miss["ids"]]
+
+
+# ── #10090: the per-source top-1 returns the walk's rows, in the walk's order ──
+#
+# `PREMATCH_PRIOR_TOP1_SQL` replaces the lateral `DISTINCT ON (s.source)` walk
+# with one backward index seek per (game, source). Each case below runs BOTH
+# statements directly and diffs the raw rows IN ORDER, then runs the callers
+# (`fetch_prematch_prior_rows`, `read_prematch_priors`,
+# `settled_prematch_odds_by_event`) with `PREMATCH_PRIOR_TOP1` on and off, cold,
+# warm and mixed, and diffs what they hand back. The one place the two may
+# differ — a timestamp tie — has its own fixture: the walk keeps either row, the
+# top-1 keeps the later-inserted one.
+
+_TOP1_UNBOUNDED_SQL = PREMATCH_PRIOR_TOP1_SQL.replace(
+    "AND s.captured_at <= t.cutoff", ""
+)
+
+
+def _ordered(rows):
+    """Every column, in the order the server returned them."""
+    return [
+        (
+            int(r[0]),
+            str(r[1]),
+            None if r[2] is None else Decimal(r[2]),
+            None if r[3] is None else Decimal(r[3]),
+            None if r[4] is None else Decimal(r[4]),
+        )
+        for r in rows
+    ]
+
+
+def _bind_matrix(candidates):
+    """Every bind shape the truth gate names, built from the seeded rows."""
+    e0, e1, e2 = candidates[0], candidates[1], candidates[2]
+    c0, c1, c2 = e0.commence_time, e1.commence_time, e2.commence_time
+    ladder = list(PREDICTION_MARKET_SOURCES)
+    return {
+        "base": prematch_prior_binds(candidates),
+        "repeated_same_cutoff": {
+            "ids": [e0.id, e2.id, e0.id],
+            "cutoffs": [c0, c2, c0],
+            "sources": ladder,
+        },
+        "repeated_different_cutoffs": {
+            "ids": [e0.id, e0.id, e2.id],
+            "cutoffs": [c0, c0 + timedelta(minutes=60), c2],
+            "sources": ladder,
+        },
+        "duplicate_and_null_sources": {
+            "ids": [e0.id, e2.id],
+            "cutoffs": [c0, c2],
+            "sources": ["polymarket", "kalshi", None, "kalshi", "polymarket"],
+        },
+        "only_null_sources": {
+            "ids": [e0.id],
+            "cutoffs": [c0],
+            "sources": [None],
+        },
+        "no_sources": {"ids": [e0.id], "cutoffs": [c0], "sources": []},
+        "off_ladder_source": {
+            "ids": [e0.id, e2.id],
+            "cutoffs": [c0, c2],
+            "sources": ["espn", "kalshi"],
+        },
+        "ids_longer_null_padded": {
+            "ids": [e0.id, e1.id, e2.id],
+            "cutoffs": [c0],
+            "sources": ladder,
+        },
+        "cutoffs_longer_null_padded": {
+            "ids": [e2.id],
+            "cutoffs": [c2, c0, c1],
+            "sources": ladder,
+        },
+        "future_cutoff": {
+            "ids": [e0.id, e1.id],
+            "cutoffs": [_T0 + timedelta(days=3650), _T0 + timedelta(days=3650)],
+            "sources": ladder,
+        },
+        # Exactly on a post-kickoff row's timestamp: inclusive means kalshi's
+        # +30 min 0.92 is the answer, and polymarket's +90 is not.
+        "inclusive_on_a_row": {
+            "ids": [e0.id],
+            "cutoffs": [c0 + timedelta(minutes=30)],
+            "sources": ladder,
+        },
+        "unknown_event": {
+            "ids": [987654321, e0.id],
+            "cutoffs": [c0, c0],
+            "sources": ladder,
+        },
+    }
+
+
+async def _run(session, sql, binds):
+    return _ordered((await session.execute(text(sql), binds)).all())
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "base",
+        "repeated_same_cutoff",
+        "repeated_different_cutoffs",
+        "duplicate_and_null_sources",
+        "only_null_sources",
+        "no_sources",
+        "off_ladder_source",
+        "ids_longer_null_padded",
+        "cutoffs_longer_null_padded",
+        "future_cutoff",
+        "inclusive_on_a_row",
+        "unknown_event",
+    ],
+)
+async def test_the_top1_returns_the_walks_rows_in_the_walks_order(seeded_db, case):
+    session, candidates = seeded_db
+    binds = _bind_matrix(candidates)[case]
+
+    walk = await _run(session, PREMATCH_PRIOR_SQL, binds)
+    top1 = await _run(session, PREMATCH_PRIOR_TOP1_SQL, binds)
+
+    assert top1 == walk, f"{case}: top-1 {top1} != walk {walk}"
+
+
+async def test_the_matrix_answers_are_pinned_as_literals(seeded_db):
+    """Two statements that agree on nothing-returned also agree. The cases that
+    carry a semantic are pinned independently of either statement."""
+    session, candidates = seeded_db
+    e0, e1, e2 = (c.id for c in candidates[:3])
+    m = _bind_matrix(candidates)
+    D = Decimal
+
+    async def top1(case):
+        return [r[:3] for r in await _run(session, PREMATCH_PRIOR_TOP1_SQL, m[case])]
+
+    # NULL home newer than the last real one: the older real reading, not nothing.
+    assert (e2, "kalshi", D("0.4200")) in await top1("base")
+    # duplicate sources collapse; a NULL source matches nothing; order is source.
+    assert await top1("duplicate_and_null_sources") == [
+        (e0, "kalshi", D("0.6100")),
+        (e0, "polymarket", D("0.5900")),
+        (e2, "kalshi", D("0.4200")),
+    ]
+    assert await top1("only_null_sources") == []
+    assert await top1("no_sources") == []
+    assert await top1("off_ladder_source") == [
+        (e0, "kalshi", D("0.6100")),
+        (e2, "espn", D("0.6600")),
+        (e2, "kalshi", D("0.4200")),
+    ]
+    # repeated id, two cutoffs: each position gets its own cutoff's answer.
+    assert await top1("repeated_different_cutoffs") == [
+        (e0, "kalshi", D("0.6100")),
+        (e0, "polymarket", D("0.5900")),
+        (e0, "kalshi", D("0.9200")),
+        (e0, "polymarket", D("0.5900")),
+        (e2, "kalshi", D("0.4200")),
+    ]
+    # NULL padding: a NULL id or a NULL cutoff yields no rows for that position.
+    assert await top1("ids_longer_null_padded") == [
+        (e0, "kalshi", D("0.6100")),
+        (e0, "polymarket", D("0.5900")),
+    ]
+    assert await top1("cutoffs_longer_null_padded") == [(e2, "kalshi", D("0.4200"))]
+    # a cutoff past every row reads the latest; inclusive takes the row ON it.
+    assert await top1("future_cutoff") == [
+        (e0, "kalshi", D("0.9900")),
+        (e0, "polymarket", D("0.1500")),
+        (e1, "kalshi", D("0.7700")),
+        (e1, "polymarket", D("0.8800")),
+    ]
+    assert await top1("inclusive_on_a_row") == [
+        (e0, "kalshi", D("0.9200")),
+        (e0, "polymarket", D("0.5900")),
+    ]
+    assert await top1("unknown_event") == [
+        (e0, "kalshi", D("0.6100")),
+        (e0, "polymarket", D("0.5900")),
+    ]
+
+
+async def test_the_top1_fixture_can_tell_its_own_mutants_apart(seeded_db):
+    """The matrix above is only a gate if it sees the top-1's own failure modes:
+    a dropped kickoff bound, the NULL-home guard moved out of the top-1, the
+    source dedupe dropped, and a misaligned cutoff array."""
+    session, candidates = seeded_db
+    m = _bind_matrix(candidates)
+    base = m["base"]
+    live = await _run(session, PREMATCH_PRIOR_TOP1_SQL, base)
+
+    assert _TOP1_UNBOUNDED_SQL != PREMATCH_PRIOR_TOP1_SQL, "the bound moved"
+    assert await _run(session, _TOP1_UNBOUNDED_SQL, base) != live
+
+    null_guard_dropped = PREMATCH_PRIOR_TOP1_SQL.replace(
+        "AND s.home_win_probability IS NOT NULL", ""
+    )
+    assert null_guard_dropped != PREMATCH_PRIOR_TOP1_SQL
+    assert await _run(session, null_guard_dropped, base) != live
+
+    no_dedupe = PREMATCH_PRIOR_TOP1_SQL.replace("SELECT DISTINCT u.src", "SELECT u.src")
+    assert no_dedupe != PREMATCH_PRIOR_TOP1_SQL
+    dup = m["duplicate_and_null_sources"]
+    assert await _run(session, no_dedupe, dup) != await _run(
+        session, PREMATCH_PRIOR_TOP1_SQL, dup
+    )
+
+    rotated = dict(base, cutoffs=base["cutoffs"][1:] + base["cutoffs"][:1])
+    assert await _run(session, PREMATCH_PRIOR_TOP1_SQL, rotated) != live
+
+
+async def test_the_callers_hand_back_the_same_output_with_the_switch_on_and_off(
+    seeded_db, monkeypatch
+):
+    """The caller's view, both arms, cold → warm → mixed, over the whole matrix.
+
+    The cache is reset between arms: its keys do not name the statement (on
+    purpose — flipping the switch must not empty it), so a warm cache would
+    otherwise serve the other arm's rows and prove nothing.
+    """
+    import app.utils.prematch_reading as pr
+    from app.utils.settled_prematch_batch import settled_prematch_odds_by_event
+
+    monkeypatch.setattr(pr, "_utcnow", lambda: _T0 + timedelta(days=30))
+    monkeypatch.delenv("PREMATCH_READING_CACHE", raising=False)
+    monkeypatch.setenv("PREMATCH_READING_CACHE_SHARED", "0")
+    session, candidates = seeded_db
+
+    def fetched(rows):
+        return _ordered(
+            [
+                (
+                    r.event_id,
+                    r.source,
+                    r.home_win_probability,
+                    r.away_win_probability,
+                    r.draw_probability,
+                )
+                for r in rows
+            ]
+        )
+
+    def nested_items(d):
+        return [(k, list(v.items())) for k, v in d.items()]
+
+    async def outcome(call):
+        # The cache sorts `sources` into its key, so a NULL source raises there,
+        # before either statement runs — in both arms alike. Unreachable from
+        # production (the binds carry the ladder constant); recorded, not hidden.
+        try:
+            return await call()
+        except TypeError as exc:
+            return ("raised", type(exc).__name__)
+
+    async def one_arm(flag):
+        monkeypatch.setenv("PREMATCH_PRIOR_TOP1", flag)
+        out = {}
+        for case, binds in _bind_matrix(candidates).items():
+            monkeypatch.delenv("PREMATCH_READING_CACHE", raising=False)
+            pr._reset_prematch_cache_for_tests()
+
+            async def fetch(b=binds):
+                return fetched(await pr.fetch_prematch_prior_rows(session, b))
+
+            cold = await outcome(fetch)
+            warm = await outcome(fetch)
+            pr._reset_prematch_cache_for_tests()
+            # mixed: hold the first position's game, read the rest.
+            first = {
+                "ids": binds["ids"][:1],
+                "cutoffs": binds["cutoffs"][:1],
+                "sources": binds["sources"],
+            }
+            await outcome(lambda: pr.fetch_prematch_prior_rows(session, first))
+            mixed = await outcome(fetch)
+            pr._reset_prematch_cache_for_tests()
+
+            async def priors(b=binds):
+                return nested_items(await pr.read_prematch_priors(session, b))
+
+            held = await outcome(priors)
+            # cache off: every shape reaches the statement, NULL sources included.
+            monkeypatch.setenv("PREMATCH_READING_CACHE", "0")
+            uncached = await outcome(fetch)
+            uncached_priors = await outcome(priors)
+            out[case] = (cold, warm, mixed, held, uncached, uncached_priors)
+        monkeypatch.delenv("PREMATCH_READING_CACHE", raising=False)
+        pr._reset_prematch_cache_for_tests()
+        out["batch"] = list(
+            (
+                await settled_prematch_odds_by_event(
+                    session, candidates, opening=lambda e: (None, None)
+                )
+            ).items()
+        )
+        return out
+
+    off = await one_arm("0")
+    on = await one_arm("1")
+
+    assert on == off
+    raised = ("raised", "TypeError")
+    for case, binds in _bind_matrix(candidates).items():
+        cold, warm, mixed, _, uncached, _ = on[case]
+        direct = await _run(session, PREMATCH_PRIOR_SQL, binds)
+        assert uncached == direct, case
+        if None in binds["sources"] and set(binds["sources"]) - {None}:
+            # sorting the key compares a str with None
+            assert cold == warm == mixed == raised, case
+        else:
+            assert cold == warm == mixed == direct, case
+    assert on["batch"], "the settled batch must answer the seeded settled cards"
+
+
+async def test_a_timestamp_tie_goes_to_the_later_inserted_row(seeded_db):
+    """Two rows for one game and source at the same `captured_at`.
+
+    The walk's `DISTINCT ON` keeps an arbitrary one — so it is only asserted to
+    return ONE OF them. The top-1 says which: `s.id DESC`, the later insert.
+    Seeded in both insertion orders so a value-ordering coincidence cannot pass
+    it, and once with the later insert's home NULL, where the guard inside the
+    top-1 hands the tie to the earlier row.
+    """
+    session, candidates = seeded_db
+    sport_id = (
+        await session.execute(
+            text("SELECT id FROM sports WHERE key = 'baseball_mlb_p222'")
+        )
+    ).scalar_one()
+    kick = _T0 + timedelta(days=10)
+
+    async def tied_game(*homes):
+        ev = Event(
+            sport_id=sport_id,
+            home_team_name="P222 Tie Home",
+            away_team_name="P222 Tie Away",
+            commence_time=kick,
+            status="completed",
+        )
+        session.add(ev)
+        await session.flush()
+        for home in homes:  # one flush each, so ids follow this order
+            session.add(
+                WinProbSnapshot(
+                    event_id=ev.id,
+                    source="kalshi",
+                    captured_at=kick - timedelta(minutes=30),
+                    home_win_probability=home,
+                    away_win_probability=None if home is None else 1 - home,
+                )
+            )
+            await session.flush()
+        await session.commit()
+        return ev.id
+
+    rising = await tied_game(0.4000, 0.4500)
+    falling = await tied_game(0.4500, 0.4000)
+    null_last = await tied_game(0.4000, None)
+    binds = {
+        "ids": [rising, falling, null_last],
+        "cutoffs": [kick, kick, kick],
+        "sources": list(PREDICTION_MARKET_SOURCES),
+    }
+
+    top1 = [r[:3] for r in await _run(session, PREMATCH_PRIOR_TOP1_SQL, binds)]
+    assert top1 == [
+        (rising, "kalshi", Decimal("0.4500")),
+        (falling, "kalshi", Decimal("0.4000")),
+        (null_last, "kalshi", Decimal("0.4000")),
+    ]
+
+    walk = [r[:3] for r in await _run(session, PREMATCH_PRIOR_SQL, binds)]
+    assert [r[:2] for r in walk] == [r[:2] for r in top1]
+    assert {r[2] for r in walk[:2]} <= {Decimal("0.4000"), Decimal("0.4500")}
+    assert walk[2] == (null_last, "kalshi", Decimal("0.4000"))

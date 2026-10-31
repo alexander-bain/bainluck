@@ -31,13 +31,12 @@ import pytest
 from app.models import Team
 from app.routes import teams as teams_route
 from app.routes.events import _settled_prematch_odds
-from app.utils.prematch_reading import PREMATCH_PRIOR_SQL
+from app.utils.prematch_reading import prematch_prior_sql
 
 from tests.test_container_hydrated_reader_9636 import KICKOFF, _Result, _event, _sport
 
 SPECIMEN = 15323985
 MLB = "baseball_mlb"
-_PREMATCH = " ".join(PREMATCH_PRIOR_SQL.split())
 
 
 class _Savepoint:
@@ -65,7 +64,7 @@ class _PrematchSession:
         return _Savepoint(self.savepoint_log)
 
     async def execute(self, sql, params=None):
-        assert " ".join(str(sql).split()) == _PREMATCH, str(sql)[:120]
+        assert " ".join(str(sql).split()) == " ".join(prematch_prior_sql().split()), str(sql)[:120]
         self.prematch_binds.append(params)
         if self.fail:
             raise RuntimeError("canceling statement due to statement timeout")

@@ -237,6 +237,12 @@ class _FlakySession:
             # These immediate recording writes start with PostgreSQL's default
             # unlimited timeout. The real timeout/cancellation gates use PG.
             return SimpleNamespace(scalar_one=lambda: "0")
+        if stmt is poly_task.ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
+            # #10090 (6cbd058e): the lock budget and the arm above, fused. Left
+            # to fall through, it consumed a slate batch as a SELECT.
+            return SimpleNamespace(scalar_one=lambda: "0")
+        if stmt is poly_task.RESTORE_DNPL_PRICE_TIMEOUTS_SQL:
+            return _Result([])
         if stmt is SET_STATEMENT_TIMEOUT_SQL:
             return _Result([])
         if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget

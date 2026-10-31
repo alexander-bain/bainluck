@@ -26,7 +26,7 @@ from app.models.models import Event, Sport
 from app.routes import events as events_route
 from app.routes.events import _settled_prematch_odds, get_event
 from app.utils.feed_scoring import format_event_data
-from app.utils.prematch_reading import PREMATCH_PRIOR_SQL
+from app.utils.prematch_reading import prematch_prior_sql
 
 from tests.test_series_fold_3810 import is_blend_fold, is_series_fold
 
@@ -110,7 +110,7 @@ class _PrematchSession:
         return _Savepoint(self.savepoint_log)
 
     async def execute(self, statement, binds=None, *_a, **_kw):
-        assert " ".join(str(statement).split()) == " ".join(PREMATCH_PRIOR_SQL.split())
+        assert " ".join(str(statement).split()) == " ".join(prematch_prior_sql().split())
         self.calls.append(binds)
         if self.fail:
             raise RuntimeError("canceling statement due to statement timeout")

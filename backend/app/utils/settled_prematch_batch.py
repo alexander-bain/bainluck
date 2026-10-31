@@ -26,12 +26,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Iterable, Optional
 
-from sqlalchemy import text
 
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.prematch_reading import (
-    PREMATCH_PRIOR_SQL,
+    fetch_prematch_prior_rows,
     prematch_prior_binds,
     prematch_row_to_reading,
     resolve_prematch_reading,
@@ -67,7 +66,7 @@ async def settled_prematch_odds_by_event(
     try:
         nested = await db.begin_nested()
         try:
-            for row in (await db.execute(text(PREMATCH_PRIOR_SQL), binds)).all():
+            for row in await fetch_prematch_prior_rows(db, binds):
                 by_event.setdefault(row.event_id, {}).setdefault(
                     row.source, prematch_row_to_reading(row)
                 )

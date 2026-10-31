@@ -219,6 +219,9 @@ def _card(items, event_id):
 def _clean_cache(monkeypatch):
     # The process tier only, unless a test installs a fake Redis.
     monkeypatch.setenv("FEED_SHARED_BUILD_CROSS_WORKER", "0")
+    # These tests count the shared tier's reads; #10090's per-game cache under
+    # it would answer the second build first. That cache has its own tests.
+    monkeypatch.setenv("PREMATCH_READING_CACHE", "0")
     for name in ("FEED_SHARED_BUILD_TTL_S", "FEED_SHARED_BUILD_TTL_S_EVENT_SNAPSHOT_FALLBACK",
                  "FEED_SHARED_BUILD_TTL_S_EVENT_PREMATCH_PRIOR"):
         monkeypatch.delenv(name, raising=False)
