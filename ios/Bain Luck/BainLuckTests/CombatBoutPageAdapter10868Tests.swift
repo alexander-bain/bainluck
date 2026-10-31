@@ -270,6 +270,20 @@ final class CombatBoutPageAdapter10868Tests: XCTestCase {
                        "Update interrupted · showing the last recorded chances")
     }
 
+    /// CONSTRUCTED: `opening_odds: null` (the body serves no `prematch_odds`),
+    /// during the bout and then also `status: completed`. The event fields carry
+    /// no absence reason, so the About says unavailable, never "not recorded".
+    func testAnOmittedPreFightReadingIsUnavailableNeverNotRecorded() throws {
+        for setting in [["opening_odds": NSNull()] as [String: Any],
+                        ["opening_odds": NSNull(), "status": "completed"]] {
+            let event = try Self.edited(Self.mmaDetail, setting)
+            XCTAssertNil(A.prematchPair(event))
+            let chances = A.about(event, host: host(event, Self.readAt)).sections[0].paragraphs
+            XCTAssertEqual(chances.first, "Pre-match chance unavailable.", "\(setting)")
+            XCTAssertFalse(chances.contains { $0.contains("not recorded") }, "\(setting)")
+        }
+    }
+
     // MARK: - Retained bodies (verbatim)
 
     static let mmaDetail = ##"""

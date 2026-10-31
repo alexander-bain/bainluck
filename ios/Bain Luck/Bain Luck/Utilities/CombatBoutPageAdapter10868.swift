@@ -144,7 +144,7 @@ enum CombatBoutPageAdapter10868 {
         static let noFinishDetail = "Finish details unavailable."
         static let noResultYet = "Result unavailable."
         static let noHeroPair = "Win chance unavailable."
-        static let noPrematchPair = "Pre-match chance not recorded."
+        static let noPrematchPair = "Pre-match chance unavailable."
         static let noInFightAdmitted = "In-fight chance unavailable. Recorded readings remain in the history."
         static let historyWords = "The chart draws recorded readings only. Times without a reading stay blank, and no line is drawn across them."
     }

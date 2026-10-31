@@ -112,7 +112,9 @@ enum SoccerMatchPageAdapter10868 {
         static let preMatchChance = "Pre-match chance"
         static let openingChance = "Opening chance"
         static let winChanceUnavailable = "Win chance unavailable"
-        static let preMatchNotRecorded = "Pre-match chance not recorded"
+        /// An omitted pre-match or opening object carries no absence reason, so
+        /// it is unavailable, never "not recorded".
+        static let preMatchUnavailable = "Pre-match chance unavailable"
         static let drawChanceUnavailable = "Draw chance unavailable"
         static let awayChanceUnavailable = "Away win chance unavailable"
         static let recorded = "Recorded"
@@ -286,11 +288,11 @@ enum SoccerMatchPageAdapter10868 {
             primary = pregame
             comparison = nil
         }
-        let primaryMissing = pagePhase == .final ? Words.preMatchNotRecorded : Words.winChanceUnavailable
+        let primaryMissing = pagePhase == .final ? Words.preMatchUnavailable : Words.winChanceUnavailable
         let home = SoccerOutcomeSlot11449(
             label: Words.outcome(shown.home), color: tints.home,
             primary: primary.home, comparison: comparison?.home,
-            primaryUnavailable: primaryMissing, comparisonUnavailable: Words.preMatchNotRecorded)
+            primaryUnavailable: primaryMissing, comparisonUnavailable: Words.preMatchUnavailable)
         let draw = SoccerOutcomeSlot11449(
             label: Words.draw, color: DS.textSecondary, primary: nil, comparison: nil,
             primaryUnavailable: Words.drawChanceUnavailable, comparisonUnavailable: Words.drawChanceUnavailable)

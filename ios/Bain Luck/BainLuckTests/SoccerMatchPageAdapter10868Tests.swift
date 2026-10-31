@@ -109,6 +109,29 @@ final class SoccerMatchPageAdapter10868Tests: XCTestCase {
         XCTAssertNil(headline.draw.primary, "the draw is never computed from the two")
     }
 
+    /// CONSTRUCTED: the final body with `prematch_odds` and `opening_odds`
+    /// removed, then the live body with `opening_odds` removed (its
+    /// `prematch_odds` is already null). The event fields carry no absence
+    /// reason, so an omitted baseline is unavailable, never "not recorded".
+    func testAnOmittedPreMatchAndOpeningObjectReadsUnavailableNeverNotRecorded() throws {
+        let final = try F.detail(try F.edited(F.finalDetail, removing: ["prematch_odds", "opening_odds"]))
+        let atFinal = A.headline(final, host: F.pageHost(F.finalNow, observedAt: observed(final)))
+        XCTAssertEqual(atFinal.primaryHeading.title, A.Words.preMatchChance)
+        XCTAssertEqual(atFinal.primaryText(for: atFinal.home), .unavailable("Pre-match chance unavailable"))
+        XCTAssertNil(atFinal.away.primary)
+        XCTAssertNotEqual(atFinal.home.primary, formatProbability(1.0), "the settled hero is never the headline")
+
+        let live = try F.detail(try F.edited(F.liveDetail, removing: ["opening_odds"]))
+        let during = A.headline(live, host: F.pageHost(F.liveNow, observedAt: observed(live)))
+        XCTAssertEqual(during.home.primary, formatProbability(0.995), "the current chance is untouched")
+        XCTAssertEqual(during.comparisonHeading?.title, A.Words.preMatchChance)
+        XCTAssertEqual(during.comparisonText(for: during.home), .unavailable("Pre-match chance unavailable"))
+        XCTAssertEqual(during.comparisonText(for: during.away), .unavailable(A.Words.awayChanceUnavailable))
+
+        let shown = [atFinal.primaryText(for: atFinal.home).spoken, during.comparisonText(for: during.home)?.spoken]
+        XCTAssertFalse(shown.contains { $0?.contains("not recorded") == true })
+    }
+
     /// CONSTRUCTED: the same live body with delivery interrupted.
     func testAnInterruptedPageCallsItsPairLastRecorded() throws {
         let event = try F.detail(F.liveDetail)
