@@ -71,7 +71,7 @@ import { newestServedScore } from "@/lib/event/newestServedScore";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
 import EkgHeartbeat from "@/components/event/EkgHeartbeat";
-import { EMPTY_EKG_TRACKER, stepEkgTracker, type EkgTracker } from "@/lib/event/ekgHeartbeat";
+import { EMPTY_EKG_TRACKER, ekgDraws, stepEkgTracker, type EkgTracker } from "@/lib/event/ekgHeartbeat";
 import { useObservationCount } from "@/hooks/useObservationCount";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
@@ -2467,7 +2467,7 @@ export default function EventPage({ params }: EventPageProps) {
     { eventId, status: streamStatus, confirmedAt: streamConfirmedAt, priceObservedAt: acceptedPriceClock },
     Date.now(),
   );
-  const ekgVisible = ekgOptIn && quoteEligible && !connectionTerminalLabel;
+  const ekgVisible = ekgDraws({ optIn: ekgOptIn, quoteEligible, isLive, terminalLabel: connectionTerminalLabel });
   // The warnings are the header badge's own `stale` branch, asked where that
   // badge would have drawn — never a threshold of this status's own (#4469).
   const ageAdmissionIsStale =

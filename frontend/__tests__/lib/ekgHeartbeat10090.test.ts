@@ -13,6 +13,7 @@ import {
   EKG_FLAT_AFTER_MS,
   EKG_MIN_BEAT_GAP_MS,
   EMPTY_EKG_TRACKER,
+  ekgDraws,
   presentEkg,
   stepEkgTracker,
   type EkgObservation,
@@ -180,5 +181,27 @@ describe('#10090 EKG — bursts coalesce', () => {
     t = stepEkgTracker(t, o, ms(9));
     expect(t.beats).toBe(1);
     expect(t.lastSignalAt).toBe(ms(6));
+  });
+});
+
+describe('#10090 EKG — which pages draw it (decision 66: ON for live games)', () => {
+  const live = { optIn: true, quoteEligible: true, isLive: true, terminalLabel: null };
+
+  test('a live game with nothing remembered draws it', () => {
+    expect(ekgDraws(live)).toBe(true);
+  });
+
+  test('a scheduled game draws nothing, though its quote stream subscribes', () => {
+    expect(ekgDraws({ ...live, isLive: false })).toBe(false);
+  });
+
+  test('a suspended game draws nothing: not live, and its stoppage label hides it too', () => {
+    expect(ekgDraws({ ...live, isLive: false, terminalLabel: 'Rain delay' })).toBe(false);
+  });
+
+  test('the reader opting out, a page that cannot subscribe, or a finish each hide it', () => {
+    expect(ekgDraws({ ...live, optIn: false })).toBe(false);
+    expect(ekgDraws({ ...live, quoteEligible: false })).toBe(false);
+    expect(ekgDraws({ ...live, terminalLabel: 'Finished' })).toBe(false);
   });
 });

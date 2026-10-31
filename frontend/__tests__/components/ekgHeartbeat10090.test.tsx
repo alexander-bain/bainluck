@@ -92,9 +92,12 @@ describe("#10090 resolveEkgOptIn (default ON, Alex decision 66)", () => {
 });
 
 describe("#10090 the page wiring (pinned by text)", () => {
-  test("the heartbeat is drawn only behind the opt-in, only while subscribing, never finished", () => {
+  test("the heartbeat is drawn only behind the opt-in, only on a live game, never finished", () => {
     expect(PAGE).toContain("const ekgOptIn = useEkgOptIn();");
-    expect(PAGE).toContain("const ekgVisible = ekgOptIn && quoteEligible && !connectionTerminalLabel;");
+    expect(PAGE).toContain(
+      "const ekgVisible = ekgDraws({ optIn: ekgOptIn, quoteEligible, isLive, terminalLabel: connectionTerminalLabel });",
+    );
+    expect(PAGE).toContain('const isLive = event?.status === "live" && hasStarted;');
     expect(PAGE).toMatch(/\{ekgVisible && !isFinished \? \(\s*<div[^>]*data-testid="ekg-row">\s*<EkgHeartbeat tracker=\{ekgTrackerRef\.current\} status=\{streamStatus\} \/>/);
   });
   test("the tracker is fed the hook's confirmedAt and the ACCEPTED price clock", () => {

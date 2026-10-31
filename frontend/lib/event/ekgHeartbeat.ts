@@ -161,3 +161,26 @@ export function presentEkg(tracker: EkgTracker, status: LiveStreamStatus, now: n
   const alive = transportOpen(status) && since !== null && since < EKG_FLAT_AFTER_MS;
   return { mode: alive ? 'beating' : 'flat', beats: tracker.beats, secondsSinceSignal, label: `Markets reporting: ${ago}` };
 }
+
+/** What `ekgDraws` reads off the page; each field is the page's own value. */
+export interface EkgDrawInputs {
+  /** The reader's choice (`useEkgOptIn`): ON unless `?ekg=0` was remembered. */
+  optIn: boolean;
+  /** The page subscribes to the quote stream (`canSubscribeEventQuotes`). */
+  quoteEligible: boolean;
+  /** The page's `isLive`: status `live` AND the game has started. */
+  isLive: boolean;
+  /** The connection status's terminal label (finished, settled, stoppage), or null. */
+  terminalLabel: string | null;
+}
+
+/**
+ * Whether the page draws the heartbeat at all (Alex decision 66: ON by default
+ * FOR LIVE GAMES). The quote stream also subscribes pre-game and while
+ * suspended, so `quoteEligible` alone would draw a heartbeat on every upcoming
+ * game's page — one it has not earned. A suspended game gets none either; its
+ * stoppage label already hid it.
+ */
+export function ekgDraws({ optIn, quoteEligible, isLive, terminalLabel }: EkgDrawInputs): boolean {
+  return optIn && quoteEligible && isLive && !terminalLabel;
+}
