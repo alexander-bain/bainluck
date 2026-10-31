@@ -27,7 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.routes.events import _settled_prematch_odds
-from app.utils.prematch_reading import PREMATCH_PRIOR_SQL
+from app.utils.prematch_reading import prematch_prior_sql
 
 from tests.test_container_hydrated_reader_9636 import (
     KICKOFF,
@@ -39,7 +39,6 @@ from tests.test_container_hydrated_reader_9636 import (
 )
 
 SPECIMEN = 14780550
-_PREMATCH = " ".join(PREMATCH_PRIOR_SQL.split())
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +48,7 @@ def _enabled(monkeypatch):
 
 
 def _is_prematch(sql) -> bool:
-    return " ".join(str(sql).split()) == _PREMATCH
+    return " ".join(str(sql).split()) == " ".join(prematch_prior_sql().split())
 
 
 class _Savepoint:

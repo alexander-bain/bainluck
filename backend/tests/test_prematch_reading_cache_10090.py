@@ -26,7 +26,6 @@ import pytest
 
 import app.utils.prematch_reading as pr
 from app.utils.prematch_reading import (
-    PREMATCH_PRIOR_SQL,
     PREMATCH_READING_CACHE_TTL_S,
     fetch_prematch_prior_rows,
     read_prematch_priors,
@@ -49,14 +48,14 @@ def _snap(event_id, source, home, captured_at, away=None, draw=None):
 
 
 class _FakeDb:
-    """Executes `PREMATCH_PRIOR_SQL` over an in-memory `win_prob_snapshots`."""
+    """Executes the active pre-match statement over an in-memory `win_prob_snapshots`."""
 
     def __init__(self, snapshots):
         self.snapshots = list(snapshots)
         self.calls: list[dict] = []
 
     async def execute(self, stmt, params):
-        assert str(stmt) == PREMATCH_PRIOR_SQL
+        assert str(stmt) == pr.prematch_prior_sql()
         self.calls.append(
             {k: (list(v) if isinstance(v, list) else v) for k, v in params.items()}
         )
@@ -395,7 +394,14 @@ def test_no_surface_executes_the_statement_around_the_cache():
     offenders = [
         str(path.relative_to(app_dir))
         for path in app_dir.rglob("*.py")
-        if "text(PREMATCH_PRIOR_SQL)" in path.read_text()
+        if any(
+            call in path.read_text()
+            for call in (
+                "text(PREMATCH_PRIOR_SQL)",
+                "text(PREMATCH_PRIOR_TOP1_SQL)",
+                "text(prematch_prior_sql())",
+            )
+        )
         and path.name != "prematch_reading.py"
     ]
     assert offenders == []
@@ -681,4 +687,4 @@ async def test_the_stats_line_reports_hits_misses_and_bypasses_once_a_minute(
 def pr_text():
     from sqlalchemy import text
 
-    return text(PREMATCH_PRIOR_SQL)
+    return text(pr.prematch_prior_sql())

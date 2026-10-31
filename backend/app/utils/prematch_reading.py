@@ -482,6 +482,84 @@ PREMATCH_PRIOR_SQL = """
     ) x
 """
 
+# ── #10090: ONE INDEX SEEK PER (GAME, SOURCE) INSTEAD OF A WALK ──────────────
+#
+# Measured on production 2026-10-31 19:16–19:51Z (pg_stat_statements diff): the
+# statement above still ran 71 times at a MEAN OF 9.5 s on a cache miss, 8.1% of
+# every block the database read. The lateral's `DISTINCT ON (s.source)` has to
+# read EVERY eligible snapshot of the game for every requested source, and check
+# each one on the heap for `home_win_probability IS NOT NULL`, before it can
+# keep the newest. A live game holds thousands of snapshots.
+#
+# This form asks the same question one source at a time, `ORDER BY captured_at
+# DESC LIMIT 1`, so Postgres seeks `ix_winprob_event_source_captured
+# (event_id, source, captured_at)` backward from the cutoff and stops at the
+# first row with a home probability. Local PG17, 40 settled games × 3,000
+# snapshots per source with that index: 84,452 buffers / 85 ms → 422 buffers /
+# 0.47 ms, same 80 rows (about 5 buffers per game and source, against ~1,056).
+#
+# Same rows, held by `tests/integration/test_prematch_prior_lateral_equivalence_pg.py`:
+#
+#   * `:sources` is membership, as `ANY` was — NULLs dropped, duplicates
+#     collapsed by `DISTINCT`, so a duplicated source cannot double a row;
+#   * `home_win_probability IS NOT NULL` and the inclusive `captured_at <=
+#     cutoff` are INSIDE the top-1, so a NULL-home row newer than the last real
+#     reading is skipped, not returned as "no reading", and nothing after kickoff
+#     can be the answer;
+#   * home, away and draw come from the ONE row, as before;
+#   * output order is position, then source — the order the old plan produced
+#     and the order `fetch_prematch_prior_rows` re-emits per game.
+#
+# TIES: two rows for one game and source with the same `captured_at` are a real
+# shape (one transaction's writes share `now()`). `DISTINCT ON` above keeps an
+# arbitrary one of them. This form says which: `s.id DESC`, the later-inserted
+# row wins. The old statement is left byte-for-byte as it runs today, because it
+# is the rollback, so the two forms can disagree ONLY on such a tie.
+#
+# `PREMATCH_PRIOR_TOP1=0` executes the statement above instead, unchanged. The
+# cache keys still digest `PREMATCH_PRIOR_SQL`: they name the answer, which both
+# forms give, so flipping the switch does not empty the shared cache.
+PREMATCH_PRIOR_TOP1_SQL = """
+    SELECT x.event_id, x.source,
+           x.home_win_probability, x.away_win_probability, x.draw_probability
+    FROM unnest(cast(:ids as integer[]), cast(:cutoffs as timestamptz[]))
+         WITH ORDINALITY AS t(event_id, cutoff, ord)
+    CROSS JOIN (
+        SELECT DISTINCT u.src
+        FROM unnest(cast(:sources as text[])) AS u(src)
+        WHERE u.src IS NOT NULL
+    ) w
+    CROSS JOIN LATERAL (
+        SELECT s.event_id, s.source,
+               s.home_win_probability, s.away_win_probability,
+               s.draw_probability
+        FROM win_prob_snapshots s
+        WHERE s.event_id = t.event_id
+          AND s.source = w.src
+          AND s.home_win_probability IS NOT NULL
+          AND s.captured_at <= t.cutoff
+        ORDER BY s.captured_at DESC, s.id DESC
+        LIMIT 1
+    ) x
+    ORDER BY t.ord, x.source
+"""
+
+PREMATCH_PRIOR_TOP1_ENV = "PREMATCH_PRIOR_TOP1"
+
+
+def prematch_prior_top1_enabled() -> bool:
+    """The rollback to the `DISTINCT ON` walk without a deploy. Defaults ON."""
+    raw = os.environ.get(PREMATCH_PRIOR_TOP1_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def prematch_prior_sql() -> str:
+    """The statement a pre-match read executes now: top-1, or the walk when off."""
+    if prematch_prior_top1_enabled():
+        return PREMATCH_PRIOR_TOP1_SQL
+    return PREMATCH_PRIOR_SQL
+
+
 def prematch_row_to_reading(row: Any) -> tuple:
     """One ``PREMATCH_PRIOR_SQL`` row as the ``(home, away, draw)`` the ladder eats.
 
@@ -967,7 +1045,7 @@ async def fetch_prematch_prior_rows(db: Any, binds: Mapping[str, Any]) -> list:
     async def _read_as_before(reason: str) -> list:
         counts[reason] = 1
         counts["db_reads"] = 1
-        rows = list((await db.execute(text(PREMATCH_PRIOR_SQL), dict(binds))).all())
+        rows = list((await db.execute(text(prematch_prior_sql()), dict(binds))).all())
         _finish(counts)
         return rows
 
@@ -1055,7 +1133,7 @@ async def fetch_prematch_prior_rows(db: Any, binds: Mapping[str, Any]) -> list:
     if miss_ids:
         counts["db_reads"] = 1
         miss_binds = {**dict(binds), "ids": miss_ids, "cutoffs": miss_cutoffs}
-        for row in (await db.execute(text(PREMATCH_PRIOR_SQL), miss_binds)).all():
+        for row in (await db.execute(text(prematch_prior_sql()), miss_binds)).all():
             fetched.setdefault(row.event_id, []).append(_plain_row(row))
         expires = _monotonic() + PREMATCH_READING_CACHE_TTL_S
         to_publish: list[tuple[tuple, tuple]] = []
