@@ -1626,10 +1626,28 @@ struct OddsChartView: View {
     }
 
     private var drawnWindow: DrawnWindow {
-        DrawnWindow(finishedEnd: EventState.isFinished(status) ? gameEndDate : nil,
-                    forcedDomain: forcedDomain, legacyDataDomain: legacyDataDomain,
-                    started: isGameStarted, range: drawnRange,
-                    sinceStart: isGameStarted ? sinceStartDate : nil)
+        Self.drawnWindow(status: status, commenceTime: commenceTime, history: vm.history,
+                         forcedDomain: forcedDomain, legacyDataDomain: legacyDataDomain,
+                         selectedRange: selectedRange,
+                         playStart: { vm.observedPlayStart(scheduled: $0, sportKey: sportKey) })
+    }
+
+    /// The chart's window from what it is handed: `isGameStarted`,
+    /// `drawnRange`, `sinceStartDate` and `gameEndDate` over these inputs.
+    /// `playStart` is `ObservedPlayStart.cut` for a scheduled start. Static
+    /// (#10090) so the page's timing seam cuts its points exactly as this
+    /// chart does (`EventDetailViewModel.timingPresented`).
+    static func drawnWindow(status: String?, commenceTime: String?, history: EventHistoryResponse?,
+                            forcedDomain: ClosedRange<Date>?, legacyDataDomain: ClosedRange<Date>?,
+                            selectedRange: OddsTimeRange, playStart: (Date) -> Date?) -> DrawnWindow {
+        let started = status == "live" || EventState.isFinished(status)
+        let kickoff = sinceStartCut(commenceTime: commenceTime?.asDate,
+                                    commenceTimeIsKickoff: history?.commenceTimeIsKickoff)
+        return DrawnWindow(finishedEnd: EventState.isFinished(status) ? gameEndDate(status: status, history: history) : nil,
+                           forcedDomain: forcedDomain, legacyDataDomain: legacyDataDomain,
+                           started: started,
+                           range: offersSinceStart(isGameStarted: started, kickoff: kickoff) ? selectedRange : .all,
+                           sinceStart: started ? kickoff.map { playStart($0) ?? $0 } : nil)
     }
 
     /// The points this chart draws (`drawnWindow`), through the view model's memo.
@@ -1753,11 +1771,21 @@ struct OddsChartView: View {
         gameStart: Date?,
         admits: (Date) -> Bool
     ) -> PublicationCheckpointMount4974? {
-        guard let journey, journey.eventId == eventId, EventState.isFinished(status),
-              points.contains(where: { $0.source == PublicationCheckpointMount4974.blendSource })
+        guard let journey, mountsPublicationCheckpoints(journey: journey, eventId: eventId, status: status,
+                                                        points: points)
         else { return nil }
         return PublicationCheckpointMount4974(journey: journey, points: points,
                                               gameStart: gameStart, admits: admits)
+    }
+
+    /// Whether `publicationCheckpointMount` mounts `journey` over `points`.
+    /// #10090 — the timing seam asks it too: a mounted chart draws the
+    /// mount's plan, so its line's end is not one of `points`.
+    static func mountsPublicationCheckpoints(journey: PublicationJourney4974.Journey?, eventId: Int,
+                                             status: String?, points: [ChartDataPoint]) -> Bool {
+        guard let journey else { return false }
+        return journey.eventId == eventId && EventState.isFinished(status)
+            && points.contains(where: { $0.source == PublicationCheckpointMount4974.blendSource })
     }
 
     /// Whether a checkpoint at `date` lies in the window this chart shows — the
@@ -2872,13 +2900,21 @@ struct OddsChartView: View {
         // missing we do NOT synthesize a client arithmetic mean labelled
         // "aggregate": that would show a *different* Bain Luck number precisely when
         // backend aggregation failed. Fail closed — consensus stays primary (C43 P1).
-        if let aggregateLine = history.aggregateLine, !aggregateLine.isEmpty {
-            for p in aggregateLine {
-                guard let date = p.timestamp.asDate else { continue }
-                points.append(ChartDataPoint(date: date, probability: p.homeProbability, source: "aggregate"))
-            }
-        }
+        points.append(contentsOf: servedBlendPoints(from: history))
+        return points
+    }
 
+    /// `servedPoints`' blend alone: the backend's `aggregate_line` in wire
+    /// order, and only on a payload with win-probability sources (a
+    /// sportsbooks-only payload draws no blend). #10090 — the timing seam
+    /// reads only the blend, so it builds no sportsbook or venue series.
+    static func servedBlendPoints(from history: EventHistoryResponse) -> [ChartDataPoint] {
+        guard !(history.winProbHistory?.isEmpty ?? true), let aggregateLine = history.aggregateLine else { return [] }
+        var points: [ChartDataPoint] = []
+        for p in aggregateLine {
+            guard let date = p.timestamp.asDate else { continue }
+            points.append(ChartDataPoint(date: date, probability: p.homeProbability, source: "aggregate"))
+        }
         return points
     }
 

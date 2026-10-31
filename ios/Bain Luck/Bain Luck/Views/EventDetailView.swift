@@ -96,6 +96,15 @@ struct EventDetailView: View {
                                    journey: vm.publicationJourney, key: publicationTaskKey,
                                    remembering: vm, now: displayNow())
     }
+    /// #10090 — what the probability chart below is handed that decides
+    /// which points it draws, for the timing seam's chart mark
+    /// (`EventDetailViewModel.timingPresented`, which reads it only while
+    /// recording): the same windows, range and journey, from the same page.
+    private var timingChartWindow: EventDetailViewModel.TimingChartWindow {
+        .init(forcedDomain: sharedChartDomain, legacyDataDomain: legacyChartDataDomain,
+              selectedRange: chartRange,
+              journey: Self.chartPublicationJourney(vm.publicationJourney, key: publicationTaskKey))
+    }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     /// Reflow the hero before its growing center column squeezes the teams.
@@ -962,7 +971,7 @@ struct EventDetailView: View {
             .modifier(PageScrollPhase9483(signals: nbaStreamSignals))
             // #10090 — the timing seam's view mark: this update handed the hero
             // and chart the value it names. Not a paint (`LiveTimingSeam`).
-            .onChange(of: vm.timingPresented(event)) { old, new in
+            .onChange(of: vm.timingPresented(event, chart: timingChartWindow)) { old, new in
                 LiveTimingSeam.viewUpdated(from: old, to: new)
             }
             // #9483 — a card opened full size: the page stays mounted beneath,

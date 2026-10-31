@@ -76,17 +76,18 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     /// The read the chart draws: the blend served to `edge` (60% until then,
     /// `value` there), pinned at `edge` under `pinRevision` when one is given.
     /// The default ends before every frame and preview below, so those are
-    /// drawn past it.
+    /// drawn past it. `opening: false` serves the edge point alone.
     private static func served(edge: String = "2026-09-25T16:59:00Z", value: Double = 0.6,
-                               pinRevision: String? = nil, pinObserved: String? = nil) throws -> EventHistoryResponse {
+                               pinRevision: String? = nil, pinObserved: String? = nil,
+                               opening: Bool = true) throws -> EventHistoryResponse {
         let pin = pinRevision.map { #","blend_edge_pinned":true,"blend_edge_fold_revision":\#($0)"# } ?? ""
+        let first = opening ? #"{"timestamp":"2026-09-25T16:58:00Z","home_probability":0.6},"# : ""
         let observed = pinObserved.map { #","blend_edge_observed_at":"\#($0)""# } ?? ""
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(EventHistoryResponse.self, from: Data("""
         {"event_id":4242,"home_team":"Celtics","away_team":"Knicks","status":"live","history":[],
-         "aggregate_line":[{"timestamp":"2026-09-25T16:58:00Z","home_probability":0.6},
-                           {"timestamp":"\(edge)","home_probability":\(value)}],
+         "aggregate_line":[\(first){"timestamp":"\(edge)","home_probability":\(value)}],
          "win_prob_history":{"polymarket":[{"timestamp":"\(edge)","home_probability":\(value)}]}\(pin)\(observed)}
         """.utf8))
     }
@@ -315,10 +316,27 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
 
     // MARK: - Buffer at or behind the read (#10090 served end)
 
+    /// The points `vm`'s page chart draws, by the chart's own path: every
+    /// series (`chartPoints`), enriched, then cut to the window `window`
+    /// hands it (`drawnWindow`, `drawnPoints`).
+    private func chartsOwnDrawn(_ vm: EventDetailViewModel, _ history: EventHistoryResponse,
+                                window: EventDetailViewModel.TimingChartWindow = .unwindowed) throws -> [ChartDataPoint] {
+        let event = try XCTUnwrap(vm.event)
+        let cut = OddsChartView.drawnWindow(
+            status: event.status, commenceTime: event.commenceTime, history: history,
+            forcedDomain: window.forcedDomain, legacyDataDomain: window.legacyDataDomain,
+            selectedRange: window.selectedRange,
+            playStart: { ObservedPlayStart.cut(scheduled: $0, history: history, sportKey: event.sport) })
+        return OddsChartView.drawnPoints(OddsChartView.enrichWithGameState(
+            OddsChartView.chartPoints(from: history, liveFrames: vm.chartFrames(event)), history: history), window: cut)
+    }
+
     /// The chart's own end for `vm`'s page, as the plot draws it.
-    private func chartsOwnEnd(_ vm: EventDetailViewModel, _ history: EventHistoryResponse) throws -> ChartDataPoint {
-        try XCTUnwrap(OddsChartView.chartPoints(from: history, liveFrames: vm.chartFrames(try XCTUnwrap(vm.event)))
-            .filter { $0.source == "aggregate" }.sorted { $0.date < $1.date }.last)
+    private func chartsOwnEnd(_ vm: EventDetailViewModel, _ history: EventHistoryResponse,
+                              window: EventDetailViewModel.TimingChartWindow = .unwindowed) throws -> ChartDataPoint {
+        let drawn = try chartsOwnDrawn(vm, history, window: window)
+        XCTAssertTrue(OddsChartView.chartIsDrawable(drawn, mount: nil), "the chart draws a line")
+        return try XCTUnwrap(OddsChartView.drawnBlendEnd(drawn))
     }
 
     /// A frame at EXACTLY the read's edge is not drawn there (ties go to the
@@ -367,13 +385,71 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(shown.chartProbability, 0.57, "the drawn value, not the frame's 0.55")
         XCTAssertEqual(shown.chartObserved, "2026-09-25T17:11:00Z".asDate, "the pin's observation, not the frame's")
 
-        // The view mark carries exactly that.
+        // The view mark carries exactly that, after a presentation of the
+        // SAME page whose chart named no end (the seam compares one event's
+        // presentations only; `.idle` is event 0).
         marks = []
-        LiveTimingSeam.viewUpdated(from: .idle, to: shown)
-        XCTAssertEqual(marks.last, .init(name: .viewChartUpdated, eventId: 4242, path: "view",
-                                         basis: "served:rev:4242=21", stamp: LiveTimingSeam.stamp(end.date),
-                                         probability: "0.57",
-                                         observed: LiveTimingSeam.stamp("2026-09-25T17:11:00Z".asDate)))
+        let prior = LiveTimingSeam.Presented(eventId: 4242, headlineBasis: shown.headlineBasis,
+                                             probability: shown.probability, observed: shown.observed,
+                                             chartBasis: "-", chartEdge: nil, chartProbability: nil)
+        LiveTimingSeam.viewUpdated(from: prior, to: shown)
+        XCTAssertEqual(marks, [.init(name: .viewChartUpdated, eventId: 4242, path: "view",
+                                     basis: "served:rev:4242=21", stamp: LiveTimingSeam.stamp(end.date),
+                                     probability: "0.57",
+                                     observed: LiveTimingSeam.stamp("2026-09-25T17:11:00Z".asDate))])
+    }
+
+    // MARK: - The chart's window and drawable gate (#10090 R1)
+
+    /// The chart cuts its points to the window the page hands it
+    /// (`OddsChartView.drawnPoints`): a frame past that window's end is not
+    /// drawn, so the line ends on the read's last point inside it, and the
+    /// mark names THAT point, never the clipped frame.
+    func testAFramePastTheChartsWindowIsNotTheEndSoTheMarkNamesThePointDrawnInsideIt() async throws {
+        let history = try Self.served()
+        let (_, handle, vm) = await loaded(try page(), history: history)
+        defer { vm.stopRefresh() }
+        handle.fire("probability", Self.raw())
+        await drain()
+        let event = try XCTUnwrap(vm.event)
+        XCTAssertEqual(vm.timingPresented(event).chartBasis, "rev:4242=21", "uncut, the frame ends the line")
+
+        let opens = try XCTUnwrap("2026-09-25T16:00:00Z".asDate), ends = try XCTUnwrap("2026-09-25T17:05:00Z".asDate)
+        let window = EventDetailViewModel.TimingChartWindow(forcedDomain: opens...ends, legacyDataDomain: nil,
+                                                            selectedRange: .all, journey: nil)
+        let end = try chartsOwnEnd(vm, history, window: window)
+        XCTAssertEqual(end.date, "2026-09-25T16:59:00Z".asDate, "the chart draws the read's point inside its window")
+        let shown = vm.timingPresented(event, chart: window)
+        XCTAssertEqual(shown.chartBasis, "served:none", "never the clipped frame's rev:4242=21")
+        XCTAssertEqual(shown.chartEdge, end.date)
+        XCTAssertEqual(shown.chartProbability, end.probability)
+        XCTAssertNil(shown.chartObserved)
+    }
+
+    /// One blend point is no line: the chart's drawable gate shows its empty
+    /// state (`chartIsDrawable`) though a venue series is served beside it,
+    /// so no end is drawn and none is named. A frame past the read's edge
+    /// makes it a line, and the end is named again.
+    func testOneBlendPointIsNoLineSoNoEndIsNamedUntilAFrameMakesItOne() async throws {
+        let history = try Self.served(opening: false)
+        let (_, handle, vm) = await loaded(try page(), history: history)
+        defer { vm.stopRefresh() }
+        XCTAssertFalse(history.winProbHistory?.isEmpty ?? true, "a venue series is served")
+        XCTAssertFalse(OddsChartView.chartIsDrawable(try chartsOwnDrawn(vm, history), mount: nil),
+                       "the chart shows its empty state")
+        let empty = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(empty.chartBasis, "-")
+        XCTAssertNil(empty.chartEdge)
+        XCTAssertNil(empty.chartProbability)
+        XCTAssertNil(empty.chartObserved)
+
+        handle.fire("probability", Self.raw())
+        await drain()
+        let end = try chartsOwnEnd(vm, history)
+        let shown = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(shown.chartBasis, "rev:4242=21")
+        XCTAssertEqual(shown.chartEdge, end.date)
+        XCTAssertEqual(shown.chartProbability, end.probability)
     }
 
     // MARK: - Preview v3 (#10090 preview seam)
@@ -554,5 +630,18 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(marks.map(\.basis), [foldedBasis(session, seq: 1), foldedBasis(other, seq: 3)])
         XCTAssertEqual(next, shown, "a refused preview changes nothing the page prints")
         XCTAssertEqual(next.headlineBasis, foldedBasis(session, seq: 2))
+    }
+}
+
+private extension EventDetailViewModel.TimingChartWindow {
+    /// A chart handed no window: nothing cut but what the payload cuts itself.
+    nonisolated static let unwindowed = Self(forcedDomain: nil, legacyDataDomain: nil, selectedRange: .all, journey: nil)
+}
+
+private extension EventDetailViewModel {
+    /// The seam over a chart handed no window (`unwindowed`).
+    @MainActor
+    func timingPresented(_ event: EventDetail) -> LiveTimingSeam.Presented {
+        timingPresented(event, chart: .unwindowed)
     }
 }

@@ -1562,26 +1562,37 @@ final class EventDetailViewModel: ObservableObject {
     }
 
     /// What the hero and chart print, for the timing seam's view marks
-    /// (`LiveTimingSeam.presented`); `.idle` while nothing records.
+    /// (`LiveTimingSeam.presented`); `.idle` while nothing records. `chart` is
+    /// what the page hands its probability chart that cuts its points; read
+    /// only while recording.
     ///
     /// Evaluated with every body. With no preview displayed, `headline` and
     /// `displayedProbabilityObservedAt` return the committed value at their
     /// first guard, so it reads those directly: no copy, no projection. The
-    /// chart's end is worked out once per change of its inputs
-    /// (`timingChartEnd`), not once per body, by the chart's own rule:
-    /// `chartFrames` (the preview's projection, or the committed headline's
-    /// marker over an older pin, `BlendPreview.headlineOverOlderPin`) extended
-    /// over the read (`OddsChartView.extendingToLiveEdge`), ending where the
-    /// blend line ends (`OddsChartView.drawnBlendEnd`). A buffer frame at or
-    /// behind the read's edge is not drawn there, so the end is then the
-    /// read's point. Each end is named by its own provenance
+    /// chart's end is worked out by the chart's own rule, each half once per
+    /// change of its inputs, not once per body: `chartFrames` (the preview's
+    /// projection, or the committed headline's marker over an older pin,
+    /// `BlendPreview.headlineOverOlderPin`) extended over the read
+    /// (`OddsChartView.extendingToLiveEdge`, `timingChartEnd`); then cut to
+    /// the chart's window and past its drawable gate (`timingDrawnEnd`),
+    /// ending where the blend line ends (`OddsChartView.drawnBlendEnd`). A
+    /// live window's end moves with the clock, so that second half is redone
+    /// on most bodies while recording, over the blend's points alone. A
+    /// buffer frame at or behind the read's edge is not drawn there, so the
+    /// end is then the read's point. Each end is named by its own provenance
     /// (`LiveTimingSeam.drawnChartEnd`). No history, or one the chart refused
     /// (`historyIsDrawn`): the chart's points are not this model's to know,
     /// so no end is named.
     @MainActor
-    func timingPresented(_ event: EventDetail) -> LiveTimingSeam.Presented {
+    func timingPresented(_ event: EventDetail, chart: @autoclosure () -> TimingChartWindow) -> LiveTimingSeam.Presented {
         guard LiveTimingSeam.isRecording else { return .idle }
         let shown = BlendPreview.displayed(blendPreview, held: event, now: previewNow())
+        let chart = chart()
+        let window = OddsChartView.drawnWindow(
+            status: event.status, commenceTime: event.commenceTime, history: history,
+            forcedDomain: chart.forcedDomain, legacyDataDomain: chart.legacyDataDomain,
+            selectedRange: chart.selectedRange,
+            playStart: { timingPlayStart(scheduled: $0, sportKey: event.sport) })
         let key = TimingChartKey(state: shown == nil ? nil : blendPreview, shown: shown,
                                  hero: event.heroProbability, heroObservedAt: event.heroProbabilityObservedAt,
                                  revision: LiveEventPriceReconciliation.pairedFoldRevision(in: event),
@@ -1589,14 +1600,20 @@ final class EventDetailViewModel: ObservableObject {
                                  history: historyGeneration)
         if timingChartEnd?.key != key {
             let frames = chartFrames(event)
-            let drawn = historyIsDrawn ? history.flatMap { history in
-                OddsChartView.drawnBlendEnd(OddsChartView.extendingToLiveEdge(
-                    timingServedBlend(history), with: frames, history: history))
+            // In the order the plot draws them (`enrichWithGameState` sorts by date).
+            let blend = historyIsDrawn ? history.map { history in
+                OddsChartView.extendingToLiveEdge(timingServedBlend(history), with: frames, history: history)
+                    .sorted { $0.date < $1.date }
             } : nil
             // Only a displayed preview projects; a committed page's extra point is the marker.
-            timingChartEnd = (key, drawn, frames, shown != nil && frames.count > liveBlend.count)
+            timingChartEnd = (key, blend, frames, shown != nil && frames.count > liveBlend.count)
+            timingDrawnMemo = nil
         }
-        let drawn = timingChartEnd?.drawn, frames = timingChartEnd?.frames ?? []
+        let cut = TimingCutKey(status: event.status, window: window, journey: chart.journey)
+        if timingDrawnMemo?.key != cut {
+            timingDrawnMemo = (cut, timingChartEnd?.blend.flatMap { timingDrawnEnd($0, cut, eventId: event.id) })
+        }
+        let drawn = timingDrawnMemo?.drawn, frames = timingChartEnd?.frames ?? []
         guard shown != nil, let state = blendPreview else {
             return LiveTimingSeam.presented(
                 committed: event, headline: event, observed: event.heroProbabilityObservedAt?.asDate,
@@ -1606,6 +1623,32 @@ final class EventDetailViewModel: ObservableObject {
             committed: event, headline: headline(event), observed: state.observedAt,
             drawn: drawn, frames: frames, projected: timingChartEnd?.projected ?? false,
             preview: LiveTimingSeam.previewBasis(of: state, in: blendPreviewReader), history: history)
+    }
+
+    /// #10090 — what the page hands its probability chart that decides which
+    /// points it draws (`OddsChartView.drawnWindow`, `checkpointMount`): its
+    /// forced and legacy windows, the page's All / Since Start choice and the
+    /// journey it may mount. The page's own values, for the timing seam.
+    struct TimingChartWindow: Equatable {
+        let forcedDomain: ClosedRange<Date>?
+        let legacyDataDomain: ClosedRange<Date>?
+        let selectedRange: OddsTimeRange
+        let journey: PublicationJourney4974.Journey?
+    }
+
+    /// The blend line's end among `blend` (sorted as the plot sorts it) as
+    /// the chart draws it: cut to its window (`OddsChartView.drawnPoints`) and
+    /// past its drawable gate (`chartIsDrawable`). Nil when that chart shows
+    /// its empty state, or mounts a finished game's checkpoints (#4974): it
+    /// then draws the mount's plan, and which point ends it is not known here.
+    @MainActor
+    private func timingDrawnEnd(_ blend: [ChartDataPoint], _ cut: TimingCutKey, eventId: Int) -> ChartDataPoint? {
+        let drawn = OddsChartView.drawnPoints(blend, window: cut.window)
+        guard !OddsChartView.mountsPublicationCheckpoints(journey: cut.journey, eventId: eventId,
+                                                          status: cut.status, points: drawn),
+              OddsChartView.chartIsDrawable(drawn, mount: nil)
+        else { return nil }
+        return OddsChartView.drawnBlendEnd(drawn)
     }
 
     /// Everything `chartFrames` reads: the displayed preview and value (which
@@ -1623,24 +1666,53 @@ final class EventDetailViewModel: ObservableObject {
         let history: Int
     }
 
-    /// The timing seam's last drawn chart end, the frames it was drawn from,
-    /// and whether the last of them is the preview's projection. Diagnostic
-    /// only: the chart itself always calls `chartFrames`.
-    private var timingChartEnd: (key: TimingChartKey, drawn: ChartDataPoint?, frames: [LiveBlendPoint],
+    /// The timing seam's last extended blend (nil: no history the chart
+    /// draws), the frames it was extended with, and whether the last of them
+    /// is the preview's projection. Diagnostic only: the chart itself always
+    /// calls `chartFrames`.
+    private var timingChartEnd: (key: TimingChartKey, blend: [ChartDataPoint]?, frames: [LiveBlendPoint],
                                  projected: Bool)?
 
-    /// The read's served blend points (`OddsChartView.servedPoints`), once per
-    /// payload. Only the blend: every step `extendingToLiveEdge` takes towards
-    /// the blend line's end reads `aggregate` points alone, so the venue and
-    /// sportsbook series would only cost the seam time on every frame.
+    /// Everything the chart's cut and drawable gate read besides its points.
+    private struct TimingCutKey: Equatable {
+        let status: String?
+        let window: OddsChartView.DrawnWindow
+        let journey: PublicationJourney4974.Journey?
+    }
+
+    /// The end `timingDrawnEnd` last found in `timingChartEnd`'s blend, and
+    /// the cut it found it under. Cleared whenever that blend is rebuilt.
+    private var timingDrawnMemo: (key: TimingCutKey, drawn: ChartDataPoint?)?
+
+    /// The read's served blend points (`OddsChartView.servedBlendPoints`),
+    /// once per payload. Only the blend: every step `extendingToLiveEdge`
+    /// takes towards the blend line's end, and the cut and the gate on a
+    /// chart that draws one, read `aggregate` points alone.
     private var timingServedMemo: (generation: Int, points: [ChartDataPoint])?
 
     @MainActor
     private func timingServedBlend(_ history: EventHistoryResponse) -> [ChartDataPoint] {
         if let memo = timingServedMemo, memo.generation == historyGeneration { return memo.points }
-        let points = OddsChartView.servedPoints(from: history).filter { $0.source == "aggregate" }
+        let points = OddsChartView.servedBlendPoints(from: history)
         timingServedMemo = (historyGeneration, points)
         return points
+    }
+
+    /// `ObservedPlayStart.cut` for the chart's window, once per payload,
+    /// scheduled start and sport (the chart's `observedPlayStart`): a scan of
+    /// every ESPN and win-probability row, which every body may not repeat.
+    private var timingPlayStartMemo: (generation: Int, scheduled: Date, sportKey: String?, cut: Date?)?
+
+    @MainActor
+    private func timingPlayStart(scheduled: Date, sportKey: String?) -> Date? {
+        guard let history else { return nil }
+        if let memo = timingPlayStartMemo, memo.generation == historyGeneration,
+           memo.scheduled == scheduled, memo.sportKey == sportKey {
+            return memo.cut
+        }
+        let cut = ObservedPlayStart.cut(scheduled: scheduled, history: history, sportKey: sportKey)
+        timingPlayStartMemo = (historyGeneration, scheduled, sportKey, cut)
+        return cut
     }
 
     /// #11564 — a `preview_open_v3`: the domain and session this stream's
