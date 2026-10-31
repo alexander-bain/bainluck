@@ -70,6 +70,7 @@ import asyncio
 import contextlib
 from contextvars import ContextVar
 from collections import deque
+import itertools
 import logging
 import math
 import os
@@ -849,6 +850,55 @@ STAMP_HELD_OWED_FRESH_ENV = "STAMP_HELD_OWED_FRESH"
 def stamp_held_owed_fresh_on() -> bool:
     return os.getenv(STAMP_HELD_OWED_FRESH_ENV, "0").strip() == "1"
 
+
+# #10090 write-under-queued — a game whose stamp attempt is QUEUED (admitted,
+# no worker has started it) is fenced from the price write exactly as one
+# whose stamp is RUNNING. On the saturated Polymarket lane (~250 attempts
+# queued, a turn 6-60 s) every newer price of an unheld game therefore stays
+# buffered for the whole wait, the stamp that finally lands carries a price as
+# old as the wait, and the current price waits a second whole turn. Production
+# 19:58-20:03Z 2026-10-31 (v6012, `readout.txt`): Polymarket LIVE chains
+# recv -> stamp p50 5.9 s / p90 11.1 s, pre-game p50 28 s / p90 64 s, and the
+# newest input a stamp carried was p50 3.5 s old. The fence protects a RUNNING
+# attempt's read — its basis must not predate a committed price its stamp is
+# then dated after (I2, #8910); a queued attempt has read nothing, so for it
+# the fence protects nothing and costs the game a turn. On, the game flush may
+# write an event whose attempt is queued (`fenced_event_ids`: the next N picks
+# per queue, or every queued attempt with ``all``). It takes a write lease
+# first (`writing_begin` / `writing_end`): no queued attempt of an event under
+# write starts until that write has returned, so a read never straddles its
+# own event's write (I1). The committed cohort then RIDES the queued attempt
+# (`admit_fresh` re-stages its newest input onto it — no debt, no second
+# attempt) instead of being refused as HELD. A running attempt is fenced as
+# before; a cohort committed after its read started is kept owed as before;
+# the call's own fresh population (startup, a hand-over's carried events) is
+# fenced as before. Unset or ``0`` (default): today's fence, byte for byte.
+STAMP_WRITE_UNDER_QUEUED_ENV = "STAMP_WRITE_UNDER_QUEUED"
+#: A worker that finds every queued attempt under a write lease re-checks at
+#: least this often; a lease never outlives its flush.
+WRITE_LEASE_WAIT_S = 0.25
+#: An absorb right (`writing_end` granted it to a still-queued attempt) is
+#: spent at the cohort's offer, which follows its commit in the same flush;
+#: one not offered within this many seconds has expired.
+WRITE_RIGHT_TTL_S = 5.0
+
+
+def stamp_write_under_queued() -> Optional[int]:
+    """The fence-lift horizon: None off (default); 0 every queued attempt
+    (``all``); N > 0 the next N picks per queue. Read at each use; anything
+    unparseable is off."""
+    raw = os.getenv(STAMP_WRITE_UNDER_QUEUED_ENV, "0").strip().lower()
+    if raw in ("", "0", "off", "false", "no"):
+        return None
+    if raw in ("all", "every", "*"):
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 # #10090 (Argon flush-loop Rank 2) — a due throttle-deferred LIVE event rides
 # a running call's door outside its debt slots, at most this many at a time.
 # Production 2026-10-30 00:18Z (Kalshi 15338515, origin=throttle,
@@ -1042,6 +1092,12 @@ class StampSpans:
         self.read_json = 0
         #: #10090 `stamp_wait_reason`: reason -> the events that waited for it.
         self.wait_reasons: dict[str, set] = {}
+        #: #10090 write-under-queued: committed cohorts that rode a queued
+        #: attempt (`admit_fresh` ABSORBED) and worker turns that found every
+        #: queued attempt under a write lease. Printed only when either is
+        #: non-zero, so the line is unchanged with the switch off.
+        self.absorbed = 0
+        self.lease_waits = 0
 
     def add_prepared(self, slot_s: float, read_s: float) -> None:
         self.prepared += 1
@@ -1071,6 +1127,9 @@ class StampSpans:
                 for reason, events in sorted(self.wait_reasons.items())
             )
             if self.wait_reasons else ""
+        ) + (
+            f" write_under_queued=absorbed:{self.absorbed},lease_waits:{self.lease_waits}"
+            if self.absorbed or self.lease_waits else ""
         )
 
 
@@ -3174,42 +3233,78 @@ class _FreshAdmission:
         riding = self.debts | self.live_debts
         return min(riding) if riding else None
 
-    def next_queued(self, held: Container[int] = frozenset()) -> int:
+    def next_queued(
+        self, held: Container[int] = frozenset(), skip: Container[int] = (),
+    ) -> Optional[int]:
         """The admitted event the next free worker stamps: the oldest live
         one, unless ADMITTED_LIVE_RUN live stamps in a row have started while
         a non-live one waited — then that oldest non-live one. Among live
         ones, the oldest a reader holds (``held``) goes first, unless
         READER_FIRST_RUN of those in a row have started while an unheld one
-        waited — then the oldest unheld one."""
-        if self.live_queue and (not self.queue or self.live_run < ADMITTED_LIVE_RUN):
-            if self.queue:
-                self.live_run += 1
-            return self._next_live(held)
-        self.live_run = 0
-        return self.queue.popleft()
+        waited — then the oldest unheld one.
 
-    def _next_live(self, held: Container[int]) -> int:
+        #10090 write-under-queued: an event in ``skip`` (its price rows are
+        under a write lease) is left queued in place and the next eligible
+        one is taken; the pre-game turn a leased pre-game head would have
+        taken goes to a live one rather than idling the worker (the lease
+        ends within the flush and the head keeps its place). None when every
+        queued event is skipped. An empty ``skip`` is today's pick exactly."""
+        if self.live_queue and (not self.queue or self.live_run < ADMITTED_LIVE_RUN):
+            picked = self._next_live(held, skip)
+            if picked is not None:
+                if self.queue:
+                    self.live_run += 1
+                return picked
+        picked = self._first_eligible(self.queue, skip)
+        if picked is not None:
+            self.live_run = 0
+            return picked
+        if skip and self.live_queue:
+            return self._next_live(held, skip)
+        return None
+
+    @staticmethod
+    def _first_eligible(queue: deque, skip: Container[int]) -> Optional[int]:
+        if not skip:
+            return queue.popleft() if queue else None
+        for index, event_id in enumerate(queue):
+            if event_id not in skip:
+                del queue[index]
+                return event_id
+        return None
+
+    def _next_live(self, held: Container[int], skip: Container[int] = ()) -> Optional[int]:
         live_queue = self.live_queue
+        if not skip:
+            if not held:
+                return live_queue.popleft()
+            eligible = list(enumerate(live_queue))
+        else:
+            eligible = [(i, eid) for i, eid in enumerate(live_queue) if eid not in skip]
+            if not eligible:
+                return None
+
+        def take(position: int) -> int:
+            index, event_id = eligible[position]
+            del live_queue[index]
+            return event_id
+
         if not held:
-            return live_queue.popleft()
-        first_held = next((i for i, eid in enumerate(live_queue) if eid in held), None)
+            return take(0)
+        first_held = next((p for p, (_i, eid) in enumerate(eligible) if eid in held), None)
         if first_held is None:
             self.held_run = 0
-            return live_queue.popleft()
-        unheld_waiting = first_held > 0 or any(eid not in held for eid in live_queue)
+            return take(0)
+        unheld_waiting = first_held > 0 or any(eid not in held for _i, eid in eligible)
         if not unheld_waiting:
             self.held_run = 0
-            return live_queue.popleft()
+            return take(0)
         if self.held_run >= READER_FIRST_RUN:
             self.held_run = 0
-            first_unheld = next(i for i, eid in enumerate(live_queue) if eid not in held)
-            event_id = live_queue[first_unheld]
-            del live_queue[first_unheld]
-            return event_id
+            first_unheld = next(p for p, (_i, eid) in enumerate(eligible) if eid not in held)
+            return take(first_unheld)
         self.held_run += 1
-        event_id = live_queue[first_held]
-        del live_queue[first_held]
-        return event_id
+        return take(first_held)
 
     def release(self, event_ids) -> None:
         """These events' stamps returned, or went back to debt unstamped."""
@@ -3547,6 +3642,17 @@ class LiveBlendRefresher:
         #: #10090 — resolved when the next call opens its door
         #: (`admission_opened`).
         self._admission_signal = None
+        #: #10090 write-under-queued (STAMP_WRITE_UNDER_QUEUED) — events whose
+        #: price rows a caller is writing now (`writing_begin`): no queued
+        #: attempt of theirs starts until `writing_end`.
+        self._writing: set[int] = set()
+        #: Events a write returned for while their attempt was still queued:
+        #: event id -> the `_mono` time of that return. Their next committed
+        #: cohort rides the attempt (`admit_fresh`) rather than being refused.
+        self._written_queued: dict[int, float] = {}
+        #: Resolved at the next `writing_end`, for a worker that found every
+        #: queued attempt under a lease.
+        self._writing_signal = None
         #: #10090 — optional callback notified when held events release so a
         #: socket flush loop that fenced a newer quote on those events wakes.
         self.release_wake: Optional[Callable[[Iterable[int]], None]] = None
@@ -4072,6 +4178,10 @@ class LiveBlendRefresher:
         window = _FreshAdmission(flush_started, clock, due, release_wake=self.release_wake)
         window.publish = publish_committed
         window.publish_inline = publish_inline
+        # #10090 write-under-queued: a right granted under the previous call's
+        # window names an attempt that is gone; this call's events are staged
+        # by this call.
+        self._written_queued.clear()
         if self._stage_hook("attempt_released") is not None:
             window.on_release = lambda ids: self._stage_trace("attempt_released", ids)
         self._admission = window
@@ -4951,6 +5061,152 @@ class LiveBlendRefresher:
         """
         return None if self._holding is None else frozenset(self._holding)
 
+    def fenced_event_ids(self) -> Optional[frozenset]:
+        """#10090 write-under-queued — the running call's events a price write
+        must not touch.
+
+        Off (default), exactly `holding_event_ids`: every event whose stamp is
+        queued or running. On (`STAMP_WRITE_UNDER_QUEUED`), the events whose
+        attempt is RUNNING or still unclaimed in the call's own fresh
+        population, plus the admitted queue beyond the lift horizon: with
+        ``all`` no queued admitted attempt fences; with N the next N picks of
+        each queue (and every queued live game a reader holds, picked first)
+        stop fencing, so their newest price is written by the flush before
+        their turn and the stamp carries it. None before the call opens its
+        door, as `holding_event_ids`. A caller writing an event this returns
+        as unfenced takes the write lease (`writing_begin`) first.
+        """
+        holding = self.holding_event_ids()
+        horizon = stamp_write_under_queued()
+        window = self._admission
+        if holding is None or horizon is None or window is None:
+            return holding
+        if horizon == 0:
+            lifted = set(window.live_queue)
+            lifted.update(window.queue)
+        else:
+            lifted = set(itertools.islice(window.live_queue, horizon))
+            lifted.update(itertools.islice(window.queue, horizon))
+            held = self._reader_held_ids()
+            if held:
+                lifted.update(eid for eid in window.live_queue if eid in held)
+        return holding.difference(lifted) if lifted else holding
+
+    def writing_begin(self, event_ids: Iterable[int]) -> None:
+        """#10090 write-under-queued — the caller is about to write these
+        events' price rows (a flush's whole planned cohort, before its first
+        chunk): until `writing_end` no queued attempt of theirs starts, so an
+        attempt's read never straddles a write of its own event. A new write
+        supersedes any unspent absorb right. Synchronous; harmless when the
+        switch is off (nothing is skipped: the fence kept these fenced)."""
+        event_ids = set(event_ids)
+        self._writing.update(event_ids)
+        for event_id in event_ids:
+            self._written_queued.pop(event_id, None)
+
+    def writing_end(self, event_ids: Iterable[int], *, written: Iterable[int] = ()) -> None:
+        """#10090 write-under-queued — the caller's writes of these events
+        have returned (``written``: those whose rows it committed). A written
+        event whose attempt is still queued gains the right to ride that
+        attempt with its committed cohort at the offer that follows
+        (`admit_fresh`): the attempt has read nothing yet and, admitted after
+        this return, will read the rows just committed. Wakes a worker waiting
+        on the lease. Synchronous."""
+        event_ids = set(event_ids)
+        self._writing.difference_update(event_ids)
+        written = set(written) & event_ids
+        window = self._admission
+        if (
+            written and window is not None and not window.closed
+            and stamp_write_under_queued() is not None
+        ):
+            queued = set(window.live_queue)
+            queued.update(window.queue)
+            now = _mono()
+            for event_id in written:
+                if event_id in queued:
+                    self._written_queued[event_id] = now
+        signal, self._writing_signal = self._writing_signal, None
+        if signal is not None and not signal.done():
+            signal.set_result(None)
+
+    def writing_yield(self, event_ids: Iterable[int]) -> frozenset:
+        """#10090 write-under-queued — the caller holding a lease on these
+        events is about to WAIT for the running call to end (a join inside its
+        chunk loop). A queued attempt of a leased event cannot start until
+        that lease ends, and the lease cannot end until the caller resumes:
+        so their queued attempts are handed back to debt here, exactly as
+        `shed_queued` hands a hand-over's (read nothing, sent no frame, owed
+        with no hold), and the call drains. Their rows are still being
+        written; the offer after their last chunk admits a fresh attempt on
+        the whole cohort. Returns the attempts handed back. Synchronous."""
+        window = self._admission
+        if window is None:
+            return frozenset()
+        leased = set(event_ids)
+        shed = [eid for eid in window.live_queue if eid in leased]
+        shed += [eid for eid in window.queue if eid in leased]
+        if not shed:
+            return frozenset()
+        for queue in (window.live_queue, window.queue):
+            for event_id in [eid for eid in queue if eid in leased]:
+                queue.remove(event_id)
+        window.admitted.difference_update(shed)
+        for event_id in shed:
+            self._written_queued.pop(event_id, None)
+            self._refresh_failed(
+                [event_id], window.retry, window.clocks.get(event_id, window.clock),
+                self.receipts,
+                {event_id: window.staged[event_id]} if event_id in window.staged else {},
+                window.stored_wall.get(event_id),
+                CancelledError(), hold=False,
+            )
+        window.release(shed)
+        return frozenset(shed)
+
+    def _absorb_right(self, event_id: int, now: float) -> bool:
+        """Whether this event's committed cohort rides its queued (or just
+        started) attempt: a write returned for it while it was queued, within
+        WRITE_RIGHT_TTL_S. A live right is spent here; an expired one is
+        dropped."""
+        granted = self._written_queued.get(event_id)
+        if granted is None:
+            return False
+        del self._written_queued[event_id]
+        return now - granted <= WRITE_RIGHT_TTL_S
+
+    def _ride_queued(self, window: _FreshAdmission, absorbed: set, marks) -> None:
+        """Re-stage each absorbed event's newest committed input onto its
+        queued attempt, exactly as an admission stages a taken event's, so the
+        receipt the attempt resolves covers this cohort (no chain opens: the
+        event counts as due)."""
+        receipts = self.receipts
+        if receipts is None or not absorbed:
+            return
+        staged, wall = self._receipt_call(receipts.staged_for, marks) or ({}, None)
+        staged = {eid: m for eid, m in staged.items() if eid in absorbed}
+        self._observe_committed(receipts, staged, wall, set(absorbed), _mono())
+        for event_id, mark in staged.items():
+            window.staged[event_id] = mark
+            window.stored_wall[event_id] = wall
+
+    async def _wait_for_write_lease(self) -> None:
+        """A worker found every queued attempt under a write lease: wait for
+        the next `writing_end`, at most WRITE_LEASE_WAIT_S, then look again."""
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        spans = getattr(self, "stamp_spans", None)
+        if spans is not None:
+            spans.lease_waits += 1
+        signal = self._writing_signal
+        if signal is None or signal.done() or signal.get_loop() is not loop:
+            signal = self._writing_signal = loop.create_future()
+        try:
+            await asyncio.wait_for(asyncio.shield(signal), timeout=WRITE_LEASE_WAIT_S)
+        except asyncio.TimeoutError:
+            pass
+
     def holding_frontier(self) -> Optional[_HoldingFrontier]:
         """#10090 — the running call's attempts queued or running right now,
         as a frontier a lifecycle wait can drain while the call keeps
@@ -5101,12 +5357,34 @@ class LiveBlendRefresher:
             return frozenset()
         excluded = set(defer_event_ids)
         event_ids = list(event_ids)  # read again below (trace, door)
+        # #10090 write-under-queued (STAMP_WRITE_UNDER_QUEUED): a committed
+        # cohort of an event whose attempt is still queued — or started only
+        # after the write that carried this cohort returned (`writing_end`
+        # granted the right while it was queued) — RIDES that attempt: its
+        # newest input is re-staged onto it below, no debt is kept and no
+        # chain opens, and the attempt reads these rows at its turn. An event
+        # whose attempt was running before the write is refused as HELD, as
+        # before: its read may predate the commit.
+        absorbed: set[int] = set()
+        if self._written_queued:
+            # A right outlives neither the attempt it was granted for (one
+            # whose attempt has returned is admitted again as today) nor its
+            # TTL nor the switch; a bridged or side write grants none.
+            for eid in [eid for eid in self._written_queued if eid not in window.holding]:
+                del self._written_queued[eid]
+            if stamp_write_under_queued() is None:
+                self._written_queued.clear()
+            now_mono = _mono()
+            for eid in event_ids:
+                if eid in window.holding and eid not in excluded and self._absorb_right(eid, now_mono):
+                    absorbed.add(eid)
         if self._stage_hook("stage_admission") is not None:
             for eid in event_ids:
                 if eid in excluded or eid in window.holding:
                     self._stage_trace(
                         "stage_admission", "ADMIT",
-                        "DEFERRED_UNFINISHED" if eid in excluded else "HELD",
+                        "DEFERRED_UNFINISHED" if eid in excluded
+                        else "ABSORBED" if eid in absorbed else "HELD",
                         (eid,), flush_started=flush_started,
                     )
         taken = {
@@ -5207,12 +5485,23 @@ class LiveBlendRefresher:
                         rotation.remove(eid)
                         rotation.append(eid)
             self._debt_rotation = rotation
+        if absorbed:
+            self._ride_queued(window, absorbed, marks)
+            spans = getattr(self, "stamp_spans", None)
+            if spans is not None:
+                spans.absorbed += len(absorbed)
+            if flush_started == self._pending_flush_started:
+                # A committed price of this flush rides the call: the flush is
+                # fresh-bearing, as it would be had the door taken it.
+                self._pending_fresh_flush = True
+            else:
+                self._admitted_fresh_flush = flush_started
         if not taken:
             self._stamp_wait_sweep(
                 "admit", flush_started, excluded=debt_excluded,
                 due_reason="LIVE_DEBT_SLOT_BUSY",
             )
-            return frozenset()
+            return frozenset(absorbed)
         # #10090: an event whose earlier stamp in this call has returned is
         # admitted again for its newer committed price. That attempt is retired
         # whole: its admission, outcome, clock, retry origin and input mark are
@@ -5299,7 +5588,7 @@ class LiveBlendRefresher:
             "admit", flush_started, taken=frozenset(due), excluded=debt_excluded,
             due_reason="LIVE_DEBT_SLOT_BUSY",
         )
-        return cohort
+        return cohort | absorbed if absorbed else cohort
 
     def stop_admitting(self) -> None:
         """#10090 — a lifecycle drain (final, cancellation, catalog change, a
@@ -5357,33 +5646,45 @@ class LiveBlendRefresher:
 
     async def _admitted_worker(self, window: _FreshAdmission) -> None:
         while window.live_queue or window.queue:
+            # #10090 write-under-queued: an event whose price rows are under a
+            # write lease is not started until the write has returned.
+            skip = (
+                self._writing
+                if self._writing and stamp_write_under_queued() is not None else ()
+            )
             # Read before the pick: a non-live head taken while a live game
             # waits (ADMITTED_LIVE_RUN) is stamped alone, as today.
             live_waiting = bool(window.live_queue)
             event_id = window.next_queued(
-                self._reader_held_ids() if live_waiting else frozenset()
+                self._reader_held_ids() if live_waiting else frozenset(), skip,
             )
+            if event_id is None:
+                await self._wait_for_write_lease()
+                continue
             group_ids = [event_id]
             live_batch = False
             if not live_waiting and window.queue:
-                group_ids = self._admitted_batch(window, event_id)
+                group_ids = self._admitted_batch(window, event_id, skip)
             elif live_waiting and window.live_queue and event_id in self._live_event_ids:
                 # #10090 `admitted_live_batch`: the picked live game and the
                 # head live games of its own cohort share one transaction.
-                group_ids = self._admitted_live_batch(window, event_id)
+                group_ids = self._admitted_live_batch(window, event_id, skip)
                 live_batch = len(group_ids) > 1
             await self._stamp_admitted(window, group_ids, live_batch=live_batch)
 
-    def _admitted_live_batch(self, window: _FreshAdmission, head: int) -> list[int]:
+    def _admitted_live_batch(
+        self, window: _FreshAdmission, head: int, skip: Container[int] = (),
+    ) -> list[int]:
         """#10090 — the picked LIVE event and, when an `ADMITTED_LIVE_BATCH`
         above one is in force, the queued live events at the head of the live
         queue from the same cohort: head of the queue only, in queue order,
         stopping at the first event that is no longer live by now or carries
-        another flush clock or stored wall. Nothing is reordered or skipped;
-        an event not taken stays at the head for the next turn. Each extra
-        event counts against ADMITTED_LIVE_RUN as its own pick would, so a
-        waiting pre-game event keeps today's one turn in ADMITTED_LIVE_RUN + 1
-        live EVENTS, not live transactions."""
+        another flush clock or stored wall (or, write-under-queued, is under a
+        write lease — ``skip``). Nothing is reordered or skipped; an event
+        not taken stays at the head for the next turn. Each extra event
+        counts against ADMITTED_LIVE_RUN as its own pick would, so a waiting
+        pre-game event keeps today's one turn in ADMITTED_LIVE_RUN + 1 live
+        EVENTS, not live transactions."""
         limit = _admitted_live_batch_size()
         live = self._live_event_ids
         if limit <= 1 or head not in live:
@@ -5398,6 +5699,7 @@ class LiveBlendRefresher:
             event_id = live_queue[0]
             if (
                 event_id not in live
+                or event_id in skip
                 or window.clocks.get(event_id, window.clock) != clock
                 or window.stored_wall.get(event_id) != stored_wall
             ):
@@ -5407,13 +5709,16 @@ class LiveBlendRefresher:
                 window.live_run += 1
         return group_ids
 
-    def _admitted_batch(self, window: _FreshAdmission, head: int) -> list[int]:
+    def _admitted_batch(
+        self, window: _FreshAdmission, head: int, skip: Container[int] = (),
+    ) -> list[int]:
         """#10090 — the non-live head and, when an `ADMITTED_STAMP_BATCH`
         above one is in force, the queued events that follow it from the same
         cohort: the head of the queue only, in queue order, stopping at the
         first event that is live by now or carries another flush clock or
-        stored wall, or the moment a live game is queued. Nothing is reordered
-        or skipped; an event not taken stays at the head for the next turn."""
+        stored wall (or is under a write lease — ``skip``), or the moment a
+        live game is queued. Nothing is reordered or skipped; an event not
+        taken stays at the head for the next turn."""
         limit = _admitted_stamp_batch()
         live = self._live_event_ids
         if limit <= 1 or head in live:
@@ -5426,6 +5731,7 @@ class LiveBlendRefresher:
             event_id = queue[0]
             if (
                 event_id in live
+                or event_id in skip
                 or window.clocks.get(event_id, window.clock) != clock
                 or window.stored_wall.get(event_id) != stored_wall
             ):
