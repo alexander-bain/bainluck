@@ -3490,7 +3490,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     from app.models.models import (
         Event, FuturesMarket, FuturesOutcome,
     )
-    from app.services.polymarket_ws import PolymarketWebSocket
+    from app.services.polymarket_ws import (
+        PolymarketWebSocket,
+        stable_drop_retry_base_seconds,
+    )
     from app.tasks.live_blend_refresh import (
         DEFAULT_MIN_REFRESH_INTERVAL_S, HeldRowQuotes, LiveBlendRefresher, TailReceipts,
         OwedChartCustody, adopt_handed_off,
@@ -3742,6 +3745,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # when the venue sends no later move. The shared snapshot switch is the undo.
     ws = PolymarketWebSocket(
         price_book_snapshots=book_snapshot_prices_enabled(),
+        # #10090: a stable game socket that drops abruptly re-dials sooner.
+        stable_drop_retry_base=stable_drop_retry_base_seconds(),
     )
 
     async def load_game_slate(*, stored_live_only=False):
