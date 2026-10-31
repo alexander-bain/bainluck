@@ -281,6 +281,10 @@ class _PMCatalogFlushBoundary:
         try:
             # No maps change beneath a stamp left running by an earlier batch.
             timing.enter("stamps")
+            if self.stamps is not None and _handover_shed_queued_enabled():
+                # #10090: every game flush is held from here, so wait only for
+                # the attempts already running; queued ones go back to debt.
+                self.stamps.shed_queued()
             await self.join_stamps()
             if self.stamps is not None:
                 # Committed bridged cohorts no game flush has stamped yet become
@@ -297,6 +301,20 @@ class _PMCatalogFlushBoundary:
                     self.condition.notify_all()
             finally:
                 timing.finish(outcome)
+
+
+def _handover_shed_queued_enabled() -> bool:
+    """#10090 — env `PM_HANDOVER_SHED_QUEUED`, read at each catalog handover.
+
+    On (missing, blank, anything but an off word), the handover's `stamps`
+    phase, which holds every game flush, waits only for the stamp attempts
+    already running: queued ones go back to debt (`shed_queued`). Production
+    2026-10-31 00:46-01:36Z: `stamps` was 1.37-3.96 s of `blocked` 1.49-4.15 s,
+    and PM's worst stamps came in same-second clusters across games at the
+    handovers. "0"/"false"/"off"/"no" is today's join of the whole queue.
+    """
+    raw = os.environ.get("PM_HANDOVER_SHED_QUEUED")
+    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
 
 
 def _handover_outcome(exc: BaseException) -> str:
@@ -476,6 +494,25 @@ class _PMStampOwner:
         if holding is None:
             return self.events
         return set(holding)
+
+    def shed_queued(self) -> int:
+        """#10090 — close the running call's door and hand its queued, not yet
+        started attempts back to debt (`LiveBlendRefresher.shed_queued`), so a
+        join that holds every flush waits only for the running ones. The
+        number shed; 0 with no running call or a refresher without it."""
+        if self._task is None or self._task.done():
+            return 0
+        shed = getattr(self.refresher, "shed_queued", None)
+        if shed is None:
+            return 0
+        events = shed()
+        self.fresh.difference_update(events)
+        if events:
+            logger.info(
+                "Polymarket WS handover shed: %d queued stamp attempts back to "
+                "debt before the stamp join", len(events),
+            )
+        return len(events)
 
     async def join(self, *, cancel=False) -> None:
         if self._task is None:
