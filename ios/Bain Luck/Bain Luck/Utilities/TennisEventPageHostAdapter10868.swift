@@ -48,8 +48,10 @@ import SwiftUI
 /// own mount rule shows, and their actions reach the host: a totals milestone or
 /// an exact finish is held as the reader's choice; a handicap panel or a routed
 /// Details opens exactly that catalogue original, never a neighbour. A card's
-/// Details control is wired only when the owner supplied routes for that card.
-/// Every original stays reachable in All props.
+/// Details control is offered only when what that card shows on this pass
+/// resolves to exactly one catalogue original (`detailsControls`, decided
+/// before the control is drawn); otherwise the card keeps its comparisons and
+/// offers no Details. Every original stays reachable in All props.
 ///
 /// EVENT IDENTITY. A history response whose `event_id` is not this event's is
 /// refused whole (`TennisHistoryAdapter10868.admitted`), for the chart AND for
@@ -151,8 +153,8 @@ struct TennisEventPageHost10868: View {
     }
 
     private func page(_ built: Built, mode: TennisEventPageMode10868) -> TennisEventPagePresentation10868 {
-        let routes = built.cards?.routes ?? TennisCardsAdapter10868.Routes()
         let controls = Self.readingControls(built.series) { held = $0 }
+        let cardDetails = Self.detailsControls(built) { resolved in details(resolved) }
         return TennisEventPagePresentation10868(
             input: built.input, mode: mode, originals: built.originals,
             onAbout: { open(.about) },
@@ -170,23 +172,15 @@ struct TennisEventPageHost10868: View {
             onHistoryInspectionChoice: nil,
             onHistoryPlotPosition: controls.plot,
             onShowLatestReading: controls.latest,
-            onSetDetails: routes.sets.isEmpty ? nil : { (id: String) in
-                details(TennisCardsAdapter10868.setDetails(id, supplied: built.cards, originals: built.originals))
-            },
+            onSetDetails: cardDetails.sets,
             onTotalSelect: { id in cardsHeld.totalMilestoneID = id },
-            onTotalDetails: routes.totals.isEmpty ? nil : { (id: String) in
-                details(TennisCardsAdapter10868.totalDetails(id, supplied: built.cards, originals: built.originals))
-            },
+            onTotalDetails: cardDetails.totals,
             totalTimingExpanded: $totalTiming,
             onExactSelect: { scope, id in
                 cardsHeld.exactScopeID = scope
                 cardsHeld.exactOriginalID = id
             },
-            onExactDetails: routes.exact.isEmpty ? nil : { (scope: String, id: String) in
-                details(TennisCardsAdapter10868.exactDetails(
-                    scopeID: scope, originalID: id, mounted: built.input.exact, supplied: built.cards,
-                    originals: built.originals))
-            },
+            onExactDetails: cardDetails.exact,
             onExactRecover: {
                 cardsHeld.exactScopeID = nil
                 cardsHeld.exactOriginalID = nil
@@ -209,13 +203,55 @@ struct TennisEventPageHost10868: View {
                 { hold(TennisReadingAdapter10868.latest(in: series)) })
     }
 
+    /// The story cards' Details callbacks for one pass.
+    struct DetailsControls {
+        var sets: ((String) -> Void)? = nil
+        var totals: ((String) -> Void)? = nil
+        /// (scope id, original id), exactly as the card names them.
+        var exact: ((String, String) -> Void)? = nil
+    }
+
+    /// Each card's Details callback, or nil — decided from THIS pass's shown
+    /// cards and catalogue before any control is drawn
+    /// (`TennisCardsAdapter10868.detailsAvailability`), so a leaf never draws
+    /// a Details control that would open nothing. A supplied callback still
+    /// resolves the id it is handed and opens only exactly that catalogue
+    /// original; it never opens another in its place. The page and the
+    /// full-size reader get the same callbacks; the presentation adds the
+    /// page's one hold, and the reader none.
+    static func detailsControls(_ built: Built,
+                                open: @escaping (OriginalMarketDetails9483.Selection) -> Void) -> DetailsControls {
+        let cards = built.cards
+        let originals = built.originals
+        let mounted = TennisEventPageModel10868(built.input).exact
+        let available = TennisCardsAdapter10868.detailsAvailability(built.input, supplied: cards, originals: originals)
+        return DetailsControls(
+            sets: available.sets ? { (id: String) -> Void in
+                if let resolved = TennisCardsAdapter10868.setDetails(id, supplied: cards, originals: originals) {
+                    open(resolved)
+                }
+            } : nil,
+            totals: available.totals ? { (id: String) -> Void in
+                if let resolved = TennisCardsAdapter10868.totalDetails(id, supplied: cards, originals: originals) {
+                    open(resolved)
+                }
+            } : nil,
+            exact: available.exact ? { (scope: String, id: String) -> Void in
+                if let resolved = TennisCardsAdapter10868.exactDetails(
+                    scopeID: scope, originalID: id, mounted: mounted, supplied: cards, originals: originals) {
+                    open(resolved)
+                }
+            } : nil)
+    }
+
     /// The exact mode; the presentation has already asked for the hold.
     private func open(_ mode: TennisEventPageMode10868) {
         presented = Presented(mode: mode)
     }
 
     /// A card's Details: the exact catalogue original it resolved, held and
-    /// opened; nothing when it resolved none.
+    /// opened; nothing when it resolved none (a handicap panel's choice outside
+    /// the page's catalogue).
     private func details(_ resolved: OriginalMarketDetails9483.Selection?) {
         guard let resolved else { return }
         selection = resolved

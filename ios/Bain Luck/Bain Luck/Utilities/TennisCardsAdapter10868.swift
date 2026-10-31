@@ -37,7 +37,10 @@ import SwiftUI
 /// Which supplied card is offered at all is the page's own mount rule
 /// (`TennisEventPageModel10868`), applied in `TennisPageInputAdapter10868`: a
 /// card in the wrong phase, the wrong variant or with nothing to show is never
-/// offered. Nothing here fetches, subscribes, formats a figure, grades or ranks.
+/// offered. Whether a mounted card offers Details is decided per pass, before
+/// the control is drawn (`detailsAvailability`): only when what it shows
+/// resolves to exactly one catalogue original. Nothing here fetches,
+/// subscribes, formats a figure, grades or ranks.
 enum TennisCardsAdapter10868 {
     typealias Details = OriginalMarketDetails9483
 
@@ -211,5 +214,99 @@ enum TennisCardsAdapter10868 {
         case .lanes(let lanes)?: lanes.scope?.id
         case nil: nil
         }
+    }
+
+    // MARK: - Details availability
+
+    /// One exact finish's Details, as the exact card names it.
+    struct ExactTarget: Hashable {
+        let scopeID: String
+        let originalID: String
+    }
+
+    /// Which card Details the page may offer on this pass. A card whose
+    /// Details is not offered keeps every comparison it shows.
+    struct DetailsAvailability: Equatable {
+        var sets = false
+        var totals = false
+        var exact = false
+    }
+
+    /// Every set Details the shown card would draw, in its own order: each
+    /// shown chance the leaf's own action rule names (exact, nonblank, unique).
+    static func offeredSetDetails(_ sets: PeriodOutcomeFinalScoreInput10868?) -> [String] {
+        guard let sets else { return [] }
+        return sets.periodIndices.flatMap { index in
+            sets.comparison.series.compactMap { one -> String? in
+                guard case .details(let id)? = sets.detailsAction(one, periodIndex: index, canOpenDetails: true) else {
+                    return nil
+                }
+                return id
+            }
+        }
+    }
+
+    /// The totals card's one Details, either variant: the leaf offers it only
+    /// for its resolved selected milestone (the held one, or the owner's).
+    static func offeredTotalDetails(_ totals: TennisEventPageTotals10868?) -> String? {
+        let action: TotalMilestoneAction10868?
+        switch totals {
+        case .final(let line)?: action = line.detailsAction(canOpenDetails: true)
+        case .thresholds(let live)?: action = live.detailsAction(canOpenDetails: true)
+        case nil: action = nil
+        }
+        guard case .details(let id)? = action else { return nil }
+        return id
+    }
+
+    /// Every exact Details the shown card would draw: the final tiles' one
+    /// resolved held finish; before and during play, each placed lane and each
+    /// named original below the lanes.
+    static func offeredExactDetails(_ exact: TennisEventPageExact10868?) -> [ExactTarget] {
+        let actions: [ExactScoreMapAction10868?]
+        switch exact {
+        case .final(let tiles)?:
+            actions = [tiles.detailsAction(canOpen: true)]
+        case .lanes(let lanes)?:
+            actions = lanes.lanes.map { lanes.detailsAction($0, canOpen: true) }
+                + lanes.unplaced.map { lanes.detailsAction($0, canOpen: true) }
+        case nil:
+            actions = []
+        }
+        return actions.compactMap { action -> ExactTarget? in
+            guard case .details(let scopeID, let originalID)? = action else { return nil }
+            return ExactTarget(scopeID: scopeID, originalID: originalID)
+        }
+    }
+
+    /// Decided BEFORE any control is drawn, from what each card shows on THIS
+    /// pass (the page's own mount rule, the host's held choices applied) and
+    /// the current catalogue: a card's Details is offered only when every
+    /// Details control it would draw names an original that resolves through
+    /// its owner's route to exactly one catalogue original — in the exact card,
+    /// inside its own scope. An unrouted id, a route to an original the
+    /// catalogue does not hold or holds twice, a held choice no longer offered
+    /// and a scope that is not the card's own each close it. Never a neighbour.
+    ///
+    /// The totals card and the final's finish tiles draw one Details, for the
+    /// shown selection only, so the decision is exactly that original's. The
+    /// set chances and the lanes draw one per original through one callback
+    /// (the accepted leaves take no per-original availability), so they are
+    /// offered only when ALL of them resolve: a partially routed card shows its
+    /// comparisons with no Details rather than one dead control.
+    static func detailsAvailability(_ input: TennisEventPageInput10868, supplied: Supplied?,
+                                    originals: TennisEventPageOriginals10868) -> DetailsAvailability {
+        let model = TennisEventPageModel10868(input)
+        let sets = offeredSetDetails(model.sets)
+        let exact = offeredExactDetails(model.exact)
+        return DetailsAvailability(
+            sets: !sets.isEmpty && sets.allSatisfy { setDetails($0, supplied: supplied, originals: originals) != nil },
+            totals: offeredTotalDetails(model.totals).map {
+                totalDetails($0, supplied: supplied, originals: originals) != nil
+            } ?? false,
+            exact: !exact.isEmpty && exact.allSatisfy {
+                exactDetails(scopeID: $0.scopeID, originalID: $0.originalID, mounted: model.exact,
+                             supplied: supplied, originals: originals) != nil
+            })
     }
 }
