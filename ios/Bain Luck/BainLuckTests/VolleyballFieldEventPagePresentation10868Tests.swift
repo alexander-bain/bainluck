@@ -490,8 +490,11 @@ final class VolleyballFieldEventPagePresentation10868Tests: XCTestCase {
         if FieldHistoryGeometry10868.drawsStyle(.filled, in: history), let words = history.markKey.filled { texts.append(words) }
         texts += history.xTicks.flatMap(\.lines) + history.yTicks.flatMap(\.lines)
         texts.append(FieldHistoryGeometry10868.spokenValue(history))
+        // The shared key's slots are reachable only while its key block is drawn.
+        let blocks = FieldHistoryGeometry10868.blocksAbovePlot(history) + FieldHistoryGeometry10868.blocksBelowPlot(history)
         for series in history.series {
             texts.append(series.name)
+            guard blocks.contains(.key) else { continue }
             texts += FieldHistoryGeometry10868.readoutSlots(series, in: history).map(FieldHistoryGeometry10868.spokenSlot)
             texts += [FieldHistoryGeometry10868.keyNote(series, in: history)].compactMap { $0 }
         }
@@ -578,6 +581,9 @@ final class VolleyballFieldEventPagePresentation10868Tests: XCTestCase {
 
     private static let forbiddenClaim = #"(?i)(pre-?season|season[- ]start|pregame|pre-event|before the (competition|season|tournament)|\bcurrent\b|\blive\b|\bnow\b|\bsettled\b|\bfinal\b|\bresult\b|\bwon\b|\bchampion\b)"#
     private static let negation = #"(?i)(\bnot\b|\bno\b|\bnever\b|\bunavailable\b|\bwithout\b|isn’t|isn't)"#
+
+    /// The last-recorded slot's label, not the "Last recorded trades" control.
+    private static let lastRecordedSlot = #"Last recorded trade(?!s)"#
 
     private static func matches(_ text: String, _ pattern: String) -> Bool {
         text.range(of: pattern, options: .regularExpression) != nil
@@ -880,7 +886,10 @@ final class VolleyballFieldEventPagePresentation10868Tests: XCTestCase {
             XCTAssertEqual(inline.entries.map(\.series), input.history.series)
             XCTAssertEqual(inline.entries.map(\.series.shape), [.circle, .diamond, .square])
             for (entry, team) in zip(inline.entries, Self.sampled) {
-                XCTAssertEqual(entry.slots, Self.slots(input.history, team))
+                // Last recorded: the resolver's one slot. An inspected hour: only the resolver's inspected slot.
+                let resolved = Self.slots(input.history, team)
+                XCTAssertEqual(entry.slots, moment.at == nil ? resolved : [resolved.last!])
+                XCTAssertEqual(entry.slots, VolleyballFieldReadoutsPresentation10868.shownSlots(entry.series, in: inline.history))
                 XCTAssertEqual(VolleyballFieldReadoutsPresentation10868.chooseID(entry), "highlight.\(team.team.key)")
             }
             XCTAssertEqual(inline.entries.map(\.isSelected), [true, false, false])
@@ -893,10 +902,10 @@ final class VolleyballFieldEventPagePresentation10868Tests: XCTestCase {
         XCTAssertEqual(VolleyballFieldReadoutsPresentation10868.figures(latest.entries), ["49%", "25%", "3%"])
         // No callback: the history's own rule makes the readout static, with no id.
         XCTAssertTrue(latest.entries.allSatisfy { $0.choose == .shownStatic && VolleyballFieldReadoutsPresentation10868.chooseID($0) == nil })
-        // At an hour no team traded, only each team's own last recorded figure is shown.
+        // At an hour no team traded: no figure at all, never the last recorded ones.
         let empty = VolleyballFieldEventPagePresentation10868(input: Self.page(.hour(Self.emptyHour)), onHistoryAction: { _ in })
             .readoutsContent(reader: false, accessibilitySize: false)
-        XCTAssertEqual(VolleyballFieldReadoutsPresentation10868.figures(empty.entries), ["49%", "25%", "3%"])
+        XCTAssertEqual(VolleyballFieldReadoutsPresentation10868.figures(empty.entries), [])
     }
 
     func testThePresentationCopyHidesOnlyTheDuplicateKeyAndTheOwnersHistoryStaysWhole() {
@@ -1201,6 +1210,152 @@ final class VolleyballFieldEventPagePresentation10868Tests: XCTestCase {
         // The negated sentences are explicit about what these chances are not.
         XCTAssertTrue(Self.about.paragraphs[1].contains("not current chances"))
         XCTAssertTrue(Self.endpointCopy.note!.contains("not pre-season or current chances"))
+    }
+
+    // MARK: - The selected hour alone (V1)
+
+    func testWhileAnHourIsSelectedTheComposedReadoutsShowOnlyThatHourInlineAndFullSize() {
+        /// The composed inline and full-size readouts for one moment, with the
+        /// owner's input checked unchanged and the full reader checked equal.
+        func readouts(_ moment: Moment) -> [VolleyballFieldReadoutEntry10868] {
+            let input = Self.page(moment)
+            let inline = VolleyballFieldEventPagePresentation10868(input: input, onHistoryAction: { _ in })
+                .readoutsContent(reader: false, accessibilitySize: false)
+            let full = VolleyballFieldEventPagePresentation10868(input: input, mode: .reader(.history), onHistoryAction: { _ in })
+                .readoutsContent(reader: true, accessibilitySize: true)
+            XCTAssertEqual(full.entries.map(\.slots), inline.entries.map(\.slots), "\(moment)")
+            XCTAssertEqual(full.entries.map(\.isSelected), inline.entries.map(\.isSelected))
+            XCTAssertEqual(full.entries.map(VolleyballFieldReadoutsPresentation10868.chooseID),
+                           inline.entries.map(VolleyballFieldReadoutsPresentation10868.chooseID))
+            // The owner's history is unchanged, field for field; each copy differs only in height, expand and key.
+            XCTAssertEqual(input.history, Self.history(moment))
+            var restored = inline.history
+            restored.showsKey = true
+            XCTAssertEqual(restored, input.history)
+            var restoredFull = full.history
+            restoredFull.showsKey = true
+            XCTAssertEqual(restoredFull, VolleyballFieldEventPageModel10868.presentationCopy(input.history, plotHeight: 390, expand: nil, showsKey: true))
+            return inline.entries
+        }
+        func figures(_ entries: [VolleyballFieldReadoutEntry10868]) -> [String] {
+            VolleyballFieldReadoutsPresentation10868.figures(entries)
+        }
+
+        // Last recorded mode: three figures, each with its own date.
+        let latest = readouts(.lastRecorded)
+        XCTAssertEqual(latest.map(\.slots), Self.sampled.map { [Self.figureSlot("Last recorded trade", $0, $0.trades.last!.at)] })
+        XCTAssertEqual(figures(latest).count, 3)
+        XCTAssertEqual(Set(latest.flatMap(\.slots).map(FieldHistoryGeometry10868.spokenSlot)).count, 3)
+
+        // An empty selected hour: three absence slots and no figure at all.
+        let empty = readouts(.hour(Self.emptyHour))
+        XCTAssertEqual(empty.map(\.slots), Array(repeating: [FieldHistoryReadoutSlot10868(label: "Selected hour", display: .words("No trade in this hour"))], count: 3))
+        XCTAssertEqual(figures(empty), [])
+        XCTAssertTrue(empty.allSatisfy { !Self.matches(VolleyballFieldReadoutsPresentation10868.spoken($0), Self.lastRecordedSlot) })
+
+        // An hour only Nebraska traded: its own value and two absences.
+        let onlyNebraska = Self.nebraskaTrades.map { $0.at }.first { at in
+            Self.pittsburgh.trades.allSatisfy { $0.at != at } && Self.wisconsin.trades.allSatisfy { $0.at != at }
+        }!
+        let sparse = readouts(.hour(onlyNebraska))
+        XCTAssertEqual(sparse.map(\.slots), [
+            [Self.figureSlot("Selected hour", Self.nebraska, onlyNebraska)],
+            [FieldHistoryReadoutSlot10868(label: "Selected hour", display: .words("No trade in this hour"))],
+            [FieldHistoryReadoutSlot10868(label: "Selected hour", display: .words("No trade in this hour"))],
+        ])
+        XCTAssertEqual(figures(sparse), [Self.figure(Self.trade(Self.nebraska, onlyNebraska)!.cents)])
+
+        // A shared hour: each team's own independent close.
+        let shared = readouts(.hour(1791561600000))
+        XCTAssertEqual(shared.map(\.slots), [
+            [Self.figureSlot("Selected hour", Self.nebraska, 1791561600000)],
+            [Self.figureSlot("Selected hour", Self.pittsburgh, 1791561600000)],
+            [FieldHistoryReadoutSlot10868(label: "Selected hour", display: .words("No trade in this hour"))],
+        ])
+        XCTAssertEqual(figures(shared), ["45%", "29%"])
+
+        // The same observation: Nebraska's last trade selected is one slot, its own date — the
+        // last-recorded slot is not shown beside it.
+        let lastHour = Self.nebraskaTrades.last!.at
+        let same = readouts(.hour(lastHour))
+        XCTAssertEqual(same[0].slots, [Self.figureSlot("Selected hour", Self.nebraska, lastHour)])
+        XCTAssertEqual(same[0].slots[0].display, latest[0].slots[0].display)
+        XCTAssertNotEqual(same[0].slots[0].label, latest[0].slots[0].label)
+        // Equal 45% values at distinct hours keep their own dates.
+        let firstEqual = readouts(.hour(1791432000000))[0].slots
+        let secondEqual = readouts(.hour(1791439200000))[0].slots
+        XCTAssertEqual(firstEqual, [Self.figureSlot("Selected hour", Self.nebraska, 1791432000000)])
+        XCTAssertEqual(secondEqual, [Self.figureSlot("Selected hour", Self.nebraska, 1791439200000)])
+        XCTAssertNotEqual(firstEqual, secondEqual)
+
+        // The shown slot is the resolver's own inspected slot, never a reformatted or carried value.
+        let history = Self.history(.hour(onlyNebraska))
+        for series in history.series {
+            XCTAssertEqual(VolleyballFieldReadoutsPresentation10868.shownSlots(series, in: history),
+                           [FieldHistoryReadoutSlot10868(label: "Selected hour", display: FieldHistoryGeometry10868.inspectedDisplay(series, in: history))])
+        }
+
+        // Choose payloads and holds are unchanged while an hour is selected.
+        var log: [String] = []
+        let input = Self.page(.hour(Self.emptyHour))
+        let pageReadouts = VolleyballFieldEventPagePresentation10868(
+            input: input, onHistoryAction: { log.append("chart:\($0)") }, onInteraction: { log.append("hold") })
+            .readoutsContent(reader: false, accessibilitySize: false)
+        XCTAssertEqual(pageReadouts.entries.map(VolleyballFieldReadoutsPresentation10868.chooseID),
+                       Self.sampled.map { "highlight.\($0.team.key)" })
+        XCTAssertEqual(pageReadouts.entries.map(\.isSelected), [true, false, false])
+        pageReadouts.onChoose?(VolleyballFieldReadoutsPresentation10868.chooseID(pageReadouts.entries[2])!)
+        let fullReadouts = VolleyballFieldEventPagePresentation10868(
+            input: input, mode: .reader(.history), onHistoryAction: { log.append("chart:\($0)") }, onInteraction: { log.append("hold") })
+            .readoutsContent(reader: true, accessibilitySize: false)
+        fullReadouts.onChoose?(VolleyballFieldReadoutsPresentation10868.chooseID(fullReadouts.entries[1])!)
+        XCTAssertEqual(log, ["hold", "chart:highlight.KXNCAAWV-26-WIS", "chart:highlight.KXNCAAWV-26-PITT"])
+
+        // Reachable text follows the slots actually shown: no last-recorded slot while an hour is selected,
+        // in the readouts or the hidden shared key, on the page or full size.
+        let pageView = VolleyballFieldEventPagePresentation10868(input: Self.page(.hour(Self.emptyHour)))
+        for reader in [false, true] {
+            let shown = Self.readoutsText(pageView.readoutsContent(reader: reader, accessibilitySize: false))
+                + Self.historyText(pageView.historyContent(reader: reader, accessibilitySize: false).input)
+            XCTAssertFalse(shown.contains { Self.matches($0, Self.lastRecordedSlot) }, "reader \(reader)")
+            XCTAssertTrue(shown.contains("Selected hour"))
+        }
+        let latestView = VolleyballFieldEventPagePresentation10868(input: Self.page())
+        XCTAssertTrue(Self.readoutsText(latestView.readoutsContent(reader: false, accessibilitySize: false)).contains("Last recorded trade"))
+    }
+
+    func testOwnerKeyContextKeepsTheSharedKeyAsTheOneRemainingDuplicationOfLastRecordedFigures() {
+        // Without key context the shared key is hidden: the last-recorded figures stay out of view.
+        let plain = Self.page(.hour(Self.emptyHour))
+        let plainHistory = VolleyballFieldEventPageModel10868(plain).history(reader: false, accessibilitySize: false)
+        XCTAssertFalse(FieldHistoryGeometry10868.blocksAbovePlot(plainHistory).contains(.key))
+        XCTAssertFalse(FieldHistoryGeometry10868.blocksBelowPlot(plainHistory).contains(.key))
+        // With the owner's key context the owner's key stays, with its context and controls, and the
+        // unchanged shared key still shows every resolver slot — the documented preservation case.
+        var keyed = Self.parts(.hour(Self.emptyHour))
+        keyed.history = Self.history(.hour(Self.emptyHour), keyContext: true)
+        let model = VolleyballFieldEventPageModel10868(keyed.input)
+        XCTAssertFalse(model.hidesSharedKey)
+        for reader in [false, true] {
+            let drawn = model.history(reader: reader, accessibilitySize: false)
+            XCTAssertTrue(drawn.showsKey)
+            XCTAssertTrue(FieldHistoryGeometry10868.blocksAbovePlot(drawn).contains(.key))
+            XCTAssertEqual(drawn.series, keyed.history.series)
+            XCTAssertNotNil(FieldHistoryGeometry10868.keyContext(drawn.series[0]))
+            XCTAssertEqual(FieldHistoryGeometry10868.actions(drawn).filter { $0.id.hasPrefix("highlight.") },
+                           FieldHistoryGeometry10868.actions(keyed.history).filter { $0.id.hasPrefix("highlight.") })
+            let nebraska = drawn.series[0]
+            XCTAssertEqual(FieldHistoryGeometry10868.readoutSlots(nebraska, in: drawn), [
+                Self.figureSlot("Last recorded trade", Self.nebraska, Self.nebraskaTrades.last!.at),
+                FieldHistoryReadoutSlot10868(label: "Selected hour", display: .words("No trade in this hour")),
+            ])
+            XCTAssertTrue(Self.historyText(drawn).contains { Self.matches($0, Self.lastRecordedSlot) })
+        }
+        // The readouts themselves still show only the selected hour.
+        let readouts = VolleyballFieldEventPagePresentation10868(input: keyed.input).readoutsContent(reader: false, accessibilitySize: false)
+        XCTAssertEqual(VolleyballFieldReadoutsPresentation10868.figures(readouts.entries), [])
+        XCTAssertTrue(readouts.entries.allSatisfy { $0.slots.map(\.label) == ["Selected hour"] })
+        XCTAssertEqual(keyed.input.history, Self.history(.hour(Self.emptyHour), keyContext: true))
     }
 
     // MARK: - Full size and arrangement

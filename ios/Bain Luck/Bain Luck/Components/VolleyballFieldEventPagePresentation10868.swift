@@ -44,15 +44,24 @@ import SwiftUI
 // change words; and its full-size history keeps the page height. The two
 // small Views here fill exactly those gaps on the shared resolvers.
 //
-// Readouts: every slot is `FieldHistoryGeometry10868.readoutSlots` for the
-// history copy drawn beside it, with the history's own note, selection and
-// choose-control state. A readout acts only while the history's own rules
-// make its choose action live, and hands back that exact action id through
-// the history callback; otherwise it is static. While no team carries key
-// context, a presentation copy of the history hides the shared key so the
-// readouts are not shown twice; that copy keeps every series, run, readout,
-// inspection, mark-key word, action and plot field, and the owner's history
-// input is never changed.
+// Readouts: every slot is one of `FieldHistoryGeometry10868.readoutSlots` for
+// the history copy drawn beside it, with the history's own note, selection and
+// choose-control state. While an hour is inspected (the owner's
+// `beforeAndInspected` intent) a readout shows ONLY the resolver's inspected
+// slot — that hour's own figure and date, or its absence words — and never the
+// last-recorded slot; otherwise it shows the resolver's slots as they are (one
+// last-recorded slot each). Nothing is elected, carried forward or
+// reformatted. A readout acts only while the history's own rules make its
+// choose action live, and hands back that exact action id through the history
+// callback; otherwise it is static. While no team carries key context, a
+// presentation copy of the history hides the shared key, so neither the
+// readouts nor the hidden last-recorded figures are shown twice; that copy
+// keeps every series, run, readout, inspection, mark-key word, action and plot
+// field, and the owner's history input is never changed. The one remaining
+// duplication is deliberate: when the owner gives a team key context, the
+// shared key stays for it, and that unchanged shared key still shows every
+// resolver slot, including the last-recorded figures while an hour is
+// inspected.
 //
 // Endpoints: a row names one history series by its exact id; a listed-twice,
 // missing or shared id keeps the owner's name beside the unavailable words and
@@ -677,6 +686,7 @@ struct VolleyballFieldEndpointsPresentation10868: View {
 nonisolated struct VolleyballFieldReadoutEntry10868: Equatable {
     let series: FieldHistorySeries10868
     let note: String?
+    /// The slots shown (`VolleyballFieldReadoutsPresentation10868.shownSlots`).
     let slots: [FieldHistoryReadoutSlot10868]
     let isSelected: Bool
     /// The history's own choose-control state for this series.
@@ -684,8 +694,10 @@ nonisolated struct VolleyballFieldReadoutEntry10868: Equatable {
 }
 
 /// Each displayed team's readouts exactly as the history resolves them, each
-/// figure at one scaled size under its own label with its own date. A readout
-/// highlights its team only through the history's own live choose action.
+/// figure at one scaled size under its own label with its own date: the
+/// selected hour alone while an hour is inspected, else each team's own last
+/// recorded trade. A readout highlights its team only through the history's
+/// own live choose action.
 /// Teams sit side by side while every measured figure fits an equal share,
 /// else one full-width row each; accessibility sizes go straight to rows.
 struct VolleyballFieldReadoutsPresentation10868: View {
@@ -710,10 +722,21 @@ struct VolleyballFieldReadoutsPresentation10868: View {
             VolleyballFieldReadoutEntry10868(
                 series: $0,
                 note: FieldHistoryGeometry10868.keyNote($0, in: history),
-                slots: FieldHistoryGeometry10868.readoutSlots($0, in: history),
+                slots: Self.shownSlots($0, in: history),
                 isSelected: FieldHistoryGeometry10868.isSelected($0, in: history),
                 choose: FieldHistoryGeometry10868.chooseState($0, hasCallback: onChoose != nil, in: history))
         }
+    }
+
+    /// The slots a readout shows, from the history's own resolver: while an hour
+    /// is inspected (`beforeAndInspected`), only the resolver's inspected slot —
+    /// its second, with its own label and its own date or absence words; in any
+    /// other intent, the resolver's slots unchanged. A presentation choice only:
+    /// no reading is elected, carried forward or reformatted.
+    static func shownSlots(_ series: FieldHistorySeries10868, in history: FieldHistoryInput10868) -> [FieldHistoryReadoutSlot10868] {
+        let slots = FieldHistoryGeometry10868.readoutSlots(series, in: history)
+        guard case .beforeAndInspected = history.readout else { return slots }
+        return Array(slots.suffix(1))
     }
 
     /// The live choose id a readout hands back, while its action is available.
@@ -944,8 +967,11 @@ nonisolated struct VolleyballFieldEventPageModel10868: Equatable {
     }
 
     /// Whether the readouts stand in for the shared key: while no series
-    /// carries key context, the key would show only the readouts and their
-    /// choose controls, which the readouts carry. Otherwise the key stays.
+    /// carries key context, the key would show only the resolver's slots and
+    /// their choose controls, which the readouts carry — so hiding it keeps the
+    /// last-recorded figures out of view while an hour is inspected. With key
+    /// context the owner's key stays, and that unchanged shared key still shows
+    /// every resolver slot: the one deliberate remaining duplication.
     var hidesSharedKey: Bool {
         input.history.series.allSatisfy { FieldHistoryGeometry10868.keyContext($0) == nil }
     }
