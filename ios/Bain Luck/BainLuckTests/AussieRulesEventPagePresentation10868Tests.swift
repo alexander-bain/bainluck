@@ -54,6 +54,22 @@ import XCTest
 /// foreign, duplicate, missing, corrected, omitted, restored and
 /// missing-callback case; the restore of the omitted originals (no genuine later
 /// body is retained); the lead scale's range and ticks; every geometry probe.
+///
+/// PHASE-ADMITTED OWNER FIXTURES. Each phase's ordinary input admits only that
+/// phase's facts across every reachable surface — headline readings, final
+/// points, result story, reader heading, notice, About and its sources, history
+/// and originals. Before play: the event's pre-match chance and the pre-match
+/// history only. During play: also the independently dated recordings and the
+/// owner's current-absence words, never a final actual, report or score. At the
+/// final: the complete official result and its provenance. A deliberately
+/// hostile input that supplies later facts to an earlier phase is labelled
+/// where it is used; it proves the leaves' existing phase rules and authorizes
+/// no production filter (history in particular is never filtered: the owner
+/// supplies phase-admitted history). The during headline's recorded label
+/// carries its quote time ("Recorded 5:13 AM UTC") so the earlier game quote
+/// never reads as an undated current value beside the history's later held
+/// reading; a real production binding localizes every clock through the
+/// existing owner formatter instead of keeping literal UTC copy.
 @MainActor
 final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
     private typealias Tests = AussieRulesEventPagePresentation10868Tests
@@ -1298,6 +1314,9 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
 
     private static let headlineScope = "aflw:event:winner"
     private static let beforeLabel = "Pre-match win chance"
+    /// The owner's already-formatted label for the 05:13 game quotes (CONSTRUCTED
+    /// copy; production localizes through the owner formatter).
+    private static let recordedLabel = "Recorded 5:13 AM UTC"
     private static let baselineDetail = "Oct 11, 4:03:39.046959 AM UTC · event history, before the 4:04 AM kickoff"
 
     private static func ref(_ team: String) -> FieldChooserOriginalRef10868 {
@@ -1343,13 +1362,18 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
             openHint: "Opens this team’s history")
     }
 
-    /// Every later reading and both final points are always supplied: the
-    /// phase alone decides what shows.
+    /// The owner's phase-admitted headline: before play the pre-match reading
+    /// only; during play also the dated recording; at the final the pre-match
+    /// reading and the final points. `supplyingLater` is the deliberately hostile
+    /// control that hands every later reading and both final points to any phase.
     private static func headline(_ phase: AussieRulesEventPagePhase10868,
                                  baseline: Bool = true,
                                  actual: Actual = .reported,
                                  as headlinePhase: FieldOutlookPhase10868? = nil,
-                                 strayRef: Bool = false) -> FieldHeadlineInput10868 {
+                                 strayRef: Bool = false,
+                                 supplyingLater: Bool = false) -> FieldHeadlineInput10868 {
+        let suppliesRecording = supplyingLater || phase == .during
+        let suppliesActual = supplyingLater || phase == .final
         var catalogue: [FieldChooserOriginal10868] = []
         var pairs: [FieldMovementPair10868] = []
         var finishes: [FieldFinishPlace10868] = []
@@ -1359,17 +1383,18 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
             let before = baseline
                 ? reading(beforeLabel, side.beforeText, baselineDetail)
                 : FieldChooserReading10868(label: beforeLabel, value: .missing("Not recorded before kickoff"))
-            let later = reading("Recorded", side.recordedText, side.recordedClock)
+            let later = reading(recordedLabel, side.recordedText, side.recordedClock)
             catalogue.append(FieldChooserOriginal10868(
-                ref: ref, name: side.name, plan: .comparison(before: before, later: later),
+                ref: ref, name: side.name,
+                plan: suppliesRecording ? .comparison(before: before, later: later) : .single(before),
                 preview: FieldChooserPreview10868(history: nil, absence: "History in the chart"),
                 movement: nil, clock: nil, result: nil, browseStatus: "Event win chance", accent: side.tint))
             pairs.append(FieldMovementPair10868(
                 ref: ref,
                 before: baseline ? FieldMovementObservation10868(probability: side.before, reading: before) : nil,
-                later: FieldMovementObservation10868(probability: side.recorded, reading: later),
-                movement: nil, observation: "recorded:\(side.key)"))
-            switch actual {
+                later: suppliesRecording ? FieldMovementObservation10868(probability: side.recorded, reading: later) : nil,
+                movement: nil, observation: suppliesRecording ? "recorded:\(side.key)" : nil))
+            switch suppliesActual ? actual : .rejected {
             case .reported:
                 finishes.append(FieldFinishPlace10868(ref: ref, reading: reading("Final points", side.points, side.pointsDetail)))
             case .missing:
@@ -1474,16 +1499,39 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
         }
     }
 
-    private static let about = AussieRulesEventPageAbout10868(title: "About these probabilities", sections: [
-        AussieRulesEventPageAboutSection10868(title: "Event win probabilities", paragraphs: [
-            "The event history supplies Sydney 32% / Carlton 68% at 4:03:39 AM UTC, before the confirmed 4:04 AM kickoff.",
-            "The earlier 37% / 63% quotes carry their own later quote timestamps. Neither source proves an actively traded current probability. Event history does not establish each original contract’s baseline.",
-        ]),
-        AussieRulesEventPageAboutSection10868(title: "Official final score", paragraphs: [
-            "A goal is worth six points; a behind is worth one. Sydney finished with 4 goals and 8 behinds (32); Carlton with 8 goals and 11 behinds (59).",
-            "Exact quarter-end times are unavailable. Official scores do not grade the original contracts.",
-        ], source: Tests.report),
-    ])
+    /// The owner's About for the phase: only the facts admitted by then.
+    private static func about(_ phase: AussieRulesEventPagePhase10868) -> AussieRulesEventPageAbout10868 {
+        switch phase {
+        case .before:
+            return AussieRulesEventPageAbout10868(title: "About these probabilities", sections: [
+                AussieRulesEventPageAboutSection10868(title: "Event win probability", paragraphs: [
+                    "The event history supplies Sydney 32% / Carlton 68% at Oct 11, 4:03:39 AM UTC, before the scheduled 4:04 AM start.",
+                    "Event history does not establish each original contract’s baseline. Projected final unavailable.",
+                ]),
+            ])
+        case .during:
+            return AussieRulesEventPageAbout10868(title: "About these probabilities", sections: [
+                AussieRulesEventPageAboutSection10868(title: "Event win probabilities", paragraphs: [
+                    "The event history supplies Sydney 32% / Carlton 68% at Oct 11, 4:03:39 AM UTC, before the confirmed 4:04 AM kickoff.",
+                    "Sydney 37% and Carlton 63% were recorded from the Polymarket game market at Oct 11, 5:13:47 AM UTC. The history’s latest held reading is dated separately. Neither is proof of an actively traded current probability. Event history does not establish each original contract’s baseline.",
+                ]),
+                AussieRulesEventPageAboutSection10868(title: "Match state", paragraphs: [
+                    "The supplied status is suspended. Score and quarter are unavailable, and no match result is inferred.",
+                ]),
+            ])
+        case .final:
+            return AussieRulesEventPageAbout10868(title: "About these probabilities", sections: [
+                AussieRulesEventPageAboutSection10868(title: "Event win probabilities", paragraphs: [
+                    "The event history supplies Sydney 32% / Carlton 68% at 4:03:39 AM UTC, before the confirmed 4:04 AM kickoff.",
+                    "The earlier 37% / 63% quotes carry their own later quote timestamps. Neither source proves an actively traded current probability. Event history does not establish each original contract’s baseline.",
+                ]),
+                AussieRulesEventPageAboutSection10868(title: "Official final score", paragraphs: [
+                    "A goal is worth six points; a behind is worth one. Sydney finished with 4 goals and 8 behinds (32); Carlton with 8 goals and 11 behinds (59).",
+                    "Exact quarter-end times are unavailable. Official scores do not grade the original contracts.",
+                ], source: Tests.report),
+            ])
+        }
+    }
 
     private static let pageCopy = AussieRulesEventPageCopy10868(
         storiesLabel: "Match stories", storyUnavailable: "This story is not available in this update.",
@@ -1497,14 +1545,14 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
                               headline: FieldHeadlineInput10868? = nil,
                               history: FieldHistoryInput10868? = nil,
                               story: AussieRulesResultStory10868? = nil,
-                              withStory: Bool = true,
+                              withStory: Bool? = nil,
                               stream: StoryStreamPresentation10868? = nil,
                               stories: [AussieRulesEventPageStory10868] = Tests.storyLinks) -> AussieRulesEventPageInput10868 {
         AussieRulesEventPageInput10868(
             phase: phase, reader: readerHeader(phase), headline: headline ?? Tests.headline(phase),
             notice: notice(phase), history: history ?? Tests.history(Tests.stage(phase)), readerPlotHeight: 350,
-            story: withStory ? (story ?? Tests.story()) : nil, stream: stream, stories: stories,
-            about: about, copy: pageCopy)
+            story: (withStory ?? (phase == .final)) ? (story ?? Tests.story()) : nil, stream: stream, stories: stories,
+            about: Tests.about(phase), copy: pageCopy)
     }
 
     private static func stream() -> StoryStreamPresentation10868 {
@@ -1568,6 +1616,28 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
                   clock: "Oct 11, 5:13:47.061944 AM UTC", mode: mode)]
     }
 
+    /// CONSTRUCTED before-play originals: no retained pre-match body exists, so
+    /// nothing later — no game quote, no quote clock — rides on them.
+    private static func beforeOriginals() -> [Details.Original] {
+        [(carltonOutcome, "Carlton Blues"), (sydneyOutcome, "Sydney Swans")].map { outcome, name in
+            Details.Original(
+                identity: Tests.identity(outcome), title: "Sydney Swans vs. Carlton Blues", outcome: name, mode: .pregame,
+                pregame: .missing("Prop pregame chance unavailable"), later: nil, grade: nil,
+                about: Details.About(source: "Polymarket", rules: .unavailable("Rules not retained in this capture"),
+                                     provenance: [], historicalQuote: nil))
+        }
+    }
+
+    /// The owner's phase-admitted originals with the Carlton original held.
+    private static func phaseOriginals(_ phase: AussieRulesEventPagePhase10868) -> AussieRulesEventPageOriginals10868 {
+        let held = selection(carltonOutcome)
+        switch phase {
+        case .before: return originals(beforeOriginals(), selection: held)
+        case .during: return originals(retainedOriginals(.comparison(.recorded)), selection: held)
+        case .final: return originals(retainedOriginals(.result), selection: held)
+        }
+    }
+
     private static let labels: [Details.Identity: String] = [
         Tests.identity(Tests.carltonOutcome): "Carlton Blues",
         Tests.identity(Tests.sydneyOutcome): "Sydney Swans",
@@ -1586,26 +1656,276 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
                                           labels: originals.labels, unavailableChoice: originals.unavailableChoice)
     }
 
+    // MARK: Reachable phase text
+
+    /// Final actual facts, by meaning and context — never a bare "32", which is
+    /// also the valid pre-match 32% event chance. Each one is reachable at the
+    /// final (the positive control).
+    private static let finalPositivePatterns = [
+        "(^|[^0-9.:])32\\s*[–-]\\s*59([^0-9]|$)", "(^|[^0-9.:])59\\s*[–-]\\s*32([^0-9]|$)",
+        "(^|[^0-9.:])59([^0-9%:]|$)", "(^|[^0-9.])4\\.8([^0-9]|$)", "(^|[^0-9.])8\\.11([^0-9]|$)",
+        "\\bgoals?\\b", "\\bbehinds?\\b", "\\bofficial\\b", "final points", "\\bwon\\b", "\\bby 27\\b",
+        "match report", "points ahead",
+    ]
+
+    /// Every final fact a page before the final must not reach.
+    private static let finalFactPatterns = finalPositivePatterns + ["\\bwins\\b", "\\bfavourite (won|finished)\\b"]
+
+    /// Later in-play facts a page before play must not reach: the recorded
+    /// figures, every clock after the last pre-match observation, and the
+    /// suspended status.
+    private static let laterFactPatterns = [
+        "(^|[^0-9.])37%", "(^|[^0-9.])63%", "(^|[^0-9.])0\\.5%", "(^|[^0-9.])99\\.5%",
+        "5:13", "5:40:37", "5:42:33", "7:05:05", "11:47:59", "12:04:05", "\\bsuspended\\b",
+    ]
+
+    /// Each matching text, prefixed by the pattern it matched.
+    private static func leaks(_ texts: [String], _ patterns: [String]) -> [String] {
+        patterns.flatMap { pattern in
+            texts.filter { $0.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil }
+                .map { "\(pattern) ⟵ \($0)" }
+        }
+    }
+
+    private static func reaches(_ texts: [String], _ pattern: String) -> Bool {
+        texts.contains { $0.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil }
+    }
+
+    /// Every string a reader can reach from one input, through the shared
+    /// models the views draw from: the reader heading and notice; the headline
+    /// as drawn and spoken, with its catalogue; the page and full-size history
+    /// (readouts, inspection, keys, controls, spoken value); the page and
+    /// full-size result story; the stream and its story links; the About with
+    /// its sources; and, with `originals`, every chooser choice, catalogue card,
+    /// each original's Details and spoken Details, and the held Details.
+    private static func reachableText(_ input: AussieRulesEventPageInput10868,
+                                      originals: AussieRulesEventPageOriginals10868?) -> [String] {
+        let model = AussieRulesEventPageModel10868(input)
+        var texts = [input.reader.title, input.copy.storiesLabel]
+        texts += [input.reader.state, input.notice, input.copy.allPropsLabel].compactMap { $0 }
+        if let headline = model.headline {
+            let leaf = FieldHeadlineModel10868(headline)
+            texts += [leaf.eyebrow, leaf.title, leaf.stateSummary, leaf.aboutLabel(canAbout: true),
+                      headline.copy.openHint].compactMap { $0 }
+            texts += [leaf.aboutHint(canAbout: true), headline.copy.graphicLabel]
+            if let state = leaf.state {
+                texts += [state.figure, state.unit, state.caption, state.detail, state.spoken].compactMap { $0 }
+            }
+            for competitor in leaf.competitors {
+                texts += [competitor.slot.name, leaf.competitorSummary(competitor)]
+                texts += [competitor.slot.compactName].compactMap { $0 }
+                for endpoint in competitor.metrics {
+                    texts.append(FieldChaseModel10868.label(endpoint))
+                    texts += [FieldChaseModel10868.figure(endpoint), FieldChaseModel10868.words(endpoint),
+                              FieldChaseModel10868.detail(endpoint)].compactMap { $0 }
+                }
+            }
+            for original in headline.catalogue {
+                texts += [original.name, original.browseStatus, original.preview.absence].compactMap { $0 }
+            }
+        } else {
+            texts.append(input.copy.headlineUnavailable)
+        }
+        for history in [input.history, model.readerHistory] {
+            texts += historyText(history)
+        }
+        for story in [model.storyModel, model.readerStoryModel].compactMap({ $0 }) {
+            texts += storyText(story)
+        }
+        if let stream = input.stream {
+            texts.append(stream.heading)
+            texts += [stream.eyebrow, stream.companionLabel, stream.position, stream.status, stream.pending,
+                      stream.nextHint, stream.basis].compactMap { $0 }
+            // Each card: the owner's linked story reason, or its unavailable words.
+            for card in stream.cards {
+                texts.append(card.name)
+                if let link = model.storyLink(card.id) {
+                    texts += [link.reason].compactMap { $0 }
+                } else {
+                    texts.append(input.copy.storyUnavailable)
+                }
+            }
+        }
+        if let about = model.about {
+            texts.append(about.title)
+            for section in about.sections {
+                texts.append(section.title)
+                texts += section.paragraphs
+                if let source = section.source {
+                    texts += [source.id, source.label] + [source.hint].compactMap { $0 }
+                }
+            }
+        }
+        if let originals {
+            texts += originalsText(originals)
+        }
+        return texts
+    }
+
+    private static func historyText(_ history: FieldHistoryInput10868) -> [String] {
+        typealias Readout = FieldHistoryGeometry10868
+        var texts = [history.title, history.summary, history.unboundReadingWords] + history.notes
+        texts += [history.caption, history.markKey.hollow, history.markKey.filled, history.comparisonExplanation,
+                  history.plotUnavailableWords, history.windows?.groupLabel, Readout.probabilityRangeExplanation(history),
+                  Readout.selectionWords(history), history.plotAbsence?.title, history.plotAbsence?.words]
+            .compactMap { $0 }
+        texts += (history.yTicks + history.xTicks).flatMap(\.lines)
+        texts += history.guides.map(\.label) + history.breaks.map(\.mark)
+        texts += Readout.actions(history).flatMap { [$0.label, $0.spokenLabel].compactMap { $0 } }
+        for series in history.series {
+            texts.append(series.name)
+            texts += [series.absentWords, series.keyContext?.label, series.keyContext?.words, series.keyContext?.spoken]
+                .compactMap { $0 }
+            let slots = Readout.readoutSlots(series, in: history) + Readout.selectedSlots(series, in: history)
+            for slot in slots {
+                texts += [slot.label, Readout.spokenSlot(slot)]
+                switch slot.display {
+                case .figure(let figure, let provenance): texts += [figure, provenance]
+                case .words(let words): texts.append(words)
+                }
+            }
+        }
+        if let inspection = history.inspection {
+            texts.append(inspection.caption)
+            texts += [inspection.note].compactMap { $0 }
+            for choice in inspection.choices {
+                texts += choice.lines + [choice.spoken]
+            }
+            for selection in inspection.selections.values {
+                switch selection {
+                case .point(_, let spoken): texts.append(spoken)
+                case .absent(let words): texts.append(words)
+                }
+            }
+            switch inspection.choicePresentation {
+            case .buttons(let groupLabel): texts.append(groupLabel)
+            case .slider(let label): texts.append(label)
+            }
+        }
+        texts.append(Readout.spokenValue(history))
+        return texts
+    }
+
+    private static func storyText(_ story: StoryModel) -> [String] {
+        let copy = story.copy
+        var texts = [copy.eyebrow, copy.title, copy.expectationTitle, copy.railScale, copy.breaksTitle,
+                     copy.breaksGroupLabel, copy.notesLabel, copy.expandLabel]
+        texts += [copy.expectationCaption, copy.breaksCaption, copy.takeaway, copy.selectHint].compactMap { $0 }
+        if story.expectation.isEmpty {
+            texts.append(copy.expectationUnavailable)
+        }
+        for row in story.expectation {
+            texts += [row.name, StoryModel.spokenExpectation(row), FieldChaseModel10868.label(row.endpoint)]
+            texts += [FieldChaseModel10868.figure(row.endpoint), FieldChaseModel10868.words(row.endpoint),
+                      FieldChaseModel10868.detail(row.endpoint)].compactMap { $0 }
+        }
+        if let result = story.result {
+            texts += [result.eyebrow, result.headline, result.spoken] + result.lines + [result.detail].compactMap { $0 }
+        } else {
+            texts.append(copy.resultUnavailable)
+        }
+        let scale = story.story.scale
+        texts += [scale.label] + [scale.upperWords, scale.lowerWords].compactMap { $0 }
+        texts += story.ticks.map { $0.label }
+        if story.bars.isEmpty {
+            texts.append(copy.breaksEmpty)
+        }
+        for bar in story.bars {
+            texts += [bar.row.label, bar.row.leadWords, bar.row.score, bar.row.spoken]
+            texts += [bar.row.change, story.barWords(bar)].compactMap { $0 }
+        }
+        switch story.selection {
+        case .row(let row): texts += [row.label, row.score] + [row.change].compactMap { $0 }
+        case .missing(let words): texts.append(words)
+        case .unheld(let prompt): texts += [prompt].compactMap { $0 }
+        }
+        texts += story.notes
+        if let report = story.story.report {
+            texts += [report.id, report.label] + [report.hint].compactMap { $0 }
+        }
+        return texts
+    }
+
+    private static func originalsText(_ originals: AussieRulesEventPageOriginals10868) -> [String] {
+        var texts = [originals.heading, originals.emptyWords, originals.unavailableChoice]
+        texts += [originals.context].compactMap { $0 }
+        for choice in choices(originals) {
+            texts += [choice.label, OriginalMarketChooser9483.spoken(choice)] + [choice.status].compactMap { $0 }
+        }
+        let cards = OriginalMarketCatalogue9483.cards(catalogue: originals.catalogue, selection: originals.selection,
+                                                      labels: originals.labels, unavailableChoice: originals.unavailableChoice)
+        texts += cards.map { OriginalMarketCatalogue9483.spoken($0) }
+        var contents = cards.compactMap(\.content)
+        let held = Details.content(catalogue: originals.catalogue, selection: originals.selection)
+        contents += [held].compactMap { $0 }
+        texts.append(Details.spoken(held))
+        for original in originals.catalogue?.originals ?? [] {
+            let own = Details.content(catalogue: originals.catalogue,
+                                      selection: Details.Selection(scope: originals.catalogue?.scope ?? "",
+                                                                   identity: original.identity))
+            texts.append(Details.spoken(own))
+            contents += [own].compactMap { $0 }
+        }
+        for content in contents {
+            texts += [content.title, content.outcome]
+            for reading in content.readings {
+                texts += [reading.label, reading.text] + [reading.provenance].compactMap { $0 }
+            }
+            if let result = content.result {
+                texts += [result.words] + [result.provenance].compactMap { $0 }
+            }
+            texts += content.about.flatMap { [$0.label, $0.value] }
+            switch content.rules {
+            case .verified(let paragraphs): texts += paragraphs
+            case .unavailable(let words): texts.append(words)
+            case .omitted: break
+            }
+        }
+        return texts
+    }
+
     // MARK: - Phases
 
     func testThePhaseGatesTheHeadlineAndHidesEveryLaterFactBeforeAndDuringPlay() {
-        let before = Page(input: Self.input(.before))
-        XCTAssertEqual(before.headlineContent()?.input, Self.input(.before).headline)
-        XCTAssertEqual(Self.metrics(before.model.headline), [["Pre-match win chance=32%"], ["Pre-match win chance=68%"]],
-                       "a supplied later reading and both final points stay hidden before play")
-        XCTAssertNil(before.model.story)
-        XCTAssertNil(before.model.storyModel)
-        XCTAssertNil(before.pageStoryContent())
-        XCTAssertNil(Page(input: Self.input(.before), mode: .reader(.story)).readerStoryContent())
-        XCTAssertFalse(before.model.readerShows(.story))
-        XCTAssertTrue(before.model.readerShows(.history))
+        // The ordinary owner fixtures admit only each phase's facts.
+        let ordinaryBefore = Self.input(.before)
+        XCTAssertNil(ordinaryBefore.story)
+        XCTAssertEqual(ordinaryBefore.headline.finishes, [])
+        XCTAssertEqual(ordinaryBefore.headline.pairs.map { $0.later == nil }, [true, true])
+        let ordinaryDuring = Self.input(.during)
+        XCTAssertNil(ordinaryDuring.story)
+        XCTAssertEqual(ordinaryDuring.headline.finishes, [])
 
-        let during = Page(input: Self.input(.during))
-        XCTAssertEqual(Self.metrics(during.model.headline),
-                       [["Pre-match win chance=32%", "Recorded=37%"], ["Pre-match win chance=68%", "Recorded=63%"]])
-        XCTAssertNil(during.model.story, "no final actual or story leaks during play")
-        XCTAssertNil(during.pageStoryContent())
-        XCTAssertFalse(during.model.readerShows(.story))
+        // The hostile controls hand every later reading, both final points and the
+        // story to the earlier phases; the leaves' own phase rules still show
+        // only the phase's facts.
+        let hostileBefore = Self.input(.before, headline: Self.headline(.before, supplyingLater: true), withStory: true)
+        let hostileDuring = Self.input(.during, headline: Self.headline(.during, supplyingLater: true), withStory: true)
+        XCTAssertNotNil(hostileBefore.story)
+        XCTAssertEqual(hostileBefore.headline.finishes.count, 2)
+
+        for input in [ordinaryBefore, hostileBefore] {
+            let before = Page(input: input)
+            XCTAssertEqual(before.headlineContent()?.input, input.headline)
+            XCTAssertEqual(Self.metrics(before.model.headline), [["Pre-match win chance=32%"], ["Pre-match win chance=68%"]],
+                           "no later reading or final points before play")
+            XCTAssertNil(before.model.story)
+            XCTAssertNil(before.model.storyModel)
+            XCTAssertNil(before.pageStoryContent())
+            XCTAssertNil(Page(input: input, mode: .reader(.story)).readerStoryContent())
+            XCTAssertFalse(before.model.readerShows(.story))
+            XCTAssertTrue(before.model.readerShows(.history))
+        }
+
+        for input in [ordinaryDuring, hostileDuring] {
+            let during = Page(input: input)
+            XCTAssertEqual(Self.metrics(during.model.headline),
+                           [["Pre-match win chance=32%", "Recorded 5:13 AM UTC=37%"],
+                            ["Pre-match win chance=68%", "Recorded 5:13 AM UTC=63%"]])
+            XCTAssertNil(during.model.story, "no final actual or story leaks during play")
+            XCTAssertNil(during.pageStoryContent())
+            XCTAssertFalse(during.model.readerShows(.story))
+        }
 
         let finished = Page(input: Self.input(.final))
         XCTAssertEqual(Self.metrics(finished.model.headline),
@@ -1637,8 +1957,13 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
             ["Pre-match win chance: 32%, Oct 11, 4:03:39.046959 AM UTC · event history, before the 4:04 AM kickoff"],
             ["Pre-match win chance: 68%, Oct 11, 4:03:39.046959 AM UTC · event history, before the 4:04 AM kickoff"],
         ])
-        XCTAssertNotNil(headline.pairs[0].later, "the later reading is supplied, and not shown before play")
+        XCTAssertEqual(headline.pairs.map { $0.later == nil }, [true, true], "the before fixture admits no later reading")
+        XCTAssertEqual(headline.finishes, [])
         XCTAssertTrue(FieldHeadlineModel10868(headline).keyIsHollow)
+        // Hostile control: a supplied later reading is still not shown before play.
+        let supplied = Self.headline(.before, supplyingLater: true)
+        XCTAssertNotNil(supplied.pairs[0].later)
+        XCTAssertEqual(FieldHeadlineModel10868(supplied).competitors.map(\.metrics.count), [1, 1])
 
         // The pre-match history's readout is bound to that exact observation.
         let history = Self.history(.pregame)
@@ -1652,8 +1977,8 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
         XCTAssertEqual(point.style, .hollow)
 
         // The event's pre-match chance is never an original's baseline.
-        let catalogue = Self.originals(Self.retainedOriginals(.pregame), selection: nil).catalogue
-        let readings = Self.choices(Self.originals(Self.retainedOriginals(.pregame), selection: nil)).compactMap {
+        let catalogue = Self.originals(Self.beforeOriginals(), selection: nil).catalogue
+        let readings = Self.choices(Self.originals(Self.beforeOriginals(), selection: nil)).compactMap {
             $0.selection.flatMap { Details.content(catalogue: catalogue, selection: $0)?.readings.first }
         }
         XCTAssertEqual(readings.map(\.text), ["Prop pregame chance unavailable", "Prop pregame chance unavailable"])
@@ -1666,9 +1991,9 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
         let model = FieldHeadlineModel10868(headline)
         let summaries = model.competitors.map { model.competitorSummary($0) }
         XCTAssertEqual(summaries, [
-            "Pre-match win chance: 32%, \(Self.baselineDetail). Recorded: 37%, Recorded Oct 11, 5:13:47.061944 AM UTC · Polymarket game market",
-            "Pre-match win chance: 68%, \(Self.baselineDetail). Recorded: 63%, Recorded Oct 11, 5:13:47.172598 AM UTC · Polymarket game market",
-        ], "each team's quote keeps its own quote clock")
+            "Pre-match win chance: 32%, \(Self.baselineDetail). Recorded 5:13 AM UTC: 37%, Recorded Oct 11, 5:13:47.061944 AM UTC · Polymarket game market",
+            "Pre-match win chance: 68%, \(Self.baselineDetail). Recorded 5:13 AM UTC: 63%, Recorded Oct 11, 5:13:47.172598 AM UTC · Polymarket game market",
+        ], "each team's quote keeps its own quote clock, and its visible label says when")
         XCTAssertEqual(model.stateSummary, "Suspended. Score and quarter unavailable. Match result unconfirmed")
         XCTAssertEqual(during.input.notice, "Score and quarter unavailable. Match result unconfirmed.")
         for words in summaries + [model.stateSummary ?? ""] {
@@ -1689,8 +2014,13 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
             [.figure("68%", provenance: Self.baselineProvenance), .figure("99.5%", provenance: Self.recordedProvenance(1039))],
         ])
 
-        // The same history under a before-play page shows no recorded headline figure.
+        // Hostile control: a future history handed to a before-play page passes
+        // through unchanged — the page never filters history, so the ordinary
+        // before fixture supplies only the 954 pre-match rows — and the headline
+        // still shows only the pre-match chance.
         let pre = Page(input: Self.input(.before, history: suspended))
+        XCTAssertEqual(pre.historyContent(reader: false).input, suspended)
+        XCTAssertEqual(Self.input(.before).history.series[0].runs.flatMap(\.points).count, 954)
         XCTAssertEqual(Self.metrics(pre.model.headline), [["Pre-match win chance=32%"], ["Pre-match win chance=68%"]])
         XCTAssertNil(pre.model.story)
     }
@@ -2050,8 +2380,82 @@ final class AussieRulesEventPagePresentation10868Tests: XCTestCase {
         XCTAssertNil(streamed.model.storyLink("missing"))
         let twice = Page(input: Self.input(.final, stream: Self.stream(), stories: Self.storyLinks + Self.storyLinks))
         XCTAssertNil(twice.model.storyLink("result"))
-        XCTAssertNil(Page(input: Self.input(.during, stream: Self.stream())).model.storyLink("result"),
+        XCTAssertNil(Page(input: Self.input(.during, withStory: true, stream: Self.stream())).model.storyLink("result"),
                      "a story this phase does not mount is never linked")
+    }
+
+    // MARK: - Phase-admitted reachable text
+
+    func testEachPhaseReachesOnlyItsOwnAdmittedFactsOnEverySurface() throws {
+        let before = Self.reachableText(Self.input(.before), originals: Self.phaseOriginals(.before))
+        let during = Self.reachableText(Self.input(.during), originals: Self.phaseOriginals(.during))
+        let finished = Self.reachableText(Self.input(.final), originals: Self.phaseOriginals(.final))
+
+        // Before play: no later recording, clock or status, and no final actual,
+        // report or score — while the valid pre-match 32% event chance, equal in
+        // digits to the final 32 points, stays.
+        XCTAssertEqual(Self.leaks(before, Self.laterFactPatterns + Self.finalFactPatterns), [])
+        XCTAssertTrue(Self.reaches(before, "(^|[^0-9.])32%"))
+        XCTAssertTrue(Self.reaches(before, "(^|[^0-9.])68%"))
+        let beforeHistory = Self.input(.before).history
+        XCTAssertTrue(beforeHistory.series.allSatisfy { series in
+            series.runs.flatMap(\.points).allSatisfy { $0.x < 0 && $0.style == .hollow }
+        }, "every before-play history point is a pre-match observation")
+
+        // During play: the independently dated recordings stay; no final
+        // actual, report or score.
+        XCTAssertEqual(Self.leaks(during, Self.finalFactPatterns), [])
+        for figure in ["(^|[^0-9.])37%", "(^|[^0-9.])63%", "(^|[^0-9.])0\\.5%", "(^|[^0-9.])99\\.5%"] {
+            XCTAssertTrue(Self.reaches(during, figure), figure)
+        }
+
+        // The during headline's recorded label carries its own quote time, apart
+        // from the history's later held reading, and Info carries the full date
+        // and source.
+        let duringInput = Self.input(.during)
+        let headline = try XCTUnwrap(AussieRulesEventPageModel10868(duringInput).headline)
+        let recorded = FieldHeadlineModel10868(headline).competitors.compactMap { $0.metrics.last }
+        XCTAssertEqual(recorded.map { FieldChaseModel10868.label($0) }, ["Recorded 5:13 AM UTC", "Recorded 5:13 AM UTC"])
+        XCTAssertEqual(recorded.map { FieldChaseModel10868.figure($0) }, ["37%", "63%"])
+        let history = duringInput.history
+        XCTAssertEqual(history.series.map { FieldHistoryGeometry10868.inspectedDisplay($0, in: history) }, [
+            .figure("0.5%", provenance: "Recorded Oct 11, 12:04:05 PM UTC · Polymarket event history"),
+            .figure("99.5%", provenance: "Recorded Oct 11, 12:04:05 PM UTC · Polymarket event history"),
+        ])
+        let info = try XCTUnwrap(AussieRulesEventPageModel10868(duringInput).about)
+        XCTAssertTrue(Self.reaches(info.sections.flatMap(\.paragraphs), "Polymarket game market at Oct 11, 5:13:47 AM UTC"))
+
+        // Positive control: the final input does reach every final fact.
+        for pattern in Self.finalPositivePatterns {
+            XCTAssertTrue(Self.reaches(finished, pattern), pattern)
+        }
+        XCTAssertTrue(Self.reaches(finished, "(^|[^0-9.])32%"), "the pre-match chance stays at the final too")
+    }
+
+    func testThePhaseTextGuardCatchesTheFixtureItReplaced() {
+        // The replaced shape: the final About (official score, goals and
+        // behinds, report source, later quotes) and an in-play originals body
+        // handed to a before-play page.
+        var leaked = Self.input(.before)
+        leaked.about = Self.about(.final)
+        let hits = Self.leaks(
+            Self.reachableText(leaked, originals: Self.originals(Self.retainedOriginals(.pregame),
+                                                                 selection: Self.selection(Self.carltonOutcome))),
+            Self.laterFactPatterns + Self.finalFactPatterns)
+        for pattern in ["\\bgoals?\\b", "\\bbehinds?\\b", "\\bofficial\\b", "match report",
+                        "(^|[^0-9.])37%", "(^|[^0-9.])63%", "5:13"] {
+            XCTAssertTrue(hits.contains { $0.hasPrefix("\(pattern) ⟵") }, pattern)
+        }
+
+        // During play the same final About is caught.
+        var duringLeak = Self.input(.during)
+        duringLeak.about = Self.about(.final)
+        XCTAssertFalse(Self.leaks(Self.reachableText(duringLeak, originals: Self.phaseOriginals(.during)),
+                                  Self.finalFactPatterns).isEmpty)
+
+        // A bare 32 in a pre-match figure is not a final fact.
+        XCTAssertEqual(Self.leaks(["32%", "Pre-match win chance: 32%"], Self.finalFactPatterns), [])
+        XCTAssertFalse(Self.leaks(["Final points: 32"], Self.finalFactPatterns).isEmpty)
     }
 
     // MARK: - Interaction
