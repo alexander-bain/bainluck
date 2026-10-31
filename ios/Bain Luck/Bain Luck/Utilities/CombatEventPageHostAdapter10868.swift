@@ -45,14 +45,30 @@ import SwiftUI
 /// (`CombatHistoryAdapter10868.unavailable`), with no working chart control and
 /// no retry. The real load/error/retry contract is Native's.
 ///
-/// Controls: only Full chart (and a headline fighter's open) opens anything —
-/// the full-size history. Details and Inspect are offered unavailable until
-/// their owner contracts exist, so the shared callback never enables a control
-/// that does nothing. The About opens with no source link (none is served).
+/// Chart controls: only Full chart (and a headline fighter's open) opens
+/// anything — the full-size history. The chart's Details and Inspect are
+/// offered unavailable until their owner contracts exist, so the shared
+/// callback never enables a control that does nothing. The About opens with no
+/// source link (none is served).
 /// The page's hold (`onInteraction`) is handed to the presentation, which calls
 /// it once before each page, catalogue or Details action; stream cards request
 /// it through the stream's own `.interaction` intent; full-size content keeps
 /// the exact callbacks with no second hold.
+///
+/// A STORY CARD'S DETAILS. The four cards read their originals from the game
+/// matrix; Details opens a catalogue original, which comes from the served raw
+/// rows. The two can disagree — a raw row withdrawn while its matrix option
+/// stays, a duplicated row, a composite matrix ref. So each card's Details
+/// callback is offered only when that card's own selected Details action (the
+/// leaf's `detailsAction`, which names the selected original only) resolves
+/// through `detailsSelection` to exactly one current catalogue original
+/// (`detailsRoutes`); otherwise that card gets no Details callback, which is
+/// how the leaves say "no Details" (`canOpenDetails` is `onDetails != nil`).
+/// Nothing else changes: every card, original, selection and neighbour stays,
+/// and a neighbour that resolves keeps its working control. The page and the
+/// full-size reader take the same callbacks from the same built input, and
+/// Details still asks for no hold of its own (stream cards request it through
+/// the stream; full-size content asks for none).
 struct CombatEventPageHost10868: View {
     let event: EventDetail
     let history: EventHistoryResponse?
@@ -132,7 +148,11 @@ struct CombatEventPageHost10868: View {
     }
 
     private func page(_ built: Built, mode: CombatEventPageMode10868) -> CombatEventPagePresentation10868 {
-        CombatEventPagePresentation10868(
+        let details = Self.detailsCallbacks(built) { held in
+            selection = held
+            open(.original)
+        }
+        return CombatEventPagePresentation10868(
             input: built.input, mode: mode, originals: built.originals,
             onAbout: { open(.about) },
             onAboutSource: nil,
@@ -152,16 +172,16 @@ struct CombatEventPageHost10868: View {
             onHistoryInspectionChoice: nil,
             onHistoryPlotPosition: nil,
             onMethodSelect: { methodsHeld = .init(rowID: $0.methodID, originalID: $0.originalID) },
-            onMethodDetails: { details(marketID: $0.marketID, originalID: $0.originalID, in: built.originals) },
+            onMethodDetails: details.methods,
             methodTimingExpanded: $methodTiming,
             onRoundSelect: { roundsHeld = .init(rowID: $0.slotID, originalID: $0.originalID) },
-            onRoundDetails: { details(marketID: $0.marketID, originalID: $0.originalID, in: built.originals) },
+            onRoundDetails: details.rounds,
             roundTimingExpanded: $roundTiming,
             onKnockoutSelect: { knockoutHeld = .init(rowID: $0.methodID, originalID: $0.originalID) },
-            onKnockoutDetails: { details(marketID: $0.marketID, originalID: $0.originalID, in: built.originals) },
+            onKnockoutDetails: details.knockout,
             knockoutTimingExpanded: $knockoutTiming,
             onDurationSelect: { durationHeld = .init(rowID: $0.durationMarketID, originalID: $0.originalID) },
-            onDurationDetails: { details(marketID: $0.marketID, originalID: $0.originalID, in: built.originals) },
+            onDurationDetails: details.duration,
             durationTimingExpanded: $durationTiming,
             onInteraction: onInteraction)
     }
@@ -171,22 +191,109 @@ struct CombatEventPageHost10868: View {
         presented = Presented(mode: mode)
     }
 
-    /// A card's Details: the one catalogue original with this market and side,
-    /// else nothing — never a neighbour.
-    private func details(marketID: String, originalID: String, in originals: CombatEventPageOriginals10868) {
-        guard let held = Self.detailsSelection(marketID: marketID, originalID: originalID, in: originals) else { return }
-        selection = held
-        open(.original)
-    }
-
     /// The catalogue selection a card's exact original names: exactly one
-    /// original whose identity carries this market and this side.
+    /// current catalogue original whose identity carries this market and this
+    /// side. A composite ref — more than one provider id in its market or its
+    /// side, as part three joins them with "+" — is not one provider original,
+    /// so it resolves to nothing even when a catalogue row carries the same
+    /// composite. No catalogue, no match or more than one match: nothing, never
+    /// a neighbour.
     static func detailsSelection(marketID: String, originalID: String,
                                  in originals: CombatEventPageOriginals10868) -> OriginalMarketDetails9483.Selection? {
-        guard let catalogue = originals.catalogue else { return nil }
+        guard let catalogue = originals.catalogue, !isComposite(marketID), !isComposite(originalID) else { return nil }
         let found = catalogue.originals.filter { $0.identity.market == marketID && $0.identity.side == originalID }
         guard found.count == 1 else { return nil }
         return OriginalMarketDetails9483.Selection(scope: catalogue.scope, identity: found[0].identity)
+    }
+
+    /// Part three's spelling of a multi-id ref ("240262496+240262497").
+    static func isComposite(_ id: String) -> Bool {
+        id.contains("+")
+    }
+
+    // MARK: - A story card's Details
+
+    /// Where each card's Details would open: the selection its own selected
+    /// Details action resolves to, or nil — no selected original, the leaf
+    /// offers no Details for it, or it names no single current catalogue
+    /// original. Read from the inputs the leaves are actually handed
+    /// (`CombatEventPageModel10868`), so a card the page does not mount offers
+    /// nothing.
+    struct DetailsRoutes: Equatable {
+        var methods: OriginalMarketDetails9483.Selection?
+        var rounds: OriginalMarketDetails9483.Selection?
+        var knockout: OriginalMarketDetails9483.Selection?
+        var duration: OriginalMarketDetails9483.Selection?
+    }
+
+    static func detailsRoutes(_ built: Built) -> DetailsRoutes {
+        let model = CombatEventPageModel10868(built.input)
+        let originals = built.originals
+        return DetailsRoutes(
+            methods: methodRoute(model.methods, in: originals),
+            rounds: roundRoute(model.rounds, in: originals),
+            knockout: methodRoute(model.knockout, in: originals),
+            duration: durationRoute(model.duration, in: originals))
+    }
+
+    static func methodRoute(_ input: CombatMethodInput10868?,
+                            in originals: CombatEventPageOriginals10868) -> OriginalMarketDetails9483.Selection? {
+        guard case .details(let ref)? = input?.detailsAction(canOpenDetails: true) else { return nil }
+        return detailsSelection(marketID: ref.marketID, originalID: ref.originalID, in: originals)
+    }
+
+    static func roundRoute(_ input: CombatRoundInput10868?,
+                           in originals: CombatEventPageOriginals10868) -> OriginalMarketDetails9483.Selection? {
+        guard case .details(let ref)? = input?.detailsAction(canOpenDetails: true) else { return nil }
+        return detailsSelection(marketID: ref.marketID, originalID: ref.originalID, in: originals)
+    }
+
+    static func durationRoute(_ input: CombatDurationInput10868?,
+                              in originals: CombatEventPageOriginals10868) -> OriginalMarketDetails9483.Selection? {
+        guard case .details(let ref)? = input?.detailsAction(canOpenDetails: true) else { return nil }
+        return detailsSelection(marketID: ref.marketID, originalID: ref.originalID, in: originals)
+    }
+
+    /// The four cards' Details callbacks, as the page and the full-size reader
+    /// both pass them.
+    struct DetailsCallbacks {
+        var methods: ((CombatMethodOriginalRef10868) -> Void)?
+        var rounds: ((CombatRoundOriginalRef10868) -> Void)?
+        var knockout: ((CombatMethodOriginalRef10868) -> Void)?
+        var duration: ((CombatDurationOriginalRef10868) -> Void)?
+    }
+
+    /// A card gets a callback only when its route exists, and the callback
+    /// opens exactly that route: the ref it receives must resolve to the same
+    /// selection, else it does nothing. `open` is the host's exact write; no
+    /// hold is asked here.
+    static func detailsCallbacks(_ built: Built,
+                                 open: @escaping (OriginalMarketDetails9483.Selection) -> Void) -> DetailsCallbacks {
+        let routes = detailsRoutes(built)
+        let originals = built.originals
+        // The exact route, opened only for a ref that resolves to it again.
+        func opener(_ route: OriginalMarketDetails9483.Selection?) -> ((String, String) -> Void)? {
+            guard let route else { return nil }
+            return { marketID, originalID in
+                guard Self.detailsSelection(marketID: marketID, originalID: originalID, in: originals) == route
+                else { return }
+                open(route)
+            }
+        }
+        func methodCallback(_ route: OriginalMarketDetails9483.Selection?) -> ((CombatMethodOriginalRef10868) -> Void)? {
+            guard let send = opener(route) else { return nil }
+            return { (ref: CombatMethodOriginalRef10868) in send(ref.marketID, ref.originalID) }
+        }
+        func roundCallback(_ route: OriginalMarketDetails9483.Selection?) -> ((CombatRoundOriginalRef10868) -> Void)? {
+            guard let send = opener(route) else { return nil }
+            return { (ref: CombatRoundOriginalRef10868) in send(ref.marketID, ref.originalID) }
+        }
+        func durationCallback(_ route: OriginalMarketDetails9483.Selection?) -> ((CombatDurationOriginalRef10868) -> Void)? {
+            guard let send = opener(route) else { return nil }
+            return { (ref: CombatDurationOriginalRef10868) in send(ref.marketID, ref.originalID) }
+        }
+        return DetailsCallbacks(methods: methodCallback(routes.methods), rounds: roundCallback(routes.rounds),
+                                knockout: methodCallback(routes.knockout), duration: durationCallback(routes.duration))
     }
 
     private func handle(_ intent: StoryStreamPresentation10868.Intent) {
