@@ -1169,10 +1169,11 @@ B 1790407440 99
         label: "Brisbane lead · actual points", upperWords: "Brisbane ahead", lowerWords: "Fremantle ahead")
 
     private static func scoring(plays source: [Play] = Tests.plays, selected: String? = nil,
-                                checkpoints marks: [AflMatchScoringCheckpoint10868]? = nil) -> AflMatchScoringStory10868 {
+                                checkpoints marks: [AflMatchScoringCheckpoint10868]? = nil,
+                                readerHeight: CGFloat? = 300) -> AflMatchScoringStory10868 {
         AflMatchScoringStory10868(
             plays: scoringPlays(source), scale: scoringScale, guides: guides(source), checkpoints: marks ?? checkpoints(),
-            selectedPlayID: selected ?? Tests.plays.last!.id, plotHeight: 210, readerPlotHeight: 300,
+            selectedPlayID: selected ?? Tests.plays.last!.id, plotHeight: 210, readerPlotHeight: readerHeight,
             copy: AflMatchScoringCopy10868(
                 eyebrow: "THE COMEBACK · ACTUAL POINTS", title: "17 down. Four goals. Won.",
                 orderLabel: "Scoring plays, in order — not elapsed time",
@@ -2585,6 +2586,69 @@ B 1790407440 99
         var unlabelled = Self.pageCopy(.final)
         unlabelled.comparisonLabel = nil
         XCTAssertEqual(Page(input: Self.input(.final, copy: unlabelled)).comparisonContent(reader: false).label, "Win probability history")
+    }
+
+    func testTheFullScoringHeightIsValidatedAndTheScoringStoryOtherwiseUnchanged() throws {
+        // (owner full-size height, full-size scoring height); inline is 210.
+        let cases: [(CGFloat?, CGFloat)] = [
+            (nil, 210), (0, 210), (-40, 210), (CGFloat.nan, 210), (CGFloat.infinity, 210), (-CGFloat.infinity, 210),
+            (120, 210), (210, 210), (300, 300), (420, 420),
+        ]
+        let opened = Self.pointID(Self.brisbane, 1_790_396_940)
+        for (owner, expected) in cases {
+            let words = owner.map { "\($0)" } ?? "nil"
+            var log: [String] = []
+            let input = Self.input(.final, scoring: Self.scoring(readerHeight: owner))
+            func page(_ mode: AflMatchEventPageMode10868) -> Page {
+                Page(input: input, mode: mode,
+                     onCardOpen: { log.append("open:\($0.rawValue)") },
+                     onCardDetails: { log.append("details:\($0.rawValue)") },
+                     onPlaySelect: { log.append("play:\($0)") },
+                     onChanceOpen: { log.append("chance:\($0.observation ?? "none")") },
+                     onReaderIntent: { log.append("reader:\(Tests.words($0))") },
+                     onInteraction: { log.append("hold") })
+            }
+            // The ACTUAL composed page and full-size scoring methods.
+            let inline = try XCTUnwrap(page(.page).pageScoringContent(), words)
+            let full = try XCTUnwrap(page(.reader(.scoring)).readerScoringContent(), words)
+            XCTAssertEqual(log, [], "building either card holds nothing (\(words))")
+            // Height: inline unchanged; full size validated, finite, never shorter.
+            XCTAssertEqual(inline.model.story.plotHeight, 210, words)
+            XCTAssertEqual(full.model.story.plotHeight, expected, words)
+            XCTAssertTrue(full.model.story.plotHeight.isFinite, words)
+            XCTAssertGreaterThanOrEqual(full.model.story.plotHeight, inline.model.story.plotHeight, words)
+            // Everything but the height is the same story, context and selection.
+            XCTAssertEqual(full.model.story.plays, inline.model.story.plays, words)
+            XCTAssertEqual(full.model.story.plays.count, 55, words)
+            XCTAssertEqual(full.model.story.scale, inline.model.story.scale, words)
+            XCTAssertEqual(full.model.story.guides, inline.model.story.guides, words)
+            XCTAssertEqual(full.model.story.checkpoints, inline.model.story.checkpoints, words)
+            XCTAssertEqual(full.model.story.selectedPlayID, inline.model.story.selectedPlayID, words)
+            XCTAssertEqual(full.model.story.copy, inline.model.story.copy, words)
+            XCTAssertEqual(full.model.placements, inline.model.placements, words)
+            XCTAssertEqual(full.model.checkpoints, inline.model.checkpoints, words)
+            XCTAssertEqual(full.model.selectedID, inline.model.selectedID, words)
+            XCTAssertEqual(full.model.headline, inline.model.headline, words)
+            XCTAssertEqual(full.model.chance, inline.model.chance, words)
+            // Once-only holds on the page; exact callbacks full size.
+            let chance = try XCTUnwrap(inline.model.chanceModel, words)
+            let opening = try XCTUnwrap(chance.sides.first.flatMap { chance.openAction($0, canOpen: true) }, words)
+            inline.onSelect?(Self.plays[3].id)
+            inline.onExpand?()
+            inline.onChanceOpen?(opening)
+            full.onSelect?(Self.plays[4].id)
+            full.onDetails?()
+            full.onPeriods?()
+            full.onChanceOpen?(opening)
+            XCTAssertNil(full.onExpand, words)
+            XCTAssertEqual(log, [
+                "hold", "play:\(Self.plays[3].id)", "hold", "open:scoring", "hold", "chance:\(opened)",
+                "play:\(Self.plays[4].id)", "reader:details:scoring", "reader:open:periods", "chance:\(opened)",
+            ], words)
+        }
+        // The default fixture's valid enlarged height.
+        XCTAssertEqual(Model(Self.input(.final)).readerScoringModel?.story.plotHeight, 300)
+        XCTAssertEqual(Model(Self.input(.final)).scoringModel?.story.plotHeight, 210)
     }
 
     // MARK: - Rules fidelity

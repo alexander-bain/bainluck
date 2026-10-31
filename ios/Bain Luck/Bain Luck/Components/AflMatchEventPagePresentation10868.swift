@@ -878,14 +878,15 @@ struct AflMatchEventPageModel10868: Equatable {
         Self.readable(input.copy.comparisonLabel) ?? input.copy.historyName
     }
 
-    /// The full-size scoring story: the same story at the owner's reader plot
-    /// height when taller.
+    /// The full-size scoring story: the same story at the owner's full-size
+    /// height while usable, never shorter than inline; any other height keeps
+    /// the inline one.
     var readerScoringModel: AflMatchScoringModel10868? {
         guard let shown = scoring else { return nil }
         let full = AflMatchScoringStory10868(
             plays: shown.plays, scale: shown.scale, guides: shown.guides, checkpoints: shown.checkpoints,
             selectedPlayID: shown.selectedPlayID,
-            plotHeight: max(shown.plotHeight, shown.readerPlotHeight ?? shown.plotHeight),
+            plotHeight: RugbyMatchEventPageModel10868.readerPlotHeight(shown.readerPlotHeight, history: shown.plotHeight),
             readerPlotHeight: shown.readerPlotHeight, copy: shown.copy)
         return AflMatchScoringModel10868(story: full, headline: headline, chance: chance)
     }
