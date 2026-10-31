@@ -29,6 +29,16 @@
  * endpoints cannot share a row, the last takes a second row (the minimal clear
  * placement); type never shrinks. Tick times, positions, guides and every
  * observation are unchanged.
+ *
+ * Period guide labels (FQ2, Design admission 2026-10-31): each label is measured
+ * at its real size, like the time labels, and drawn where it always was — 3 px
+ * right of its own guide line — whenever it fits inside the SVG and clears the
+ * labels beside it. Only a label that would leave the SVG slides inward, as far
+ * as the edge needs; only one that would then touch a neighbour takes a row
+ * above, and the drawing grows by that row so the plot keeps its full height.
+ * The guide line, every period, its words and its time never move or go; type
+ * never shrinks (the 200% "Q3" that ran past the right edge, browser lab
+ * c9bcdad25b).
  */
 
 import { useId, useRef, useState } from "react";
@@ -109,6 +119,49 @@ export function axisLabelSubset(
   return shown
     .sort((a, b) => a.index - b.index)
     .map((label) => ({ index: label.index, start: label.start, lane: 0 }));
+}
+
+export interface GuideLabelPlacement {
+  /** Position of the label's guide among the period guides, in the owner's order. */
+  index: number;
+  /** Left edge of the label, in SVG coordinates. */
+  start: number;
+  /** 0 is the row just above the plot (every label's row before FQ2); 1, 2… only to clear a collision. */
+  lane: number;
+}
+
+/**
+ * Where each period guide's label is drawn. A label starts `pad` px right of its
+ * own guide line — exactly where it always started — whenever it ends inside
+ * `right` (the SVG's width) and clears, by `gap`, every label already placed in
+ * its row. A label that would leave the SVG slides left only as far as the edge
+ * needs, and never past `left` (the plot's left edge, so it cannot reach the y
+ * labels). A label that would then touch a neighbour takes the next row up. A
+ * pure function of measured (or estimated) widths: nothing is shortened,
+ * renamed, resized, hidden or dropped, and the guide lines are not its concern.
+ */
+export function guideLabelPlacement(
+  guideXs: number[],
+  lengths: number[],
+  left: number,
+  right: number,
+  gap: number,
+  pad = 3,
+): GuideLabelPlacement[] {
+  const lo = Number.isFinite(left) ? left : 0;
+  const hi = Math.max(lo, Number.isFinite(right) ? right : lo);
+  const count = Math.min(guideXs.length, lengths.length);
+  const placed: Array<GuideLabelPlacement & { length: number }> = [];
+  for (let index = 0; index < count; index += 1) {
+    const length = Math.max(0, Number.isFinite(lengths[index]) ? lengths[index] : 0);
+    const own = (Number.isFinite(guideXs[index]) ? guideXs[index] : lo) + pad;
+    // Inside the SVG: the own position when it fits, else slid in from the right edge, never past `left`.
+    const start = own + length <= hi ? Math.max(lo, own) : Math.max(lo, hi - length);
+    let lane = 0;
+    while (placed.some((p) => p.lane === lane && start < p.start + p.length + gap && p.start < start + length + gap)) lane += 1;
+    placed.push({ index, start, lane, length });
+  }
+  return placed.map(({ index, start, lane }) => ({ index, start, lane }));
 }
 
 export interface HockeyJourneyLineColors {
@@ -192,7 +245,24 @@ export default function HockeyJourneyHistoryChart({
     domain && domain.upper > domain.lower
       ? MARGIN.left + ((t - domain.lower) / (domain.upper - domain.lower)) * plotW
       : MARGIN.left + plotW / 2;
-  const y = (p: number) => MARGIN.top + (1 - p) * plotH;
+  const laneHeight = Math.ceil(fontPx * 1.25);
+
+  // Period guide labels (FQ2): measured, kept 3 px right of their own line when they fit inside
+  // the SVG and clear their neighbours; otherwise slid in from the edge and, only on a collision,
+  // lifted a row. A lifted row adds height ABOVE the plot (`guideBand`), so the plot keeps its height.
+  const periodGuides = history.guides.filter((guide) => guide.kind === "period");
+  const guideLabels = guideLabelPlacement(
+    periodGuides.map((guide) => x(guide.t)),
+    periodGuides.map((guide) => lengthOf(guide.label)),
+    MARGIN.left,
+    width,
+    LABEL_GAP_PX,
+  );
+  const guideLabelAt = new Map(periodGuides.map((guide, i) => [guide.id, guideLabels[i]]));
+  const guideBand = guideLabels.reduce((n, label) => Math.max(n, label.lane), 0) * laneHeight;
+  const plotTop = MARGIN.top + guideBand;
+
+  const y = (p: number) => plotTop + (1 - p) * plotH;
   const path = (run: HockeyJourneyHistoryPoint[]) =>
     run.map((pt, i) => `${i === 0 ? "M" : "L"} ${x(pt.t).toFixed(1)} ${y(pt.p).toFixed(1)}`).join(" ");
 
@@ -206,28 +276,31 @@ export default function HockeyJourneyHistoryChart({
     Math.max(LABEL_GAP_PX, fontPx),
   );
   const laneCount = placements.reduce((n, label) => Math.max(n, label.lane + 1), 0);
-  const laneHeight = Math.ceil(fontPx * 1.25);
   // The first lane starts below the lower half of the "0%" label, which is centred on the plot's floor.
-  const labelBandTop = PLOT_HEIGHT - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
-  const svgHeight = Math.max(PLOT_HEIGHT + 26, labelBandTop + laneCount * laneHeight + 4);
+  const labelBandTop = PLOT_HEIGHT + guideBand - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
+  const svgHeight = Math.max(PLOT_HEIGHT + guideBand + 26, labelBandTop + laneCount * laneHeight + 4);
 
   // Real text lengths replace the estimate once the browser can measure them (not in jsdom/SSR).
   // A label drawn for the first time is measured too, so the drawn subset is re-checked against real widths.
+  // The period guide labels are measured by the same rule (FQ2).
+  const guideLabelRefs = useRef<Array<SVGTextElement | null>>([]);
   const labelSignature = `${fontPx}|${history.xTicks.map((tick) => tick.label).join("\u0001")}|${history.yTicks
     .map((tick) => tick.label)
-    .join("\u0001")}|${placements.map((label) => label.index).join(",")}`;
+    .join("\u0001")}|${placements.map((label) => label.index).join(",")}|${periodGuides.map((guide) => guide.label).join("\u0001")}`;
   useIsomorphicLayoutEffect(() => {
     const next: Record<string, number> = {};
     let changed = false;
-    xLabelRefs.current.forEach((el, i) => {
-      const label = history.xTicks[i]?.label;
+    // forEach skips the holes a drawn SUBSET leaves in the ref arrays (only drawn labels hold an element).
+    const measure = (el: SVGTextElement | null, label: string | undefined) => {
       if (!el || label === undefined || typeof el.getComputedTextLength !== "function") return;
       const length = el.getComputedTextLength();
       if (!Number.isFinite(length) || length <= 0) return;
       const key = `${fontPx}|${label}`;
       next[key] = length;
       if (Math.abs((measured[key] ?? -1) - length) > 0.5) changed = true;
-    });
+    };
+    xLabelRefs.current.forEach((el, i) => measure(el, history.xTicks[i]?.label));
+    guideLabelRefs.current.forEach((el, i) => measure(el, periodGuides[i]?.label));
     if (changed) setMeasured((prev) => ({ ...prev, ...next }));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure only when the labels, their size or the drawn subset change
   }, [labelSignature]);
@@ -287,23 +360,36 @@ export default function HockeyJourneyHistoryChart({
                 </text>
               </g>
             ))}
-            {history.guides.map((guide) => (
-              <g key={guide.id}>
-                <line
-                  x1={x(guide.t)}
-                  x2={x(guide.t)}
-                  y1={MARGIN.top}
-                  y2={MARGIN.top + plotH}
-                  className="stroke-surface-border"
-                  strokeDasharray="3 3"
-                />
-                {guide.kind === "period" && (
-                  <text x={x(guide.t) + 3} y={MARGIN.top - 8} className="fill-text-secondary text-xs">
-                    {guide.label}
-                  </text>
-                )}
-              </g>
-            ))}
+            {history.guides.map((guide) => {
+              // The line stays on its own time; only a period label's box is placed (FQ2).
+              const label = guide.kind === "period" ? guideLabelAt.get(guide.id) : undefined;
+              return (
+                <g key={guide.id}>
+                  <line
+                    x1={x(guide.t)}
+                    x2={x(guide.t)}
+                    y1={plotTop}
+                    y2={plotTop + plotH}
+                    className="stroke-surface-border"
+                    strokeDasharray="3 3"
+                  />
+                  {label && (
+                    <text
+                      ref={(el) => {
+                        guideLabelRefs.current[label.index] = el;
+                      }}
+                      x={label.start}
+                      y={plotTop - 8 - label.lane * laneHeight}
+                      className="fill-text-secondary text-xs"
+                      data-guide-label={guide.id}
+                      data-guide-lane={label.lane}
+                    >
+                      {guide.label}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
             {[home, away].flatMap((series) =>
               series.runs.flatMap((run, i) =>
                 run.length > 1

@@ -40,7 +40,12 @@ import HockeyJourneyMatrix, {
 import HockeyJourneyHistoryChart, {
   axisLabelSubset,
   estimateLabelWidth,
+  guideLabelPlacement,
 } from "@/components/event/eventpage10868/HockeyJourneyHistoryChart";
+// FQ2: the shared chart's football caller, through its own history builder (read-only).
+import footballFixtures from "../lib/footballJourney10868.fixtures.json";
+import { footballJourneyHistory } from "@/lib/eventPage10868/footballJourney";
+import type { HockeyJourneyHistory } from "@/lib/eventPage10868/hockeyJourneyTypes";
 
 const journey = buildHockeyJourney({
   event: fixtures.finalDetail as unknown as EventDetailResponse,
@@ -934,4 +939,163 @@ it("prints the shown player's whole name and team on the card, outside the close
   // A held player no longer served shows no one else's identity.
   act(() => root.render(<HockeyJourneyContributionCard card={card} held={{ playerId: "player:nobody", milestoneId: null }} onHold={() => {}} />));
   expect(host.querySelector("[data-shown-player]")).toBeNull();
+});
+
+// ─── FQ2 (Design admission 2026-10-31): period guide labels stay inside the chart ─────────────
+//
+// Browser lab c9bcdad25b (RESULTS sha256 f3c763c1…): Jaguars–Eagles 14639175 live at 200% text drew
+// "Q3" from 3 px right of its guide line straight past the SVG's right edge (375 px: 299.6–331.9
+// against an SVG ending at 318; 393 px: 316.9–349.1 against 336). The chart frame widths below are
+// the lab's measured SVG widths for those two phones (CONSTRUCTED layout: jsdom lays nothing out,
+// so the frame's clientWidth is set to the measured value; label widths are the chart's own
+// estimate, which is what it draws with before the browser can measure).
+
+describe("period guide labels stay inside the SVG, at their own line when they fit (FQ2)", () => {
+  /** CONSTRUCTED layout: the chart frame's width in px, as the browser lab measured it. */
+  function withFrameWidth(px: number) {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => px });
+  }
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+  });
+
+  const jagLive = footballFixtures.jaguarsLiveDetail as unknown as EventDetailResponse;
+  const jagLiveHistory = footballFixtures.jaguarsLiveHistory as unknown as EventHistoryResponse;
+  const JAG_LIVE_NOW = Date.parse("2026-10-11T15:37:30Z");
+  /** The history the football section draws for the retained live read (footballJourney10868 tests' JAG_LIVE_NOW). */
+  const jaguarsLive = () => footballJourneyHistory(jagLiveHistory, jagLive, "live", JAG_LIVE_NOW).history;
+  const hockeyFinal = () => finalJourney(finalMarkets).history;
+
+  /** Every period label the chart drew, found by its own words, with its own guide line. */
+  function periodLabels(history: HockeyJourneyHistory, fontPx: number) {
+    const svg = host.querySelector('svg[role="img"]')!;
+    const texts = Array.from(svg.querySelectorAll("text"));
+    const labels = history.guides
+      .filter((guide) => guide.kind === "period")
+      .map((guide) => {
+        const text = texts.find((t) => t.textContent === guide.label)!;
+        const line = text.parentElement!.querySelector("line")!;
+        const start = Number(text.getAttribute("x"));
+        return {
+          label: guide.label,
+          className: text.getAttribute("class") ?? "",
+          start,
+          end: start + estimateLabelWidth(guide.label, fontPx),
+          y: Number(text.getAttribute("y")),
+          lineX: Number(line.getAttribute("x1")),
+          lineTop: Number(line.getAttribute("y1")),
+        };
+      });
+    const yLabels = Array.from(svg.querySelectorAll('text[text-anchor="end"]')).map((t) => Number(t.getAttribute("y")));
+    return {
+      width: Number(svg.getAttribute("width")),
+      height: Number(svg.getAttribute("height")),
+      plotHeight: Math.max(...yLabels) - Math.min(...yLabels),
+      labels,
+    };
+  }
+
+  it.each([
+    [375, 261],
+    [393, 279],
+  ])(
+    "Jaguars live, 200 percent text, %i px phone (chart %i px): Q3 stays inside the SVG, still at its own line, at full size",
+    (_phone, frameWidth) => {
+      withRootFont(32);
+      withFrameWidth(frameWidth);
+      const history = jaguarsLive();
+      expect(history.guides.filter((guide) => guide.kind === "period").map((guide) => guide.label)).toEqual(["Q1", "Q2", "Q3"]);
+      act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={COLORS} />));
+      const drawn = periodLabels(history, 24); // text-xs (12 px) at a 32 px root
+      expect(drawn.width).toBe(frameWidth);
+      const q3 = drawn.labels.find((label) => label.label === "Q3")!;
+      // Where Q3 always started (3 px right of its line) it would end past the SVG: the lab's escape.
+      expect(q3.lineX + 3 + estimateLabelWidth("Q3", 24)).toBeGreaterThan(drawn.width);
+      for (const label of drawn.labels) {
+        expect(label.start).toBeGreaterThanOrEqual(0);
+        expect(label.end).toBeLessThanOrEqual(drawn.width); // inside the SVG
+        expect(label.start).toBeLessThanOrEqual(label.lineX + 3); // never further right than it always was
+        expect(label.end).toBeGreaterThanOrEqual(label.lineX); // still reaches its own line
+        expect(label.className.split(/\s+/)).toContain("text-xs"); // type never shrinks
+        expect(label.y).toBeLessThan(label.lineTop); // above the plot, never over the lines
+      }
+      // Q1 and Q2 already fit: exactly where they always were.
+      for (const label of drawn.labels.filter((l) => l.label !== "Q3")) {
+        expect(label.start).toBe(label.lineX + 3);
+        expect(label.y).toBe(label.lineTop - 8);
+      }
+    },
+  );
+
+  it("at 100% text every caller's period labels are exactly where they always were (hockey final, Jaguars live)", () => {
+    const cases: Array<[string, () => HockeyJourneyHistory, number]> = [
+      ["hockey final 15169793", hockeyFinal, 317],
+      ["hockey final 15169793", hockeyFinal, 1190],
+      ["Jaguars live 14639175", jaguarsLive, 317],
+      ["Jaguars live 14639175", jaguarsLive, 335],
+      ["Jaguars live 14639175", jaguarsLive, 1190],
+    ];
+    for (const [name, make, frameWidth] of cases) {
+      withFrameWidth(frameWidth);
+      const history = make();
+      act(() => root.render(<HockeyJourneyHistoryChart key={`${name}|${frameWidth}`} history={history} colors={COLORS} />));
+      const drawn = periodLabels(history, 12);
+      expect(drawn.labels.length).toBeGreaterThan(0);
+      for (const label of drawn.labels) {
+        expect([name, frameWidth, label.label, label.start]).toEqual([name, frameWidth, label.label, label.lineX + 3]);
+        expect([name, frameWidth, label.label, label.y]).toEqual([name, frameWidth, label.label, label.lineTop - 8]);
+      }
+    }
+  });
+
+  it("guideLabelPlacement: fitting labels keep their start; an edge label slides only as far as the edge; never past the plot's left; a collision lifts a row", () => {
+    expect(guideLabelPlacement([100, 200], [17, 17], 44, 317, 6)).toEqual([
+      { index: 0, start: 103, lane: 0 },
+      { index: 1, start: 203, lane: 0 },
+    ]);
+    // The lab's 375 px / 200% Q3: line at 239.6, a 32.3 px label, a 261 px SVG — it ends at the edge.
+    expect(guideLabelPlacement([239.6], [32.3], 56, 261, 6)).toEqual([{ index: 0, start: 261 - 32.3, lane: 0 }]);
+    // Longer than the room: it starts at the plot's left edge, never over the y labels.
+    expect(guideLabelPlacement([60], [300], 56, 261, 6)).toEqual([{ index: 0, start: 56, lane: 0 }]);
+    // Two lines 5 px apart: the second keeps its own start and takes the row above.
+    expect(guideLabelPlacement([100, 105], [30, 30], 44, 317, 6)).toEqual([
+      { index: 0, start: 103, lane: 0 },
+      { index: 1, start: 108, lane: 1 },
+    ]);
+    // An edge slide that lands on a neighbour lifts the slid label.
+    expect(guideLabelPlacement([210, 250], [30, 30], 44, 270, 6)).toEqual([
+      { index: 0, start: 213, lane: 0 },
+      { index: 1, start: 240, lane: 1 },
+    ]);
+    expect(guideLabelPlacement([], [], 44, 317, 6)).toEqual([]);
+  });
+
+  it("a lifted row adds height above the plot: the plot keeps its height and every guide line keeps its time (TEST MUTATION: a constructed Q4 one minute after Q3)", () => {
+    withRootFont(32);
+    withFrameWidth(261);
+    const history = jaguarsLive();
+    act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={COLORS} />));
+    const base = periodLabels(history, 24);
+    const q3 = history.guides.find((guide) => guide.label === "Q3")!;
+    const crowded: HockeyJourneyHistory = {
+      ...history,
+      guides: [...history.guides, { id: "period:Q4", t: q3.t + 60_000, label: "Q4", kind: "period" }], // CONSTRUCTED
+    };
+    act(() => root.render(<HockeyJourneyHistoryChart history={crowded} colors={COLORS} />));
+    const lifted = periodLabels(crowded, 24);
+    const laneHeight = Math.ceil(24 * 1.25);
+    expect(lifted.plotHeight).toBe(base.plotHeight);
+    expect(lifted.height).toBe(base.height + laneHeight);
+    const at = (d: typeof base, label: string) => d.labels.find((l) => l.label === label)!;
+    expect(at(lifted, "Q4").y).toBe(at(lifted, "Q3").y - laneHeight);
+    for (const label of ["Q1", "Q2", "Q3"]) {
+      expect(at(lifted, label).lineX).toBe(at(base, label).lineX);
+      expect(at(lifted, label).start).toBe(at(base, label).start);
+    }
+    for (const label of lifted.labels) {
+      expect(label.start).toBeGreaterThanOrEqual(0);
+      expect(label.end).toBeLessThanOrEqual(lifted.width);
+      expect(label.y).toBeGreaterThan(0);
+    }
+  });
 });
