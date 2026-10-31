@@ -1,3 +1,4 @@
+import CryptoKit
 import SwiftUI
 import XCTest
 @testable import Bain_Luck
@@ -2394,5 +2395,1141 @@ final class CricketEventPageT20Composition10868Tests: XCTestCase {
         XCTAssertEqual(beforeStream.intents(for: .open(pregameRef), resolved: beforeStream.resolve(reduceMotion: false, actionable: true)),
                        [.interaction(scope: beforeStream.scope, card: pregameRef), .open(pregameRef)])
         XCTAssertEqual(log, [], "a static card asks for nothing")
+    }
+}
+
+// MARK: - Archive isolation on the Test and T20 compositions
+
+extension CricketEventPagePresentation10868Tests {
+    /// CONSTRUCTED: an archive admission handed to this Test page at moments
+    /// where it must not mount, to prove the default stays nil and nothing
+    /// changes without the owner's admission at the final.
+    private static func constructedArchive() -> CricketEventPageArchive10868 {
+        CricketEventPageArchive10868(
+            baselineReminder: "Constructed reminder", readoutsCaption: "Constructed caption",
+            readouts: sides.map { CricketEventPageArchiveReadout10868(seriesID: $0, reading: .unavailable("Constructed words")) },
+            chaseLabel: "Constructed label",
+            chase: CricketEventPageArchiveReadout10868(seriesID: "TIE", reading: .unavailable("Constructed words")),
+            unidentified: "Constructed unavailable")
+    }
+
+    @MainActor
+    func testWithoutAnArchiveTheTestPageKeepsItsHeadlineAndLeavesAndItsFullSizeHeightIsValidated() {
+        for moment in [Moment.before, .over64, .over85, .final] {
+            let input = Self.page(moment)
+            let model = CricketEventPageModel10868(input)
+            let view = CricketEventPagePresentation10868(input: input)
+            XCTAssertNil(input.archive, "no archive unless the owner admits one")
+            XCTAssertNil(model.archive)
+            XCTAssertEqual(model.archiveReadouts, [])
+            XCTAssertNil(model.archiveChase)
+            XCTAssertNil(view.archiveHistoryContent())
+            XCTAssertNil(view.archiveChaseContent())
+            // The generic headline, every original's block included.
+            XCTAssertEqual(view.headlineContent()?.input, input.headline)
+            XCTAssertEqual(view.headlineContent()?.input.rows.count, 3)
+
+            guard moment != .final else { continue }
+            // Supplied before or during play: nothing of it mounts, and the
+            // page is exactly the page without it.
+            var admitted = input
+            admitted.archive = Self.constructedArchive()
+            let admittedModel = CricketEventPageModel10868(admitted)
+            let admittedView = CricketEventPagePresentation10868(input: admitted)
+            XCTAssertNil(admittedModel.archive, "the archive is a final-only composition")
+            XCTAssertEqual(admittedModel.archiveReadouts, [])
+            XCTAssertNil(admittedModel.archiveChase)
+            XCTAssertNil(admittedView.archiveHistoryContent())
+            XCTAssertNil(admittedView.archiveChaseContent())
+            XCTAssertEqual(admittedView.headlineContent()?.input, input.headline)
+            XCTAssertEqual(CricketEventPageCard10868.allCases.filter(admittedModel.isMounted),
+                           CricketEventPageCard10868.allCases.filter(model.isMounted))
+            XCTAssertEqual(admittedView.chaseContent()?.input, view.chaseContent()?.input)
+            XCTAssertEqual(admittedModel.readerHistory, model.readerHistory)
+        }
+
+        // The full-size history: a usable owner height, never shorter than the
+        // page's 302; any other owner value keeps the page's.
+        let cases: [(CGFloat?, CGFloat)] = [
+            (nil, 302), (0, 302), (-40, 302), (CGFloat.nan, 302), (CGFloat.infinity, 302), (-CGFloat.infinity, 302),
+            (120, 302), (302, 302), (350, 350), (480, 480),
+        ]
+        for (owner, expected) in cases {
+            let words = owner.map { "\($0)" } ?? "nil"
+            var input = Self.page(.over64)
+            input.readerPlotHeight = owner
+            let full = CricketEventPagePresentation10868(input: input, mode: .reader(.history)).historyContent(reader: true)
+            XCTAssertEqual(CricketEventPageModel10868(input).readerHistory.plotHeight, expected, words)
+            XCTAssertEqual(full.input.plotHeight, expected, words)
+            XCTAssertTrue(full.input.plotHeight.isFinite, words)
+            XCTAssertEqual(CricketEventPagePresentation10868(input: input).historyContent(reader: false).input.plotHeight, 302, words)
+        }
+    }
+}
+
+extension CricketEventPageT20Composition10868Tests {
+    @MainActor
+    func testTheT20PageNeverMountsAnArchiveAndItsFullSizeHeightIsValidated() {
+        for frame in [Frame.before, .over15, .final] {
+            let input = Self.page(frame)
+            XCTAssertNil(input.archive, "no archive unless the owner admits one")
+            // CONSTRUCTED: an archive admission handed to a T20 page.
+            var admitted = input
+            admitted.archive = CricketEventPageArchive10868(
+                baselineReminder: "Constructed reminder",
+                readouts: Self.sides.map { CricketEventPageArchiveReadout10868(seriesID: $0, reading: .unavailable("Constructed words")) },
+                chaseLabel: "Constructed label",
+                chase: CricketEventPageArchiveReadout10868(seriesID: "WI", reading: .unavailable("Constructed words")),
+                unidentified: "Constructed unavailable")
+            let model = CricketEventPageModel10868(admitted)
+            let view = CricketEventPagePresentation10868(input: admitted)
+            let plain = CricketEventPagePresentation10868(input: input)
+            XCTAssertNil(model.archive, "the archive is a Test composition only")
+            XCTAssertEqual(model.archiveReadouts, [])
+            XCTAssertNil(model.archiveChase)
+            XCTAssertNil(view.archiveHistoryContent())
+            XCTAssertNil(view.archiveChaseContent())
+            XCTAssertEqual(Self.mounted(admitted), Self.mounted(input))
+            XCTAssertEqual(view.headlineContent()?.input, input.headline, "the T20 headline is unchanged")
+            XCTAssertEqual(view.headlineContent()?.input.rows.count, 2)
+            XCTAssertEqual(view.chaseContent()?.input, plain.chaseContent()?.input)
+            XCTAssertEqual(view.chaseContent()?.limitedOvers, plain.chaseContent()?.limitedOvers)
+            XCTAssertEqual(view.expectationShiftContent()?.input, plain.expectationShiftContent()?.input)
+            XCTAssertEqual(view.pregameContent()?.input, plain.pregameContent()?.input)
+        }
+
+        let cases: [(CGFloat?, CGFloat)] = [
+            (nil, 302), (0, 302), (-40, 302), (CGFloat.nan, 302), (CGFloat.infinity, 302), (-CGFloat.infinity, 302),
+            (120, 302), (302, 302), (350, 350), (480, 480),
+        ]
+        for (owner, expected) in cases {
+            let words = owner.map { "\($0)" } ?? "nil"
+            var input = Self.page(.over15)
+            input.readerPlotHeight = owner
+            XCTAssertEqual(CricketEventPageModel10868(input).readerHistory.plotHeight, expected, words)
+            XCTAssertEqual(CricketEventPagePresentation10868(input: input, mode: .reader(.history)).historyContent(reader: true).input.plotHeight,
+                           expected, words)
+            XCTAssertEqual(CricketEventPagePresentation10868(input: input).historyContent(reader: false).input.plotHeight, 302, words)
+        }
+    }
+}
+
+// MARK: - The archived cricket-match composition
+
+/// #10868 — the archived `cricket-match` route through the SAME shared cricket
+/// page: a Test page at the final with the owner's explicit `archive`
+/// admission. Not a second screen, and nothing here is South Africa–Australia
+/// Test or India–West Indies T20 evidence.
+///
+/// PREPARED / NOT RUN. Composition only: that the whole existing page mounts —
+/// the compact actual-state headline, the history, the resolved chase, the
+/// three originals with their Details, and the full-size readers — with each
+/// leaf's input unchanged; that the archive's three recorded readouts and its
+/// readable pre-match reminder sit above the history on the page and full
+/// size, and its recorded draw-or-tie chance beside the actual final chase in
+/// the stream and full size, from the same owner input; names and shapes by
+/// exact original identity; equal figures; an unavailable inspected hour;
+/// fixed actuals; date guides; the validated full-size height; phase and
+/// format isolation with hostile controls; no new action or hold; verbatim
+/// rules and the retained receipt. Nothing here claims a rendered fit, a
+/// native runtime, VoiceOver behaviour, a production binding or route
+/// readiness.
+///
+/// ARCHIVED raw values — `prototype/src/cricketMatch.json` (sha256 c97116b6…,
+/// captured 2026-10-13T06:22:59Z: event file f82ac782…, hourly candle file
+/// b0d523a1…) and `prototype/src/cricketFinalScore.json` (087254c1…), as
+/// selected by `native-cricket-archive-comparison/SELECTION.json`:
+/// - Kalshi event KXTESTMATCH-26SEP290000AUS-AINA ("India A vs Australia A"):
+///   three independent Yes originals -INA, -AUS-A and -TIE, finalized with
+///   results no, no and yes, settled 2026-10-02T12:15:24Z; the rules give a
+///   scheduled start (Sep 29, 2026 at 12:00 AM EDT), not an actual start;
+/// - 365 raw hourly candles (122, 123, 120); 56 carry no close price, so 309
+///   positive-volume closes are admitted (109, 100, 100) over 111 distinct
+///   hours from 2026-09-27T18:00Z to 2026-10-02T12:00Z, with 24 missing
+///   side-hours; every close is a whole cent;
+/// - at 2026-09-30T06:00Z (Sep 29, 11 PM PDT) the three closes are 30%, 36%
+///   and 39% (105%); at 2026-09-29T23:00Z (Sep 29, 4 PM PDT) India A 65% and
+///   Australia A 20% with no Draw/Tie close; the last closes, all at
+///   2026-10-02T12:00Z, are 1%, 1% and 99% (101%). Independent trades: never
+///   normalized, current or synchronized, and no settlement endpoint;
+/// - no verified pre-match baseline, projection, or actual start or finish
+///   clock;
+/// - the reported final: a draw. India A 167 and 310/9; Australia A 358 and
+///   173/4 declared. The fourth-innings chase: 310 runs, 9 wickets, 103.0
+///   overs against a rule-based target of 365 — not a projection. Draw and tie
+///   are separate sporting results combined by ONE contract.
+///
+/// CONSTRUCTED (owner inputs, not retained facts): every display name ("Draw /
+/// tie"), label, figure text and PDT date line, caption, reminder and absence
+/// words, the two-hour segmentation (the reference's display rule, applied as
+/// the owner would), the date-guide, tick and window words, the inspection
+/// captions, stream metadata, About text, tints, headline and chase words, the
+/// overs words ("103 overs" for the retained 103.0), and every `constructed.*`
+/// reference. The before and during pages are CONSTRUCTED only to prove
+/// isolation; real phase evidence for this match is still owed.
+final class CricketEventPageArchive10868Tests: XCTestCase {
+
+    // MARK: Retained facts
+
+    private enum Hour { case latest, sixUTC, tieAbsent }
+
+    private static let event = "KXTESTMATCH-26SEP290000AUS-AINA"
+    private static let suffixes = ["INA", "AUS-A", "TIE"]
+    private static let tickers = suffixes.map { "\(event)-\($0)" }
+    private static let retainedTitle = "India A vs Australia A"
+    private static let titles = ["India A wins", "Australia A wins", "Draw/Tie wins"]
+    private static let outcomes = ["India A", "Australia A", "Draw/Tie"]
+    private static let rulesPrimary = [
+        "If India A wins the India A vs Australia A men's professional Test series cricket match originally scheduled for Sep 29, 2026 at 12:00 AM EDT, then the market resolves to Yes.",
+        "If Australia A wins the India A vs Australia A men's professional Test series cricket match originally scheduled for Sep 29, 2026 at 12:00 AM EDT, then the market resolves to Yes.",
+        "If India A and Australia A draw or tie in the India A vs Australia A men's professional Test series cricket match originally scheduled for Sep 29, 2026 at 12:00 AM EDT, then the market resolves to Yes.",
+    ]
+    private static let rulesSecondary = "If the match ends in a draw or tie, the market titled \"Draw/Tie\" will resolve Yes.\nIf the match is cancelled prior to scheduled commencement, or is abandoned prior to the toss (i.e. the toss does not occur) and no\nofficial result is declared by the governing body, then all markets will resolve to a fair market price.\nIf the match is delayed for more than 5 days from its original scheduled start time before commencement, then all markets will resolve to a fair market price.\nIf the match is abandoned after the toss has occurred, markets will resolve based on the official result recorded by the governing body of the relevant competition.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners."
+    /// sha256 of the UTF-8 strings in `cricketMatch.json`.
+    private static let retainedHashes: [String: String] = [
+        "INA": "f5bdd03728a49afd16c3a3f833a32ae5729998fa0cc02862e2a449962df45efe",
+        "AUS-A": "aa89284238bb903e423948c5f2b3cb6b6d57187e62c9407ec956966d75c92930",
+        "TIE": "15aecd00b69af054a8ef4741e99b81ddf411514b74c5b7c2577416d2e2bb5f5b",
+        "secondary": "bf993f4acc339afc718d890368001c24d7366b6838462f7d7cb9eb594c0168dc",
+        "title": "92edb27ad332cbef502478535795474e1d1da2a537eb8e46c8c26b01e38711c1",
+    ]
+    private static let retainedResults = ["no", "no", "yes"]
+    private static let rawCandles = [122, 123, 120]
+    private static let admittedCounts = [109, 100, 100]
+    private static let distinctHours = 111
+    private static let missingSideHours = 24
+    /// sha256 of "<ticker>@<epoch>:<cents>" lines, joined by newlines, for
+    /// every admitted close in ticker then time order.
+    private static let closesDigest = "b9e8fa932e75393be7e56b76b17f135533907713fd5f1ad7a168437def3ac726"
+
+    /// Seconds since 1970 (the history's own domain unit).
+    private static let firstHour: Double = 1_790_532_000      // 2026-09-27T18:00:00Z
+    private static let lastHour: Double = 1_790_942_400       // 2026-10-02T12:00:00Z
+    private static let sixUTC: Double = 1_790_748_000         // 2026-09-30T06:00:00Z
+    private static let tieAbsentHour: Double = 1_790_722_800  // 2026-09-29T23:00:00Z
+    private static let settledAt: Double = 1_790_943_324      // 2026-10-02T12:15:24Z
+
+    /// Each original's admitted hours, as whole hours after `firstHour`, in
+    /// time order.
+    private static let hourOffsets: [[Int]] = [
+        [0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+         32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
+         59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85,
+         88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+         112, 113, 114],
+        [3, 9, 11, 12, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+         40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+         67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 88, 89, 90, 91, 92, 93, 94, 95,
+         96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114],
+        [0, 1, 3, 8, 9, 12, 14, 16, 17, 19, 20, 21, 22, 23, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+         40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67,
+         68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+         97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114],
+    ]
+    /// Each original's hourly close, in whole cents, in the same order.
+    private static let closeCents: [[Int]] = [
+        [93, 62, 51, 52, 64, 63, 61, 63, 66, 63, 66, 62, 63, 68, 68, 70, 74, 75, 77, 79, 76, 76, 76, 75, 77, 73, 76,
+         81, 77, 75, 74, 80, 84, 81, 82, 82, 77, 67, 65, 61, 58, 64, 64, 65, 67, 63, 61, 63, 64, 65, 66, 67, 68, 59,
+         65, 29, 30, 28, 30, 32, 30, 13, 17, 15, 15, 13, 13, 13, 17, 10, 9, 11, 11, 13, 13, 11, 13, 11, 16, 9, 5, 3,
+         2, 20, 10, 16, 9, 11, 11, 10, 10, 7, 10, 10, 11, 11, 9, 9, 9, 9, 12, 8, 13, 10, 27, 2, 5, 1, 1],
+        [25, 32, 30, 33, 30, 15, 34, 16, 11, 12, 12, 21, 20, 12, 10, 17, 18, 17, 13, 13, 14, 15, 17, 12, 15, 16, 12,
+         17, 24, 24, 23, 19, 21, 24, 19, 19, 21, 19, 16, 19, 20, 19, 20, 19, 19, 20, 19, 36, 29, 28, 34, 23, 44, 45,
+         57, 54, 51, 50, 39, 47, 53, 57, 54, 53, 50, 39, 57, 54, 57, 49, 54, 57, 53, 66, 67, 62, 66, 74, 74, 69, 73,
+         70, 71, 68, 75, 73, 65, 73, 70, 78, 69, 67, 51, 26, 35, 44, 91, 69, 17, 1],
+        [20, 29, 30, 11, 11, 10, 25, 26, 26, 10, 26, 17, 13, 9, 17, 20, 17, 20, 20, 15, 13, 14, 13, 7, 9, 9, 8, 8, 8,
+         13, 18, 21, 24, 22, 21, 18, 17, 20, 18, 16, 20, 20, 20, 22, 17, 25, 52, 39, 42, 39, 50, 59, 45, 32, 32, 36,
+         39, 43, 46, 39, 33, 36, 38, 39, 37, 45, 43, 37, 36, 35, 42, 37, 57, 33, 3, 27, 21, 20, 23, 19, 21, 24, 20,
+         22, 19, 21, 24, 24, 24, 16, 18, 20, 43, 58, 51, 25, 7, 36, 86, 99],
+    ]
+
+    private static let innings = ["India A": ["167", "310/9"], "Australia A": ["358", "173/4 d"]]
+    private static let chaseRuns = 310
+    private static let chaseWickets = 9
+    private static let chaseOvers = "103.0"
+    private static let chaseTarget = 365
+
+    private static func points(_ index: Int) -> [(x: Double, cents: Int)] {
+        zip(hourOffsets[index], closeCents[index]).map { (x: firstHour + Double($0.0) * 3600, cents: $0.1) }
+    }
+
+    private static func cents(_ index: Int, at x: Double) -> Int? {
+        points(index).first { $0.x == x }?.cents
+    }
+
+    private static func pointID(_ index: Int, _ x: Double) -> String { "\(tickers[index])@\(Int(x))" }
+
+    private static func sha256(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: Constructed owner words
+
+    private static let names = ["India A", "Australia A", "Draw / tie"]
+    /// Keyed by the exact original ticker, never by position — once for each
+    /// shape type the page's leaves use.
+    private static let historyShapes: [String: CricketHistoryShape10868] = [
+        "\(event)-INA": .circle, "\(event)-AUS-A": .diamond, "\(event)-TIE": .square,
+    ]
+    private static let outlookShapes: [String: CricketOutlookShape10868] = [
+        "\(event)-INA": .circle, "\(event)-AUS-A": .diamond, "\(event)-TIE": .square,
+    ]
+    private static let tints: [String: Color] = [
+        "\(event)-INA": .blue, "\(event)-AUS-A": .green, "\(event)-TIE": .gray,
+    ]
+    private static let reminder = "Pre-match chances unavailable"
+    private static let pregameWords = "Pre-match chance unavailable"
+    private static let unidentified = "Original unavailable"
+    private static let chaseLabel = "Recorded draw / tie chance"
+    private static let notThisHour = "Not recorded this hour"
+    private static let finalDetail = "BCCI scorecard and Cricket Australia match report · exact start and finish clocks unavailable"
+    private static let settlementDetail = "Contract finalized Oct 2, 5:15 AM PDT"
+    private static let outcomeWords = ["Did not win", "Did not win", "Match drawn"]
+    private static let gradeWords = ["Lost", "Lost", "Won"]
+    private static let tieRef = CricketChaseRef10868(event: "constructed.event.ainaaus", market: "constructed.market.TIE",
+                                                     outcome: "constructed.yes")
+    /// The first admitted hour of each later local (Pacific) date.
+    private static let dateStarts: [(x: Double, date: String)] = [
+        (1_790_578_800, "Sep 28"), (1_790_665_200, "Sep 29"), (1_790_751_600, "Sep 30"),
+        (1_790_838_000, "Oct 1"), (1_790_924_400, "Oct 2"),
+    ]
+    private static let dateKey = "Dashed lines: the first recorded hour of each local date, Pacific time — not a day of play or an innings"
+    /// Final-only facts: none may reach an earlier phase.
+    private static let finalOnly = ["Match drawn", "Final draw", "99%", "Won", "310", "365", "167", "358", "Last recorded"]
+
+    private static func at(_ hour: Hour) -> Double? {
+        switch hour {
+        case .latest: nil
+        case .sixUTC: sixUTC
+        case .tieAbsent: tieAbsentHour
+        }
+    }
+
+    private static func detail(_ hour: Hour) -> String {
+        switch hour {
+        case .latest: "Last recorded hourly trade · Oct 2, 5 AM PDT"
+        case .sixUTC: "Hourly trade close · Sep 29, 11 PM PDT"
+        case .tieAbsent: "Hourly trade close · Sep 29, 4 PM PDT"
+        }
+    }
+
+    /// The owner's reading of one original: its exact close at the selected
+    /// hour (the last admitted close when none is selected), or its words.
+    private static func reading(_ hour: Hour, _ index: Int) -> CricketChaseReading10868 {
+        let value: Int?
+        if let x = at(hour) {
+            value = cents(index, at: x)
+        } else {
+            value = points(index).last?.cents
+        }
+        guard let value else { return .unavailable(notThisHour) }
+        return .observed(CricketChaseFigure10868(text: "\(value)%", detail: detail(hour)))
+    }
+
+    private static func caption(_ hour: Hour) -> String {
+        hour == .latest ? "Last recorded trades · each with its own time"
+            : "Separately recorded trades at the selected hour · they need not add to 100%"
+    }
+
+    // MARK: History
+
+    /// The owner's runs: a new segment after any gap longer than two hours.
+    private static func segments(_ index: Int) -> [CricketHistorySegment10868] {
+        var runs: [[(x: Double, cents: Int)]] = []
+        for point in points(index) {
+            if let last = runs.last?.last, point.x - last.x <= 7200 {
+                runs[runs.count - 1].append(point)
+            } else {
+                runs.append([point])
+            }
+        }
+        return runs.map { run in
+            CricketHistorySegment10868(id: "\(tickers[index]).\(Int(run[0].x))", points: run.map {
+                CricketHistoryPoint10868(id: pointID(index, $0.x), x: $0.x, probability: Double($0.cents) / 100, isPregame: false)
+            })
+        }
+    }
+
+    private static func series(_ index: Int, id: String? = nil) -> CricketHistorySeries10868 {
+        let ticker = tickers[index]
+        return CricketHistorySeries10868(id: id ?? ticker, name: names[index], shape: historyShapes[ticker]!,
+                                         tint: tints[ticker]!, segments: segments(index), absentWords: "No recorded trades")
+    }
+
+    private static func inspection(_ hour: Hour) -> CricketHistoryInspection10868? {
+        guard let x = at(hour) else { return nil }
+        var selections: [String: CricketHistorySelection10868] = [:]
+        for index in 0..<3 {
+            if let value = cents(index, at: x) {
+                selections[tickers[index]] = .point(id: pointID(index, x), spoken: "\(value)%")
+            } else {
+                selections[tickers[index]] = .absent(words: notThisHour)
+            }
+        }
+        let clock = hour == .sixUTC ? "Sep 29, 11 PM PDT" : "Sep 29, 4 PM PDT"
+        return CricketHistoryInspection10868(x: x, caption: "Selected · \(clock) · exact hour, nothing carried forward",
+                                             selections: selections)
+    }
+
+    private static let dateChoices = [("2026-09-27", "Sep 27"), ("2026-09-28", "Sep 28"), ("2026-09-29", "Sep 29"),
+                                      ("2026-09-30", "Sep 30"), ("2026-10-01", "Oct 1"), ("2026-10-02", "Oct 2")]
+
+    private static func history(_ hour: Hour = .latest, list: [CricketHistorySeries10868]? = nil,
+                                plotHeight: CGFloat = 302) -> CricketHistoryInput10868 {
+        CricketHistoryInput10868(
+            title: "Win probability", series: list ?? (0..<3).map { series($0) },
+            domain: CricketHistoryDomain10868(lower: firstHour, upper: lastHour),
+            yTicks: [CricketHistoryTick10868(value: 0, lines: ["0%"]), CricketHistoryTick10868(value: 0.5, lines: ["50%"]),
+                     CricketHistoryTick10868(value: 1, lines: ["100%"])],
+            xTicks: [CricketHistoryTick10868(value: firstHour, lines: ["Sep 27", "11 AM"]),
+                     CricketHistoryTick10868(value: lastHour, lines: ["Oct 2", "5 AM"])],
+            context: "Recorded Kalshi hourly trade closes · gaps over two hours are not joined · times in Pacific Daylight Time",
+            pregameKey: "Pregame",
+            summary: "India A circles, Australia A diamonds and draw or tie squares: recorded hourly trades only, with no pre-match baseline.",
+            plotHeight: plotHeight,
+            window: .choices(groupLabel: "History dates",
+                             choices: [CricketHistoryWindowChoice10868(id: "all", label: "All dates", isSelected: true)]
+                                 + dateChoices.map { CricketHistoryWindowChoice10868(id: $0.0, label: $0.1, isSelected: false) }),
+            inspection: inspection(hour),
+            previous: CricketHistoryControl10868(label: "Previous recorded hour", isAvailable: true),
+            next: CricketHistoryControl10868(label: "Next recorded hour", isAvailable: hour != .latest),
+            expand: CricketHistoryControl10868(label: "Expand cricket probability history", isAvailable: true))
+    }
+
+    private static func markers() -> CricketHistoryMarkerContext10868 {
+        CricketHistoryMarkerContext10868(
+            phase: .completed,
+            markers: dateStarts.map { start in
+                CricketHistoryMarker10868(
+                    id: "date.\(Int(start.x))", x: start.x, emphasis: .subtle, label: nil,
+                    spoken: "First recorded hour on \(start.date), Pacific time; a calendar date, not a day of play",
+                    absentWords: nil)
+            },
+            key: dateKey)
+    }
+
+    // MARK: Headline, chase, archive
+
+    private static func headline(_ phase: CricketHeadlinePhase10868 = .completed) -> CricketHeadlineInput10868 {
+        let rows = (0..<3).map { index -> CricketOutlookRow10868 in
+            let ticker = tickers[index]
+            return CricketOutlookRow10868(
+                id: ticker, subject: names[index], shape: outlookShapes[ticker]!, tint: tints[ticker]!,
+                ref: CricketOutlookRef10868(event: "constructed.event.ainaaus", market: "constructed.market.\(suffixes[index])",
+                                            outcome: "constructed.yes"),
+                before: .unavailable(pregameWords), comparison: .withheld("Recorded, not current"), movement: nil,
+                finish: CricketOutlookFinish10868(
+                    outcome: .admitted(CricketOutlookFinalWord10868(text: outcomeWords[index], symbolName: nil, detail: finalDetail)),
+                    grade: .admitted(CricketOutlookFinalWord10868(text: gradeWords[index], symbolName: nil, detail: settlementDetail))))
+        }
+        let caption: String = switch phase {
+        case .before: "Constructed · before play"
+        case .during: "Constructed · during play"
+        case .completed: "Final · Match drawn"
+        }
+        // The actual state is supplied for the final only.
+        let state: CricketHeadlineState10868? = phase == .completed
+            ? .reported(CricketHeadlineStateFrame10868(
+                entries: [CricketHeadlineStateEntry10868(label: "India A", text: "167 & 310/9", spoken: "167 and 310 for 9"),
+                          CricketHeadlineStateEntry10868(label: "Australia A", text: "358 & 173/4 d",
+                                                         spoken: "358 and 173 for 4 declared")],
+                detail: finalDetail))
+            : nil
+        return CricketHeadlineInput10868(
+            phase: phase, caption: caption, beforeLabel: "Pre-match", comparisonLabel: "Recorded", outcomeLabel: "Match",
+            outcomeMissing: "Not reported", rows: rows, state: state)
+    }
+
+    /// The resolved chase, supplied in every phase; the page mounts it at the
+    /// final only.
+    private static let chase = CricketChaseInput10868(
+        phase: .final, subject: "Draw / tie", eyebrow: "Draw / tie contract · India A’s second innings", headline: nil,
+        pregameLabel: "Pre-match", pregame: .unavailable(pregameWords), comparisonLabel: "Recorded draw / tie chance",
+        comparison: .withheld("Recorded, not current"), resultLabel: "Final",
+        contractResult: .graded(CricketChaseFigure10868(text: "Won", detail: settlementDetail)),
+        matchResult: .reported(CricketChaseFigure10868(text: "Match drawn", detail: finalDetail)),
+        actual: .reported(CricketChaseState10868(
+            battingSubject: "India A", context: "Fourth innings · final", runs: .reported(text: "310", value: 310),
+            runsCaption: "runs · 9 wickets down", target: .reported(text: "365", value: 365), targetCaption: "runs to win",
+            wickets: Array(repeating: CricketChaseWicket10868.lost, count: 9) + [.remaining], wicketsText: "9 wickets lost · 1 left",
+            oversText: "103 overs", reportDetail: finalDetail)),
+        detailsRef: tieRef,
+        notes: ["Draw and tie are separate sporting results; this contract combines them.",
+                "The final score stays fixed while you inspect earlier chances."])
+
+    private static func readout(_ id: String, _ reading: CricketChaseReading10868) -> CricketEventPageArchiveReadout10868 {
+        CricketEventPageArchiveReadout10868(seriesID: id, reading: reading)
+    }
+
+    private static func archive(_ hour: Hour = .latest, readouts: [CricketEventPageArchiveReadout10868]? = nil,
+                                chase: CricketEventPageArchiveReadout10868? = nil) -> CricketEventPageArchive10868 {
+        CricketEventPageArchive10868(
+            baselineReminder: reminder, readoutsCaption: caption(hour),
+            readouts: readouts ?? (0..<3).map { readout(tickers[$0], reading(hour, $0)) },
+            chaseLabel: chaseLabel, chase: chase ?? readout(tickers[2], reading(hour, 2)), unidentified: unidentified)
+    }
+
+    // MARK: Page
+
+    private static func title(_ phase: CricketHeadlinePhase10868) -> CricketEventPageTitle10868 {
+        CricketEventPageTitle10868(eyebrow: phase == .completed ? "Four-day match · Final draw" : "Four-day match · constructed phase",
+                                   title: "India A vs Australia A")
+    }
+
+    private static func reader(_ phase: CricketHeadlinePhase10868) -> CricketEventPageReaderHeader10868 {
+        phase == .completed
+            ? CricketEventPageReaderHeader10868(title: "India A · Australia A", state: "Final draw · Pre-match unavailable")
+            : CricketEventPageReaderHeader10868(title: "India A · Australia A", state: "Constructed phase")
+    }
+
+    private static let about = CricketEventPageAbout10868(
+        title: "About this history",
+        paragraphs: ["Three separate Kalshi contracts. The third combines draw and tie, which are distinct cricket outcomes.",
+                     "The rules give a scheduled start, not an evidenced actual start. Exact start and finish clocks are unavailable.",
+                     "Only positive-volume hourly trade closes are plotted. Missing hours are not filled, separate trades are never normalized, and settlement is not appended as 0% or 100%."])
+
+    private static let copy = CricketEventPageCopy10868(
+        storiesLabel: "Match stories", storyUnavailable: "This story is not available for this match.",
+        headlineUnavailable: "Match chances unavailable.", aboutLabel: "About this match",
+        allPropsLabel: "All 3 original markets")
+
+    private static func stream(_ phase: CricketHeadlinePhase10868, wide: Bool = false) -> StoryStreamPresentation10868? {
+        guard phase != .before else { return nil }
+        let scope = "constructed.cricket-archive:\(phase == .completed ? "final" : "during")"
+        let ref = StoryStreamPresentation10868.CardRef(scope: scope, id: "chase")
+        return StoryStreamPresentation10868(
+            scope: scope, eyebrow: nil, heading: "After the match",
+            cards: [StoryStreamPresentation10868.Card(id: "chase", name: "The final chase")],
+            primary: ref, companion: nil, companionLabel: nil, wide: wide, position: "1 of 1", previous: nil, next: nil)
+    }
+
+    /// The archive is supplied in every phase unless `plain`; only the page
+    /// phase and the format decide what mounts.
+    private static func page(_ phase: CricketHeadlinePhase10868 = .completed, hour: Hour = .latest,
+                             archive: CricketEventPageArchive10868? = nil, plain: Bool = false,
+                             history: CricketHistoryInput10868? = nil, readerHeight: CGFloat? = 350,
+                             format: CricketEventPageFormat10868 = .test) -> CricketEventPageInput10868 {
+        CricketEventPageInput10868(
+            phase: phase, title: title(phase), reader: reader(phase), headline: headline(phase), secondaryProvenance: true,
+            notice: nil, history: history ?? Self.history(hour), historyMarkers: markers(), readerPlotHeight: readerHeight,
+            chase: chase, runsTint: tints[tickers[0]]!, wicketTint: .gray,
+            stream: stream(phase), stories: [CricketEventPageStory10868(cardID: "chase", card: .chase)],
+            about: about, copy: copy, format: format,
+            archive: plain ? nil : (archive ?? Self.archive(hour)))
+    }
+
+    // MARK: Originals
+
+    private static let originalsScope = "constructed.scope.cricket-match.ainaaus"
+
+    private static func identity(_ index: Int) -> OriginalMarketDetails9483.Identity {
+        OriginalMarketDetails9483.Identity(source: "kalshi", market: tickers[index], side: "Yes")
+    }
+
+    private static func selection(_ index: Int) -> OriginalMarketDetails9483.Selection {
+        OriginalMarketDetails9483.Selection(scope: originalsScope, identity: identity(index))
+    }
+
+    private static func catalogue() -> OriginalMarketDetails9483.Catalogue {
+        OriginalMarketDetails9483.Catalogue(scope: originalsScope, originals: (0..<3).map { index in
+            OriginalMarketDetails9483.Original(
+                identity: identity(index), title: titles[index], outcome: outcomes[index], mode: .result,
+                pregame: .missing(pregameWords), later: nil,
+                grade: OriginalMarketDetails9483.Grade(words: gradeWords[index], provenance: settlementDetail),
+                about: OriginalMarketDetails9483.About(
+                    source: "Kalshi · \(tickers[index])", rules: .verified([rulesPrimary[index], rulesSecondary]),
+                    provenance: [OriginalMarketDetails9483.Row(label: "Scheduled start in the rules",
+                                                               value: "Sep 29, 2026 at 12:00 AM EDT · not an evidenced actual start")],
+                    historicalQuote: OriginalMarketDetails9483.HistoricalQuote(text: "\(points(index).last!.cents)%",
+                                                                               recorded: detail(.latest))),
+                beforeLabel: "Before the match")
+        })
+    }
+
+    private static func originals(selected: Int? = 2) -> CricketEventPageOriginals10868 {
+        CricketEventPageOriginals10868(
+            catalogue: catalogue(), selection: selected.map { selection($0) },
+            heading: "All 3 original markets", context: "3 retained originals",
+            emptyWords: "No retained originals for this match", unavailableChoice: "Original unavailable", tint: .blue)
+    }
+
+    private static func activation(_ stream: StoryStreamPresentation10868, _ id: String,
+                                   log: @escaping (String) -> Void) -> StoryStreamCardActivation10868 {
+        let resolved = stream.resolve(reduceMotion: false, actionable: true)
+        let ref = StoryStreamPresentation10868.CardRef(scope: stream.scope, id: id)
+        return StoryStreamCardActivation10868(card: ref, intents: stream.activationIntents(for: ref, resolved: resolved)) { intent in
+            if case .interaction(_, let card) = intent { log("hold:\(card?.id ?? "-")") } else { log("other") }
+        }
+    }
+
+    // MARK: Guards
+
+    /// Every word the archive composition shows, on the page and full size.
+    @MainActor
+    private static func archiveWords(_ view: CricketEventPagePresentation10868) -> [String] {
+        var words: [String] = []
+        if let history = view.archiveHistoryContent() {
+            words += [history.caption].compactMap { $0 } + history.readouts.map(\.spoken) + [history.reminder]
+        }
+        if let chase = view.archiveChaseContent() {
+            words.append(chase.readout.spoken)
+        }
+        return words
+    }
+
+    /// Every word the page shows outside the history leaf: its titles, the
+    /// mounted headline's payload and state, the mounted chase's visible
+    /// words, and the archive's.
+    @MainActor
+    private static func pageWords(_ view: CricketEventPagePresentation10868) -> [String] {
+        var words = [view.input.title.title, view.input.title.eyebrow, view.input.reader.title, view.input.reader.state]
+            .compactMap { $0 }
+        if let headline = view.headlineContent()?.input {
+            let info = headline.sourceInfo
+            words += [info.caption].compactMap { $0 }
+            words += info.subjects.flatMap { subject in [subject.subject] + subject.entries.flatMap { [$0.text] + [$0.detail].compactMap { $0 } } }
+            words += [headline.accessibilityState].compactMap { $0 }
+        }
+        if let chase = view.chaseContent()?.input {
+            words += [chase.accessibilityHeader, chase.accessibilityChances]
+            words += [chase.accessibilityRuns, chase.accessibilityWickets, chase.accessibilityNotes].compactMap { $0 }
+        }
+        return words + archiveWords(view)
+    }
+
+    private static func leaks(_ words: [String]) -> [String] {
+        finalOnly.filter { token in words.contains { $0.contains(token) } }
+    }
+
+    /// A recorded figure presented as a pre-match, pregame, current or live
+    /// chance.
+    private static func baselineClaims(_ words: [String]) -> [String] {
+        let claim = #"(?i)\b(pre-?match|pregame|current|live)\b[^%]*\d+%|\d+%[^;]*\b(pre-?match|pregame|current|live)\b"#
+        return words.filter { $0.range(of: claim, options: .regularExpression) != nil }
+    }
+
+    private static func isFigure(_ reading: CricketChaseReading10868?) -> Bool {
+        if case .observed? = reading { return true }
+        return false
+    }
+
+    // MARK: Retained receipt and rules
+
+    @MainActor
+    func testTheRetainedArchiveReceiptKeepsEveryCountClockAndIndependentChance() {
+        // 365 raw candles; the fixture is exactly the 309 admitted closes.
+        XCTAssertEqual(Self.rawCandles.reduce(0, +), 365)
+        XCTAssertEqual(Self.hourOffsets.map(\.count), Self.closeCents.map(\.count))
+        XCTAssertEqual((0..<3).map { Self.points($0).count }, Self.admittedCounts)
+        XCTAssertEqual(Self.admittedCounts.reduce(0, +), 309)
+        let lines = (0..<3).flatMap { index in Self.points(index).map { "\(Self.tickers[index])@\(Int($0.x)):\($0.cents)" } }
+        XCTAssertEqual(Self.sha256(lines.joined(separator: "\n")), Self.closesDigest)
+
+        // 111 distinct hours and 24 missing side-hours; every close strictly in time order.
+        let hours = Set((0..<3).flatMap { Self.points($0).map(\.x) })
+        XCTAssertEqual(hours.count, Self.distinctHours)
+        XCTAssertEqual(3 * hours.count - Self.admittedCounts.reduce(0, +), Self.missingSideHours)
+        XCTAssertEqual(hours.min(), Self.firstHour)
+        XCTAssertEqual(hours.max(), Self.lastHour)
+        for index in 0..<3 {
+            let xs = Self.points(index).map(\.x)
+            XCTAssertEqual(xs, xs.sorted())
+            XCTAssertEqual(Set(xs).count, xs.count)
+            XCTAssertTrue(Self.points(index).allSatisfy { $0.cents > 0 && $0.cents < 100 }, "no 0% or 100% endpoint")
+        }
+
+        // Independent chances, never normalized, current or synchronized.
+        XCTAssertEqual((0..<3).map { Self.cents($0, at: Self.sixUTC) }, [30, 36, 39])
+        XCTAssertEqual([30, 36, 39].reduce(0, +), 105)
+        XCTAssertEqual((0..<3).map { Self.cents($0, at: Self.tieAbsentHour) }, [65, 20, nil])
+        XCTAssertEqual((0..<3).map { Self.points($0).last?.cents }, [1, 1, 99])
+        XCTAssertEqual(Set((0..<3).compactMap { Self.points($0).last?.x }), [Self.lastHour])
+        XCTAssertEqual((0..<3).compactMap { Self.points($0).last?.cents }.reduce(0, +), 101)
+        XCTAssertLessThan(Self.lastHour, Self.settledAt, "settlement is later and is not appended")
+
+        // The history the owner hands the page: exactly these closes, solid
+        // runs split only at gaps over two hours, every mark filled.
+        let history = Self.history()
+        XCTAssertEqual(history.series.map(\.id), Self.tickers)
+        XCTAssertEqual(Self.tickers, ["KXTESTMATCH-26SEP290000AUS-AINA-INA", "KXTESTMATCH-26SEP290000AUS-AINA-AUS-A",
+                                      "KXTESTMATCH-26SEP290000AUS-AINA-TIE"])
+        XCTAssertEqual(history.series.map { $0.segments.map(\.points.count) }, [[1, 81, 27], [1, 3, 69, 27], [3, 2, 9, 59, 27]])
+        XCTAssertEqual(history.series.map { CricketHistoryGeometry10868.marks($0, in: history.domain).count }, Self.admittedCounts)
+        XCTAssertTrue(history.series.allSatisfy { $0.segments.flatMap(\.points).allSatisfy { !$0.isPregame } },
+                      "no qualified baseline: every historical observation is filled")
+        XCTAssertFalse(CricketHistoryGeometry10868.showsPregameKey(history))
+
+        // The final tuple: fixed actuals, a rule-based target, one combined contract.
+        XCTAssertEqual(Self.innings["India A"], ["167", "310/9"])
+        XCTAssertEqual(Self.innings["Australia A"], ["358", "173/4 d"])
+        XCTAssertEqual([Self.chaseRuns, Self.chaseWickets, Self.chaseTarget], [310, 9, 365])
+        XCTAssertEqual(Self.chaseOvers, "103.0")
+        XCTAssertEqual(Self.chase.visibleState?.runs.value, Double(Self.chaseRuns))
+        XCTAssertEqual(Self.chase.visibleState?.target.value, Double(Self.chaseTarget))
+        XCTAssertEqual(Self.chase.visibleWickets.filter { $0 == .lost }.count, Self.chaseWickets)
+    }
+
+    @MainActor
+    func testTheThreeOriginalsKeepVerbatimRulesAndTheirOwnIndependentResults() {
+        XCTAssertEqual(Self.sha256(Self.retainedTitle), Self.retainedHashes["title"])
+        for index in 0..<3 {
+            XCTAssertEqual(Self.sha256(Self.rulesPrimary[index]), Self.retainedHashes[Self.suffixes[index]])
+        }
+        XCTAssertEqual(Self.sha256(Self.rulesSecondary), Self.retainedHashes["secondary"])
+        XCTAssertTrue(Self.rulesSecondary.hasPrefix("If the match ends in a draw or tie, the market titled \"Draw/Tie\" will resolve Yes."),
+                      "draw and tie: two sporting results, ONE contract")
+
+        let originals = Self.originals()
+        for index in 0..<3 {
+            let content = OriginalMarketDetails9483.content(catalogue: originals.catalogue, selection: Self.selection(index))
+            XCTAssertEqual(content?.rules, .verified([Self.rulesPrimary[index], Self.rulesSecondary]))
+            XCTAssertEqual(content?.title, Self.titles[index])
+            XCTAssertEqual(content?.readings.map(\.text), [Self.pregameWords], "no pre-match figure is invented")
+            XCTAssertEqual(content?.readings.first?.isValue, false)
+            XCTAssertEqual(content?.result?.words, Self.gradeWords[index])
+            XCTAssertEqual(content?.result?.provenance, Self.settlementDetail)
+        }
+        XCTAssertEqual(Self.retainedResults.map { $0 == "yes" ? "Won" : "Lost" }, Self.gradeWords,
+                       "each contract's own retained result, apart from the match")
+        let details = CricketEventPagePresentation10868(input: Self.page(), mode: .original, originals: originals).originalDetailsContent()
+        XCTAssertEqual(details?.selection, Self.selection(2))
+        XCTAssertEqual(details?.catalogue, originals.catalogue)
+        // A selection from another scope names no original — never a neighbour.
+        XCTAssertNil(OriginalMarketDetails9483.content(
+            catalogue: originals.catalogue,
+            selection: OriginalMarketDetails9483.Selection(scope: "constructed.scope.other", identity: Self.identity(0))))
+    }
+
+    // MARK: The composition
+
+    @MainActor
+    func testAtTheFinalTheWholePageMountsWithTheCompactActualHeadlineAndTheReadoutsAboveTheHistory() {
+        let input = Self.page()
+        let model = CricketEventPageModel10868(input)
+        let originals = Self.originals()
+        let page = CricketEventPagePresentation10868(input: input, originals: originals)
+        let reader = CricketEventPagePresentation10868(input: input, mode: .reader(.history), originals: originals)
+
+        // The whole existing page: headline, history, resolved chase, the
+        // three originals and their Details, and the full-size readers.
+        XCTAssertEqual(model.archive, input.archive)
+        XCTAssertEqual(CricketEventPageCard10868.allCases.filter(model.isMounted), [.history, .chase])
+        XCTAssertTrue(model.readerShows(.history))
+        XCTAssertTrue(model.readerShows(.chase))
+        XCTAssertEqual(model.storyCard("chase"), .chase)
+        XCTAssertEqual(page.historyContent(reader: false).input, input.history)
+        XCTAssertEqual(reader.historyContent(reader: true).input, model.readerHistory)
+        XCTAssertEqual(reader.historyContent(reader: true).markers, page.historyContent(reader: false).markers)
+        XCTAssertNil(reader.historyContent(reader: true).input.expand)
+        XCTAssertEqual(page.chaseContent()?.input, input.chase)
+        XCTAssertEqual(page.chooserContent()?.catalogue, originals.catalogue)
+        XCTAssertEqual(page.chooserContent()?.selection, originals.selection)
+        let choices = OriginalMarketChooser9483.choices(catalogue: originals.catalogue, selection: originals.selection,
+                                                        labels: originals.labels, unavailableChoice: originals.unavailableChoice)
+        XCTAssertEqual(choices.map(\.label), Self.titles)
+        XCTAssertEqual(CricketEventPagePresentation10868(input: input, mode: .catalogue, originals: originals).catalogueContent()?.catalogue,
+                       originals.catalogue)
+        XCTAssertTrue(model.aboutEntry(mode: .reader(.history), canOpen: true))
+
+        // The compact actual-state headline: the owner's caption and final
+        // innings words, spoken in full, with no per-original blocks.
+        guard let headline = page.headlineContent() else { return XCTFail("the final headline mounts") }
+        XCTAssertEqual(headline.input, CricketEventPageModel10868.compactHeadline(input.headline))
+        XCTAssertEqual(headline.input.phase, .completed)
+        XCTAssertEqual(headline.input.caption, "Final · Match drawn")
+        XCTAssertEqual(headline.input.rows, [], "a missing baseline is not three unavailable blocks")
+        XCTAssertEqual(headline.input.state, input.headline.state, "every actual score stays")
+        XCTAssertEqual(headline.input.accessibilityState,
+                       "India A: 167 and 310 for 9. Australia A: 358 and 173 for 4 declared. \(Self.finalDetail)")
+        XCTAssertEqual(headline.input.sourceInfo.subjects, [])
+        XCTAssertEqual(headline.input.sourceInfo.state, input.headline.state)
+        XCTAssertTrue(headline.input.sourceInfo.hasProvenance)
+        XCTAssertEqual(headline.secondaryProvenance, true)
+        XCTAssertEqual(input.headline.rows.count, 3, "the owner's own headline input is unchanged")
+
+        // The archive's readouts and reminder: the same owner input on the
+        // page and full size.
+        guard let inline = page.archiveHistoryContent(), let full = reader.archiveHistoryContent() else {
+            return XCTFail("the archive readouts mount on the page and full size")
+        }
+        XCTAssertEqual(inline.readouts, full.readouts)
+        XCTAssertEqual(inline.caption, full.caption)
+        XCTAssertEqual(inline.reminder, full.reminder)
+        XCTAssertEqual(inline.reminder, Self.reminder)
+        XCTAssertEqual(inline.caption, "Last recorded trades · each with its own time")
+        XCTAssertEqual(inline.readouts.map(\.name), Self.names)
+        XCTAssertEqual(inline.readouts.compactMap(\.shape), [.circle, .diamond, .square])
+        XCTAssertEqual(inline.readouts.map(\.tint), Self.tickers.map { Self.tints[$0] })
+        XCTAssertEqual(inline.readouts.compactMap(\.reading),
+                       ["1%", "1%", "99%"].map { CricketChaseReading10868.observed(CricketChaseFigure10868(text: $0, detail: Self.detail(.latest))) })
+        XCTAssertEqual(inline.readouts.map(\.spoken), [
+            "India A: 1%, Last recorded hourly trade · Oct 2, 5 AM PDT",
+            "Australia A: 1%, Last recorded hourly trade · Oct 2, 5 AM PDT",
+            "Draw / tie: 99%, Last recorded hourly trade · Oct 2, 5 AM PDT",
+        ])
+        XCTAssertEqual(Self.leaks(Self.archiveWords(page)).contains("99%"), true)
+        XCTAssertFalse(Self.archiveWords(page).contains { $0.contains("100%") && !$0.contains("need not add") },
+                       "no figure becomes a settled 100%")
+    }
+
+    @MainActor
+    func testTheRecordedDrawOrTieChanceSitsBesideTheActualFinalChaseInTheStreamAndFullSize() {
+        var log: [String] = []
+        let input = Self.page()
+        let page = CricketEventPagePresentation10868(input: input, onChaseDetails: { log.append("details:\($0.market)") })
+        let reader = CricketEventPagePresentation10868(input: input, mode: .reader(.chase),
+                                                      onChaseDetails: { log.append("details:\($0.market)") })
+        guard let stream = input.stream else { return XCTFail("the final stream is supplied") }
+        let streamChase = page.chaseContent(activation: Self.activation(stream, "chase") { log.append($0) })
+        let readerChase = reader.chaseContent()
+        guard let besideStream = page.archiveChaseContent(), let besideReader = reader.archiveChaseContent() else {
+            return XCTFail("the recorded chance sits beside the chase in the stream and full size")
+        }
+        XCTAssertEqual(log, [], "building asks for nothing")
+
+        // The actual accepted chase leaf, unchanged, with its own final gating.
+        XCTAssertEqual(streamChase?.input, input.chase)
+        XCTAssertEqual(readerChase?.input, input.chase)
+        XCTAssertNil(readerChase?.limitedOvers)
+        let chase = Self.chase
+        XCTAssertEqual(chase.phase, .final, "never coerced into play")
+        XCTAssertNil(chase.visibleComparison, "the leaf still hides an in-play comparison at the final")
+        XCTAssertEqual(chase.visibleHeading, "Match drawn")
+        XCTAssertEqual(chase.visibleHeadingDetail, Self.finalDetail)
+        XCTAssertEqual(chase.visibleContractResult, .graded(CricketChaseFigure10868(text: "Won", detail: Self.settlementDetail)))
+        XCTAssertEqual(chase.pregame, .unavailable(Self.pregameWords),
+                       "the chase card's readable pre-match reminder is its own pregame slot, the same input inline and full size")
+        XCTAssertEqual(chase.accessibilityChances, "Pre-match: \(Self.pregameWords). Final: Won, \(Self.settlementDetail)")
+        XCTAssertEqual(chase.visibleState?.runs, .reported(text: "310", value: 310))
+        XCTAssertEqual(chase.visibleState?.target, .reported(text: "365", value: 365))
+        XCTAssertEqual(chase.visibleWickets.filter { $0 == .remaining }.count, 1)
+        XCTAssertEqual(chase.visibleState?.oversText, "103 overs")
+        XCTAssertEqual(chase.railGeometry?.target, 1)
+        XCTAssertEqual(chase.railGeometry?.fill ?? 0, 310.0 / 365.0, accuracy: 1e-9)
+        XCTAssertEqual(chase.accessibilityRuns?.contains(CricketChaseInput10868.targetQualifier), true, "the target is not a projection")
+
+        // Beside it, the recorded chance with its own date: the same input both ways.
+        XCTAssertEqual(besideStream.readout, besideReader.readout)
+        XCTAssertEqual(besideStream.readout, CricketEventPageArchiveShown10868(
+            name: Self.chaseLabel, shape: .square, tint: Self.tints[Self.tickers[2]],
+            reading: .observed(CricketChaseFigure10868(text: "99%", detail: Self.detail(.latest)))))
+        XCTAssertEqual(besideStream.readout.spoken, "Recorded draw / tie chance: 99%, Last recorded hourly trade · Oct 2, 5 AM PDT")
+        XCTAssertNotEqual(besideStream.readout.reading, .observed(CricketChaseFigure10868(text: "Won", detail: Self.settlementDetail)),
+                          "a recorded chance is not the contract's result")
+
+        // Details: the stream's activation once, then the exact owner callback; full size exact.
+        streamChase?.onDetails?(Self.tieRef)
+        readerChase?.onDetails?(Self.tieRef)
+        XCTAssertEqual(log, ["hold:chase", "details:constructed.market.TIE", "details:constructed.market.TIE"])
+
+        // Beside a mounted chase only, and only when the owner names one.
+        var noChase = Self.page()
+        noChase.chase = nil
+        XCTAssertNil(CricketEventPagePresentation10868(input: noChase).archiveChaseContent())
+        XCTAssertNotNil(CricketEventPagePresentation10868(input: noChase).archiveHistoryContent(), "the readouts stay with the history")
+        var unnamed = Self.page()
+        unnamed.archive?.chase = nil
+        XCTAssertNil(CricketEventPagePresentation10868(input: unnamed).archiveChaseContent())
+        XCTAssertEqual(CricketEventPagePresentation10868(input: unnamed).chaseContent()?.input, input.chase)
+    }
+
+    @MainActor
+    func testNamesAndShapesFollowTheExactOriginalAndAnUnknownOrSharedIdentityBorrowsNothing() {
+        // Shapes keyed by original ticker, for both shape types the leaves use.
+        XCTAssertEqual(Self.tickers.compactMap { Self.historyShapes[$0] }, [.circle, .diamond, .square])
+        XCTAssertEqual(Self.tickers.compactMap { Self.outlookShapes[$0] }, [.circle, .diamond, .square])
+        let input = Self.page()
+        XCTAssertEqual(input.history.series.map(\.shape), [.circle, .diamond, .square])
+        XCTAssertEqual(input.headline.rows.map(\.shape), [.circle, .diamond, .square])
+        XCTAssertEqual(input.history.series.map(\.id), input.headline.rows.map(\.id))
+
+        // A reordered history keeps each readout on its own original.
+        let reordered = CricketEventPageModel10868(Self.page(history: Self.history(list: [Self.series(2), Self.series(0), Self.series(1)])))
+        XCTAssertEqual(reordered.archiveReadouts.map(\.name), Self.names)
+        XCTAssertEqual(reordered.archiveReadouts.compactMap(\.shape), [.circle, .diamond, .square])
+        XCTAssertEqual(reordered.archiveChase?.shape, .square)
+        // A reordered readout list keeps each figure with its own name.
+        let shuffled = CricketEventPageModel10868(Self.page(archive: Self.archive(
+            readouts: [2, 0, 1].map { Self.readout(Self.tickers[$0], Self.reading(.sixUTC, $0)) })))
+        XCTAssertEqual(shuffled.archiveReadouts.map(\.name), ["Draw / tie", "India A", "Australia A"])
+        XCTAssertEqual(shuffled.archiveReadouts.compactMap(\.shape), [.square, .circle, .diamond])
+        XCTAssertEqual(shuffled.archiveReadouts.compactMap(\.reading), [2, 0, 1].map { Self.reading(.sixUTC, $0) })
+
+        // An unknown or empty identity names no series: the owner's words,
+        // and no shape, tint or figure — not even the chase's label.
+        let blank = CricketEventPageArchiveShown10868(name: Self.unidentified, shape: nil, tint: nil, reading: nil)
+        let unknown = "\(Self.event)-ENG"
+        let strangers = CricketEventPageModel10868(Self.page(archive: Self.archive(
+            readouts: [Self.readout(unknown, Self.reading(.latest, 0)), Self.readout("", Self.reading(.latest, 1)),
+                       Self.readout(Self.tickers[2], Self.reading(.latest, 2))],
+            chase: Self.readout(unknown, Self.reading(.latest, 2)))))
+        XCTAssertEqual(Array(strangers.archiveReadouts.prefix(2)), [blank, blank])
+        XCTAssertEqual(strangers.archiveReadouts[2].name, "Draw / tie", "a neighbour keeps its own identity")
+        XCTAssertEqual(strangers.archiveReadouts[0].spoken, Self.unidentified)
+        XCTAssertEqual(strangers.archiveChase, blank)
+
+        // Two series sharing one id: that id names neither.
+        let shared = CricketEventPageModel10868(Self.page(history: Self.history(list: [
+            Self.series(0), Self.series(1), Self.series(2), Self.series(1, id: Self.tickers[2]),
+        ])))
+        XCTAssertEqual(shared.archiveReadouts.map(\.name), ["India A", "Australia A", Self.unidentified])
+        XCTAssertNil(shared.archiveReadouts[2].reading)
+        XCTAssertNil(shared.archiveReadouts[2].shape)
+        XCTAssertEqual(shared.archiveChase, blank)
+    }
+
+    @MainActor
+    func testEqualFiguresAtAnInspectedHourAndAnUnavailableSelectedHourStaysUnavailable() {
+        // Sep 29, 11 PM PDT: three figures of one kind, each its own (105%, left as is).
+        let six = Self.page(hour: .sixUTC)
+        let sixView = CricketEventPagePresentation10868(input: six)
+        guard let sixReadouts = sixView.archiveHistoryContent()?.readouts else { return XCTFail("the readouts mount") }
+        XCTAssertEqual(sixReadouts.count, 3)
+        XCTAssertTrue(sixReadouts.allSatisfy { Self.isFigure($0.reading) }, "every readout is a whole figure in the same slot")
+        XCTAssertEqual(sixReadouts.compactMap(\.reading),
+                       ["30%", "36%", "39%"].map { CricketChaseReading10868.observed(CricketChaseFigure10868(text: $0, detail: Self.detail(.sixUTC))) })
+        XCTAssertEqual(sixView.archiveHistoryContent()?.caption, "Separately recorded trades at the selected hour · they need not add to 100%")
+        XCTAssertEqual(CricketHistoryGeometry10868.spokenValue(six.history),
+                       "Selected · Sep 29, 11 PM PDT · exact hour, nothing carried forward; India A: 30%; Australia A: 36%; Draw / tie: 39%")
+        XCTAssertEqual(sixView.archiveChaseContent()?.readout.reading,
+                       .observed(CricketChaseFigure10868(text: "39%", detail: Self.detail(.sixUTC))))
+
+        // Sep 29, 4 PM PDT: no draw or tie trade that hour — it stays unavailable.
+        let absent = Self.page(hour: .tieAbsent)
+        let absentView = CricketEventPagePresentation10868(input: absent)
+        XCTAssertEqual(absentView.archiveHistoryContent()?.readouts.compactMap(\.reading), [
+            CricketChaseReading10868.observed(CricketChaseFigure10868(text: "65%", detail: Self.detail(.tieAbsent))),
+            .observed(CricketChaseFigure10868(text: "20%", detail: Self.detail(.tieAbsent))),
+            .unavailable(Self.notThisHour),
+        ])
+        XCTAssertEqual(absentView.archiveChaseContent()?.readout.reading, .unavailable(Self.notThisHour))
+        XCTAssertEqual(absentView.archiveChaseContent()?.readout.spoken, "Recorded draw / tie chance: \(Self.notThisHour)")
+        XCTAssertEqual(CricketHistoryGeometry10868.keyNote(absent.history.series[2], in: absent.history), Self.notThisHour)
+        XCTAssertNil(CricketHistoryGeometry10868.inspectedPoint(absent.history.series[2], in: absent.history))
+
+        // Hostile: a stale figure supplied for that hour stays unavailable on
+        // both, and its neighbours keep their own figures.
+        let stale = CricketEventPageModel10868(Self.page(hour: .tieAbsent, archive: Self.archive(
+            .tieAbsent,
+            readouts: [Self.readout(Self.tickers[0], Self.reading(.tieAbsent, 0)), Self.readout(Self.tickers[1], Self.reading(.tieAbsent, 1)),
+                       Self.readout(Self.tickers[2], Self.reading(.sixUTC, 2))],
+            chase: Self.readout(Self.tickers[2], Self.reading(.sixUTC, 2)))))
+        XCTAssertEqual(stale.archiveReadouts[2].reading, .unavailable(Self.notThisHour))
+        XCTAssertEqual(stale.archiveChase?.reading, .unavailable(Self.notThisHour))
+        XCTAssertEqual(stale.archiveReadouts[0].reading, Self.reading(.tieAbsent, 0))
+
+        // The baseline-claim guard: nothing shown claims a pre-match or current
+        // figure, and the guard catches a recorded figure dressed as one.
+        XCTAssertEqual(Self.baselineClaims(Self.pageWords(sixView)), [])
+        XCTAssertEqual(Self.baselineClaims(Self.pageWords(absentView)), [])
+        let dressed = CricketEventPagePresentation10868(input: Self.page(archive: Self.archive(readouts: [
+            Self.readout(Self.tickers[0], .observed(CricketChaseFigure10868(text: "62%", detail: "Pre-match close · Sep 27, 4 PM PDT"))),
+            Self.readout(Self.tickers[1], Self.reading(.latest, 1)), Self.readout(Self.tickers[2], Self.reading(.latest, 2)),
+        ])))
+        XCTAssertEqual(Self.baselineClaims(Self.archiveWords(dressed)).count, 1)
+    }
+
+    @MainActor
+    func testTheActualFinalStaysFixedWhileEarlierHoursAreBrowsed() {
+        let latest = Self.page()
+        let latestView = CricketEventPagePresentation10868(input: latest)
+        for hour in [Hour.sixUTC, .tieAbsent] {
+            let browsed = Self.page(hour: hour)
+            let browsedView = CricketEventPagePresentation10868(input: browsed)
+            XCTAssertEqual(browsedView.headlineContent()?.input, latestView.headlineContent()?.input, "the compact final stays")
+            XCTAssertEqual(browsedView.chaseContent()?.input, latestView.chaseContent()?.input, "the final chase stays")
+            XCTAssertEqual(browsed.history.series, latest.history.series)
+            XCTAssertNotEqual(browsed.history.inspection, latest.history.inspection)
+            XCTAssertNotEqual(CricketEventPageModel10868(browsed).archiveReadouts, CricketEventPageModel10868(latest).archiveReadouts)
+            XCTAssertEqual(browsedView.archiveHistoryContent()?.reminder, latestView.archiveHistoryContent()?.reminder)
+            XCTAssertEqual(browsedView.archiveChaseContent()?.readout.name, Self.chaseLabel)
+        }
+    }
+
+    @MainActor
+    func testDateGuidesMarkTheFirstRecordedHourOfEachLocalDate() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        var firsts: [Double] = []
+        var seen = Set<DateComponents>()
+        for hour in Set((0..<3).flatMap { Self.points($0).map(\.x) }).sorted() {
+            if seen.insert(calendar.dateComponents([.year, .month, .day], from: Date(timeIntervalSince1970: hour))).inserted {
+                firsts.append(hour)
+            }
+        }
+        XCTAssertEqual(firsts.count, 6, "six local dates")
+        XCTAssertEqual(firsts.first, Self.firstHour, "the first date starts at the window's own first hour")
+        XCTAssertEqual(calendar.component(.hour, from: Date(timeIntervalSince1970: Self.firstHour)), 11, "not midnight by rule")
+        XCTAssertEqual(Array(firsts.dropFirst()), Self.dateStarts.map(\.x))
+
+        let input = Self.page()
+        let anchor = CricketEventPagePresentation10868(input: input).historyContent(reader: false)
+        XCTAssertEqual(anchor.markers?.phase, .completed)
+        XCTAssertEqual(anchor.markers?.markers.map(\.x), Self.dateStarts.map(\.x))
+        XCTAssertEqual(anchor.markers?.markers.allSatisfy { $0.label == nil && $0.emphasis == .subtle }, true)
+        XCTAssertEqual(anchor.markers?.key, Self.dateKey)
+        XCTAssertEqual(CricketHistoryGeometry10868.visibleMarkers(anchor.markers, domain: input.history.domain).count, 5)
+        XCTAssertEqual(CricketEventPagePresentation10868(input: input, mode: .reader(.history)).historyContent(reader: true).markers,
+                       anchor.markers)
+    }
+
+    @MainActor
+    func testTheFullSizeHistoryHeightIsFiniteAndNeverShorterThanInline() {
+        let cases: [(CGFloat?, CGFloat)] = [
+            (nil, 302), (0, 302), (-40, 302), (CGFloat.nan, 302), (CGFloat.infinity, 302), (-CGFloat.infinity, 302),
+            (200, 302), (302, 302), (350, 350), (480, 480),
+        ]
+        for (owner, expected) in cases {
+            let words = owner.map { "\($0)" } ?? "nil"
+            let input = Self.page(readerHeight: owner)
+            let full = CricketEventPagePresentation10868(input: input, mode: .reader(.history)).historyContent(reader: true)
+            XCTAssertEqual(CricketEventPageModel10868(input).readerHistory.plotHeight, expected, words)
+            XCTAssertEqual(full.input.plotHeight, expected, words)
+            XCTAssertTrue(full.input.plotHeight.isFinite, words)
+            XCTAssertEqual(CricketEventPagePresentation10868(input: input).historyContent(reader: false).input.plotHeight, 302, words)
+            XCTAssertEqual(full.input.series, input.history.series, words)
+            XCTAssertEqual(full.input.inspection, input.history.inspection, words)
+        }
+        // An owner's taller inline plot at an accessibility size is never shrunk full size.
+        let large = Self.page(history: Self.history(plotHeight: 380), readerHeight: 350)
+        XCTAssertEqual(CricketEventPageModel10868(large).readerHistory.plotHeight, 380)
+        XCTAssertEqual(CricketEventPageModel10868(Self.page(history: Self.history(plotHeight: 380), readerHeight: 460)).readerHistory.plotHeight, 460)
+    }
+
+    // MARK: Isolation and holds
+
+    @MainActor
+    func testConstructedBeforeDuringAndT20PagesShowNoArchiveTextAndTheGuardCatchesALeak() {
+        let finalWords = Self.archiveWords(CricketEventPagePresentation10868(input: Self.page()))
+        XCTAssertFalse(Self.leaks(finalWords).isEmpty, "control: the final readouts do carry final-only facts")
+
+        for phase in [CricketHeadlinePhase10868.before, .during] {
+            // CONSTRUCTED: the archive and the final chase are supplied anyway.
+            let input = Self.page(phase)
+            XCTAssertNotNil(input.archive)
+            XCTAssertNotNil(input.chase)
+            let model = CricketEventPageModel10868(input)
+            for mode in [CricketEventPageMode10868.page, .reader(.history), .reader(.chase)] {
+                let view = CricketEventPagePresentation10868(input: input, mode: mode)
+                XCTAssertNil(view.archiveHistoryContent(), "\(phase) \(mode)")
+                XCTAssertNil(view.archiveChaseContent(), "\(phase) \(mode)")
+                XCTAssertNil(view.chaseContent(), "a final chase is never coerced into \(phase)")
+                XCTAssertEqual(view.headlineContent()?.input, input.headline, "the generic headline, never the compact archive one")
+                XCTAssertEqual(Self.leaks(Self.pageWords(view)), [], "\(phase) \(mode)")
+                XCTAssertEqual(Self.baselineClaims(Self.pageWords(view)), [], "\(phase) \(mode)")
+            }
+            XCTAssertNil(model.archive)
+            XCTAssertEqual(model.archiveReadouts, [])
+            XCTAssertNil(model.archiveChase)
+            XCTAssertNil(model.story("chase"))
+            XCTAssertFalse(model.readerShows(.chase))
+            XCTAssertNil(CricketEventPagePresentation10868(input: input).historyContent(reader: false).markers,
+                         "completed date guides are not drawn at \(phase)")
+            // Exactly the same page as without the archive.
+            let plain = CricketEventPageModel10868(Self.page(phase, plain: true))
+            XCTAssertEqual(CricketEventPageCard10868.allCases.filter(model.isMounted), CricketEventPageCard10868.allCases.filter(plain.isMounted))
+            XCTAssertEqual(model.headline, plain.headline)
+            XCTAssertEqual(model.readerHistory, plain.readerHistory)
+        }
+        // Control: had the final readouts reached a during page, the guard would say so.
+        let leaked = Self.pageWords(CricketEventPagePresentation10868(input: Self.page(.during))) + finalWords
+        XCTAssertFalse(Self.leaks(leaked).isEmpty)
+
+        // Format isolation: the same final inputs on a T20 page mount no
+        // archive, and its headline stays the generic one.
+        let t20 = Self.page(format: .t20)
+        let t20View = CricketEventPagePresentation10868(input: t20)
+        XCTAssertNil(CricketEventPageModel10868(t20).archive)
+        XCTAssertNil(t20View.archiveHistoryContent())
+        XCTAssertNil(t20View.archiveChaseContent())
+        XCTAssertEqual(t20View.headlineContent()?.input, t20.headline)
+        XCTAssertEqual(Self.archiveWords(t20View), [])
+    }
+
+    @MainActor
+    func testTheArchiveAddsNoActionOrHoldAndSourcesAboutAndReadersKeepTheirExactCallbacks() {
+        var log: [String] = []
+        var received: [CricketHeadlineSourceInfo10868] = []
+        let input = Self.page()
+        func view(_ mode: CricketEventPageMode10868 = .page, hook: Bool = true) -> CricketEventPagePresentation10868 {
+            CricketEventPagePresentation10868(
+                input: input, mode: mode, originals: Self.originals(),
+                onAbout: { log.append("about") },
+                onSourceInfo: { received.append($0); log.append("sources") },
+                onAllProps: { log.append("allProps") },
+                onOriginalSelect: { log.append("original:\($0.identity.market)") },
+                onStoryIntent: { _ in log.append("stream") },
+                onHistoryPrevious: { log.append("previous") },
+                onHistoryNext: { log.append("next") },
+                onHistoryExpand: { log.append("expand") },
+                onHistoryWindowChoice: { log.append("window:\($0)") },
+                onHistoryPlotPosition: { log.append("plot:\(Int($0))") },
+                onChaseDetails: { log.append("chase:\($0.market)") },
+                onInteraction: hook ? { log.append("hold") } : nil)
+        }
+
+        // Building and reading the archive and every leaf calls nothing.
+        let page = view()
+        _ = page.archiveHistoryContent()
+        _ = page.archiveChaseContent()
+        _ = view(.reader(.history)).archiveHistoryContent()
+        _ = view(.reader(.chase)).archiveChaseContent()
+        let headline = page.headlineContent()
+        let anchor = page.historyContent(reader: false)
+        _ = page.chooserContent()
+        _ = view(.original).originalDetailsContent()
+        XCTAssertEqual(log, [])
+
+        // The archive changes no leaf input or action: the history and the
+        // chase are those of the same page without it.
+        let plain = CricketEventPagePresentation10868(input: Self.page(plain: true))
+        XCTAssertEqual(plain.historyContent(reader: false).input, anchor.input)
+        XCTAssertEqual(plain.chaseContent()?.input, page.chaseContent()?.input)
+        XCTAssertEqual(plain.headlineContent()?.input, input.headline, "without the archive: the generic headline")
+
+        // Page actions: the hook once, then the exact owner callback.
+        page.openTitleAbout()
+        headline?.openSourceInfo()
+        anchor.onPrevious?()
+        anchor.onExpand?()
+        anchor.onWindowChoice?("2026-09-29")
+        anchor.onPlotPosition?(Self.sixUTC)
+        page.chooserContent()?.onSelect?(Self.selection(0))
+        page.openAllProps()
+        XCTAssertEqual(log, ["hold", "about", "hold", "sources", "hold", "previous", "hold", "expand", "hold", "window:2026-09-29",
+                             "hold", "plot:\(Int(Self.sixUTC))", "hold", "original:\(Self.tickers[0])", "hold", "allProps"])
+        // The sources payload is the compact headline's own, exactly: its
+        // caption and actual state, no per-original filler.
+        XCTAssertEqual(received, [CricketEventPageModel10868.compactHeadline(input.headline).sourceInfo])
+        XCTAssertEqual(received.first?.state, input.headline.state)
+        if let info = received.first {
+            let content = view(.sourceInfo(info)).sourceInfoContent(info)
+            XCTAssertEqual(content.info, info)
+        }
+
+        // Full size: the exact callbacks, no hold.
+        log = []
+        view(.reader(.history)).historyContent(reader: true).onNext?()
+        view(.reader(.history)).openReaderAbout()
+        view(.reader(.chase)).chaseContent()?.onDetails?(Self.tieRef)
+        XCTAssertEqual(log, ["next", "about", "chase:constructed.market.TIE"])
+
+        // No callbacks: no action and no hold; the static archive still shows.
+        log = []
+        let silent = CricketEventPagePresentation10868(input: input, onInteraction: { log.append("hold") })
+        XCTAssertNotNil(silent.archiveHistoryContent())
+        XCTAssertNotNil(silent.archiveChaseContent())
+        XCTAssertNil(silent.chaseContent()?.onDetails)
+        XCTAssertNil(silent.headlineContent()?.onSourceInfo)
+        XCTAssertNil(silent.historyContent(reader: false).onPrevious)
+        silent.openTitleAbout()
+        silent.openAllProps()
+        silent.headlineContent()?.openSourceInfo()
+        XCTAssertEqual(log, [])
+
+        // The stream's own Open full card names the chase, shown full size.
+        guard let stream = input.stream else { return XCTFail("the final stream is supplied") }
+        let chaseRef = StoryStreamPresentation10868.CardRef(scope: stream.scope, id: "chase")
+        XCTAssertEqual(stream.intents(for: .open(chaseRef), resolved: stream.resolve(reduceMotion: false, actionable: true)),
+                       [.interaction(scope: stream.scope, card: chaseRef), .open(chaseRef)])
     }
 }

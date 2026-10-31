@@ -113,8 +113,11 @@ import SwiftUI
 // stays with the host's containment.
 //
 // The full-size history is the same history input and markers without its
-// expand control, at the owner's reader plot height when supplied; every
-// series, segment, tick, window, inspection and step control is unchanged.
+// expand control, at the owner's reader plot height while it is a finite,
+// positive size and never shorter than the page's own plot (so it never
+// shrinks at accessibility sizes); any other owner height keeps the page's.
+// Every series, segment, tick, window, inspection and step control is
+// unchanged.
 //
 // The headline's sources and timing is the headline's own payload, handed to
 // the host unchanged, and shown here only as the host's `.sourceInfo` content
@@ -173,6 +176,37 @@ import SwiftUI
 // election, ball and rate arithmetic, its fixed scales — and its
 // `t20MomentOrder` ranking are NOT ported.
 //
+// The archived match (`cricket-match`) is this same Test page at the final —
+// the same headline, history, resolved chase, originals, Details, sources,
+// About and full-size readers — not a second screen. It is the owner's
+// explicit `archive` admission, never inferred from a title, a score, which
+// values are present or a missing baseline, and it is drawn only on a Test
+// page at the final: before or during play, and in the T20 format, a
+// supplied archive draws and speaks nothing. A retained match whose history
+// has no admitted pre-match baseline keeps every chance it recorded as
+// recorded. The headline is the existing headline View with the owner's
+// caption and actual state words only — the compact final score, its spoken
+// words, provenance and sources payload — and no per-original rows, so the
+// missing baseline is one reminder, not a column of unavailable blocks.
+// Above the history, on the page and full size, one readout per original —
+// its history series' own name, shape and tint beside an equal figure with
+// that reading's own date words, or the owner's words for an hour with no
+// trade — then the owner's readable pre-match reminder. Beside
+// the actual final chase, in the stream and full size, the owner's one
+// recorded chance with its own date words. The chase leaf keeps its own
+// final gating: its pregame slot carries the owner's pre-match words, its
+// result slot the contract's own grade, and its in-play comparison stays
+// hidden, so the recorded chance is composed beside the leaf — never coerced
+// into it, never shown as current or settled — and the actuals stay fixed
+// while an earlier hour is inspected. A readout names its series by exact
+// id: a missing, empty or shared id shows the owner's unidentified words and
+// borrows no name, shape, tint or figure from a neighbour or a position, and
+// at an inspected hour the history marks absent for a series the history's
+// own absence words stay, even when a figure is supplied. The readouts reuse
+// the headline's measured grid, the history's mark shapes and the comparison
+// figure sizes; they elect, read, format, normalize or sum nothing and take
+// no action, so there is nothing to hold.
+//
 // Host binding still owed — not available at this base: an owner that admits,
 // for one match snapshot, the phase, the headline rows and state words, the
 // history with its segments and score-report guides at or before that
@@ -187,7 +221,12 @@ import SwiftUI
 // state, each expectation-shift checkpoint's qualified score report and
 // separately recorded reading, the reported match result and each
 // original's independently admitted result, and the shift's Details
-// reference to the selection it names (T20-*-NATIVE-BINDING-MAP.md).
+// reference to the selection it names (T20-*-NATIVE-BINDING-MAP.md). For the
+// archive also: the archive admission itself (which completed Test pages are
+// retained archives with no admitted pre-match baseline), each original's
+// recorded reading at the inspected hour, or the latest in view, with its own
+// local-calendar words, the history series id each readout names, the
+// reminder words and the recorded original beside the chase.
 
 /// One card the page can show full size. `history` is the anchor.
 nonisolated enum CricketEventPageCard10868: String, Hashable, CaseIterable {
@@ -338,6 +377,67 @@ nonisolated struct CricketEventPageInput10868: Equatable {
     /// scoring rates, handed to the chase leaf beside its input and gated by
     /// the chase's own phase. Nil: the chase shows no time or rate budget.
     var limitedOvers: CricketChaseLimitedOvers10868? = nil
+    /// The owner's explicit archive composition: a Test page at the final
+    /// only. Nil, the default: every Test and T20 page is unchanged.
+    var archive: CricketEventPageArchive10868? = nil
+}
+
+// MARK: - The archived match
+
+/// One recorded chance the archive reads above the history or beside the
+/// final chase: the history series it belongs to, by that series' exact id,
+/// and the owner's reading there.
+nonisolated struct CricketEventPageArchiveReadout10868: Equatable {
+    /// Names exactly one series of the page's history; the readout takes
+    /// that series' name, shape and tint. Never matched by position.
+    let seriesID: String
+    /// The owner's figure with its own date words, or the owner's words for
+    /// an hour with no recorded trade. Never a pre-match baseline, a current
+    /// chance or a settlement.
+    let reading: CricketChaseReading10868
+}
+
+/// The owner's archive words and readouts for a completed Test page whose
+/// retained history has no admitted pre-match baseline.
+nonisolated struct CricketEventPageArchive10868: Equatable {
+    /// The readable reminder under the readouts, on the page and full size
+    /// ("Pre-match chances unavailable").
+    let baselineReminder: String
+    /// The owner's words over the readouts; nil draws none. It must not
+    /// claim the readings were observed together.
+    var readoutsCaption: String? = nil
+    /// One per original, in the owner's order.
+    let readouts: [CricketEventPageArchiveReadout10868]
+    /// The owner's label over the recorded chance beside the final chase.
+    let chaseLabel: String
+    /// The recorded chance beside the final chase; nil draws none.
+    var chase: CricketEventPageArchiveReadout10868? = nil
+    /// Shown in place of a readout whose series id names no single history
+    /// series ("Original unavailable").
+    let unidentified: String
+}
+
+/// One readout as the page shows it.
+nonisolated struct CricketEventPageArchiveShown10868: Equatable {
+    /// The series' name, the owner's chase label, or the owner's
+    /// unidentified words.
+    let name: String
+    /// Nil for an unidentified readout: nothing is borrowed.
+    let shape: CricketHistoryShape10868?
+    let tint: Color?
+    /// The owner's reading, or the history's own absence words at the
+    /// inspected hour. Nil for an unidentified readout: no figure.
+    let reading: CricketChaseReading10868?
+
+    /// The name with its figure and date words, or with its absence words;
+    /// an unidentified readout speaks only the owner's words.
+    var spoken: String {
+        guard let reading else { return name }
+        switch reading {
+        case .observed(let figure): return "\(name): \(figure.text), \(figure.detail)"
+        case .unavailable(let words), .withheld(let words): return "\(name): \(words)"
+        }
+    }
 }
 
 /// The owner's retained originals (three for a Test match, two for T20), for
@@ -382,6 +482,8 @@ nonisolated enum CricketEventPageAccessibilityID10868 {
     static let original = "cricketEventPage10868.original"
     static let about = "cricketEventPage10868.about"
     static let sourceInfo = "cricketEventPage10868.sourceInfo"
+    static let archiveReadouts = "cricketEventPage10868.archive.readouts"
+    static let archiveChase = "cricketEventPage10868.archive.chase"
     static func card(_ card: CricketEventPageCard10868) -> String { "cricketEventPage10868.card.\(card.rawValue)" }
 }
 
@@ -413,9 +515,26 @@ nonisolated struct CricketEventPageModel10868: Equatable {
         }
     }
 
-    /// The headline at the page's own phase. Otherwise nothing.
+    /// The headline at the page's own phase. Otherwise nothing. With the
+    /// archive admitted, its compact actual-state headline instead.
     var headline: CricketHeadlineInput10868? {
-        input.headline.phase == input.phase ? input.headline : nil
+        guard input.headline.phase == input.phase else { return nil }
+        guard archive != nil else { return input.headline }
+        return Self.compactHeadline(input.headline)
+    }
+
+    /// The archive's compact headline: the owner's caption, actual state
+    /// entries with their spoken forms and provenance, and the sources payload
+    /// the headline builds from exactly those — with no per-original rows, so
+    /// a missing baseline never becomes a column of unavailable blocks; the
+    /// archive's readouts carry each original's recorded chance. A
+    /// presentation copy: the owner's headline input is unchanged.
+    static func compactHeadline(_ headline: CricketHeadlineInput10868) -> CricketHeadlineInput10868 {
+        CricketHeadlineInput10868(
+            phase: headline.phase, caption: headline.caption, beforeLabel: headline.beforeLabel,
+            comparisonLabel: headline.comparisonLabel, outcomeLabel: headline.outcomeLabel,
+            outcomeMissing: headline.outcomeMissing, rows: [], state: headline.state
+        )
     }
 
     /// The owner's guides at the page's own phase. Otherwise none.
@@ -498,7 +617,8 @@ nonisolated struct CricketEventPageModel10868: Equatable {
     func readerShows(_ card: CricketEventPageCard10868) -> Bool { isMounted(card) }
 
     /// The anchor's full-size content: the same history without an expand
-    /// control inside the reader, at the owner's reader height when supplied.
+    /// control inside the reader, at the owner's reader height while usable
+    /// and never shorter than the page's; any other height keeps the page's.
     /// Every other field is the owner's, unchanged.
     var readerHistory: CricketHistoryInput10868 {
         let history = input.history
@@ -506,10 +626,56 @@ nonisolated struct CricketEventPageModel10868: Equatable {
             title: history.title, series: history.series, domain: history.domain,
             yTicks: history.yTicks, xTicks: history.xTicks, context: history.context,
             pregameKey: history.pregameKey, summary: history.summary,
-            plotHeight: input.readerPlotHeight ?? history.plotHeight,
+            plotHeight: RugbyMatchEventPageModel10868.readerPlotHeight(input.readerPlotHeight, history: history.plotHeight),
             window: history.window, inspection: history.inspection,
             previous: history.previous, next: history.next, expand: nil
         )
+    }
+
+    // MARK: Archive
+
+    /// The archive composition: a Test page at the final, by the owner's
+    /// explicit admission only. Otherwise nothing, whatever is supplied.
+    var archive: CricketEventPageArchive10868? {
+        guard input.format == .test, input.phase == .completed, let archive = input.archive else { return nil }
+        return archive
+    }
+
+    /// The history series a readout names: exactly one series with that
+    /// nonempty id. Otherwise none — never a neighbour or a position.
+    func archiveSeries(_ readout: CricketEventPageArchiveReadout10868) -> CricketHistorySeries10868? {
+        guard !readout.seriesID.isEmpty else { return nil }
+        let matches = input.history.series.filter { $0.id == readout.seriesID }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    /// A readout with its series' name (or `label`), shape and tint, and the
+    /// owner's reading — except at an inspected hour the history marks absent
+    /// for that series, which keeps the history's absence words.
+    func archiveShown(_ readout: CricketEventPageArchiveReadout10868, label: String? = nil,
+                      in archive: CricketEventPageArchive10868) -> CricketEventPageArchiveShown10868 {
+        guard let series = archiveSeries(readout) else {
+            return CricketEventPageArchiveShown10868(name: archive.unidentified, shape: nil, tint: nil, reading: nil)
+        }
+        let absent = CricketHistoryGeometry10868.inspectedAbsentWords(series, in: input.history)
+        return CricketEventPageArchiveShown10868(
+            name: label ?? series.name, shape: series.shape, tint: series.tint,
+            reading: absent.map { CricketChaseReading10868.unavailable($0) } ?? readout.reading
+        )
+    }
+
+    /// Every readout above the history, in the owner's order. None without
+    /// the archive.
+    var archiveReadouts: [CricketEventPageArchiveShown10868] {
+        guard let archive = self.archive else { return [] }
+        return archive.readouts.map { archiveShown($0, in: archive) }
+    }
+
+    /// The recorded chance beside the final chase: only while the chase is
+    /// mounted and the owner names one.
+    var archiveChase: CricketEventPageArchiveShown10868? {
+        guard let archive = self.archive, chase != nil, let readout = archive.chase else { return nil }
+        return archiveShown(readout, label: archive.chaseLabel, in: archive)
     }
 
     // MARK: About and entries
@@ -656,6 +822,163 @@ struct CricketEventPageSourceInfoContent10868: View {
                 .foregroundStyle(DS.textSecondary)
         case nil:
             EmptyView()
+        }
+    }
+}
+
+// MARK: - Archive content
+
+/// The archive's recorded chances above the history: the owner's caption,
+/// one readout per original in the headline's measured grid (equal columns
+/// while every cell fits whole, otherwise one named block per original),
+/// then the readable pre-match reminder. The same on the page and full size.
+/// Static; it acts on nothing.
+struct CricketEventPageArchiveHistoryContent10868: View {
+    let caption: String?
+    let readouts: [CricketEventPageArchiveShown10868]
+    let reminder: String
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// The comparison figures' size, one size for every readout.
+    @ScaledMetric(relativeTo: .title2) private var chanceSize: CGFloat = 26
+    @ScaledMetric(relativeTo: .body) private var missingSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .caption) private var markRadius: CGFloat = 3.5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let caption = CricketEventPageModel10868.readable(caption) {
+                CricketEventPageWrappedText10868(text: caption, font: .subheadline.weight(.semibold), color: DS.textSecondary)
+            }
+            if !readouts.isEmpty {
+                CricketHeadlineGridLayout10868(
+                    cellsPerBlock: 2,
+                    spacing: 12,
+                    rowSpacing: 6,
+                    blockSpacing: 14,
+                    forceStack: typeSize.isAccessibilitySize
+                ) {
+                    ForEach(0..<(readouts.count * 2), id: \.self) { cell in
+                        let readout = readouts[cell / 2]
+                        if cell % 2 == 0 {
+                            CricketEventPageArchiveName10868(readout: readout, markRadius: markRadius)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(readout.spoken)
+                        } else {
+                            CricketEventPageArchiveReading10868(readout: readout, chanceSize: chanceSize, missingSize: missingSize)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+            }
+            CricketEventPageWrappedText10868(text: reminder, font: .subheadline.weight(.medium), color: DS.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(CricketEventPageAccessibilityID10868.archiveReadouts)
+    }
+}
+
+/// The archive's one recorded chance beside the final chase: the owner's
+/// label with its series' shape, then the figure with its own date words, or
+/// the owner's words for an hour with no trade. Static; it acts on nothing.
+struct CricketEventPageArchiveChaseContent10868: View {
+    let readout: CricketEventPageArchiveShown10868
+
+    @ScaledMetric(relativeTo: .title2) private var chanceSize: CGFloat = 26
+    @ScaledMetric(relativeTo: .body) private var missingSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .caption) private var markRadius: CGFloat = 3.5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            CricketEventPageArchiveName10868(readout: readout, markRadius: markRadius)
+            CricketEventPageArchiveReading10868(readout: readout, chanceSize: chanceSize, missingSize: missingSize)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(readout.spoken)
+        .accessibilityIdentifier(CricketEventPageAccessibilityID10868.archiveChase)
+    }
+}
+
+/// A readout's name beside its series' solid line and filled mark, exactly
+/// the history key's shape; an unidentified readout draws no mark.
+private struct CricketEventPageArchiveName10868: View {
+    let readout: CricketEventPageArchiveShown10868
+    let markRadius: CGFloat
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if let shape = readout.shape, let tint = readout.tint {
+                Canvas { context, size in
+                    let middle = CGPoint(x: size.width / 2, y: size.height / 2)
+                    var line = Path()
+                    line.move(to: CGPoint(x: 0, y: middle.y))
+                    line.addLine(to: CGPoint(x: size.width, y: middle.y))
+                    context.stroke(line, with: .color(tint), lineWidth: 2)
+                    context.fill(CricketHistoryGeometry10868.markPath(shape, at: middle, radius: markRadius), with: .color(tint))
+                }
+                .frame(width: markRadius * 6.5, height: markRadius * 4.5)
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + markRadius }
+                .accessibilityHidden(true)
+            }
+            CricketEventPageWrappedText10868(text: readout.name, font: .subheadline.weight(.semibold), color: DS.textPrimary)
+        }
+    }
+}
+
+/// A readout's whole figure above its own date words, or the owner's words;
+/// an unidentified readout keeps an empty cell so the grid's order holds.
+private struct CricketEventPageArchiveReading10868: View {
+    let readout: CricketEventPageArchiveShown10868
+    let chanceSize: CGFloat
+    let missingSize: CGFloat
+
+    var body: some View {
+        switch readout.reading {
+        case .observed(let figure)?:
+            VStack(alignment: .leading, spacing: 4) {
+                Text(figure.text)
+                    .font(.system(size: chanceSize, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(DS.textPrimary)
+                    .fixedSize()
+                CricketEventPageWrappedText10868(text: figure.detail, font: .caption2, color: DS.textSecondary)
+            }
+        case .unavailable(let words)?, .withheld(let words)?:
+            CricketEventPageWrappedText10868(
+                text: words,
+                font: .system(size: missingSize, weight: .semibold),
+                color: DS.textSecondary
+            )
+        case nil:
+            Color.clear.frame(width: 0, height: 0)
+        }
+    }
+}
+
+/// Wrapping owner text that never breaks inside a word: a hidden, zero-height
+/// strut of its words makes the widest word part of the measured width, so
+/// the grid stacks before any word would split.
+private struct CricketEventPageWrappedText10868: View {
+    let text: String
+    let font: Font
+    let color: Color
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(CricketChaseGeometry10868.words(text).enumerated()), id: \.offset) { _, word in
+                    Text(word).font(font).fixedSize()
+                }
+            }
+            .frame(height: 0)
+            .hidden()
+            Text(text)
+                .font(font)
+                .foregroundStyle(color)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -840,6 +1163,21 @@ struct CricketEventPagePresentation10868: View {
         model.about.map { CricketEventPageAboutContent10868(about: $0) }
     }
 
+    /// The archive's readouts and reminder above the history: the same on
+    /// the page and full size. Nothing without the archive.
+    func archiveHistoryContent() -> CricketEventPageArchiveHistoryContent10868? {
+        model.archive.map {
+            CricketEventPageArchiveHistoryContent10868(caption: $0.readoutsCaption, readouts: model.archiveReadouts,
+                                                       reminder: $0.baselineReminder)
+        }
+    }
+
+    /// The archive's recorded chance beside the mounted final chase: the same
+    /// in the stream and full size. Static, so there is nothing to relay.
+    func archiveChaseContent() -> CricketEventPageArchiveChaseContent10868? {
+        model.archiveChase.map { CricketEventPageArchiveChaseContent10868(readout: $0) }
+    }
+
     /// The headline's exact payload, as static content.
     func sourceInfoContent(_ info: CricketHeadlineSourceInfo10868) -> CricketEventPageSourceInfoContent10868 {
         CricketEventPageSourceInfoContent10868(info: info)
@@ -1003,7 +1341,7 @@ struct CricketEventPagePresentation10868: View {
     }
 
     private var anchor: some View {
-        historyContent(reader: false)
+        historyGroup(reader: false)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(CricketEventPageAccessibilityID10868.anchor)
@@ -1093,13 +1431,43 @@ struct CricketEventPagePresentation10868: View {
     @ViewBuilder private func cardContent(_ card: CricketEventPageCard10868,
                                           activation: StoryStreamCardActivation10868?) -> some View {
         switch card {
-        case .history: historyContent(reader: true)
+        case .history: historyGroup(reader: true)
         case .shifts: shiftsContent(activation: activation)
-        case .chase: chaseContent(activation: activation)
+        case .chase: chaseGroup(activation: activation)
         case .survival: survivalContent(activation: activation)
         case .expectations: expectationsContent(activation: activation)
         case .pregame: pregameContent()
         case .expectationShift: expectationShiftContent(activation: activation)
+        }
+    }
+
+    /// The history, with the archive's readouts and reminder above it when the
+    /// owner admits the archive.
+    @ViewBuilder private func historyGroup(reader: Bool) -> some View {
+        if let archive = archiveHistoryContent() {
+            VStack(alignment: .leading, spacing: 16) {
+                archive
+                historyContent(reader: reader)
+            }
+        } else {
+            historyContent(reader: reader)
+        }
+    }
+
+    /// The chase, with the archive's recorded chance beside it when the owner
+    /// admits the archive and names one.
+    @ViewBuilder private func chaseGroup(activation: StoryStreamCardActivation10868?) -> some View {
+        if let archive = archiveChaseContent() {
+            VStack(alignment: .leading, spacing: 16) {
+                archive
+                Rectangle()
+                    .fill(DS.border)
+                    .frame(height: 1)
+                    .accessibilityHidden(true)
+                chaseContent(activation: activation)
+            }
+        } else {
+            chaseContent(activation: activation)
         }
     }
 
