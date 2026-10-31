@@ -787,6 +787,36 @@ def stamp_reader_first_on() -> bool:
     return os.getenv(STAMP_READER_FIRST_ENV, "1").strip() != "0"
 
 
+# #10090 held stamp floor — a LIVE game a reader holds open is due again
+# READER_HELD_STAMP_FLOOR_S after its last stamp instead of the refresher's
+# floor (2 s). Production 16:16-16:21Z 2026-10-31 (v6005 `667df791`, 4 held
+# Polymarket games): held recv -> stamp p50 3.52 s, of which held -> stamp
+# p50 2.78 s — a held game stamped fast had its next price throttle-deferred
+# behind the 2 s floor. Only `_due`'s floor moves: the chart cadence floors,
+# the held run bound (READER_FIRST_RUN) and non-live events are untouched,
+# and the floor never rises above the refresher's own. k held moving games ask
+# at most 2k stamps/s, so past READER_HELD_FAST_MAX held games every game
+# keeps the refresher's floor. ``STAMP_READER_FIRST=0``, an unreadable value,
+# or ``READER_HELD_STAMP_FLOOR_S=2`` restores the 2 s floor.
+READER_HELD_STAMP_FLOOR_ENV = "READER_HELD_STAMP_FLOOR_S"
+READER_HELD_STAMP_FLOOR_S = 0.5
+READER_HELD_FAST_MAX = 8
+
+
+def reader_held_stamp_floor_s() -> Optional[float]:
+    """The held floor in seconds, or None (no lower floor) when unreadable."""
+    raw = os.getenv(READER_HELD_STAMP_FLOOR_ENV)
+    if raw is None or not raw.strip():
+        return READER_HELD_STAMP_FLOOR_S
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return seconds
+
+
 def _reader_held_tag(source, event_id) -> str:
     """` reader_held=0|1` for a log line; empty with no source or a failing one."""
     if source is None:
@@ -3512,7 +3542,10 @@ class LiveBlendRefresher:
         last = self._last_refresh_at.get(event_id)
         if last is None:
             return True
-        floor = self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
+        floor = self.min_refresh_interval_s
+        if now - last < floor - FLUSH_CLOCK_SLACK_S:
+            floor = self._held_stamp_floor(event_id, floor)
+        floor -= FLUSH_CLOCK_SLACK_S
         if now - last >= floor:  # the caller's clock on both sides, as before
             return True
         # #10090 (Argon flush-loop Rank 2): or a floor after the stamp on the
@@ -3525,6 +3558,23 @@ class LiveBlendRefresher:
         # start + floor would stamp it again inside the floor.
         stamped = self._last_refresh_current.get(event_id, last)
         return current - max(stamped, last) >= floor
+
+    def _held_stamp_floor(self, event_id: int, floor: float) -> float:
+        """#10090 held stamp floor (READER_HELD_STAMP_FLOOR_ENV): ``floor``,
+        or the lower held floor for a live event a reader holds open while at
+        most READER_HELD_FAST_MAX are held. Read only inside the floor."""
+        if event_id not in self._live_event_ids:
+            return floor
+        held_floor = reader_held_stamp_floor_s()
+        if held_floor is None or held_floor >= floor:
+            return floor
+        held = self._reader_held_ids()
+        try:
+            if event_id in held and len(held) <= READER_HELD_FAST_MAX:
+                return held_floor
+        except Exception:  # noqa: BLE001 — a floor read never fails a stamp
+            pass
+        return floor
 
     def _due_unchanged(self, event_id: int, now: float) -> bool:
         """`_due`, changing nothing: no expired hold is dropped and no clock
