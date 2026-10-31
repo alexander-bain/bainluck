@@ -21,7 +21,32 @@ import Foundation
 /// Previous/Next name the other offered cards, and nothing moves unless the
 /// reader asks. Context-ranked, automatic advancement stays the stream owner's
 /// to add (#9483) — an explicit unpaid obligation, not this file's.
+///
+/// THE HALF-BY-HALF CARD FOLLOWS THE APPROVED ROUTE-PHASE MEMBERSHIP (Design,
+/// wave-1 review 2026-10-31; route-tracker SOCCER-CARD-RECONCILIATION.json):
+/// it is on the final, journey and replay routes and on neither the before nor
+/// the live route. So by default (`HalvesAdmission.routeDefault`) it is offered
+/// only after the final, whatever content the halves adapter has. The journey
+/// and replay hosts — or any other owner-supplied context — admit it explicitly
+/// (`.explicit`); nothing here ranks cards or infers a route.
 enum SoccerPageInputAdapter10868 {
+
+    /// Where the half-by-half card may be offered.
+    enum HalvesAdmission: Equatable {
+        /// The approved route-phase membership: after the final only.
+        case routeDefault
+        /// The host explicitly admits it in this phase (the journey and replay
+        /// routes, or other owner-supplied context).
+        case explicit
+    }
+
+    /// Whether the half-by-half card is offered in `phase` under `admission`.
+    static func offersHalves(phase: SoccerEventPagePhase10868, admission: HalvesAdmission) -> Bool {
+        switch admission {
+        case .routeDefault: phase == .final
+        case .explicit: true
+        }
+    }
 
     /// The host's own stream state — what the reader is looking at.
     struct StreamState: Equatable {
@@ -59,12 +84,14 @@ enum SoccerPageInputAdapter10868 {
         goals: TotalMilestoneInput10868?,
         both: BothTeamsScoreInput10868?,
         first: FirstScorerComparisonInput10868?,
-        halves: PeriodOutcomeComparisonInput10868?,
+        halves suppliedHalves: PeriodOutcomeComparisonInput10868?,
+        halvesAdmission: HalvesAdmission = .routeDefault,
         originalsCount: Int?,
         stream state: StreamState,
         host: SoccerMatchPageAdapter10868.Host
     ) -> SoccerEventPageInput10868 {
         let phase = SoccerMatchPageAdapter10868.phase(event, now: host.now)
+        let halves = offersHalves(phase: phase, admission: halvesAdmission) ? suppliedHalves : nil
         let offered = offeredCards(goals: goals, both: both, first: first, halves: halves)
         return SoccerEventPageInput10868(
             phase: phase,

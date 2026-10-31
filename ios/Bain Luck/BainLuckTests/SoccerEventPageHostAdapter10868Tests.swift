@@ -12,12 +12,15 @@ final class SoccerEventPageHostAdapter10868Tests: XCTestCase {
     private typealias F = SoccerRetained10868
     private typealias Host = SoccerEventPageHost10868
 
-    private func built(history: String?, markets: String?, admitted: SoccerPropReadingAdapter10868.Markets,
+    private func built(detail: String = F.liveDetail, history: String?, markets: String?,
+                       admitted: SoccerPropReadingAdapter10868.Markets, now: Date = F.liveNow,
+                       halvesAdmission: SoccerPageInputAdapter10868.HalvesAdmission = .routeDefault,
                        reading: Host.Reading = Host.Reading()) throws -> Host.Built {
-        let event = try F.detail(F.liveDetail)
+        let event = try F.detail(detail)
         return Host.build(event: event, history: try history.map { try F.history($0) },
                           markets: try markets.map { try F.markets($0) }, admitted: admitted,
-                          probabilityObservedAt: event.heroProbabilityObservedAt?.asDate, now: F.liveNow,
+                          halvesAdmission: halvesAdmission,
+                          probabilityObservedAt: event.heroProbabilityObservedAt?.asDate, now: now,
                           reading: reading, calendar: F.pacific, locale: F.locale)
     }
 
@@ -35,7 +38,8 @@ final class SoccerEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(page.input.phase, .live)
         XCTAssertEqual(page.input.headline.home.primary, formatProbability(0.995))
         XCTAssertFalse(page.input.history.series[0].runs.isEmpty)
-        XCTAssertEqual(page.input.stream.cards.map(\.id), ["goals", "both", "first", "halves"])
+        // The live route carries no half-by-half card by default.
+        XCTAssertEqual(page.input.stream.cards.map(\.id), ["goals", "both", "first"])
         XCTAssertEqual(page.input.copy.allPropsLabel, "\(SoccerPageInputAdapter10868.Words.allProps) · \(count)")
         XCTAssertEqual(page.originals.catalogue?.scope, "soccer:15325054:live:originals")
     }
@@ -46,7 +50,7 @@ final class SoccerEventPageHostAdapter10868Tests: XCTestCase {
         let page = try built(history: nil, markets: F.liveMarkets, admitted: F.liveAdmission)
         XCTAssertEqual(page.input.history.plotAbsence?.title, SoccerHistoryAdapter10868.Words.historyUnavailable)
         XCTAssertEqual(page.input.headline.home.primary, formatProbability(0.995))
-        XCTAssertEqual(page.input.stream.cards.count, 4)
+        XCTAssertEqual(page.input.stream.cards.count, 3)
         XCTAssertNotNil(page.originals.catalogue)
         // The first-team card keeps its rows and drops only the checkpoints.
         XCTAssertNil(page.input.first?.scorePath)
@@ -60,11 +64,14 @@ final class SoccerEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(page.input.headline.home.primary, formatProbability(0.995))
     }
 
+    /// A journey/replay-style host admits the half-by-half card explicitly, so
+    /// the held half selection has a card to reach.
     func testTheReadingStateReachesTheBuiltPageUnchanged() throws {
         let selection = OriginalMarketDetails9483.Selection(
             scope: "soccer:15325054:live:originals",
             identity: OriginalMarketDetails9483.Identity(source: "polymarket", market: "64353426", side: "242143189"))
         let page = try built(history: F.liveHistory, markets: F.liveMarkets, admitted: F.liveAdmission,
+                             halvesAdmission: .explicit,
                              reading: Host.Reading(story: .halves, goal: "242143187", both: "242143190",
                                                    first: "244237965", half: "draw", selection: selection,
                                                    readerOpen: true, wide: true))
@@ -75,6 +82,39 @@ final class SoccerEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(page.input.first?.selectedID, "244237965")
         XCTAssertEqual(page.input.halves?.selectedSeriesID, "draw")
         XCTAssertEqual(page.originals.selection, selection)
+    }
+
+    // MARK: - The half-by-half card's route-phase membership (Design, wave-1 review)
+
+    /// By default the host follows the approved membership: no half-by-half card
+    /// during play, the card after the final; a held half story falls back to
+    /// the first offered card. An explicit admission is the host's own context.
+    func testTheHostOffersTheHalvesCardAfterTheFinalByDefaultAndOtherwiseOnlyWhenAdmitted() throws {
+        let live = try built(history: F.liveHistory, markets: F.liveMarkets, admitted: F.liveAdmission,
+                             reading: Host.Reading(story: .halves))
+        XCTAssertNil(live.input.halves)
+        XCTAssertEqual(live.input.stream.primary?.id, "goals")
+
+        let final = try built(detail: F.finalDetail, history: F.finalHistory, markets: F.finalMarkets,
+                              admitted: F.liveAdmission, now: F.finalNow)
+        XCTAssertNotNil(final.input.halves)
+        XCTAssertTrue(final.input.stream.cards.map(\.id).contains("halves"))
+
+        let admitted = try built(history: F.liveHistory, markets: F.liveMarkets, admitted: F.liveAdmission,
+                                 halvesAdmission: .explicit)
+        XCTAssertEqual(admitted.input.stream.cards.map(\.id), ["goals", "both", "first", "halves"])
+    }
+
+    /// The host tells All props which markets are halves (its admission), so
+    /// the REAL first-half result row at 99.9% (63178219 / 242338171) is kept
+    /// only as a dated historical quote during play — never a current chance.
+    func testTheHostPassesItsHalfMarketsToAllProps() throws {
+        let page = try built(history: F.liveHistory, markets: F.liveMarkets, admitted: F.liveAdmission)
+        let home = try XCTUnwrap(page.originals.catalogue?.originals.first {
+            $0.identity == OriginalMarketDetails9483.Identity(source: "polymarket", market: "63178219", side: "242338171")
+        })
+        XCTAssertEqual(home.later, OriginalMarketDetails9483.Reading.missing(SoccerOriginalsAdapter10868.Words.inPlayUnavailable))
+        XCTAssertEqual(home.about.historicalQuote?.text, formatProbability(0.999))
     }
 
     func testEachPresentedModeHasItsOwnIdentity() {

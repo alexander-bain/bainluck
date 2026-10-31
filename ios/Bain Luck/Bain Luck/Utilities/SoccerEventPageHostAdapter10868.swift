@@ -28,12 +28,16 @@ import SwiftUI
 /// Native's call. The story markets are the owner's admission and are still
 /// owed (see `SoccerPropReadingAdapter10868.Markets`): no owner types them yet,
 /// so a host without it passes none and the page shows its headline, history
-/// and All props with no prop stories.
+/// and All props with no prop stories. The half-by-half card follows the
+/// approved route-phase membership by default — after the final only
+/// (`SoccerPageInputAdapter10868.HalvesAdmission.routeDefault`); the journey and
+/// replay hosts pass `.explicit`, which is owner-supplied context, not a rank.
 /// ```swift
 /// if ReleaseSurfaces.soccerMatchPageEnabled, SoccerEventPageHost10868.applies(event) {
 ///     SoccerEventPageHost10868(
 ///         event: vm.headline(event), history: vm.history, markets: vm.gameMarkets,
 ///         admitted: /* the owner's typed story markets — still owed */ .init(),
+///         // halvesAdmission: .explicit — journey and replay routes only
 ///         probabilityObservedAt: vm.displayedProbabilityObservedAt(event),
 ///         deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
 ///         ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
@@ -60,6 +64,9 @@ struct SoccerEventPageHost10868: View {
     let markets: GameMarketsResponse?
     /// The owner's typed story markets. Empty: no prop story is offered.
     var admitted: SoccerPropReadingAdapter10868.Markets = .init()
+    /// Where the half-by-half card may be offered: the approved default is
+    /// after the final only; the journey and replay hosts pass `.explicit`.
+    var halvesAdmission: SoccerPageInputAdapter10868.HalvesAdmission = .routeDefault
     let probabilityObservedAt: Date?
     var deliveryInterrupted: Bool = false
     var ladderHome: Double? = nil
@@ -183,6 +190,7 @@ struct SoccerEventPageHost10868: View {
 
     private func make() -> Built {
         Self.build(event: event, history: history, markets: markets, admitted: admitted,
+                   halvesAdmission: halvesAdmission,
                    probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
                    ladderHome: ladderHome, ladderAway: ladderAway, now: now,
                    reading: Reading(story: story, goal: goal, both: both, first: first, half: half,
@@ -192,9 +200,12 @@ struct SoccerEventPageHost10868: View {
 
     /// The page input and originals from the passed values alone — pure, so
     /// every changed value reaches the screen on the next pass. A missing
-    /// history response leaves only the chart slot unavailable.
+    /// history response leaves only the chart slot unavailable. The admitted
+    /// half markets also tell All props which rows are about one half.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
-                      admitted: SoccerPropReadingAdapter10868.Markets, probabilityObservedAt: Date?,
+                      admitted: SoccerPropReadingAdapter10868.Markets,
+                      halvesAdmission: SoccerPageInputAdapter10868.HalvesAdmission = .routeDefault,
+                      probabilityObservedAt: Date?,
                       deliveryInterrupted: Bool = false, ladderHome: Double? = nil, ladderAway: Double? = nil,
                       now: Date, reading: Reading = Reading(),
                       calendar: Calendar = .current, locale: Locale = .current) -> Built {
@@ -218,10 +229,12 @@ struct SoccerEventPageHost10868: View {
                                                     selectedSeriesID: reading.half)
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)
-        let originals = SoccerOriginalsAdapter10868.originals(event, markets: markets, host: props, tint: tints.home,
-                                                              selection: reading.selection)
+        let originals = SoccerOriginalsAdapter10868.originals(
+            event, markets: markets, host: props, tint: tints.home, selection: reading.selection,
+            periodMarketIDs: Set(admitted.halves.map(\.marketID)))
         let input = SoccerPageInputAdapter10868.input(
             event, history: historyInput, goals: goals, both: both, first: first, halves: halves,
+            halvesAdmission: halvesAdmission,
             originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)

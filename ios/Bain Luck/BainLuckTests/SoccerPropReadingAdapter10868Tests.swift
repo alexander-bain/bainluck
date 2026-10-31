@@ -94,6 +94,89 @@ final class SoccerPropReadingAdapter10868Tests: XCTestCase {
         XCTAssertNotNil(R.pin(yes.option, start: start.addingTimeInterval(1)))
     }
 
+    // MARK: - Period rows (Design, wave-1 review 2026-10-31)
+
+    /// The reader words for a period's dated recorded quote, spelled out.
+    private func periodQuote(_ value: Double, _ stamp: String) -> String {
+        "In-play chance unavailable · \(formatProbability(value)) recorded \(clock(stamp, F.liveNow)) · Polymarket"
+    }
+
+    /// The REAL row: the retained live body's first-half result, home outcome
+    /// (market 63178219, outcome 242338171), quoted 99.9% at 12:54:07 — its own
+    /// clock, after kickoff, two minutes before `now` — once the half is over.
+    /// Every full-match check passes, so only the period rule refuses it: no
+    /// decoded field proves this half is still being played (its matrix
+    /// question's lifecycle is the venue's `open`; its period is untyped).
+    func testDuringPlayTheRetainedFirstHalfResultAt99Point9IsADatedQuoteNotTheCurrentChance() throws {
+        let event = try F.detail(F.liveDetail)
+        let host = F.propHost(F.liveNow)
+        let home = try leg(63178219, "242338171", in: F.liveMarkets)
+
+        guard case .recorded = R.current(home, event: event, host: host) else {
+            return XCTFail("the full-match rules alone admit this quote; the period rule is what refuses it")
+        }
+        XCTAssertEqual(R.periodCurrent(home, event: event, host: host),
+                       .withheld(periodQuote(0.999, "2026-10-12T12:54:07.360375+00:00")))
+        XCTAssertEqual(R.result(home), .unconfirmed(R.Words.resultUnavailable))
+
+        let questions = try F.markets(F.liveMarkets).gameQuestionMatrix?.questions ?? []
+        let question = try XCTUnwrap(questions.first { $0.questionKey == "m:63178219" })
+        XCTAssertEqual(question.lifecycle?.state, "open")
+        XCTAssertNil(question.period)
+    }
+
+    /// CONSTRUCTED: the live body with the first-half result rows carrying the
+    /// grades the final body serves for the same outcome ids. A graded period
+    /// row shows its grade and no chance.
+    func testDuringPlayAGradedPeriodRowShowsItsGradeAndNoChance() throws {
+        let body = try F.graded(F.liveMarkets, [242338171: true, 242338170: false])
+        let event = try F.detail(F.liveDetail)
+        let home = try leg(63178219, "242338171", in: body)
+        let draw = try leg(63178219, "242338170", in: body)
+
+        XCTAssertEqual(R.result(home), .won(OutcomeVerdict.won.label))
+        XCTAssertEqual(R.result(draw), .lost(OutcomeVerdict.lost.label))
+        XCTAssertEqual(R.periodCurrent(home, event: event, host: F.propHost(F.liveNow)),
+                       .unavailable(R.Words.settledNoChance))
+    }
+
+    /// CONSTRUCTED `now`: the same REAL row forty minutes later. Stale or
+    /// recent, the quote stays a dated recorded quote on its own clock.
+    func testAStalePeriodQuoteKeepsItsOwnDateAndIsStillNotCurrent() throws {
+        let event = try F.detail(F.liveDetail)
+        let home = try leg(63178219, "242338171", in: F.liveMarkets)
+        let later = F.propHost(F.liveLaterNow)
+
+        XCTAssertEqual(R.current(home, event: event, host: later), .withheld(R.Words.noRecentUpdate))
+        XCTAssertEqual(R.periodCurrent(home, event: event, host: later),
+                       .withheld(periodQuote(0.999, "2026-10-12T12:54:07.360375+00:00")))
+        XCTAssertEqual(R.result(home), .unconfirmed(R.Words.resultUnavailable))
+    }
+
+    /// A period row with no price of its own has no quote to keep. REAL: the
+    /// served first-half O/U 0.5 Under row (64353427, `period_markets`), which
+    /// carries only its Over twin's price. CONSTRUCTED: the first-half home row
+    /// with only its `probability` set to null.
+    func testAPeriodRowWithNoPriceSaysTheInPlayChanceIsUnavailable() throws {
+        let event = try F.detail(F.liveDetail)
+        let host = F.propHost(F.liveNow)
+        let under = try leg(64353427, "242143192", in: F.liveMarkets)
+        XCTAssertEqual(R.periodCurrent(under, event: event, host: host), .unavailable(R.Words.inPlayUnavailable))
+
+        let body = try F.editedRow(F.liveMarkets, outcomeID: 242338171, setting: ["probability": NSNull()])
+        let unpriced = try leg(63178219, "242338171", in: body)
+        XCTAssertEqual(R.periodCurrent(unpriced, event: event, host: host), .unavailable(R.Words.inPlayUnavailable))
+    }
+
+    /// CONSTRUCTED: the first-half home row with only its `observed_at` set to
+    /// null. An undated quote cannot be a dated recorded quote.
+    func testAnUndatedPeriodQuoteIsNoRecentUpdateAndShowsNoFigure() throws {
+        let body = try F.editedRow(F.liveMarkets, outcomeID: 242338171, setting: ["observed_at": NSNull()])
+        let undated = try leg(63178219, "242338171", in: body)
+        XCTAssertEqual(R.periodCurrent(undated, event: try F.detail(F.liveDetail), host: F.propHost(F.liveNow)),
+                       .withheld(R.Words.noRecentUpdate))
+    }
+
     // MARK: - Before kickoff
 
     func testBeforeKickoffAnOwnClockedRecentQuoteIsThePreMatchChance() throws {

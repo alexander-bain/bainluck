@@ -53,6 +53,42 @@ import Foundation
 ///                      `GameMarketOutcome` does not decode that key — so such a
 ///                      row is never the current chance. Dependency: decode
 ///                      `observed_at_basis` (Models/FuturesModels.swift, #9483).
+///   - period rows      (Design, wave-1 review 2026-10-31) a market about one
+///                      period of the match — a half the owner admitted
+///                      (`Markets.halves`) — may show a current chance only on
+///                      the owner's own evidence that THIS period is still being
+///                      played. A recent price alone is not that evidence: the
+///                      retained live body still quotes the first half's home
+///                      result at 99.9% (12:54Z, 54 minutes after kickoff), the
+///                      row Design's review names as retained after the half. No
+///                      field the app decodes carries it:
+///                        · `QuestionMatrixQuestion.lifecycle` is the question's
+///                          own venue market status, "never from the event"
+///                          (`_lifecycle`, backend event_question_matrix.py) —
+///                          `open` on both half markets at 12:56Z, so open means
+///                          not yet graded, not in play;
+///                        · `QuestionMatrixQuestion.period` names a period (and
+///                          is null on both half markets), never its state;
+///                        · `ClosedPeriodOutcome.windowClosed` (#10850) proves a
+///                          period CLOSED, for NFL/NCAAF/NBA/WNBA `period_markets`
+///                          half rows only — soccer is excluded by name;
+///                        · the server's #1588 window filter keeps a row whose
+///                          window it cannot prove closed, so a served row is not
+///                          proof of an open one;
+///                        · `ESPNData.period` / `gameClock` are absent on the
+///                          retained live body (and `HalfScores` from
+///                          `espn_history` proves a half OVER, never open).
+///                      So `periodCurrent` never returns a current chance: a
+///                      dated quote on its own clock is kept only as that dated
+///                      recorded quote, under the in-play absence words, and the
+///                      result stays `result(_:)` — the venue's grade, else
+///                      unknown. No time elapsed since kickoff is read and no
+///                      second settlement policy is made. MISSING OWNER INPUT: a
+///                      per-period in-play state for the admitted half market
+///                      (the #10238 matrix producer, or the #1588 window owner
+///                      extended to soccer halves), or a served soccer live
+///                      period (`espn.period`) with a PeriodLabel question that
+///                      names the half in play.
 ///   - result           H4's settlement rule (`HockeyJourneyOriginalsAdapter10868
 ///                      .settlement`: `is_winner` with a venue's own
 ///                      `resolution_source`, never the retraction). A matrix
@@ -119,6 +155,13 @@ enum SoccerPropReadingAdapter10868 {
         static let notStarted = "Not started"
         static let savedBeforeStart = "saved before kickoff"
         static let recorded = "recorded"
+
+        /// A period's dated recorded quote, never its current chance:
+        /// "In-play chance unavailable · 99.9% recorded Oct 12, 5:54 AM · Polymarket".
+        static func periodQuote(_ figure: String, clock: String, venue: String?) -> String {
+            let recordedQuote = "\(figure) \(recorded) \(clock)"
+            return SoccerMatchPageAdapter10868.joined([inPlayUnavailable, recordedQuote, venue]) ?? inPlayUnavailable
+        }
     }
 
     // MARK: - Legs
@@ -286,6 +329,24 @@ enum SoccerPropReadingAdapter10868 {
         }
         return .recorded(observation(price, at: at, lead: Words.recorded,
                                      venue: SourceLabels.label(for: leg.row.source), host: host))
+    }
+
+    /// During play, for a row about one period of the match (an admitted half).
+    /// Never the current chance — no decoded field proves this period is still
+    /// being played (header: `period rows`). In H4's order: a row the venue
+    /// already settled has no chance; no price is "In-play chance unavailable";
+    /// a clock that is not provably its own, or none, is no recent update;
+    /// observed before the listed start is no in-play reading; otherwise the
+    /// quote is kept as a dated recorded quote, stale or not, under the in-play
+    /// absence words. The result is `result(_:)` alone.
+    static func periodCurrent(_ leg: Leg, event: EventDetail, host: Host) -> Current {
+        if settlement(leg) != nil { return .unavailable(Words.settledNoChance) }
+        guard let price = quoted(leg, event: event, host: host) else { return .unavailable(Words.inPlayUnavailable) }
+        guard leg.clockIsOwn, let at = leg.row.observedAt?.asDate else { return .withheld(Words.noRecentUpdate) }
+        if let start = event.commenceTime?.asDate, at < start { return .unavailable(Words.inPlayUnavailable) }
+        let clock = SoccerMatchPageAdapter10868.clockWords(at, host: host.words)
+        return .withheld(Words.periodQuote(formatProbability(price), clock: clock,
+                                           venue: SourceLabels.label(for: leg.row.source)))
     }
 
     /// The served settlement, unless the matrix grade disagrees. Unknown is not loss.

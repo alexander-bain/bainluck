@@ -14,9 +14,14 @@ final class SoccerOriginalsAdapter10868Tests: XCTestCase {
     private typealias O = SoccerOriginalsAdapter10868
     private typealias D = OriginalMarketDetails9483
 
-    private func group(_ detail: String, _ markets: String, now: Date) throws -> SoccerEventPageOriginals10868 {
-        O.originals(try F.detail(detail), markets: try F.markets(markets), host: F.propHost(now), tint: .blue)
+    private func group(_ detail: String, _ markets: String, now: Date,
+                       periods: Set<Int> = []) throws -> SoccerEventPageOriginals10868 {
+        O.originals(try F.detail(detail), markets: try F.markets(markets), host: F.propHost(now), tint: .blue,
+                    periodMarketIDs: periods)
     }
+
+    /// The CONSTRUCTED owner admission's two half markets (63178219, 63178218).
+    private var liveHalves: Set<Int> { Set(F.liveAdmission.halves.map(\.marketID)) }
 
     private func original(_ group: SoccerEventPageOriginals10868, market: String, side: String) throws -> D.Original {
         try XCTUnwrap(group.catalogue?.originals.first {
@@ -63,6 +68,71 @@ final class SoccerOriginalsAdapter10868Tests: XCTestCase {
             provenance: "\(O.Words.recorded) \(clock("2026-10-12T12:54:58.549918+00:00", F.liveNow)) · Polymarket"))
         XCTAssertNil(yes.about.historicalQuote)
         XCTAssertEqual(yes.pregame.placement, 0.55)
+    }
+
+    // MARK: - Half rows (Design, wave-1 review 2026-10-31)
+
+    /// The REAL row: the first-half result, home (63178219 / 242338171), quoted
+    /// 99.9% at 12:54:07 on its own clock after the half. Admitted as a half, it
+    /// is never the current chance: the Details keep it only as the dated
+    /// historical quote, and the later slot says the in-play chance is
+    /// unavailable.
+    func testDuringPlayAnAdmittedHalfsRecentQuoteIsADatedHistoricalQuoteNeverCurrent() throws {
+        let live = try group(F.liveDetail, F.liveMarkets, now: F.liveNow, periods: liveHalves)
+        let home = try original(live, market: "63178219", side: "242338171")
+
+        XCTAssertEqual(home.mode, .comparison(.current))
+        XCTAssertEqual(home.later, D.Reading.missing(O.Words.inPlayUnavailable))
+        XCTAssertEqual(home.about.historicalQuote, D.HistoricalQuote(
+            text: formatProbability(0.999),
+            recorded: "\(clock("2026-10-12T12:54:07.360375+00:00", F.liveNow)) · Polymarket"))
+        XCTAssertNil(home.grade)
+
+        // The second half's rows (quoted 12:36–12:37) are held the same way.
+        let secondHome = try original(live, market: "63178218", side: "246041831")
+        XCTAssertEqual(secondHome.later, D.Reading.missing(O.Words.inPlayUnavailable))
+        XCTAssertEqual(secondHome.about.historicalQuote?.text, formatProbability(0.3881))
+    }
+
+    /// Control, and the named dependency: which rows are about one half is the
+    /// owner's admission, never the title. With no admission the same REAL row
+    /// reads as a full-match quote — the reason the host passes its half
+    /// markets to All props.
+    func testWithoutTheOwnersHalfAdmissionTheRowIsNotKnownToBeAHalf() throws {
+        let live = try group(F.liveDetail, F.liveMarkets, now: F.liveNow)
+        let home = try original(live, market: "63178219", side: "242338171")
+        XCTAssertEqual(home.later, D.Reading.value(
+            formatProbability(0.999), placement: 0.999,
+            provenance: "\(O.Words.recorded) \(clock("2026-10-12T12:54:07.360375+00:00", F.liveNow)) · Polymarket"))
+        // A full-match row is unaffected by the half admission.
+        let yes = try original(try group(F.liveDetail, F.liveMarkets, now: F.liveNow, periods: liveHalves),
+                               market: "64353426", side: "242143189")
+        XCTAssertEqual(yes.later?.placement, 0.49)
+    }
+
+    /// CONSTRUCTED: the first-half home row with only its `observed_at` set to
+    /// null. A half's quote is shown only when dated, so none is kept.
+    func testAnUndatedHalfQuoteKeepsNoHistoricalQuote() throws {
+        let body = try F.editedRow(F.liveMarkets, outcomeID: 242338171, setting: ["observed_at": NSNull()])
+        let live = try group(F.liveDetail, body, now: F.liveNow, periods: liveHalves)
+        let home = try original(live, market: "63178219", side: "242338171")
+        XCTAssertEqual(home.later, D.Reading.missing(AllMarketsCatalogView9483.noRecentPrice))
+        XCTAssertNil(home.about.historicalQuote)
+    }
+
+    /// CONSTRUCTED: the first-half home row carrying the final body's grade.
+    /// During play a graded half has no chance and keeps no quote; after the
+    /// final (REAL final body) its grade is the venue's, admitted or not.
+    func testAGradedHalfHasNoChanceAndAfterTheFinalShowsItsVenueGrade() throws {
+        let graded = try F.graded(F.liveMarkets, [242338171: true])
+        let live = try group(F.liveDetail, graded, now: F.liveNow, periods: liveHalves)
+        let home = try original(live, market: "63178219", side: "242338171")
+        XCTAssertEqual(home.later, D.Reading.missing(O.Words.settledNoChance))
+        XCTAssertNil(home.about.historicalQuote)
+
+        let final = try group(F.finalDetail, F.finalMarkets, now: F.finalNow, periods: liveHalves)
+        let finalHome = try original(final, market: "63178219", side: "242338171")
+        XCTAssertEqual(finalHome.grade, D.Grade(words: OutcomeVerdict.won.label, provenance: "Settled by Polymarket"))
     }
 
     func testAfterTheFinalEachOriginalShowsItsOwnVenueGradeNeverAChance() throws {

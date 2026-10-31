@@ -109,7 +109,10 @@ import XCTest
 /// OF THE SUBSET.
 ///
 /// CONSTRUCTED here, and named where used: the reader's calendar (Pacific,
-/// en_US), each `now` (each body's own capture instant), and the owner's
+/// en_US), each `now` (each body's own capture instant; `liveLaterNow` is the
+/// live capture plus forty minutes), single-row key edits (`editedRow`, and
+/// `graded`, which copies the final body's grades onto the same outcome ids
+/// of the live body), and the owner's
 /// story-market admission (`liveAdmission`, `hullAdmission`) — no owner types
 /// these markets yet; the market ids are the ones Design's retained cases name
 /// (BOTH-TEAMS / FIRST-TEAM / SOCCER-GOAL-MILESTONE / SOCCER-HALF retained cases).
@@ -126,6 +129,9 @@ enum SoccerRetained10868 {
     static let hullNow = "2026-10-11T04:57:23.150200+00:00".asDate!
     static let liveNow = "2026-10-12T12:56:02.250422+00:00".asDate!
     static let finalNow = "2026-10-15T07:10:27.123353+00:00".asDate!
+    /// CONSTRUCTED: the live body read forty minutes after its capture — every
+    /// in-play quote in it is then older than the page's 30-minute recent window.
+    static let liveLaterNow = liveNow.addingTimeInterval(40 * 60)
 
     /// CONSTRUCTED admission: the Valladolid–Albacete story markets Design's
     /// retained cases name.
@@ -165,6 +171,31 @@ enum SoccerRetained10868 {
         for key in removing { object.removeValue(forKey: key) }
         for (key, value) in setting { object[key] = value }
         return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
+    /// A served `/game-markets` body with keys replaced on the ONE row of
+    /// `array` whose `contributor_outcome_ids` is exactly `[outcomeID]`:
+    /// CONSTRUCTED. Every other row and key stays as served; a missing row fails.
+    static func editedRow(_ json: String, array: String = "other", outcomeID: Int,
+                          setting: [String: Any]) throws -> String {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        var rows = try XCTUnwrap(object[array] as? [[String: Any]])
+        let index = try XCTUnwrap(rows.firstIndex { ($0["contributor_outcome_ids"] as? [Int]) == [outcomeID] })
+        for (key, value) in setting { rows[index][key] = value }
+        object[array] = rows
+        return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
+    /// A served body with the grades the final body serves for the same
+    /// outcome ids (`is_winner` + `resolution_source: "api_settlement"`) set on
+    /// those rows: CONSTRUCTED — only those two keys of those rows change.
+    static func graded(_ json: String, _ outcomes: [Int: Bool]) throws -> String {
+        var body = json
+        for (outcome, won) in outcomes {
+            body = try editedRow(body, outcomeID: outcome,
+                                 setting: ["is_winner": won, "resolution_source": "api_settlement"])
+        }
+        return body
     }
 
     static func sha256(_ text: String) -> String {

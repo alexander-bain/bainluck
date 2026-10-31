@@ -31,10 +31,22 @@ import SwiftUI
 ///                   its quote is never the current chance. A refused quote is
 ///                   the Details' historical quote with its own clock and venue,
 ///                   exactly as H4 keeps it — never the card figure.
+///   - period rows   (Design, wave-1 review 2026-10-31) a row of a market the
+///                   owner admitted as one half (`periodMarketIDs`, from
+///                   `SoccerPropReadingAdapter10868.Markets.halves`) is never the
+///                   current chance during play: no decoded field proves its half
+///                   is still being played (part three's header, `period rows`,
+///                   names every field checked and the missing owner input). Its
+///                   quote is kept only as the historical quote dated by its
+///                   own clock — an undated one, or one on a sibling's clock,
+///                   keeps none — and the later slot says "In-play chance
+///                   unavailable". After the final its grade is H4's, as
+///                   for every row; until then the result is unknown. Rows of the
+///                   `GameMarketOutcome` period arrays are already refused above.
 ///
 /// The host passes the event, `/game-markets`, now, the reader's calendar, the
-/// tint and its held selection, passed through unchanged for the leaf to
-/// resolve by exact scope and identity. Nothing here fetches.
+/// tint, its held selection (passed through unchanged for the leaf to resolve by
+/// exact scope and identity) and the admitted half markets. Nothing here fetches.
 enum SoccerOriginalsAdapter10868 {
     typealias Details = OriginalMarketDetails9483
     typealias H4 = HockeyJourneyOriginalsAdapter10868
@@ -58,15 +70,18 @@ enum SoccerOriginalsAdapter10868 {
     // MARK: - The page's originals
 
     /// The originals group for the page at `host.now`. No served outcome is no
-    /// catalogue, which draws `emptyWords`.
+    /// catalogue, which draws `emptyWords`. `periodMarketIDs` are the owner's
+    /// admitted half markets; none admitted is none treated as a period.
     static func originals(_ event: EventDetail, markets: GameMarketsResponse?, host: R.Host, tint: Color,
-                          selection: Details.Selection? = nil) -> SoccerEventPageOriginals10868 {
+                          selection: Details.Selection? = nil,
+                          periodMarketIDs: Set<Int> = []) -> SoccerEventPageOriginals10868 {
         let phase = SoccerMatchPageAdapter10868.phase(event, now: host.now)
         let started = HockeyJourneyContributionAdapter10868.hasStarted(event, now: host.now)
         let found = markets.map { H4.matched($0, status: event.status, now: host.now) } ?? []
         let matrix = markets?.gameQuestionMatrix
         let built = found.map {
-            original($0, event: event, phase: phase, started: started, matrix: matrix, host: host)
+            original($0, event: event, phase: phase, started: started, matrix: matrix, host: host,
+                     period: isPeriod($0.source, admitted: periodMarketIDs))
         }
         var labels: [Details.Identity: String] = [:]
         for (match, made) in zip(found, built) {
@@ -90,8 +105,15 @@ enum SoccerOriginalsAdapter10868 {
 
     // MARK: - One original
 
+    /// Whether the row belongs to a market the owner admitted as one half — by
+    /// exact market id, never by its title.
+    static func isPeriod(_ source: H4.Source, admitted: Set<Int>) -> Bool {
+        if let id = source.marketID, admitted.contains(id) { return true }
+        return (source.marketIDs ?? []).contains { admitted.contains($0) }
+    }
+
     static func original(_ match: H4.Match, event: EventDetail, phase: SoccerEventPagePhase10868, started: Bool,
-                         matrix: EventQuestionMatrix?, host: R.Host) -> Details.Original {
+                         matrix: EventQuestionMatrix?, host: R.Host, period: Bool = false) -> Details.Original {
         let mode: Details.Mode
         let later: Details.Reading?
         let grade: Details.Grade?
@@ -103,7 +125,7 @@ enum SoccerOriginalsAdapter10868 {
             grade = nil
             quote = nil
         case .live:
-            let reading = laterReading(match, event: event, host: host)
+            let reading = laterReading(match, event: event, host: host, period: period)
             mode = .comparison(.current)
             later = reading.later
             grade = nil
@@ -158,8 +180,10 @@ enum SoccerOriginalsAdapter10868 {
     /// During play: the catalogue's price as the current chance only as H4
     /// admits it, and only on a row whose clock is its own. A refused quote
     /// keeps the slot's words and becomes the historical quote; a settled row
-    /// shows no chance and keeps no quote.
-    static func laterReading(_ match: H4.Match, event: EventDetail, host: R.Host)
+    /// shows no chance and keeps no quote. A `period` row (an admitted half) is
+    /// never admitted: its quote stays historical, and only when dated by its
+    /// own clock.
+    static func laterReading(_ match: H4.Match, event: EventDetail, host: R.Host, period: Bool = false)
         -> (later: Details.Reading, quote: Details.HistoricalQuote?) {
         let venue = SourceLabels.label(for: match.source.row.source)
         let observed = match.outcome.observedAt
@@ -180,11 +204,15 @@ enum SoccerOriginalsAdapter10868 {
             text: formatProbability(price),
             recorded: date.flatMap { SoccerMatchPageAdapter10868.joined([clockWords($0, host), venue]) })
         guard clockIsOwn(match.source), let at = date else {
-            return (.missing(AllMarketsCatalogView9483.noRecentPrice), quote)
+            // A period row's quote is shown only when dated by its own clock.
+            return (.missing(AllMarketsCatalogView9483.noRecentPrice), period ? nil : quote)
         }
         if let start = event.commenceTime?.asDate, at < start {
             return (.missing(Words.inPlayUnavailable), quote)
         }
+        // No decoded field proves this half is still being played, so a recent
+        // price alone never makes its quote the current chance.
+        if period { return (.missing(Words.inPlayUnavailable), quote) }
         guard match.outcome.absence != .stale, NFLMilestoneCard9483.isRecent(observed, now: host.now) else {
             return (.missing(AllMarketsCatalogView9483.noRecentPrice), quote)
         }

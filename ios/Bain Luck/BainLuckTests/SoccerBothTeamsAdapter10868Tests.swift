@@ -35,6 +35,76 @@ final class SoccerBothTeamsAdapter10868Tests: XCTestCase {
         XCTAssertTrue(both.outcomes.allSatisfy { $0.result == .unconfirmed(R.Words.resultUnavailable) })
     }
 
+    // MARK: - The current slot (Design, wave-1 review 2026-10-31: H3/H4 rules)
+
+    /// THE REAL-ROW PROOF. The retained live body's both-teams market 64353426:
+    /// outcome 242143190 "No" 50.5% and outcome 242143189 "Yes" 49%, each its own
+    /// Polymarket `other` row (its own clock), observed 12:54:58 — after the
+    /// 12:00 kickoff, 64 s before `now`, unsettled. Every source, lifecycle and
+    /// currentness check passes, so each fills its own current slot, with its
+    /// own clock and venue.
+    func testDuringPlayTheRetainedYesAndNoRowsFillTheCurrentSlotOnlyBecauseEveryCheckPasses() throws {
+        let event = try F.detail(F.liveDetail)
+        let host = F.propHost(F.liveNow)
+        let legs = R.legs(64353426, in: try F.markets(F.liveMarkets))
+        XCTAssertEqual(legs.map(\.id), ["242143190", "242143189"])
+        XCTAssertTrue(legs.allSatisfy { $0.clockIsOwn && $0.row.source == "polymarket" && R.settlement($0) == nil })
+        let stamp = "2026-10-12T12:54:58.549918+00:00"
+        let observed = try XCTUnwrap(stamp.asDate)
+        XCTAssertGreaterThanOrEqual(observed, try XCTUnwrap(event.commenceTime?.asDate))
+        XCTAssertTrue(NFLMilestoneCard9483.isRecent(stamp, now: F.liveNow))
+
+        let both = try card(F.liveDetail, F.liveMarkets, admitted: 64353426, now: F.liveNow)
+        let words = host.words
+        let clock = SoccerMatchPageAdapter10868.clockWords(observed, host: words)
+        let time = SoccerMatchPageAdapter10868.timeWords(observed, host: words)
+        func expected(_ value: Double) -> BothTeamsCurrent10868 {
+            .recorded(BothTeamsObservation10868(probability: value, text: formatProbability(value), timeText: time,
+                                                accessibilityDetail: "recorded \(clock) · Polymarket"),
+                      movement: nil)
+        }
+        XCTAssertEqual(both.outcomes.map(\.current), [expected(0.505), expected(0.49)])
+    }
+
+    /// Settled control. CONSTRUCTED: the live body with both rows carrying the
+    /// grades the final body serves for the same outcome ids. A settled row has
+    /// no current chance; its grade is its result.
+    func testDuringPlayASettledYesOrNoHasNoCurrentChanceAndShowsItsGrade() throws {
+        let body = try F.graded(F.liveMarkets, [242143190: true, 242143189: false])
+        let both = try card(F.liveDetail, body, admitted: F.liveAdmission.both, now: F.liveNow)
+        XCTAssertTrue(both.outcomes.allSatisfy { $0.current == .unavailable(R.Words.settledNoChance) })
+        XCTAssertEqual(both.outcomes.map(\.result), [.won(OutcomeVerdict.won.label), .lost(OutcomeVerdict.lost.label)])
+    }
+
+    /// Stale control. CONSTRUCTED `now`: forty minutes later the same rows are
+    /// no recent update — never the current chance.
+    func testDuringPlayAStaleYesOrNoIsNoRecentUpdate() throws {
+        let both = try card(F.liveDetail, F.liveMarkets, admitted: F.liveAdmission.both, now: F.liveLaterNow)
+        XCTAssertTrue(both.outcomes.allSatisfy { $0.current == .withheld(R.Words.noRecentUpdate) })
+        XCTAssertTrue(both.outcomes.allSatisfy { $0.result == .unconfirmed(R.Words.resultUnavailable) })
+    }
+
+    /// Missing control. CONSTRUCTED: the Yes row with only its `probability` set
+    /// to null. Yes says its in-play chance is unavailable; No is untouched and
+    /// never completes it.
+    func testDuringPlayAYesWithNoPriceIsUnavailableAndNoIsNotItsComplement() throws {
+        let body = try F.editedRow(F.liveMarkets, outcomeID: 242143189, setting: ["probability": NSNull()])
+        let both = try card(F.liveDetail, body, admitted: F.liveAdmission.both, now: F.liveNow)
+        XCTAssertEqual(both.outcomes[1].current, .unavailable(R.Words.inPlayUnavailable))
+        guard case .recorded(let no, _) = both.outcomes[0].current else { return XCTFail("No keeps its own quote") }
+        XCTAssertEqual(no.probability, 0.505)
+    }
+
+    /// Pre-kickoff control. CONSTRUCTED: the Yes row with only its `observed_at`
+    /// moved before the 12:00 kickoff — a pre-match quote is never the in-play
+    /// chance.
+    func testDuringPlayAYesQuotedBeforeKickoffIsNotTheCurrentChance() throws {
+        let body = try F.editedRow(F.liveMarkets, outcomeID: 242143189,
+                                   setting: ["observed_at": "2026-10-12T11:59:00+00:00"])
+        let both = try card(F.liveDetail, body, admitted: F.liveAdmission.both, now: F.liveNow)
+        XCTAssertEqual(both.outcomes[1].current, .unavailable(R.Words.inPlayUnavailable))
+    }
+
     func testTheDefaultPickIsYesAndAHeldPickIsKept() throws {
         let live = try card(F.liveDetail, F.liveMarkets, admitted: F.liveAdmission.both, now: F.liveNow)
         XCTAssertEqual(live.selectedOutcomeID, "242143189")

@@ -19,14 +19,20 @@ import SwiftUI
 ///                   with no proved side joins no series — it stays reachable in
 ///                   All props. Series order home, Draw, away; one cell per
 ///                   period, by the period's exact identity.
-///   - readings      part three's rules (`SoccerPropReadingAdapter10868`).
+///   - readings      part three's rules (`SoccerPropReadingAdapter10868`). During
+///                   play each half's later slot is `periodCurrent`: no decoded
+///                   field proves a half is still being played, so a half's quote
+///                   is never its current chance — a dated quote shows only as
+///                   that dated recorded quote (`.stale`), and the result stays
+///                   the venue's grade, else unknown (Design, wave-1 review).
 ///   - names, tints  `TeamShortName.shortPair`, `TeamTextContrast.cardColors`;
 ///                   Draw takes the page's neutral `DS.textSecondary`.
 ///   - axis          the fixed 0–100% scale, scale words not chances.
 ///
-/// The card may mount in any phase the owner admits it for; Design's route
-/// map places it on the final, journey and replay routes, which is the host's
-/// call, not this file's.
+/// This file stays reusable in every phase. WHERE the card is offered is the
+/// page's: by default only after the final, the approved route-phase
+/// membership (`SoccerPageInputAdapter10868.HalvesAdmission`); the journey and
+/// replay hosts admit it explicitly.
 enum SoccerHalvesAdapter10868 {
     typealias R = SoccerPropReadingAdapter10868
 
@@ -108,7 +114,7 @@ enum SoccerHalvesAdapter10868 {
         let before = R.pregame(leg, event: event, host: host)
         let current: PeriodOutcomeCurrent10868
         if phase == .live {
-            switch R.current(leg, event: event, host: host) {
+            switch R.periodCurrent(leg, event: event, host: host) {
             case .recorded(let o): current = .recorded(observation(o))
             case .withheld(let words): current = .stale(words)
             case .unavailable(let words): current = .unavailable(words)
