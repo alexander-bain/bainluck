@@ -400,6 +400,11 @@ enum HockeyJourneyOriginalsAdapter10868 {
             case .missed: won = false
             case .unconfirmed: won = nil
             }
+        } else if gradeIsTheOvers(source) {
+            // The served grade is the Over's, not this original's: its own result
+            // is not recorded. Never inverted here, never read from the score, and
+            // never "sources disagree" (they grade two different propositions).
+            return Details.Grade(words: Words.notYetConfirmed, provenance: Words.noSettlement)
         } else {
             won = served
         }
@@ -409,6 +414,19 @@ enum HockeyJourneyOriginalsAdapter10868 {
         let verdict: OutcomeVerdict = won ? .won : .lost
         let venue = SourceLabels.label(for: source.row.source)
         return Details.Grade(words: verdict.label, provenance: venue.map { "Settled by \($0)" } ?? "Venue settlement")
+    }
+
+    /// Whether a served row's grade belongs to its Over and not to this Under
+    /// original. A line row with no price of its own is read through
+    /// `over_probability`, which the catalogue shows only on the Over side,
+    /// never on the Under leg (`QuestionCatalog9483.reading`, gotcha #17). The
+    /// producer grades that row on the same Over axis (`events.py`
+    /// `_settled_over_verdict`, #6239), so on a leg the catalogue reads as the
+    /// Under, `is_winner` describes the Over. A row that prices its own outcome
+    /// (`other`, matchups) carries its own grade.
+    static func gradeIsTheOvers(_ source: Source) -> Bool {
+        !source.row.pricesOutcome && source.row.probability == nil
+            && QuestionCatalog9483.lineSide(source.row) == .under
     }
 
     static func aboutSection(_ source: Source, historicalQuote: Details.HistoricalQuote?) -> Details.About {

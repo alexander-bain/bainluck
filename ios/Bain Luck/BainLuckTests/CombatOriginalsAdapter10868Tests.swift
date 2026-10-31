@@ -31,10 +31,13 @@ import XCTest
 /// (`value_state: result`) with no `pregame_reading` (the body predates #11125)
 /// and every question serves `subject: null` and `predicate: null`.
 ///
-/// NOT PINNED HERE, ON PURPOSE: the two round-total Unders (markets 63254895 and
-/// 63455521) are served `is_winner: false`, which the official finish may not
-/// support. The adapter reproduces the served grade; the disagreement is the
-/// backend settlement owner's, so no test fixes either answer.
+/// THE TWO ROUND-TOTAL UNDERS (markets 63254895 and 63455521, no Over twin in
+/// the catalogue) are served `is_winner: false` beside `over_probability: 0.0`.
+/// A totals row's grade is on its Over's axis (`events.py`
+/// `_settled_over_verdict`, #6239), so that `false` is the Over's, not these
+/// Unders' own result. This is a difference of axis, not evidence that the
+/// venue graded anything wrongly. The shared originals adapter shows each Under
+/// as not yet confirmed, and never inverts the boolean or reads the finish.
 ///
 /// CONSTRUCTED here, each named where used and changing only the keys it names:
 /// the reader's calendar and `now`; `status: completed`; a pre-start detail
@@ -201,6 +204,28 @@ final class CombatOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertTrue(originals.allSatisfy { $0.pregame == .missing("Pre-match chance not recorded") })
         XCTAssertEqual(try XCTUnwrap(build(event, try Self.markets(), Fixtures.readAt).catalogue).scope,
                        "combat:15318681:final:originals")
+    }
+
+    /// The two real round-total Unders at the final: their served grade is the
+    /// Over's, so each reads not yet confirmed, never Lost and never "sources
+    /// disagree". Identity and position are unchanged. The O/U 0.5 Over keeps its
+    /// own grade, and the direct Yes/No originals keep theirs.
+    func testAtTheFinalAnUnderTotalIsNeverGradedWithItsOversResult() throws {
+        // CONSTRUCTED: the detail's `status: completed`.
+        let event = try Fixtures.edited(Fixtures.mmaDetail, ["status": "completed"])
+        let originals = try XCTUnwrap(build(event, try Self.markets(), Fixtures.readAt).catalogue).originals
+        let unconfirmed = Details.Grade(words: "Not yet confirmed", provenance: "Result not recorded yet")
+        XCTAssertEqual(originals[1].identity, Details.Identity(source: "polymarket", market: "63254895", side: "238409899"))
+        XCTAssertEqual(originals[2].identity, Details.Identity(source: "polymarket", market: "63455521", side: "239081307"))
+        XCTAssertEqual(originals[1].outcome, "Under")
+        XCTAssertEqual(originals[2].outcome, "Under")
+        XCTAssertEqual(originals[1].grade, unconfirmed)
+        XCTAssertEqual(originals[2].grade, unconfirmed)
+        XCTAssertEqual(originals[1].mode, .result)
+        XCTAssertEqual(originals[0].grade, Details.Grade(words: "Won", provenance: "Settled by Polymarket"),
+                       "the Over's grade is its own")
+        XCTAssertEqual(originals[knockoutNo].grade, Details.Grade(words: "Lost", provenance: "Settled by Polymarket"),
+                       "a direct No original keeps its own grade")
     }
 
     // MARK: - The pin (constructed)

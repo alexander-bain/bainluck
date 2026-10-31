@@ -224,6 +224,55 @@ final class HockeyJourneyOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertEqual(A.settlement(isWinner: false, resolutionSource: "api_settlement"), false)
     }
 
+    /// CONSTRUCTED rows, one per case, read the way `sources` reads them. A line
+    /// row's served grade belongs to its Over (#6239). On an Under it is never
+    /// this original's result, whichever way it points. On the Over it is that
+    /// original's own. A row that prices its own outcome keeps its own grade,
+    /// "No" included. Retracted, non-authoritative and missing grades stay
+    /// unconfirmed on every row.
+    func testAnUnderLineRowNeverTakesItsOversGradeAndOwnGradesStand() {
+        func line(_ outcome: String, won: Bool?, source: String? = "api_settlement",
+                  inverted: Bool = false) -> A.Source {
+            let o = GameMarketOutcome(marketName: "O/U 2.5 Rounds", outcomeName: outcome, probability: nil,
+                                      source: "polymarket", threshold: 2.5, overProbability: won.map { $0 ? 1 : 0 },
+                                      marketType: "game_total", movement: nil, period: nil,
+                                      isWinner: won, resolutionSource: source, _inverted: inverted)
+            var row = QuestionCatalog9483.row(o)
+            row.inverted = inverted
+            return A.Source(family: .gameLines, row: row, label: outcome, marketName: o.marketName,
+                            outcomeName: outcome, marketID: 1, marketIDs: nil, outcomeIDs: [2], isWinner: won,
+                            resolutionSource: source, prop: nil)
+        }
+        func direct(_ outcome: String, won: Bool?, source: String? = "api_settlement") -> A.Source {
+            let row = QuestionCatalog9483.Row(marketName: "Will the fight go the distance?", outcomeName: outcome,
+                                              probability: nil, pricesOutcome: true, source: "polymarket")
+            return A.Source(family: .other, row: row, label: outcome, marketName: row.marketName,
+                            outcomeName: outcome, marketID: 3, marketIDs: nil, outcomeIDs: [4], isWinner: won,
+                            resolutionSource: source, prop: nil)
+        }
+        let unconfirmed = Originals.Grade(words: "Not yet confirmed", provenance: "Result not recorded yet")
+        let won = Originals.Grade(words: "Won", provenance: "Settled by Polymarket")
+        let lost = Originals.Grade(words: "Lost", provenance: "Settled by Polymarket")
+
+        XCTAssertEqual(A.contractGrade(line("Under", won: false)), unconfirmed)
+        XCTAssertEqual(A.contractGrade(line("Under", won: true)), unconfirmed)
+        XCTAssertEqual(A.contractGrade(line("Under 2.5", won: false)), unconfirmed)
+        XCTAssertEqual(A.contractGrade(line("Over", won: false, inverted: true)), unconfirmed, "a served inverted leg is an Under")
+        XCTAssertEqual(A.contractGrade(line("Over", won: true)), won)
+        XCTAssertEqual(A.contractGrade(line("Over", won: false)), lost)
+        XCTAssertEqual(A.contractGrade(direct("Yes", won: true)), won)
+        XCTAssertEqual(A.contractGrade(direct("No", won: false)), lost)
+        XCTAssertEqual(A.contractGrade(direct("No", won: true)), won)
+        for source in [direct("No", won: false, source: "ungradeable_result"), direct("Yes", won: true, source: nil),
+                       direct("Yes", won: nil), line("Over", won: true, source: "ungradeable_result"),
+                       line("Over", won: nil)] {
+            XCTAssertEqual(A.contractGrade(source), unconfirmed, source.outcomeName)
+        }
+        XCTAssertFalse(A.gradeIsTheOvers(line("Over", won: true)))
+        XCTAssertTrue(A.gradeIsTheOvers(line("Under", won: false)))
+        XCTAssertFalse(A.gradeIsTheOvers(direct("No", won: false)))
+    }
+
     func testOncePlayHasStartedThePregameReadingIsTheServedMarkAndIdentitiesHoldAcrossPhases() throws {
         let event = try detail(Self.islandersWildDetail)
         let served = try markets(Self.islandersWildMarkets)
