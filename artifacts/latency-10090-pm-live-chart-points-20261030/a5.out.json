@@ -1,0 +1,1 @@
+{"columns":["rows","newest_captured","oldest_captured_in_window","captured_of_highest_id","max_id","at"],"rows":[[13842,"2026-10-30 20:30:26.913392+00:00","2026-10-30 18:08:50.941671+00:00","2026-10-30 19:22:48.494493+00:00",25421705,"2026-10-30 20:57:49.290774+00:00"]],"row_count":1,"truncated":false,"duration_ms":1039.2,"sql_fingerprint":"cf579f93e2b061ce"}
