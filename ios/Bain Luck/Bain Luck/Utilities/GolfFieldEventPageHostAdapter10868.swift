@@ -12,10 +12,11 @@ import SwiftUI
 /// clocks — and Done returns to the same reader.
 ///
 /// What it owns is only the screen's own reading state (`Session`): which mode
-/// is shown, the Details over it, the selected golfer, the selected finish, and
-/// the chooser's disclosures. It builds the page input and the originals from
-/// the values the page already holds (passed in — it reads no view model, opens
-/// no network, subscribes to nothing, runs no timer and ranks nothing).
+/// is shown, the Details over it, the selected golfer, the selected finish, the
+/// chart inspection, and the chooser's disclosures. It builds the page input and
+/// the originals from the values the page already holds (passed in — it reads no
+/// view model, opens no network, subscribes to nothing, runs no timer and ranks
+/// nothing).
 ///
 /// The input and the originals are recomputed from those values on every body
 /// pass. No owner supplies a revision that covers every value the adapters read
@@ -55,6 +56,17 @@ import SwiftUI
 /// was opened over, or the page); an interactive dismissal returns to the page
 /// with the golfer and finish kept. Choosing never resumes or replaces a
 /// reading: there is no golf reading hold.
+///
+/// Chart inspection (`GolfFieldHistoryInspectionAdapter10868`): "Inspect
+/// history" or a plot tap starts one, after the page's hold, once; previous,
+/// next and the moment choices move inside it with no further hold; "Done
+/// inspecting" ends it. Each render path builds ONE inspection snapshot and uses
+/// it for the applied input and for all three history callbacks
+/// (`historyAction` / `inspectionChoice` / `plotPosition`). The inspection
+/// survives the full-size reader, Done, swipe-down, golfer choice and the scale
+/// while it still resolves; the first pass it no longer resolves on clears it
+/// (`Session.expireInspection`), so it never comes back without a new
+/// deliberate inspection. Nothing is held or resumed for incoming updates.
 struct GolfFieldEventPageHost10868: View {
     let winner: FuturesMarketDetail
     let history: FuturesHistoryResponse?
@@ -92,13 +104,17 @@ struct GolfFieldEventPageHost10868: View {
         var chooser: GolfFieldChooserAdapter10868.Disclosures
         /// Full scale on; false is the approved Auto scale.
         var fullScale: Bool
+        /// The held chart inspection; nil when none is open.
+        var inspection: GolfFieldHistoryInspectionAdapter10868.Held?
 
         init(selected: Int? = nil, selectedFinish: String? = nil,
-             chooser: GolfFieldChooserAdapter10868.Disclosures = .init(), fullScale: Bool = false) {
+             chooser: GolfFieldChooserAdapter10868.Disclosures = .init(), fullScale: Bool = false,
+             inspection: GolfFieldHistoryInspectionAdapter10868.Held? = nil) {
             self.selected = selected
             self.selectedFinish = selectedFinish
             self.chooser = chooser
             self.fullScale = fullScale
+            self.inspection = inspection
         }
     }
 
@@ -128,6 +144,10 @@ struct GolfFieldEventPageHost10868: View {
         var chosen: Int? = nil
         var hasChosen = false
         var selectedFinish: String? = nil
+        /// The held chart inspection. Set only by a deliberate inspection action,
+        /// cleared by Done or by the first pass it no longer resolves on, and never
+        /// revived: a cleared inspection stays cleared whatever the data does next.
+        var inspection: GolfFieldHistoryInspectionAdapter10868.Held? = nil
 
         /// The sheet's base layer: the open card or chooser, or the page under
         /// Details opened from it. Its id does not change while Details opens or
@@ -174,6 +194,27 @@ struct GolfFieldEventPageHost10868: View {
             details = nil
             mode = nil
         }
+
+        /// A deliberate inspection choice: start, step, moment choice or plot tap.
+        mutating func inspect(_ held: GolfFieldHistoryInspectionAdapter10868.Held) {
+            inspection = held
+        }
+
+        /// "Done inspecting".
+        mutating func endInspection() {
+            inspection = nil
+        }
+
+        /// Sticky withdrawal: an inspection that does not resolve on this pass is
+        /// cleared, so evidence matching again later (A→B→A, a phase out and back)
+        /// finds nothing to revive. Only the inspection is touched — the golfer,
+        /// finish, open card and Details stay.
+        mutating func expireInspection(in pass: GolfFieldHistoryInspectionAdapter10868.Pass) {
+            guard let held = inspection, GolfFieldHistoryInspectionAdapter10868.resolve(held, in: pass) == nil else {
+                return
+            }
+            inspection = nil
+        }
     }
 
     @State private var session = Session()
@@ -185,7 +226,8 @@ struct GolfFieldEventPageHost10868: View {
     @State private var fullScale = false
 
     var body: some View {
-        page(make(), mode: .page, originals: makeOriginals())
+        let snapshot = makeSnapshot()
+        page(make(snapshot), mode: .page, originals: makeOriginals(), snapshot: snapshot)
             .sheet(item: Binding(get: { session.presented },
                                  set: { shown in if shown == nil { session.dismiss() } })) { _ in
                 NavigationStack {
@@ -199,17 +241,19 @@ struct GolfFieldEventPageHost10868: View {
                     }
                 }
             }
+            .onChange(of: snapshot.pass) { _, pass in session.expireInspection(in: pass) }
     }
 
     /// Details over the open card or the page, else the open card or chooser —
     /// each over THIS pass's input and originals.
     @ViewBuilder private var sheetContent: some View {
-        let input = make()
+        let snapshot = makeSnapshot()
+        let input = make(snapshot)
         let originals = makeOriginals()
         if let details = session.details {
             detailsContent(details, input: input, originals: originals)
         } else if let mode = session.mode {
-            page(input, mode: mode, originals: originals)
+            page(input, mode: mode, originals: originals, snapshot: snapshot)
         }
     }
 
@@ -229,14 +273,19 @@ struct GolfFieldEventPageHost10868: View {
     }
 
     private func page(_ input: GolfEventPageInput10868, mode: GolfEventPageMode10868,
-                      originals: GolfFieldOriginalsAdapter10868.Originals) -> GolfEventPagePresentation10868 {
+                      originals: GolfFieldOriginalsAdapter10868.Originals,
+                      snapshot: GolfFieldHistoryInspectionAdapter10868.Snapshot) -> GolfEventPagePresentation10868 {
         GolfEventPagePresentation10868(
             input: input, mode: mode,
             onAbout: nil,
             onOpenCard: { card in open(.reader(card)) },
-            onHistoryAction: { id in handle(Self.route(id)) },
-            onHistoryInspectionChoice: nil,
-            onHistoryPlotPosition: nil,
+            onHistoryAction: Self.historyAction(snapshot, hold: onInteraction,
+                                                inspect: { session.inspect($0) },
+                                                end: { session.endInspection() },
+                                                other: { id in handle(Self.route(id)) }),
+            onHistoryInspectionChoice: Self.inspectionChoice(snapshot, inspect: { session.inspect($0) }),
+            onHistoryPlotPosition: Self.plotPosition(snapshot, hold: onInteraction,
+                                                     inspect: { session.inspect($0) }),
             onSelectFinish: { session.selectFinish($0) },
             onFinishDetails: Self.finishDetails(input, originals: originals, hold: onInteraction,
                                                 open: { session.openDetails($0) }),
@@ -272,14 +321,78 @@ struct GolfFieldEventPageHost10868: View {
         }
     }
 
-    private func make() -> GolfEventPageInput10868 {
+    private func make(_ snapshot: GolfFieldHistoryInspectionAdapter10868.Snapshot) -> GolfEventPageInput10868 {
         Self.build(winner: winner, history: history, legs: legs, tournament: tournament, cohort: cohort,
                    choice: Choice(selected: session.selected(initial: initialSelection),
                                   selectedFinish: session.selectedFinish,
                                   chooser: .init(moreExpanded: moreExpanded, browseExpanded: browseExpanded,
                                                  browseGroup: browseGroup),
-                                  fullScale: fullScale),
+                                  fullScale: fullScale,
+                                  inspection: session.inspection),
+                   snapshot: snapshot,
                    now: now)
+    }
+
+    /// This render path's one inspection snapshot.
+    private func makeSnapshot() -> GolfFieldHistoryInspectionAdapter10868.Snapshot {
+        Self.inspectionSnapshot(winner: winner, history: history, cohort: cohort,
+                                selected: session.selected(initial: initialSelection),
+                                held: session.inspection, now: now)
+    }
+
+    /// One pass's history action callback: the four inspection ids by exact
+    /// equality, every other id to the existing `route`. A start asks for the
+    /// page's hold once, first; a step, a choice or Done asks for none. An
+    /// inspection control that names nothing on this snapshot does nothing — it
+    /// is drawn unavailable or not drawn at all. Building it calls nothing.
+    static func historyAction(_ snapshot: GolfFieldHistoryInspectionAdapter10868.Snapshot, hold: (() -> Void)?,
+                              inspect: @escaping (GolfFieldHistoryInspectionAdapter10868.Held) -> Void,
+                              end: @escaping () -> Void,
+                              other: @escaping (String) -> Void) -> (String) -> Void {
+        return { id in
+            switch GolfFieldHistoryInspectionAdapter10868.intent(id, resolved: snapshot.resolved, in: snapshot.pass) {
+            case .start(let held)?:
+                hold?()
+                inspect(held)
+            case .select(let held)?:
+                inspect(held)
+            case .end?:
+                end()
+            case .unavailable?:
+                break
+            case nil:
+                other(id)
+            }
+        }
+    }
+
+    /// One pass's moment-choice callback: offered only while an inspection
+    /// resolves (the choices are drawn); a choice id resolves by exact equality
+    /// against this snapshot's moments, or chooses nothing.
+    static func inspectionChoice(_ snapshot: GolfFieldHistoryInspectionAdapter10868.Snapshot,
+                                 inspect: @escaping (GolfFieldHistoryInspectionAdapter10868.Held) -> Void)
+        -> ((String) -> Void)? {
+        guard snapshot.resolved != nil else { return nil }
+        let pass = snapshot.pass
+        return { id in
+            if let held = GolfFieldHistoryInspectionAdapter10868.choice(id, in: pass) { inspect(held) }
+        }
+    }
+
+    /// One pass's plot-tap callback: offered only where inspection is (not at the
+    /// final, not without drawn history). A tap that starts an inspection asks
+    /// for the page's hold once, first; a tap inside one asks for none.
+    static func plotPosition(_ snapshot: GolfFieldHistoryInspectionAdapter10868.Snapshot, hold: (() -> Void)?,
+                             inspect: @escaping (GolfFieldHistoryInspectionAdapter10868.Held) -> Void)
+        -> ((Double) -> Void)? {
+        guard snapshot.pass.offered else { return nil }
+        let pass = snapshot.pass
+        let inspecting = snapshot.resolved != nil
+        return { x in
+            guard let held = GolfFieldHistoryInspectionAdapter10868.position(x, in: pass) else { return }
+            if !inspecting { hold?() }
+            inspect(held)
+        }
     }
 
     private func makeOriginals() -> GolfFieldOriginalsAdapter10868.Originals {
@@ -339,19 +452,49 @@ struct GolfFieldEventPageHost10868: View {
 
     /// The page input from the passed values alone — pure, so every changed
     /// value reaches the screen on the next pass. A missing history response
-    /// leaves only the chart slot unavailable.
+    /// leaves only the chart slot unavailable. The held inspection
+    /// (`choice.inspection`) is resolved against one snapshot built here.
     static func build(winner: FuturesMarketDetail, history: FuturesHistoryResponse?,
                       legs: GolfFieldFinishAdapter10868.Legs = .init(), tournament: GolfTournamentPresentation? = nil,
                       cohort: [Int], choice: Choice = Choice(), now: Date,
                       calendar: Calendar = .current, locale: Locale = .current) -> GolfEventPageInput10868 {
+        let snapshot = inspectionSnapshot(winner: winner, history: history, cohort: cohort, selected: choice.selected,
+                                          held: choice.inspection, now: now, calendar: calendar, locale: locale)
+        return build(winner: winner, history: history, legs: legs, tournament: tournament, cohort: cohort,
+                     choice: choice, snapshot: snapshot, now: now, calendar: calendar, locale: locale)
+    }
+
+    /// The same page input over a snapshot the caller already built for this
+    /// render path, so the input and every callback read ONE pass. The snapshot
+    /// must be built from the same values and `choice.inspection`.
+    static func build(winner: FuturesMarketDetail, history: FuturesHistoryResponse?,
+                      legs: GolfFieldFinishAdapter10868.Legs, tournament: GolfTournamentPresentation?,
+                      cohort: [Int], choice: Choice, snapshot: GolfFieldHistoryInspectionAdapter10868.Snapshot,
+                      now: Date, calendar: Calendar = .current, locale: Locale = .current) -> GolfEventPageInput10868 {
         let sources = GolfFieldPageInputAdapter10868.Sources(winner: winner, history: history, legs: legs,
                                                             tournament: tournament)
         let reading = GolfFieldPageInputAdapter10868.Reading(
             cohort: chartGolfers(cohort, selected: choice.selected), selected: choice.selected,
             selectedFinish: choice.selectedFinish, chooser: choice.chooser, fullScale: choice.fullScale)
-        return GolfFieldPageInputAdapter10868.input(
+        let base = GolfFieldPageInputAdapter10868.input(
             sources, reading: reading,
             host: GolfFieldPageAdapter10868.Host(now: now, calendar: calendar, locale: locale))
+        return GolfFieldHistoryInspectionAdapter10868.applied(base, snapshot: snapshot)
+    }
+
+    /// One render path's inspection snapshot: the chart's golfers and the same
+    /// Winner field the page input reads, normalized once, with the held
+    /// inspection resolved against it once.
+    static func inspectionSnapshot(winner: FuturesMarketDetail, history: FuturesHistoryResponse?, cohort: [Int],
+                                   selected: Int?, held: GolfFieldHistoryInspectionAdapter10868.Held?, now: Date,
+                                   calendar: Calendar = .current,
+                                   locale: Locale = .current) -> GolfFieldHistoryInspectionAdapter10868.Snapshot {
+        let field = GolfFieldPageInputAdapter10868.field(
+            GolfFieldPageInputAdapter10868.Sources(winner: winner, history: history), now: now)
+        let pass = GolfFieldHistoryInspectionAdapter10868.pass(
+            field, cohort: chartGolfers(cohort, selected: selected),
+            host: GolfFieldPageAdapter10868.Host(now: now, calendar: calendar, locale: locale))
+        return GolfFieldHistoryInspectionAdapter10868.Snapshot(pass: pass, held: held)
     }
 
     /// The originals from the passed values alone, through the same Winner field
