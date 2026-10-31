@@ -116,6 +116,17 @@ enum RacingOriginalsAdapter10868 {
         Details.Identity(source: Page.venueKey(market), market: String(market.id), side: String(outcome.id))
     }
 
+    /// The Details selection a card's exact original names — the win/podium
+    /// card's win or podium ref: the same venue key, market and outcome ids, in
+    /// the catalogue's own scope. Nil when it names no held original exactly
+    /// once — never the first or a neighbour.
+    static func selection(for ref: FieldChooserOriginalRef10868, in originals: RacingEventPageOriginals10868) -> Details.Selection? {
+        guard let catalogue = originals.catalogue else { return nil }
+        let identity = Details.Identity(source: ref.source, market: ref.marketID, side: ref.outcomeID)
+        guard catalogue.originals.filter({ $0.identity == identity }).count == 1 else { return nil }
+        return Details.Selection(scope: catalogue.scope, identity: identity)
+    }
+
     // MARK: - One original
 
     static func original(_ outcome: FuturesOutcome, in market: FuturesMarketDetail, host: Page.Host) -> Details.Original {
