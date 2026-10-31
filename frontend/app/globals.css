@@ -178,6 +178,35 @@ body {
   animation: pulse-live 2s ease-in-out infinite;
 }
 
+/* #10090 — the event page's heartbeat: each beat draws the trace once, then
+   leaves it faint until the next one (`components/event/EkgHeartbeat.tsx`).
+   The path carries pathLength="100". */
+@keyframes ekg-beat {
+  0% {
+    stroke-dashoffset: 100;
+    opacity: 1;
+  }
+  45% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.4;
+  }
+}
+
+.ekg-beat {
+  stroke-dasharray: 100;
+  animation: ekg-beat 1.2s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ekg-beat {
+    animation: none;
+  }
+}
+
 /* Probability transition */
 .probability-transition {
   transition: width var(--transition-probability);
