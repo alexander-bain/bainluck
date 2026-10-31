@@ -852,46 +852,100 @@ final class CricketEventPagePresentation10868Tests: XCTestCase {
 
     // MARK: Holds
 
+    /// Only a card the stream actually draws — its primary, or its companion
+    /// when wide — carries the stream's interaction intent, so each visible
+    /// card's action asks for that hold once before its exact owner callback,
+    /// and a card the stream does not draw asks for none. No test taps a card
+    /// the stream never drew.
     @MainActor
     func testAStreamCardActionRequestsTheHoldBeforeTheExactOwnerCallbackAndNothingFiresPassively() {
         var log: [String] = []
-        let input = Self.page(.over85)
-        let view = CricketEventPagePresentation10868(
-            input: input,
-            onShiftsSelect: { log.append("shifts.select:\($0.market)") },
-            onShiftsDetails: { log.append("shifts.details:\($0.market)") },
-            onChaseDetails: { log.append("chase.details:\($0.market)") },
-            onSurvivalSelect: { log.append("survival.select:\($0.checkpointID)") },
-            onSurvivalDetails: { log.append("survival.details:\($0.checkpointID)") },
-            onExpectationsSelect: { log.append("expectations.select:\($0.market)") },
-            onInteraction: { log.append("page-hook") })
-
-        let shiftsHook = Self.activation(input.stream!, "shifts") { log.append($0) }
-        let chaseHook = Self.activation(input.stream!, "chase") { log.append($0) }
-        let survivalHook = Self.activation(input.stream!, "survival") { log.append($0) }
-        let shifts = view.shiftsContent(activation: shiftsHook)
-        let chase = view.chaseContent(activation: chaseHook)
-        let survival = view.survivalContent(activation: survivalHook)
-        XCTAssertEqual(log, [], "building cards asks for nothing")
-
-        shifts?.onSelect?(Self.outlookRef(1))
-        shifts?.onDetails?(Self.outlookRef(1))
-        chase?.onDetails?(Self.chaseRef)
+        func view(_ input: CricketEventPageInput10868) -> CricketEventPagePresentation10868 {
+            CricketEventPagePresentation10868(
+                input: input,
+                onShiftsSelect: { log.append("shifts.select:\($0.market)") },
+                onShiftsDetails: { log.append("shifts.details:\($0.market)") },
+                onChaseDetails: { log.append("chase.details:\($0.market)") },
+                onSurvivalSelect: { log.append("survival.select:\($0.checkpointID)") },
+                onSurvivalDetails: { log.append("survival.details:\($0.checkpointID)") },
+                onExpectationsSelect: { log.append("expectations.select:\($0.market)") },
+                onInteraction: { log.append("page-hook") })
+        }
+        func hook(_ input: CricketEventPageInput10868, _ id: String) -> StoryStreamCardActivation10868 {
+            Self.activation(input.stream!, id) { log.append($0) }
+        }
         // Two checkpoints on ONE shared original are two exact targets.
-        survival?.onSelect?(CricketSurvivalTarget10868(checkpointID: Self.checkpoints[1].id, original: Self.tieRef))
-        survival?.onDetails?(CricketSurvivalTarget10868(checkpointID: Self.checkpoints[3].id, original: Self.tieRef))
+        let selectTarget = CricketSurvivalTarget10868(checkpointID: Self.checkpoints[1].id, original: Self.tieRef)
+        let detailsTarget = CricketSurvivalTarget10868(checkpointID: Self.checkpoints[3].id, original: Self.tieRef)
+
+        // Narrow, 64 overs: only the primary, changing expectations, is drawn.
+        let narrow64 = Self.page(.over64)
+        let narrow64Shifts = view(narrow64).shiftsContent(activation: hook(narrow64, "shifts"))
+        XCTAssertTrue(hook(narrow64, "chase").intents.isEmpty, "the next card is not drawn when narrow")
+        XCTAssertTrue(hook(narrow64, "survival").intents.isEmpty)
+        XCTAssertEqual(log, [], "building cards asks for nothing")
+        narrow64Shifts?.onSelect?(Self.outlookRef(1))
+        narrow64Shifts?.onDetails?(Self.outlookRef(1))
+        XCTAssertEqual(log, [
+            "hold:shifts", "shifts.select:constructed.market.AUS",
+            "hold:shifts", "shifts.details:constructed.market.AUS",
+        ], "the stream's activation once, then the exact owner callback; never the page hook too")
+
+        // Narrow, 85 overs: only the primary, holding on, is drawn.
+        log = []
+        let narrow85 = Self.page(.over85)
+        let narrow85Survival = view(narrow85).survivalContent(activation: hook(narrow85, "survival"))
+        XCTAssertTrue(hook(narrow85, "shifts").intents.isEmpty, "the companion is not drawn when narrow")
+        XCTAssertTrue(hook(narrow85, "chase").intents.isEmpty)
+        XCTAssertEqual(log, [], "building cards asks for nothing")
+        narrow85Survival?.onSelect?(selectTarget)
+        narrow85Survival?.onDetails?(detailsTarget)
+        XCTAssertEqual(log, [
+            "hold:survival", "survival.select:\(Self.checkpoints[1].id)",
+            "hold:survival", "survival.details:\(Self.checkpoints[3].id)",
+        ])
+
+        // Wide, 64 overs: changing expectations and its companion, the chase, are drawn.
+        log = []
+        let wide64 = Self.page(.over64, wide: true)
+        let wide64View = view(wide64)
+        let wide64Shifts = wide64View.shiftsContent(activation: hook(wide64, "shifts"))
+        let wide64Chase = wide64View.chaseContent(activation: hook(wide64, "chase"))
+        XCTAssertTrue(hook(wide64, "survival").intents.isEmpty, "a card neither primary nor companion is not drawn")
+        XCTAssertEqual(log, [], "building cards asks for nothing")
+        wide64Shifts?.onSelect?(Self.outlookRef(1))
+        wide64Shifts?.onDetails?(Self.outlookRef(1))
+        wide64Chase?.onDetails?(Self.chaseRef)
         XCTAssertEqual(log, [
             "hold:shifts", "shifts.select:constructed.market.AUS",
             "hold:shifts", "shifts.details:constructed.market.AUS",
             "hold:chase", "chase.details:constructed.market.SA",
+        ])
+
+        // Wide, 85 overs: holding on and its companion, changing expectations, are drawn.
+        log = []
+        let wide85 = Self.page(.over85, wide: true)
+        let wide85View = view(wide85)
+        let wide85Survival = wide85View.survivalContent(activation: hook(wide85, "survival"))
+        let wide85Shifts = wide85View.shiftsContent(activation: hook(wide85, "shifts"))
+        XCTAssertTrue(hook(wide85, "chase").intents.isEmpty, "a card neither primary nor companion is not drawn")
+        XCTAssertEqual(log, [], "building cards asks for nothing")
+        wide85Survival?.onSelect?(selectTarget)
+        wide85Survival?.onDetails?(detailsTarget)
+        wide85Shifts?.onSelect?(Self.outlookRef(1))
+        wide85Shifts?.onDetails?(Self.outlookRef(1))
+        XCTAssertEqual(log, [
             "hold:survival", "survival.select:\(Self.checkpoints[1].id)",
             "hold:survival", "survival.details:\(Self.checkpoints[3].id)",
-        ], "the stream's activation once, then the exact owner callback; never the page hook too")
+            "hold:shifts", "shifts.select:constructed.market.AUS",
+            "hold:shifts", "shifts.details:constructed.market.AUS",
+        ])
 
         // Full-size content: the exact callbacks, no hold.
         log = []
-        view.chaseContent()?.onDetails?(Self.chaseRef)
-        view.survivalContent()?.onSelect?(CricketSurvivalTarget10868(checkpointID: Self.checkpoints[0].id, original: Self.tieRef))
+        let reader = view(narrow85)
+        reader.chaseContent()?.onDetails?(Self.chaseRef)
+        reader.survivalContent()?.onSelect?(CricketSurvivalTarget10868(checkpointID: Self.checkpoints[0].id, original: Self.tieRef))
         XCTAssertEqual(log, ["chase.details:constructed.market.SA", "survival.select:\(Self.checkpoints[0].id)"])
 
         // At the final the expectations card relays the same way; no owner callback means no action.
