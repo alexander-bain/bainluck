@@ -203,7 +203,9 @@ async def _running_call(r):
 
 
 @pytestmark_async
-async def test_a_held_live_debt_takes_the_live_allowance_first(clock):
+async def test_a_held_live_debt_takes_the_live_allowance_first(clock, monkeypatch):
+    # The off arm of STAMP_HELD_OWED_FRESH: the held game rides the live slot.
+    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
     r = _Gated(blocked={99, 1, 2, 3, 4})
     r.reader_held = lambda: frozenset({4})
     task = await _running_call(r)
@@ -219,9 +221,34 @@ async def test_a_held_live_debt_takes_the_live_allowance_first(clock):
 
 
 @pytestmark_async
-async def test_held_live_debt_preference_yields_one_admission_in_four(clock):
+async def test_with_held_owed_fresh_the_held_live_debt_is_a_member_and_both_slots_go_unheld(
+    clock, monkeypatch,
+):
+    # STAMP_HELD_OWED_FRESH on (Authority N2): held 4 joins the admission as a
+    # cohort member, stamped first, so the live slot and the shared slot both
+    # go to unheld debt in turn order and one fewer game waits.
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "1")
+    r = _Gated(blocked={99, 1, 2, 3, 4})
+    r.reader_held = lambda: frozenset({4})
+    task = await _running_call(r)
+    r._live_event_ids.update({1, 2, 3, 4})
+    r.adopt_pending([1, 2, 3, 4])
+    r.admit_fresh((), flush_started=1001.0)
+    await _settle()
+    assert r.started == [99, 4, 1, 2]
+    assert r._admission.live_debts == {1} and r._admission.debts == {2}
+    assert 4 in r._admission.events
+    assert r.pending_event_ids() == frozenset({3})
+    r.release.set()
+    await task
+
+
+@pytestmark_async
+async def test_held_live_debt_preference_yields_one_admission_in_four(clock, monkeypatch):
     # Pre-game 7 holds the shared slot, so the live allowance alone decides.
     # Held 50 is owed again before every admission; unheld live 1, 2 wait.
+    # The off arm of STAMP_HELD_OWED_FRESH: the held game rides the live slot.
+    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
     r = _Gated(blocked={99, 7})
     r.reader_held = lambda: frozenset({50})
     task = await _running_call(r)
@@ -239,6 +266,37 @@ async def test_held_live_debt_preference_yields_one_admission_in_four(clock):
         await _settle()
     # Strawman (no bound): fifty every time and 1, 2 never.
     assert riders == [{50}, {50}, {50}, {1}, {50}, {50}, {50}, {2}], riders
+    r.release.set()
+    await task
+
+
+@pytestmark_async
+async def test_with_held_owed_fresh_a_held_game_owed_every_admission_never_takes_the_live_slot(
+    clock, monkeypatch,
+):
+    # STAMP_HELD_OWED_FRESH on (Authority N2): held 50 is stamped as a member
+    # at every admission, held-first, and never takes the live allowance, so
+    # unheld 1 and 2 take it at the first two admissions instead of the 4th
+    # and 8th.
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "1")
+    r = _Gated(blocked={99, 7})
+    r.reader_held = lambda: frozenset({50})
+    task = await _running_call(r)
+    r.adopt_pending([7])
+    r.admit_fresh((), flush_started=1000.5)
+    await _settle()
+    assert r._admission.debts == {7}
+    r._live_event_ids.update({1, 2, 50})
+    r.adopt_pending([1, 2])
+    riders = []
+    for i in range(8):
+        r.adopt_pending([50])
+        r.admit_fresh((), flush_started=1001.0 + i)
+        riders.append(set(r._admission.live_debts))
+        await _settle()
+    assert riders == [{1}, {2}] + [set()] * 6, riders
+    assert r.started == [99, 7, 50, 1, 50, 2] + [50] * 6
+    assert not r.pending_event_ids()
     r.release.set()
     await task
 

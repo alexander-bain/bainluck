@@ -91,8 +91,12 @@ async def _running_call(r):
     return task
 
 
-async def test_a_due_held_live_debt_is_preferred_even_after_admissions_that_had_none(clock):
+async def test_a_due_held_live_debt_is_preferred_even_after_admissions_that_had_none(
+    clock, monkeypatch,
+):
     # Pre-game 7 holds the shared slot, so the live allowance alone decides.
+    # The off arm of STAMP_HELD_OWED_FRESH: the held game rides the live slot.
+    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
     r = _Gated(blocked={99, 7})
     r.reader_held = lambda: frozenset({50})
     task = await _running_call(r)
@@ -117,5 +121,37 @@ async def test_a_due_held_live_debt_is_preferred_even_after_admissions_that_had_
     # three held-less admissions spent the run; 50 waits another admission.
     assert r._admission.live_debts == {50}, (r._admission.live_debts, r._held_debt_run)
     await _settle()
+    r.release.set()
+    await task
+
+
+async def test_with_held_owed_fresh_a_due_held_debt_is_a_member_after_admissions_that_had_none(
+    clock, monkeypatch,
+):
+    # STAMP_HELD_OWED_FRESH on (Authority N2): the same three held-less
+    # admissions, then held 50 owed and due beside unheld 1 and 2. It joins
+    # the admission as a member, stamped first, and the live allowance stays
+    # with unheld debt in rotation order.
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "1")
+    r = _Gated(blocked={99, 7})
+    r.reader_held = lambda: frozenset({50})
+    task = await _running_call(r)
+    r.adopt_pending([7])
+    r.admit_fresh((), flush_started=1000.5)
+    await _settle()
+    assert r._admission.debts == {7}
+    r._live_event_ids.update({1, 2, 50})
+    for i in range(3):
+        r.adopt_pending([1, 2])
+        r.admit_fresh((), flush_started=1001.0 + i)
+        await _settle()
+        assert r._admission.live_debts.issubset({1, 2})
+    stamped_from = len(r.started)
+    r.adopt_pending([1, 2, 50])
+    r.admit_fresh((), flush_started=1004.0)
+    assert r._admission.live_debts == {2} and 50 in r._admission.events
+    await _settle()
+    assert r.started[stamped_from:] == [50, 2]
+    assert r.pending_event_ids() == frozenset({1})
     r.release.set()
     await task
