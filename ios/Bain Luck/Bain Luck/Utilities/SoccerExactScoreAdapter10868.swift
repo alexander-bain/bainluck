@@ -31,9 +31,12 @@ import Foundation
 ///                     Never a position, a label or a coordinate.
 ///   - membership      the descriptor's originals, in the descriptor's order. A
 ///                     listed original the payload no longer serves stays listed
-///                     (the owner's held catalogue) with no chance and an
-///                     unconfirmed result — after the final that is every
-///                     first-half original, all nine, not only Other. A served row
+///                     (the owner's held catalogue) with "Pre-match chance
+///                     unavailable" — the payload's silence does not prove no
+///                     price was ever recorded, so never "not recorded" and never
+///                     an invented figure — and an unconfirmed result. After the
+///                     final that is every first-half original, all nine, not
+///                     only Other. A served row
 ///                     of the scope's market the descriptor does not name is still
 ///                     shown, off the grid, as a named choice: it is never dropped
 ///                     and never given a coordinate. When two descriptor entries,
@@ -41,9 +44,12 @@ import Foundation
 ///                     every one is passed on and the leaf's own duplicate /
 ///                     ambiguous rule applies: nothing is chosen for it.
 ///   - pre-match       part three's `pregame`: before kickoff the row's own price
-///                     on its own recent clock; once started the stored pre-match
-///                     pin for the same original — never a settlement 0/1, never a
-///                     last quote.
+///                     on its own recent clock; once started the production pin
+///                     helper's pin for the same original in an admitted
+///                     10238.v1 game-scope matrix, before the listed start —
+///                     never a settlement 0/1, never a last quote. Without one,
+///                     part three's words: "not recorded" only on the producer's
+///                     own `no_pregame_pin`, else "unavailable".
 ///   - current         during play only. The full match: part three's `current`.
 ///                     A period scope: part three's `periodCurrent` — a dated
 ///                     recorded quote under the in-play absence words, never the
@@ -176,9 +182,8 @@ enum SoccerExactScoreAdapter10868 {
         guard let descriptor, descriptor.admits(event),
               let markets, markets.eventId == event.id else { return nil }
         let phase = SoccerMatchPageAdapter10868.phase(event, now: host.now)
-        let started = HockeyJourneyContributionAdapter10868.hasStarted(event, now: host.now)
         let built = descriptor.scopes.map {
-            scope($0, event: event, markets: markets, phase: phase, started: started, host: host)
+            scope($0, event: event, markets: markets, phase: phase, host: host)
         }
         guard built.contains(where: { $0.served }) else { return nil }
         let names = SoccerMatchPageAdapter10868.names(event)
@@ -210,7 +215,7 @@ enum SoccerExactScoreAdapter10868 {
 
     /// The scope, and whether its market serves at least one row here.
     static func scope(_ described: Descriptor.Scope, event: EventDetail, markets: GameMarketsResponse,
-                      phase: SoccerEventPagePhase10868, started: Bool,
+                      phase: SoccerEventPagePhase10868,
                       host: R.Host) -> (scope: ExactScoreMapScope10868, served: Bool) {
         let legs = R.legs(described.marketID, in: markets)
         let period = described.periodID != nil
@@ -220,7 +225,7 @@ enum SoccerExactScoreAdapter10868 {
             let wanted = Set(listed.outcomeIDs)
             let hits = legs.indices.filter { !legs[$0].contributors.isEmpty && Set(legs[$0].contributors) == wanted }
             guard !hits.isEmpty else {
-                originals.append(held(listed, started: started))
+                originals.append(held(listed))
                 continue
             }
             for index in hits {
@@ -266,13 +271,15 @@ enum SoccerExactScoreAdapter10868 {
     }
 
     /// A listed original the payload no longer serves: its identity and the
-    /// owner's held label, no chance, no current reading, no result.
-    static func held(_ listed: Descriptor.Original, started: Bool) -> ExactScoreMapOriginal10868 {
+    /// owner's held label, no chance, no current reading, no result. Its
+    /// pre-match chance is unavailable — the payload's silence is not the
+    /// producer's statement that none was recorded.
+    static func held(_ listed: Descriptor.Original) -> ExactScoreMapOriginal10868 {
         ExactScoreMapOriginal10868(
             id: listed.outcomeIDs.map(String.init).joined(separator: "+"),
             label: listed.label,
             placement: listed.placement,
-            pregame: .unavailable(started ? R.Words.preMatchNotRecorded : R.Words.chanceUnavailable),
+            pregame: .unavailable(R.Words.preMatchUnavailable),
             current: .unavailable(R.Words.inPlayUnavailable),
             result: .unconfirmed(R.Words.resultUnavailable))
     }

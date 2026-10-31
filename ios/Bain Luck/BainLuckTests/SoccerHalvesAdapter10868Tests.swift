@@ -121,7 +121,7 @@ final class SoccerHalvesAdapter10868Tests: XCTestCase {
         // The final body's second-half Draw serves no price at all; its result
         // is still the venue's own grade.
         XCTAssertEqual(halves.series[1].cells[1].result, lost)
-        XCTAssertTrue(halves.series.allSatisfy { $0.cells.allSatisfy { $0.pregameMissing == R.Words.preMatchNotRecorded } })
+        XCTAssertTrue(halves.series.allSatisfy { $0.cells.allSatisfy { $0.pregameMissing == R.Words.preMatchUnavailable } })
         XCTAssertEqual(halves.resultsTitle, "\(H.Words.finalResults) · \(names.home)")
     }
 

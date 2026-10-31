@@ -27,17 +27,37 @@ import Foundation
 ///   - identity         the row's served `contributor_outcome_ids` joined with
 ///                      "+", else the row id `market_name-outcome_name` (H4's
 ///                      side identity). Never a position or a label.
+///   - matrix           (Design, baseline-admission review 2026-10-31) the
+///                      option metadata — pin, side, grade, absence reason — is
+///                      read only from the known matrix contract at game scope
+///                      (`NBAEventCards9483.matrixContract`, "10238.v1"; display
+///                      scope game or absent), the boundary every production
+///                      consumer applies (`NBALadderCard9483`, the tennis and
+///                      combat originals). Any other contract or scope: no option
+///                      is matched, and the served rows themselves stay — every
+///                      original remains reachable, its result the venue's own
+///                      settlement alone.
 ///   - pre-match        before the start (`HockeyJourneyContributionAdapter10868
 ///                      .hasStarted`, `NFLMilestoneCard9483.cards`' rule): the
 ///                      row's own catalogue price while `NFLMilestoneCard9483
 ///                      .isRecent` finds its own `observed_at` recent. Once
-///                      started: the matrix option's stored pre-match pin for
-///                      the SAME market and contributor outcomes — its
-///                      `pregame_reading` when available (#11125), else its
-///                      `comparison.baseline` whose basis is `pregame_pin` (the
-///                      same stored pin, the only v1 basis) — observed strictly
-///                      before the listed start. Never the opening line, never a
-///                      current or settled price, never a neighbour.
+///                      started: the production pin helper
+///                      (`NBALadderCard9483.pin` — the `pregame_pin` comparison
+///                      baseline, else a `pregame_reading` whose basis is
+///                      `pregame_pin` and whose outcome id is this option's one
+///                      contributor, never an exact 0/1) on the matrix option for
+///                      the SAME market and contributor outcomes, kept only when
+///                      observed strictly before the listed start (soccer's own
+///                      qualifier on top; the helper is not copied or edited).
+///                      Never the opening line, never a current or settled
+///                      price, never a neighbour. No pin: "Pre-match chance not
+///                      recorded" ONLY on the known producer's own statement for
+///                      this option (`comparison.reason == "no_pregame_pin"`, the
+///                      tennis originals' distinction); every other absence — no
+///                      option, an unsupported matrix, a settled option the
+///                      comparison no longer quotes, a complement leg, a pin
+///                      after the start — is "Pre-match chance unavailable": the
+///                      pin may exist and simply not be served.
 ///   - in-play          H4's order: a row the venue already settled has no
 ///                      chance; no price is "no in-game reading"; undated is no
 ///                      recent update; observed before the listed start is no
@@ -158,7 +178,10 @@ enum SoccerPropReadingAdapter10868 {
 
     /// Reader words. Plain chance and availability language only.
     enum Words {
+        /// Only on the producer's own `no_pregame_pin` statement.
         static let preMatchNotRecorded = "Pre-match chance not recorded"
+        /// Every other missing pre-match pin.
+        static let preMatchUnavailable = "Pre-match chance unavailable"
         static let chanceUnavailable = AllMarketsCatalogView9483.unavailablePrice
         /// `AllMarketsCatalogView9483.noRecentPrice`, the page's one spelling.
         static let noRecentUpdate = AllMarketsCatalogView9483.noRecentPrice
@@ -238,10 +261,22 @@ enum SoccerPropReadingAdapter10868 {
                    option: option(marketID, contributors: ids, in: matrix))
     }
 
+    /// The game matrix this build reads — the known contract
+    /// (`NBAEventCards9483.matrixContract`) at game scope (display scope
+    /// `game`, or absent) — or nil. The same boundary as
+    /// `TennisOriginalsAdapter10868.matrix` and `NBALadderCard9483`.
+    static func admittedMatrix(_ matrix: EventQuestionMatrix?) -> EventQuestionMatrix? {
+        guard let matrix, matrix.contract == NBAEventCards9483.matrixContract,
+              matrix.displayScope == nil || matrix.displayScope == QuestionMatrixScope.game.rawValue
+        else { return nil }
+        return matrix
+    }
+
     /// The one matrix option naming exactly this market and these contributor
-    /// outcomes; nil when none or more than one does.
+    /// outcomes, in an admitted matrix only; nil when none or more than one
+    /// does, or when the matrix is not one this build reads.
     static func option(_ marketID: Int, contributors: [Int], in matrix: EventQuestionMatrix?) -> QuestionMatrixOption? {
-        guard !contributors.isEmpty, let matrix else { return nil }
+        guard !contributors.isEmpty, let matrix = admittedMatrix(matrix) else { return nil }
         let wanted = Set(contributors)
         var found: [QuestionMatrixOption] = []
         for question in matrix.questions {
@@ -319,7 +354,7 @@ enum SoccerPropReadingAdapter10868 {
         let venue = SourceLabels.label(for: leg.row.source)
         if HockeyJourneyContributionAdapter10868.hasStarted(event, now: host.now) {
             guard let pin = pin(leg.option, start: event.commenceTime?.asDate) else {
-                return .missing(Words.preMatchNotRecorded)
+                return .missing(preMatchAbsence(leg.option))
             }
             return .value(observation(pin.probability, at: pin.observedAt, lead: Words.savedBeforeStart,
                                       venue: venue, host: host))
@@ -382,24 +417,27 @@ enum SoccerPropReadingAdapter10868 {
         return admissible(QuestionCatalog9483.reading(leg.row, status: event.status, now: instant).probability)
     }
 
-    /// The stored pre-match pin: `pregame_reading` when available, else the
-    /// comparison baseline whose basis is `pregame_pin`. Only one observed
+    /// The stored pre-match pin: the production helper's (`NBALadderCard9483
+    /// .pin` — its basis, outcome identity, settlement-value refusal and
+    /// precedence, unchanged), kept only when its clock reads as a date
     /// strictly before the listed start (or with no start to compare against
     /// when the listing has none — then the pin's own basis is the claim).
     static func pin(_ option: QuestionMatrixOption?, start: Date?) -> (probability: Double, observedAt: Date)? {
-        guard let option else { return nil }
-        var candidate: (Double, Date)?
-        if let reading = option.pregameReading, reading.state == "available",
-           let value = admissible(reading.probability), let at = reading.observedAt?.asDate {
-            candidate = (value, at)
-        } else if let comparison = option.comparison, comparison.state == "comparable",
-                  let baseline = comparison.baseline, baseline.basis == "pregame_pin",
-                  let value = admissible(baseline.probability), let at = baseline.observedAt?.asDate {
-            candidate = (value, at)
-        }
-        guard let found = candidate else { return nil }
-        if let start, found.1 >= start { return nil }
-        return (probability: found.0, observedAt: found.1)
+        guard let option, let found = NBALadderCard9483.pin(option), let at = found.at.asDate,
+              let value = admissible(found.probability) else { return nil }
+        if let start, at >= start { return nil }
+        return (probability: value, observedAt: at)
+    }
+
+    /// The known producer's own statement that no pre-match pin was recorded
+    /// for an option (`TennisOriginalsAdapter10868.noPregamePinReason`).
+    static let noPregamePinReason = TennisOriginalsAdapter10868.noPregamePinReason
+
+    /// Why a started original shows no pre-match chance: "not recorded" only
+    /// when its admitted option carries the producer's `no_pregame_pin`
+    /// reason; otherwise "unavailable".
+    static func preMatchAbsence(_ option: QuestionMatrixOption?) -> String {
+        option?.comparison?.reason == noPregamePinReason ? Words.preMatchNotRecorded : Words.preMatchUnavailable
     }
 
     static func observation(_ value: Double, at: Date, lead: String, venue: String?, host: Host) -> Observation {

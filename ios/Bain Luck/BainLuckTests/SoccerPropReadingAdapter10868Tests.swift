@@ -212,8 +212,11 @@ final class SoccerPropReadingAdapter10868Tests: XCTestCase {
         XCTAssertEqual(R.result(no), .won(OutcomeVerdict.won.label))
         XCTAssertEqual(R.result(yes), .lost(OutcomeVerdict.lost.label))
         XCTAssertEqual(R.current(no, event: event, host: host), .unavailable(R.Words.settledNoChance))
-        // The retained final body serves no stored pin for this option.
-        XCTAssertEqual(R.pregame(no, event: event, host: host), .missing(R.Words.preMatchNotRecorded))
+        // The retained final body serves no stored pin for this option, and its
+        // comparison says only `not_quoted` — no statement that none was
+        // recorded — so the pre-match chance is unavailable, not "not recorded".
+        XCTAssertEqual(no.option?.comparison?.reason, "not_quoted")
+        XCTAssertEqual(R.pregame(no, event: event, host: host), .missing(R.Words.preMatchUnavailable))
     }
 
     /// CONSTRUCTED: the final Yes leg (served `is_winner: false`) carrying the No
@@ -234,6 +237,154 @@ final class SoccerPropReadingAdapter10868Tests: XCTestCase {
         XCTAssertEqual(R.result(yes), .unconfirmed(R.Words.resultUnavailable))
     }
 
+    // MARK: - The pin is the production helper's (Design, baseline-admission review)
+
+    /// REAL: the live Yes option's `pregame_pin` comparison baseline. Soccer's
+    /// pin is exactly the production helper's, with soccer's start qualifier.
+    func testTheStartedPinIsTheProductionHelpersPinKeptOnlyBeforeTheStart() throws {
+        let option = try XCTUnwrap(try leg(64353426, "242143189", in: F.liveMarkets).option)
+        let helper = try XCTUnwrap(NBALadderCard9483.pin(option))
+        let start = try XCTUnwrap(try F.detail(F.liveDetail).commenceTime?.asDate)
+        let soccer = try XCTUnwrap(R.pin(option, start: start))
+        XCTAssertEqual(soccer.probability, helper.probability)
+        XCTAssertEqual(soccer.observedAt, helper.at.asDate)
+    }
+
+    /// The CONSTRUCTED `pregame_reading` the controls below give an option:
+    /// available, basis `pregame_pin`, naming `outcome`, 0.45 at `stamp`.
+    private func reading(outcome: Int, basis: String = "pregame_pin",
+                         stamp: String = "2026-10-12T11:50:00+00:00") -> [String: Any] {
+        ["state": "available", "reason": NSNull(), "probability": 0.45, "observed_at": stamp,
+         "basis": basis, "outcome_id": outcome]
+    }
+
+    /// CONSTRUCTED: the final body's settled No option (served comparison
+    /// `not_quoted`, no `pregame_reading`) with only `pregame_reading` set.
+    private func finalNo(with pregame: [String: Any]) throws -> R.Leg {
+        let body = try F.editedOption(F.finalMarkets, question: "m:64353426", option: "o:242143190",
+                                      setting: ["pregame_reading": pregame])
+        return try leg(64353426, "242143190", in: body)
+    }
+
+    /// Positive control: a reading of this option's one contributor, basis
+    /// `pregame_pin`, before the start, is the pre-match chance — through the
+    /// helper's own reading branch.
+    func testOnceStartedAPregameReadingOfThisOutcomeIsThePreMatchChance() throws {
+        let event = try F.detail(F.finalDetail)
+        let host = F.propHost(F.finalNow)
+        let no = try finalNo(with: reading(outcome: 242143190))
+        XCTAssertNotNil(NBALadderCard9483.pin(try XCTUnwrap(no.option)))
+        XCTAssertEqual(R.pregame(no, event: event, host: host), .value(R.observation(
+            0.45, at: "2026-10-12T11:50:00+00:00".asDate!, lead: R.Words.savedBeforeStart,
+            venue: SourceLabels.label(for: "polymarket"), host: host)))
+    }
+
+    /// CONTROL, wrong basis: the same reading with only `basis` changed.
+    func testAPregameReadingOfAnotherBasisIsNoPin() throws {
+        let no = try finalNo(with: reading(outcome: 242143190, basis: "opening_line"))
+        XCTAssertNil(NBALadderCard9483.pin(try XCTUnwrap(no.option)))
+        XCTAssertEqual(R.pregame(no, event: try F.detail(F.finalDetail), host: F.propHost(F.finalNow)),
+                       .missing(R.Words.preMatchUnavailable))
+    }
+
+    /// CONTROL, wrong outcome: the same reading naming the Yes outcome.
+    func testAPregameReadingOfAnotherOutcomeIsNeverBorrowed() throws {
+        let no = try finalNo(with: reading(outcome: 242143189))
+        XCTAssertNil(NBALadderCard9483.pin(try XCTUnwrap(no.option)))
+        XCTAssertEqual(R.pregame(no, event: try F.detail(F.finalDetail), host: F.propHost(F.finalNow)),
+                       .missing(R.Words.preMatchUnavailable))
+    }
+
+    /// CONTROL, the start qualifier: the same reading observed five minutes
+    /// after kickoff. The helper returns it; soccer keeps only pins before the
+    /// listed start.
+    func testAPinTheHelperReturnsButObservedAfterKickoffIsNotAPreMatchChance() throws {
+        let no = try finalNo(with: reading(outcome: 242143190, stamp: "2026-10-12T12:05:00+00:00"))
+        XCTAssertNotNil(NBALadderCard9483.pin(try XCTUnwrap(no.option)))
+        XCTAssertNil(R.pin(no.option, start: try F.detail(F.finalDetail).commenceTime?.asDate))
+        XCTAssertEqual(R.pregame(no, event: try F.detail(F.finalDetail), host: F.propHost(F.finalNow)),
+                       .missing(R.Words.preMatchUnavailable))
+    }
+
+    /// CONTROL, precedence: the live Yes option (REAL comparison baseline 0.55
+    /// at 11:47:12) with only a `pregame_reading` of 0.45 added. The helper's
+    /// precedence — the comparison baseline first — decides, as on every page.
+    func testWhenBothAreServedTheHelpersPrecedenceDecides() throws {
+        let body = try F.editedOption(F.liveMarkets, question: "m:64353426", option: "o:242143189",
+                                      setting: ["pregame_reading": reading(outcome: 242143189,
+                                                                          stamp: "2026-10-12T11:30:00+00:00")])
+        let yes = try leg(64353426, "242143189", in: body)
+        let option = try XCTUnwrap(yes.option)
+        XCTAssertEqual(NBALadderCard9483.pin(option)?.probability, 0.55)
+        guard case .value(let shown) = R.pregame(yes, event: try F.detail(F.liveDetail), host: F.propHost(F.liveNow)) else {
+            return XCTFail("the comparison baseline is the pin")
+        }
+        XCTAssertEqual(shown.probability, 0.55)
+        XCTAssertEqual(shown.detail,
+                       "\(R.Words.savedBeforeStart) \(clock("2026-10-12T11:47:12.295868+00:00", F.liveNow)) · Polymarket")
+    }
+
+    // MARK: - The matrix contract and scope
+
+    /// CONTROL, unknown contract: the live body with only the matrix `contract`
+    /// changed. No option metadata is read — no pin, no side, no grade — and
+    /// every served row is still a leg with its own identity.
+    func testAnUnknownMatrixContractReadsNoMetadataAndKeepsEveryRow() throws {
+        let body = try F.editedMatrix(F.liveMarkets, setting: ["contract": "10238.v2"])
+        let real = R.legs(64353426, in: try F.markets(F.liveMarkets))
+        let legs = R.legs(64353426, in: try F.markets(body))
+        XCTAssertEqual(legs.map(\.id), real.map(\.id))
+        XCTAssertEqual(legs.map(\.label), real.map(\.label))
+        XCTAssertTrue(legs.allSatisfy { $0.option == nil })
+        let yes = try leg(64353426, "242143189", in: body)
+        XCTAssertEqual(R.pregame(yes, event: try F.detail(F.liveDetail), host: F.propHost(F.liveNow)),
+                       .missing(R.Words.preMatchUnavailable))
+        // No side metadata: the half-by-half card has nothing to place.
+        XCTAssertNil(SoccerHalvesAdapter10868.input(try F.detail(F.liveDetail), markets: try F.markets(body),
+                                                    admitted: F.liveAdmission.halves, host: F.propHost(F.liveNow)))
+        // After the final the result is the venue's own settlement alone.
+        let finalBody = try F.editedMatrix(F.finalMarkets, setting: ["contract": "10238.v2"])
+        let no = try leg(64353426, "242143190", in: finalBody)
+        XCTAssertNil(no.option)
+        XCTAssertEqual(R.result(no), .won(OutcomeVerdict.won.label))
+    }
+
+    /// CONTROL, foreign scope: only `display_scope` changed to `series`. An
+    /// absent display scope (served null) is still the game's.
+    func testAMatrixOfAnotherDisplayScopeReadsNoMetadata() throws {
+        let series = try F.editedMatrix(F.liveMarkets, setting: ["display_scope": "series"])
+        XCTAssertTrue(R.legs(64353426, in: try F.markets(series)).allSatisfy { $0.option == nil })
+        XCTAssertEqual(R.pregame(try leg(64353426, "242143189", in: series), event: try F.detail(F.liveDetail),
+                                 host: F.propHost(F.liveNow)),
+                       .missing(R.Words.preMatchUnavailable))
+        let unscoped = try F.editedMatrix(F.liveMarkets, setting: ["display_scope": NSNull()])
+        XCTAssertEqual(R.pin(try leg(64353426, "242143189", in: unscoped).option,
+                             start: try F.detail(F.liveDetail).commenceTime?.asDate)?.probability, 0.55)
+    }
+
+    // MARK: - "Not recorded" only on the producer's own word
+
+    /// CONSTRUCTED live variant: the Hull detail with only `status` changed to
+    /// `live`. Its first-team option says `no_pregame_pin` — the known
+    /// producer's statement — so "not recorded". The same option with only
+    /// `comparison` served null says nothing: "unavailable".
+    func testNotRecordedOnlyWhereTheProducerSaysNoPinWasRecorded() throws {
+        let event = try F.detail(try F.edited(F.hullDetail, setting: ["status": "live"]))
+        let host = F.propHost(F.hullNow)
+        let everton = try leg(62939466, "238846913", in: F.hullMarkets)
+        XCTAssertEqual(everton.option?.comparison?.reason, R.noPregamePinReason)
+        XCTAssertEqual(R.pregame(everton, event: event, host: host), .missing(R.Words.preMatchNotRecorded))
+
+        let silent = try F.editedOption(F.hullMarkets, question: "m:62939466", option: "o:238846913",
+                                        setting: ["comparison": NSNull()])
+        XCTAssertEqual(R.pregame(try leg(62939466, "238846913", in: silent), event: event, host: host),
+                       .missing(R.Words.preMatchUnavailable))
+        // An unsupported matrix carries no statement either.
+        let unsupported = try F.editedMatrix(F.hullMarkets, setting: ["contract": "10238.v2"])
+        XCTAssertEqual(R.pregame(try leg(62939466, "238846913", in: unsupported), event: event, host: host),
+                       .missing(R.Words.preMatchUnavailable))
+    }
+
     // MARK: - The score the stories share
 
     func testTheGoalsAreTheProducersScoreDatedByItsOwnClock() throws {
@@ -246,5 +397,37 @@ final class SoccerPropReadingAdapter10868Tests: XCTestCase {
         XCTAssertEqual(final.total, 5)
         XCTAssertEqual(R.goalsClock(final, final: true, host: F.propHost(F.finalNow)), A.Words.final)
         XCTAssertNil(R.goals(try F.detail(F.hullDetail)))
+    }
+}
+
+/// CONSTRUCTED matrix edits for the soccer baseline-admission controls.
+extension SoccerRetained10868 {
+    /// A served `/game-markets` body with keys replaced on the ONE matrix
+    /// option whose `option_key` is `option`, in the ONE question whose
+    /// `question_key` is `question`: CONSTRUCTED. `NSNull()` serves null. Every
+    /// other option, question and key stays as served; a missing one fails.
+    static func editedOption(_ json: String, question: String, option: String,
+                             setting: [String: Any]) throws -> String {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        var matrix = try XCTUnwrap(object["game_question_matrix"] as? [String: Any])
+        var questions = try XCTUnwrap(matrix["questions"] as? [[String: Any]])
+        let q = try XCTUnwrap(questions.firstIndex { ($0["question_key"] as? String) == question })
+        var options = try XCTUnwrap(questions[q]["options"] as? [[String: Any]])
+        let o = try XCTUnwrap(options.firstIndex { ($0["option_key"] as? String) == option })
+        for (key, value) in setting { options[o][key] = value }
+        questions[q]["options"] = options
+        matrix["questions"] = questions
+        object["game_question_matrix"] = matrix
+        return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
+    /// A served body with top-level keys of its `game_question_matrix`
+    /// replaced (`contract`, `display_scope`): CONSTRUCTED.
+    static func editedMatrix(_ json: String, setting: [String: Any]) throws -> String {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        var matrix = try XCTUnwrap(object["game_question_matrix"] as? [String: Any])
+        for (key, value) in setting { matrix[key] = value }
+        object["game_question_matrix"] = matrix
+        return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
     }
 }

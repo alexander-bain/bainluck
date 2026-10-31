@@ -18,10 +18,16 @@ import SwiftUI
 ///
 ///   - pre-match     before the start, the catalogue's price on its own recent
 ///                   clock (H4). Once started, H4 had no stored pre-match value
-///                   for a non-prop row; soccer has one: the matrix option's
-///                   stored pre-match pin for the same market and contributor
-///                   outcomes (`SoccerPropReadingAdapter10868.pin`). Otherwise
-///                   "Pre-match chance not recorded".
+///                   for a non-prop row; soccer has one: the production pin
+///                   helper on the matrix option for the same market and
+///                   contributor outcomes, in an admitted 10238.v1 game-scope
+///                   matrix only, kept when observed before the listed start
+///                   (`SoccerPropReadingAdapter10868.pin`). Otherwise "Pre-match
+///                   chance not recorded" only on the producer's own
+///                   `no_pregame_pin` statement, else "Pre-match chance
+///                   unavailable" (`SoccerPropReadingAdapter10868.preMatchAbsence`).
+///                   An unsupported matrix reads no metadata; every served
+///                   original is still listed.
 ///   - later         during play, H4's admission (dated, at or after the listed
 ///                   start, recent; a settled row has no chance), plus the
 ///                   refusal H4 asks for by name: a row from a
@@ -57,6 +63,7 @@ enum SoccerOriginalsAdapter10868 {
         static let emptyWords = "No original props recorded for this match"
         static let unavailableChoice = "Unnamed original"
         static let preMatchNotRecorded = R.Words.preMatchNotRecorded
+        static let preMatchUnavailable = R.Words.preMatchUnavailable
         static let savedBeforeStart = "Saved before kickoff"
         static let recorded = "Recorded"
         static let settledNoChance = R.Words.settledNoChance
@@ -161,7 +168,7 @@ enum SoccerOriginalsAdapter10868 {
             let market = match.source.marketID ?? match.source.marketIDs?.first
             let option = market.flatMap { R.option($0, contributors: match.source.outcomeIDs ?? [], in: matrix) }
             guard let pin = R.pin(option, start: event.commenceTime?.asDate) else {
-                return .missing(Words.preMatchNotRecorded)
+                return .missing(R.preMatchAbsence(option))
             }
             let clock = "\(Words.savedBeforeStart) \(clockWords(pin.observedAt, host))"
             return .value(formatProbability(pin.probability), placement: pin.probability,

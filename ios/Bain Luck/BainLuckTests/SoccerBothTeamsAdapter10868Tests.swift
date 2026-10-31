@@ -129,10 +129,10 @@ final class SoccerBothTeamsAdapter10868Tests: XCTestCase {
         XCTAssertEqual(both.phase, .final)
         XCTAssertEqual(both.outcomes.map(\.result), [.won(OutcomeVerdict.won.label), .lost(OutcomeVerdict.lost.label)])
         // The retained final body serves no stored pin: said, not invented.
-        XCTAssertTrue(both.outcomes.allSatisfy { $0.before == nil && $0.beforeMissing == R.Words.preMatchNotRecorded })
+        XCTAssertTrue(both.outcomes.allSatisfy { $0.before == nil && $0.beforeMissing == R.Words.preMatchUnavailable })
         XCTAssertEqual(both.scoring.title, B.Words.finalGoals)
         XCTAssertEqual(both.scoring.home.actual, .count(text: "5", status: nil))
-        XCTAssertEqual(both.timing?.lines, ["\(T.pregameTitle): \(R.Words.preMatchNotRecorded)",
+        XCTAssertEqual(both.timing?.lines, ["\(T.pregameTitle): \(R.Words.preMatchUnavailable)",
                                             "\(T.resultTitle): \(OutcomeVerdict.lost.label) · settled by Polymarket"])
     }
 

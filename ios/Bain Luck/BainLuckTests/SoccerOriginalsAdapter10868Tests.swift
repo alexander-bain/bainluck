@@ -144,8 +144,67 @@ final class SoccerOriginalsAdapter10868Tests: XCTestCase {
         XCTAssertNil(no.later)
         XCTAssertEqual(no.grade, D.Grade(words: OutcomeVerdict.won.label, provenance: "Settled by Polymarket"))
         XCTAssertEqual(yes.grade, D.Grade(words: OutcomeVerdict.lost.label, provenance: "Settled by Polymarket"))
-        // The retained final body serves no stored pin.
-        XCTAssertEqual(no.pregame, .missing(O.Words.preMatchNotRecorded))
+        // The retained final body serves no stored pin, and its comparison says
+        // only `not_quoted` — not that none was recorded: unavailable.
+        XCTAssertEqual(no.pregame, .missing(O.Words.preMatchUnavailable))
+    }
+
+    // MARK: - Baseline admission (Design, baseline-admission review 2026-10-31)
+
+    /// CONSTRUCTED live variant: the Hull detail with only `status` changed to
+    /// `live`. The first-team option's `no_pregame_pin` is the producer's own
+    /// statement: "not recorded". The same option with only `comparison` served
+    /// null: "unavailable".
+    func testNotRecordedOnlyWhereTheProducerSaysNoPinWasRecorded() throws {
+        let live = try F.edited(F.hullDetail, setting: ["status": "live"])
+        let said = try original(try group(live, F.hullMarkets, now: F.hullNow), market: "62939466", side: "238846913")
+        XCTAssertEqual(said.pregame, .missing(O.Words.preMatchNotRecorded))
+
+        let silent = try F.editedOption(F.hullMarkets, question: "m:62939466", option: "o:238846913",
+                                        setting: ["comparison": NSNull()])
+        let unsaid = try original(try group(live, silent, now: F.hullNow), market: "62939466", side: "238846913")
+        XCTAssertEqual(unsaid.pregame, .missing(O.Words.preMatchUnavailable))
+    }
+
+    /// CONSTRUCTED: the final No option with only a `pregame_reading` added —
+    /// this outcome, basis `pregame_pin`, 0.45 at 11:50 — is the production
+    /// helper's pin; the same reading naming the Yes outcome is never borrowed.
+    func testDetailsReadThePinThroughTheProductionHelper() throws {
+        func reading(_ outcome: Int) -> [String: Any] {
+            ["state": "available", "reason": NSNull(), "probability": 0.45,
+             "observed_at": "2026-10-12T11:50:00+00:00", "basis": "pregame_pin", "outcome_id": outcome]
+        }
+        let own = try F.editedOption(F.finalMarkets, question: "m:64353426", option: "o:242143190",
+                                     setting: ["pregame_reading": reading(242143190)])
+        let no = try original(try group(F.finalDetail, own, now: F.finalNow), market: "64353426", side: "242143190")
+        XCTAssertEqual(no.pregame, .value(
+            formatProbability(0.45), placement: 0.45,
+            provenance: "\(O.Words.savedBeforeStart) \(clock("2026-10-12T11:50:00+00:00", F.finalNow)) · Polymarket"))
+
+        let borrowed = try F.editedOption(F.finalMarkets, question: "m:64353426", option: "o:242143190",
+                                          setting: ["pregame_reading": reading(242143189)])
+        let refused = try original(try group(F.finalDetail, borrowed, now: F.finalNow), market: "64353426", side: "242143190")
+        XCTAssertEqual(refused.pregame, .missing(O.Words.preMatchUnavailable))
+    }
+
+    /// CONTROLS, unknown contract and foreign scope: the live body with only
+    /// the matrix `contract`, or only its `display_scope`, changed. No pin is
+    /// read, and the whole catalogue is still listed — same identities, same
+    /// order, same modes.
+    func testAnUnsupportedMatrixReadsNoPinButEveryOriginalIsStillListed() throws {
+        let real = try XCTUnwrap(try group(F.liveDetail, F.liveMarkets, now: F.liveNow).catalogue)
+        for setting in [["contract": "10238.v2"], ["display_scope": "series"]] as [[String: Any]] {
+            let body = try F.editedMatrix(F.liveMarkets, setting: setting)
+            let unsupported = try group(F.liveDetail, body, now: F.liveNow)
+            let catalogue = try XCTUnwrap(unsupported.catalogue)
+            XCTAssertEqual(catalogue.originals.map(\.identity), real.originals.map(\.identity), "\(setting)")
+            XCTAssertEqual(catalogue.originals.map(\.mode), real.originals.map(\.mode), "\(setting)")
+            XCTAssertEqual(unsupported.context, O.Words.context(real.originals.count))
+            let yes = try original(unsupported, market: "64353426", side: "242143189")
+            XCTAssertEqual(yes.pregame, .missing(O.Words.preMatchUnavailable), "\(setting)")
+            // The later reading is the catalogue's own, untouched by the matrix.
+            XCTAssertEqual(yes.later?.placement, 0.49)
+        }
     }
 
     func testBeforeKickoffOnlyARecentOwnClockedQuoteIsThePreMatchChance() throws {

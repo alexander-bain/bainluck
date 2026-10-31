@@ -104,7 +104,7 @@ final class SoccerFirstTeamAdapter10868Tests: XCTestCase {
         XCTAssertEqual(first.overview.map(\.result),
                        [.won(OutcomeVerdict.won.label), .lost(OutcomeVerdict.lost.label), .lost(OutcomeVerdict.lost.label)])
         XCTAssertNil(first.scorePath)
-        XCTAssertEqual(first.timing?.lines, ["\(T.outcomeWords.pregameTitle): \(R.Words.preMatchNotRecorded)",
+        XCTAssertEqual(first.timing?.lines, ["\(T.outcomeWords.pregameTitle): \(R.Words.preMatchUnavailable)",
                                              "\(T.outcomeWords.finalResultTitle): \(OutcomeVerdict.won.label)"])
     }
 

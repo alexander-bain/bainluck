@@ -430,7 +430,12 @@ final class SoccerExactScoreAdapter10868Tests: XCTestCase {
             0.0952, at: stamp.asDate!, lead: R.Words.recorded, venue: venue, host: host))))
         // Observed before kickoff: no in-play chance, never shown as current.
         XCTAssertEqual(try original(full, "238846934").current, .unavailable(R.Words.inPlayUnavailable))
-        // Once started the pre-match slot is the stored pin — none is served here.
+        // Once started the pre-match slot is the stored pin — none is served
+        // here, and this pregame body's option says `no_pregame_pin`: the
+        // producer's own statement, so "not recorded".
+        XCTAssertEqual(try F.markets(markets).gameQuestionMatrix?.questions
+            .first { $0.questionKey == "m:62939468" }?.options
+            .first { $0.contributorOutcomeIds == [238846931] }?.comparison?.reason, R.noPregamePinReason)
         XCTAssertEqual(oneOne.pregame, .unavailable(R.Words.preMatchNotRecorded))
         XCTAssertEqual(input.comparisons(oneOne).map(\.title), [E.Words.map.pregameTitle, E.Words.map.currentTitle])
 
@@ -464,8 +469,9 @@ final class SoccerExactScoreAdapter10868Tests: XCTestCase {
         XCTAssertEqual(full.originals.map(\.id), listed("full"))
         XCTAssertEqual(full.originals.filter { $0.result == .won(OutcomeVerdict.won.label) }.map(\.id), ["237459055"])
         XCTAssertEqual(full.originals.filter { $0.result == .lost(OutcomeVerdict.lost.label) }.count, 36)
-        // No served pre-match pin on any of the 37: no pre-match chance — never the settled 0/1.
-        XCTAssertTrue(full.originals.allSatisfy { $0.pregame == .unavailable(R.Words.preMatchNotRecorded) })
+        // No served pre-match pin on any of the 37 (their comparison says only
+        // `not_quoted`): unavailable — never "not recorded", never the settled 0/1.
+        XCTAssertTrue(full.originals.allSatisfy { $0.pregame == .unavailable(R.Words.preMatchUnavailable) })
         XCTAssertTrue(full.originals.allSatisfy { $0.current == .unavailable(R.Words.inPlayUnavailable) })
         // The actual score is its own line; only the venue's own grade outlines a cell.
         XCTAssertEqual(full.actual, ExactScoreMapActual10868(title: E.Words.finalScore,
@@ -479,12 +485,49 @@ final class SoccerExactScoreAdapter10868Tests: XCTestCase {
         XCTAssertEqual(first.originals.map(\.label), X.hullDescriptor.scopes[1].originals.map(\.label))
         XCTAssertEqual(first.originals.map(\.placement), X.hullDescriptor.scopes[1].originals.map(\.placement))
         XCTAssertTrue(first.originals.allSatisfy { $0.result == .unconfirmed(R.Words.resultUnavailable) })
-        XCTAssertTrue(first.originals.allSatisfy { $0.pregame == .unavailable(R.Words.preMatchNotRecorded) })
+        XCTAssertTrue(first.originals.allSatisfy { $0.pregame == .unavailable(R.Words.preMatchUnavailable) })
         XCTAssertFalse(first.originals.contains { input.showsResult($0) })
         XCTAssertNil(first.actual)
         XCTAssertEqual(input.slot(at: ExactScoreMapPosition10868(row: 2, column: 2), in: first), .notListed)
         XCTAssertEqual(input.comparisons(first.originals[0]).map(\.reading),
-                       [.words(R.Words.preMatchNotRecorded), .result(.unconfirmed(R.Words.resultUnavailable))])
+                       [.words(R.Words.preMatchUnavailable), .result(.unconfirmed(R.Words.resultUnavailable))])
+    }
+
+    /// The nine first-half originals the completed body no longer serves: the
+    /// payload's silence is not the producer's statement that no pre-match
+    /// price was recorded, so each is "unavailable" — never "not recorded" —
+    /// and no figure is invented for any of them, although the pregame body
+    /// served one for every one.
+    func testTheNineHeldFirstHalfOriginalsHaveNoInventedChanceAndAreUnavailableNotUnrecorded() throws {
+        let input = try map(X.hullFinalDetail, X.hullFinalMarkets, now: X.finalNow)
+        let first = try scope(input, "first")
+        XCTAssertEqual(first.originals.count, 9)
+        XCTAssertTrue(first.originals.allSatisfy { $0.pregame.observation == nil })
+        XCTAssertFalse(first.originals.contains { $0.pregame == .unavailable(R.Words.preMatchNotRecorded) })
+        XCTAssertTrue(first.originals.allSatisfy {
+            input.comparisons($0).first?.reading == .words(R.Words.preMatchUnavailable)
+        })
+        // The pregame body did price every one of them.
+        let pregame = try XCTUnwrap(try F.markets(X.hullExactMarkets).other)
+        for held in first.originals {
+            XCTAssertNotNil(pregame.first {
+                ($0.contributorOutcomeIds ?? []).map(String.init).joined(separator: "+") == held.id
+            }?.probability, held.id)
+        }
+    }
+
+    /// CONTROL, unknown contract: the completed body with only the matrix
+    /// `contract` changed. No matrix grade or pin is read; every full-match
+    /// original stays, its result the venue's own settlement alone.
+    func testAnUnsupportedMatrixKeepsEveryScoreAndTheVenuesOwnGrades() throws {
+        let body = try F.editedMatrix(X.hullFinalMarkets, setting: ["contract": "10238.v2"])
+        let input = try map(X.hullFinalDetail, body, now: X.finalNow)
+        let real = try map(X.hullFinalDetail, X.hullFinalMarkets, now: X.finalNow)
+        let full = try scope(input, "full")
+        XCTAssertEqual(full.originals.map(\.id), try scope(real, "full").originals.map(\.id))
+        XCTAssertEqual(full.originals.map(\.result), try scope(real, "full").originals.map(\.result))
+        XCTAssertTrue(full.originals.allSatisfy { $0.pregame == .unavailable(R.Words.preMatchUnavailable) })
+        XCTAssertEqual(try scope(input, "first"), try scope(real, "first"))
     }
 
     // MARK: - Membership the owner did not describe, and duplicates
