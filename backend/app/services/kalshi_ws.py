@@ -17,6 +17,7 @@ from itertools import count
 from typing import Any, Callable, Optional
 
 from app.utils.kalshi_orderbook import KalshiOrderBook
+from app.utils import ws_json
 
 logger = logging.getLogger(__name__)
 
@@ -496,7 +497,8 @@ class KalshiWebSocket:
                             async for raw in _cooperative_messages(ws):
                                 self._message_count += 1
                                 try:
-                                    data = json.loads(raw)
+                                    # #10090: the fast parser, same contract.
+                                    data = ws_json.loads(raw)
                                 except (json.JSONDecodeError, TypeError):
                                     continue
                                 finally:
@@ -701,6 +703,9 @@ class KalshiWebSocket:
         if last is not None:
             quote["price_dollars"] = last  # the genuine last trade, never local
         quote = self._with_primary_identity(quote)
+        if data.get("type") == "orderbook_snapshot":
+            # #10090: the consumer's repeat skip never skips a snapshot.
+            quote["_book_snapshot"] = True
         self._book_quotes += 1
         await dispatch.submit(self.on_ticker, quote, "Ticker")
 

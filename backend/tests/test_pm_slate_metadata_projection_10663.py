@@ -127,7 +127,7 @@ def real_loader(stored, **overrides):
         calls.append(("market", list(markets), kwargs))
         return {mid: [f"g{mid}y", f"g{mid}n"] for mid, cond in markets if cond}
 
-    async def outcome_topup(session, targets):
+    async def outcome_topup(session, targets, **kwargs):
         calls.append(("outcome", list(targets)))
         return {oid: (mid, f"o{oid}") for mid, oid, ext in targets
                 if topup.condition_id_of(ext)}

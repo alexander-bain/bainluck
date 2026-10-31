@@ -47,13 +47,39 @@ logger = logging.getLogger(__name__)
 #: same class of lie this module was written to end (gotcha #53).
 MAX_TOPUP_MARKETS = 300
 
+#: Seats for live WIN legs in the OUTCOME ask, taken before the rotating window
+#: and outside ``MAX_TOPUP_MARKETS`` (#10090).  Measured 2026-10-30: 15 of 64
+#: live games with a Polymarket price had headline legs with no token, so their
+#: moves waited 2.5-6.5 min for the poll while untokened props sorting ahead of
+#: them held the window.  Live headline legs are a few dozen condition ids; this
+#: bound only stops a misclassification from turning the priority set into a
+#: Gamma sweep.  Overflow is not dropped — it competes in the rotating window.
+MAX_PRIORITY_OUTCOME_CONDITIONS = 200
+
+#: How long a live-leg condition id that was ASKED and came back untokened
+#: rests outside the priority seats (#10090).  Measured 2026-10-30 on v5984:
+#: 395 then 386 live-leg ids against the 200 seats, so 191 of the 200 asked
+#: were still untokened a pass later — the same lowest-sorting 200 held every
+#: seat while the rest waited.  A resting id is not dropped: it competes in the
+#: rotating window, and an ask there that still leaves it untokened extends
+#: its rest.  A wall-clock bound, not a pass count, because refreshes are not
+#: regular (an admission triggers one early); 1 h is six timer refreshes.
+PRIORITY_MISS_SECONDS = 3600
+
+#: Redis sorted set: member = condition id, score = epoch second its rest ends.
+#: Scheduling scratch, like the cursor beside it — losing it costs one pass of
+#: re-asking the unfillable legs first, which is Fix A's own behaviour.
+PRIORITY_MISS_KEY = "polymarket_token_topup:outcome_priority_miss"
+
 #: Where a parent/field market records the YES token for each of its OUTCOMES.
 #: A sibling of ``clob_token_ids`` rather than a reuse of it: that key means
 #: "the two tokens of THIS market's own binary book", and a field market has no
 #: such book.  Shape is ``{"<outcome_id>": "<yes_token>"}`` — keyed by
 #: ``FuturesOutcome.id`` because that is what the socket must attribute a tick
 #: to, and stringified because JSONB object keys are always strings.
-OUTCOME_TOKEN_METADATA_KEY = "clob_yes_token_by_outcome"
+#: #10090: defined in ``futures_liveness`` so the ingest polls' metadata REPLACE
+#: carries it back (``CARRIED_METADATA_KEYS``); one name, two readers.
+from app.utils.futures_liveness import OUTCOME_TOKEN_METADATA_KEY  # noqa: E402
 
 #: Where the outcome top-up's position between recycles lives (#837).  Redis,
 #: not a column, for the reason ``anchor_schedule_sentinel`` keeps its
@@ -267,6 +293,63 @@ async def save_topup_cursor(cursor: Optional[str]) -> None:
         )
 
 
+def _read_priority_misses_sync(now: float) -> set[str]:
+    from app.tasks.redis_state import get_redis_client
+
+    return {
+        raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+        for raw in get_redis_client().zrangebyscore(PRIORITY_MISS_KEY, now, "+inf")
+    }
+
+
+def _write_priority_misses_sync(cids: list[str], now: float) -> None:
+    from app.tasks.redis_state import get_redis_client
+
+    pipe = get_redis_client().pipeline()
+    # Pruned on every write so the set holds only resting ids; the key's own
+    # expiry drops it whole after a quiet hour.
+    pipe.zremrangebyscore(PRIORITY_MISS_KEY, "-inf", now)
+    pipe.zadd(PRIORITY_MISS_KEY, {cid: now + PRIORITY_MISS_SECONDS for cid in cids})
+    pipe.expire(PRIORITY_MISS_KEY, PRIORITY_MISS_SECONDS)
+    pipe.execute()
+
+
+async def load_priority_misses() -> set[str]:
+    """Live-leg condition ids resting outside the priority seats (#10090).
+
+    A Redis fault is an empty set: every live leg competes for a seat, which is
+    Fix A as it shipped, never a leg dropped from the ask.
+    """
+    try:
+        return await asyncio.to_thread(
+            _read_priority_misses_sync, datetime.now(timezone.utc).timestamp()
+        )
+    except Exception:
+        logger.warning(
+            "Polymarket outcome token top-up: could not read the resting live "
+            "legs; every live leg competes for a priority seat this pass",
+            exc_info=True,
+        )
+        return set()
+
+
+async def save_priority_misses(cids: list[str]) -> None:
+    """Rest these ids for ``PRIORITY_MISS_SECONDS``.  A fault costs one pass."""
+    if not cids:
+        return
+    try:
+        await asyncio.to_thread(
+            _write_priority_misses_sync, cids, datetime.now(timezone.utc).timestamp()
+        )
+    except Exception:
+        logger.warning(
+            "Polymarket outcome token top-up: could not record %d untokened "
+            "live legs; they compete for a priority seat next pass",
+            len(cids),
+            exc_info=True,
+        )
+
+
 def condition_id_of(external_id: Optional[str]) -> Optional[str]:
     """The Gamma condition id a ``FuturesMarket.external_id`` addresses, or None.
 
@@ -409,6 +492,8 @@ async def topup_outcome_clob_tokens(
     *,
     service=None,
     max_outcomes: int = MAX_TOPUP_MARKETS,
+    priority_market_ids: Collection[int] = (),
+    max_priority: int = MAX_PRIORITY_OUTCOME_CONDITIONS,
 ) -> dict[int, tuple[int, str]]:
     """Fetch the YES token for each OUTCOME of a parent/field market.
 
@@ -457,6 +542,13 @@ async def topup_outcome_clob_tokens(
     including why the predicate is the event's START TIME plus its STATUS and
     not any settlement column, and why an event the graph calls 'live' is never
     aged out however old its start time reads.
+
+    LIVE WIN LEGS ARE ASKED FIRST (#10090). A condition id carrying a row of a
+    market in ``priority_market_ids`` is asked before the rotating window and
+    outside ``max_outcomes``, up to ``max_priority`` ids; the window then takes
+    its full ``max_outcomes`` from everything else, on its own cursor.
+    An id asked and left untokened rests outside those seats for
+    ``PRIORITY_MISS_SECONDS`` and competes in the window meanwhile.
     """
     from sqlalchemy import cast, func, literal, select, update
     from sqlalchemy.dialects.postgresql import JSONB
@@ -683,7 +775,41 @@ async def topup_outcome_clob_tokens(
             # the stored legs stay subscribed exactly as they would have.
             return dict(stored_filled)
 
-    if len(addressable) > max_outcomes:
+    # LIVE WIN LEGS FIRST, OUTSIDE THE WINDOW (#10090). The window is fair, and
+    # fair is the wrong answer for a game in play: measured 2026-10-30, 15 of 64
+    # live games with a Polymarket price had untokened headline legs sorting past
+    # a window held by untokened props, so a live move waited up to ceil(N/300)
+    # catalog refreshes for a turn and rode the 2.5-6.5 min poll meanwhile. The
+    # caller names its live WIN markets (the same set the market-level top-up
+    # seats first); any condition id carrying one of their rows is asked this
+    # pass. Bounded so a misclassification cannot flood Gamma, and the overflow
+    # stays in the rotation rather than being dropped.
+    priority = set(priority_market_ids)
+    live_cids = {
+        cid
+        for cid, entries in addressable.items()
+        if any(mid in priority for mid, _oid in entries)
+    }
+    # A live leg asked recently and still untokened RESTS: without this the same
+    # lowest-sorting ids, most of which Gamma cannot fill (a closed sub-market is
+    # an empty 200, gotcha #53), held every seat on every pass. It still rides
+    # the rotating window below; see `PRIORITY_MISS_SECONDS`.
+    resting = await load_priority_misses() if live_cids else set()
+    urgent = sorted(live_cids - resting)
+    if len(urgent) > max_priority:
+        logger.warning(
+            "Polymarket outcome token top-up: %d live-leg condition ids exceed "
+            "the priority cap of %d; the rest join the rotating window",
+            len(urgent),
+            max_priority,
+        )
+        urgent = urgent[: max(max_priority, 0)]
+    urgent_set = set(urgent)
+    rotating = {
+        cid: entries for cid, entries in addressable.items() if cid not in urgent_set
+    }
+
+    if len(rotating) > max_outcomes:
         # "Deferred to the next recycle" was a claim nothing kept: the head was
         # re-selected every pass and the tail was starved for good. The window
         # now RESUMES where the last pass stopped, so the sentence is true and
@@ -698,7 +824,7 @@ async def topup_outcome_clob_tokens(
         # states both numbers so the two units are never read as one.
         cursor = await load_topup_cursor()
         kept, next_cursor = select_ask_window(
-            sorted(addressable), max_outcomes, cursor
+            sorted(rotating), max_outcomes, cursor
         )
         # Saved BEFORE the ask, not after it: a Gamma failure must cost this
         # slice one pass, not hold the window at the same slice until Gamma
@@ -707,15 +833,20 @@ async def topup_outcome_clob_tokens(
         logger.warning(
             "Polymarket outcome token top-up: %d condition ids needed tokens "
             "(%d outcome legs), capped at %d (%d deferred to the next recycle; "
-            "window resumed after %s, stops at %s)",
-            len(addressable),
-            sum(len(entries) for entries in addressable.values()),
+            "window resumed after %s, stops at %s) after %d live-leg ids",
+            len(rotating),
+            sum(len(entries) for entries in rotating.values()),
             max_outcomes,
-            len(addressable) - max_outcomes,
+            len(rotating) - max_outcomes,
             cursor or "the front",
             next_cursor,
+            len(urgent),
         )
-        addressable = {cid: addressable[cid] for cid in kept}
+        rotating = {cid: rotating[cid] for cid in kept}
+
+    # Live legs lead the ask, so they ride Gamma's first batch.
+    addressable = {cid: addressable[cid] for cid in urgent}
+    addressable.update(rotating)
 
     # Our own name for each outcome — the signal `token_for_outcome` attributes
     # on. Read HERE rather than widened into the `outcomes` argument on purpose:
@@ -820,6 +951,20 @@ async def topup_outcome_clob_tokens(
             filled[outcome_id] = (market_id, token)
             by_market.setdefault(market_id, {})[str(outcome_id)] = token
 
+    # Only after an ask that ANSWERED: a raise above returned or re-raised, so a
+    # Gamma outage rests nothing. Any live-leg id asked this pass — in a seat or
+    # in the window — that still has an untokened row is exactly the id that
+    # would come back next pass, so it rests; one that a rotation re-asks and
+    # still cannot fill rests again rather than retaking a seat.
+    await save_priority_misses(
+        sorted(
+            cid
+            for cid, entries in addressable.items()
+            if cid in live_cids
+            and any(oid not in filled for _mid, oid in entries)
+        )
+    )
+
     for market_id, token_map in by_market.items():
         # Nested merge, not a replace: the outer `||` protects sibling metadata
         # keys (`polymarket_event_id`, `matchup_title`) exactly as the
@@ -862,11 +1007,21 @@ async def topup_outcome_clob_tokens(
     # attribution having gone dark, which no total would show.
     # ASKED IS IN CONDITION IDS, MAPPED IS IN OUTCOME LEGS, and they are labelled
     # so because they are different units and the pass is judged on both.
+    # `live_legs_*` are in outcome legs of the caller's live WIN markets (#10090):
+    # asked this pass, and of those, mapped this pass. `live_ids_resting` is in
+    # condition ids: live legs kept out of the seats by `PRIORITY_MISS_SECONDS`.
+    live_legs = [
+        oid
+        for entries in addressable.values()
+        for mid, oid in entries
+        if mid in priority
+    ]
     logger.info(
         "Polymarket outcome token top-up: %d condition ids asked (%d outcome "
         "legs), %d returned by Gamma, %d newly mapped across %d markets (%d not "
         "reachable via the Yes path, of which %d re-attributed off a named Yes), "
-        "%d already stored, %d subscribable",
+        "%d already stored, %d subscribable, live_legs_asked=%d "
+        "live_legs_tokened=%d live_ids_resting=%d",
         len(addressable),
         sum(len(entries) for entries in addressable.values()),
         len(fetched),
@@ -876,6 +1031,9 @@ async def topup_outcome_clob_tokens(
         reattributed,
         len(stored_filled),
         len(filled),
+        len(live_legs),
+        sum(1 for oid in live_legs if oid in filled),
+        len(live_cids & resting),
     )
     return filled
 

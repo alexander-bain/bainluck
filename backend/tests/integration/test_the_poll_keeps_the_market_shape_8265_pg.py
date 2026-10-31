@@ -31,7 +31,10 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects.postgresql import JSONB as JSONB_TYPE
 
+from app.tasks.polymarket_open_contracts import open_contract_asset_map
+from app.tasks.polymarket_token_topup import OUTCOME_TOKEN_METADATA_KEY
 from app.utils.futures_liveness import (
     CARRIED_METADATA_KEYS,
     MARKET_SHAPE_METADATA_KEY,
@@ -231,3 +234,168 @@ class TestTheBoardAfterAPoll:
 
         merged = await _old_merge(dict(_POLL_METADATA), _CLASSIFIED_ROW)
         assert _unsupported_head_outcome_ids(_board(merged), set()) == set()
+
+
+# --- #10090: the Polymarket poll keeps a parent's outcome-token map ------------
+#
+# Same REPLACE, a different key. `topup_outcome_clob_tokens` stamps
+# `clob_yes_token_by_outcome` on a game's moneyline parent; the socket reads it
+# to put the headline legs on the live connection. The hourly poll's
+# `_process_event_batch` rebuilt the parent's metadata without it. Production
+# 2026-10-30: six live games read `all_legs` at 21:20Z and `no_tokens` after
+# the 21:54:45Z poll (`updated_at` 21:54:45-49Z on all six, key absent).
+#
+# The clause under test is the one the REAL writer emits: the sunk-recovery pass
+# from #8373's rig drives `_process_event_batch` (the hourly poll's writer) over
+# Gamma's own bytes for event 1058697, and the server runs that clause against a
+# seeded row in a temp `futures_markets` (which shadows any real one).
+
+#: The keys carried before #10090, for the strawman.
+_PRE_10090_KEYS = _PRE_8265_KEYS + (MARKET_SHAPE_METADATA_KEY,)
+
+_PARENT_ID = 61799932  # the #8373 specimen's parent row
+_CUBS, _RED_SOX = 230900001, 230900002
+_TOKEN_MAP = {str(_CUBS): "7101", str(_RED_SOX): "7102"}
+
+#: The parent as the outcome top-up left it, before the poll reached it.
+_TOPPED_UP_PARENT = {
+    "polymarket_event_id": "1058697",
+    "event_title": "Chicago Cubs vs. Boston Red Sox",
+    "venue_game_start": "2026-09-27T19:05:00+00:00",
+    OUTCOME_TOKEN_METADATA_KEY: dict(_TOKEN_MAP),
+}
+
+
+async def _real_poll_clause(monkeypatch):
+    from tests.test_polymarket_sunk_open_events_6758 import _parent_update_set, _Row
+    from tests.test_polymarket_sunk_unlinked_game_arm_8373 import SPECIMEN, _run
+
+    _st, writer, *_ = await _run(monkeypatch, unlinked=[_Row(_PARENT_ID, SPECIMEN)])
+    return _parent_update_set(writer, SPECIMEN)["market_metadata"]
+
+
+async def _run_over_seeded_row(expr, existing):
+    """``expr`` evaluated against one seeded row, as ON CONFLICT would see it."""
+    from sqlalchemy import column, insert, select, table, text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    seeded = table("futures_markets", column("id"), column("market_metadata", JSONB_TYPE))
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text(
+                "CREATE TEMP TABLE futures_markets (id integer, market_metadata jsonb)"
+            ))
+            await conn.execute(
+                insert(seeded).values(id=_PARENT_ID, market_metadata=existing)
+            )
+            return (await conn.execute(select(expr))).scalar()
+    finally:
+        await engine.dispose()
+
+
+def _with_keys(expr_keys, new_metadata, col):
+    """The merge over ``expr_keys`` — the shape of every past carried list."""
+    from sqlalchemy import cast, func
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    kept = func.jsonb_strip_nulls(
+        func.jsonb_build_object(*(a for k in expr_keys for a in (k, col[k])))
+    )
+    return func.nullif(
+        func.coalesce(cast(new_metadata, JSONB), cast("{}", JSONB)).op("||")(kept),
+        cast("{}", JSONB),
+    )
+
+
+
+def _subscribed(metadata, legs=((_CUBS, "c-cubs"), (_RED_SOX, "c-sox"))):
+    """What the open-contract socket subscribes for this parent's two legs."""
+    meta = metadata or {}
+    admission = open_contract_asset_map(
+        [(
+            _PARENT_ID,
+            meta.get("clob_token_ids"),
+            meta.get("clobTokenIds"),
+            meta.get(OUTCOME_TOKEN_METADATA_KEY),
+            15331415,
+            "Chicago Cubs vs. Boston Red Sox",
+            "1058697",
+        )],
+        [(oid, _PARENT_ID, ext, False) for oid, ext in legs],
+    )
+    return admission.asset_to_outcome, admission.counts
+
+
+class TestTheOutcomeTokenMapIsCarried:
+    def test_the_map_is_carried(self):
+        assert OUTCOME_TOKEN_METADATA_KEY in CARRIED_METADATA_KEYS
+
+    def test_the_carried_name_is_the_one_the_socket_reads(self):
+        # Through the reader, not a retyped string: a rename on either side
+        # would otherwise leave this green while production erases the key.
+        assets, _ = _subscribed({OUTCOME_TOKEN_METADATA_KEY: dict(_TOKEN_MAP)})
+        assert assets == {"7101": _CUBS, "7102": _RED_SOX}
+
+    def test_CONTROL_the_earlier_carried_keys_are_still_carried(self):
+        for key in _PRE_10090_KEYS:
+            assert key in CARRIED_METADATA_KEYS
+
+    async def test_the_polymarket_writers_clause_reads_the_map_off_the_existing_row(
+        self, monkeypatch
+    ):
+        from sqlalchemy.dialects import postgresql
+
+        expr = await _real_poll_clause(monkeypatch)
+        params = expr.compile(dialect=postgresql.dialect()).params
+        assert OUTCOME_TOKEN_METADATA_KEY in set(
+            v for v in params.values() if isinstance(v, str)
+        ), "the poll's ON CONFLICT clause REPLACES the outcome-token map"
+
+
+@needs_postgres
+@pytest.mark.asyncio
+class TestThePollKeepsTheMapOnARealServer:
+    async def test_the_real_poll_clause_keeps_the_map_and_the_legs_stay_subscribed(
+        self, monkeypatch
+    ):
+        expr = await _real_poll_clause(monkeypatch)
+        merged = await _run_over_seeded_row(expr, dict(_TOPPED_UP_PARENT))
+        assert merged[OUTCOME_TOKEN_METADATA_KEY] == _TOKEN_MAP
+        # The poll's own fresh keys still win: the moved start replaced the
+        # stored one (#8373's ship rides the same write).
+        assert merged["venue_game_start"].startswith("2026-09-25T17:05")
+        assets, _ = _subscribed(merged)
+        assert assets == {"7101": _CUBS, "7102": _RED_SOX}
+
+    async def test_STRAWMAN_the_pre_10090_clause_erased_it_and_no_leg_was_subscribed(self):
+        from sqlalchemy import column, table
+
+        col = table("futures_markets", column("market_metadata", JSONB_TYPE)).c.market_metadata
+        merged = await _run_over_seeded_row(
+            _with_keys(_PRE_10090_KEYS, {"polymarket_event_id": "1058697"}, col),
+            dict(_TOPPED_UP_PARENT),
+        )
+        assert OUTCOME_TOKEN_METADATA_KEY not in merged
+        assets, counts = _subscribed(merged)
+        assert assets == {}
+        assert counts["markets_without_tokens"] == 1
+
+    async def test_CONTROL_a_parent_never_topped_up_is_not_given_a_map(self, monkeypatch):
+        expr = await _real_poll_clause(monkeypatch)
+        bare = {k: v for k, v in _TOPPED_UP_PARENT.items() if k != OUTCOME_TOKEN_METADATA_KEY}
+        merged = await _run_over_seeded_row(expr, bare)
+        assert OUTCOME_TOKEN_METADATA_KEY not in merged
+
+    async def test_a_duel_keeps_the_fresh_market_tokens_and_the_socket_still_pairs_by_them(self):
+        # A one-market event's parent gets Gamma's own `clob_token_ids` from the
+        # poll. A map carried beside it changes nothing: the socket pairs by the
+        # market's tokens whenever their count equals its leg count, and reads
+        # the map only otherwise — the precedence this change keeps.
+        fresh = {"polymarket_event_id": "1058697", "clob_token_ids": ["9001", "9002"]}
+        existing = {**_TOPPED_UP_PARENT, "clob_token_ids": ["8001", "8002"]}
+        merged = await _merge(fresh, existing)
+        assert merged["clob_token_ids"] == ["9001", "9002"]
+        assert merged[OUTCOME_TOKEN_METADATA_KEY] == _TOKEN_MAP
+        assets, _ = _subscribed(merged)
+        assert assets == {"9001": _CUBS, "9002": _RED_SOX}

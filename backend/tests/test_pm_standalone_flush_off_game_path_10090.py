@@ -198,7 +198,7 @@ class TestTheShutdown:
                 if not (
                     isinstance(stmt, Update)
                     and stmt.table.name == "futures_outcomes"
-                    and 71 in dict(price_writes(stmt))
+                    and 71 in dict(price_writes(stmt, *a[:1]))
                 ):
                     return await super().execute(stmt, *a, **kw)
                 seen["writes"] += 1

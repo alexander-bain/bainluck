@@ -596,3 +596,93 @@ class TestStepThreeTheHeroStopsSayingNoPriceYet:
             "the 15-minute matcher no longer calls the writer this file drives, "
             "so the last link of this chain is no longer a shipping path"
         )
+
+
+# ── #10090 item 4: the matcher's committed live stamp reaches open pages ─────
+# The 15-minute matcher's stamp is the poll's twin (discover's 2040Z return,
+# L7879): it committed and published nothing. Same recording Redis as the
+# poll's arms (`test_live_poll_kalshi_prices_real_postgres`).
+
+
+async def _persist_through_the_matcher(session, event, status):
+    from app.tasks.prediction_market_matching import (
+        _LinkedMarketRef,
+        _phase2_persist_group_reading,
+    )
+
+    await _run_linked_book_refresh(session, list(CAPTURED.values()))
+    await session.execute(
+        text("UPDATE events SET status = :s WHERE id = :id"),
+        {"s": status, "id": event.id},
+    )
+    await session.commit()
+    market_row = (await session.execute(
+        text("SELECT id, event_id, source, external_id, name "
+             "  FROM futures_markets WHERE external_id = :t"),
+        {"t": EVENT_TICKER},
+    )).first()
+    return await _phase2_persist_group_reading(
+        session,
+        [_LinkedMarketRef(
+            market_id=market_row.id, source=market_row.source,
+            external_id=market_row.external_id, name=market_row.name,
+            event_id=market_row.event_id, event_commence_time=event.commence_time,
+            home_team_name=HOME, away_team_name=AWAY,
+        )],
+        _matcher_stats(),
+    )
+
+
+@pytest.fixture
+def published(pg_session, monkeypatch):
+    from tests.integration.test_live_poll_kalshi_prices_real_postgres import (
+        _CommittedFrameRecorder,
+    )
+
+    recorder = _CommittedFrameRecorder(pg_session.bind)
+    monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", lambda: recorder)
+    return recorder
+
+
+class TestTheMatchersCommittedLiveStampPublishesItsFrame:
+    async def test_a_live_stamp_publishes_one_fresh_frame_after_its_commit(
+        self, unpriced_and_linked, published,
+    ):
+        from app.routes.event_stream import _frame_is_fresh
+
+        session, event = unpriced_and_linked
+        event_id = event.id
+        spoke = await _persist_through_the_matcher(session, event, "live")
+
+        assert spoke is not None, "control: the matcher did not stamp"
+        sources, rev = (await session.execute(
+            text("SELECT win_probability_sources, win_probability_sources_rev "
+                 "  FROM events WHERE id = :id"), {"id": event_id},
+        )).one()
+        assert len(published.frames) == 1, (
+            f"the matcher's committed live stamp published {len(published.frames)} "
+            "frames"
+        )
+        channel, frame = published.frames[0]
+        assert channel == f"live:event:{event_id}"
+        assert frame["rev"] == {str(event_id): rev}
+        assert published.committed_revs == [rev]
+        assert frame["source"] == "kalshi"
+        assert frame["source_value"] == sources["kalshi"]["value"]
+        assert frame["source_snapshot"]["rev"] == frame["rev"]
+        assert _frame_is_fresh(frame, datetime.now(timezone.utc))
+
+    async def test_a_stamp_on_a_scheduled_game_publishes_nothing(
+        self, unpriced_and_linked, published,
+    ):
+        session, event = unpriced_and_linked
+        event_id = event.id
+        spoke = await _persist_through_the_matcher(session, event, "scheduled")
+
+        assert spoke is not None, "control: the matcher did not stamp"
+        sources = (await session.execute(
+            text("SELECT win_probability_sources FROM events WHERE id = :id"),
+            {"id": event_id},
+        )).scalar()
+        assert sources.get("kalshi") is not None, sources
+        assert published.frames == []

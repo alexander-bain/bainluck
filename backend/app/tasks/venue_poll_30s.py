@@ -113,9 +113,14 @@ when an earlier group in the same pass used up the time; the pass's FIRST group
 had all the time there was, so its timeout counts as a failure and moves on. A
 Kalshi market with more legs than a whole pass's budget can read is skipped and
 counted (``units_oversize``), never left at the head. The population
-is re-read at most every ``POPULATION_TTL_S`` per worker process. Single-flight
-in the task wrapper means a slow pass declines the next tick rather than
-overlapping it.
+is re-read at most every ``POPULATION_TTL_S`` per worker process. A population
+read that fails (its 20 s statement timeout, a lost connection) is not retried
+by the next tick: it starts a backoff shared by every worker process
+(``…:<venue>_population:backoff``, 30 s doubling to ``BACKOFF_MAX_S``), during
+which the process's last population read stands in (``population_stale``) or,
+with none read yet, the venue sits the pass out (``population_backoff``); both
+read ``partial``. Single-flight in the task wrapper means a slow pass declines
+the next tick rather than overlapping it.
 """
 
 from __future__ import annotations
@@ -458,22 +463,69 @@ def rotate(units: list[Unit], cursor: Optional[str]) -> list[Unit]:
 
 
 _POPULATION: dict[str, tuple[float, list[Unit]]] = {}
+#: Process-local floor under the shared population backoff: a process does not
+#: retry a failed read before this monotonic time even when Redis is unreadable.
+_POPULATION_RETRY_AT: dict[str, float] = {}
+#: Consecutive failed reads in this process, so the floor doubles like the
+#: shared backoff (``start_backoff`` reads a flat 30 s when Redis is down).
+_POPULATION_FAILS: dict[str, int] = {}
 
 
-async def load_population(session, venue: str, *, now_mono: float) -> list[Unit]:
+class PopulationBackoff(Exception):
+    """A recent population read failed and this process has no population to reuse."""
+
+
+def _population_backoff_name(venue: str) -> str:
+    return f"{venue}_population"
+
+
+async def load_population(
+    session, venue: str, *, now_mono: float, stats: Optional[dict] = None
+) -> list[Unit]:
+    """The venue's population, cached ``POPULATION_TTL_S`` per process.
+
+    A failed read never makes the next tick re-run the statement: it starts the
+    shared population backoff; until it lapses the last population this process
+    read is reused, or :class:`PopulationBackoff` is raised when there is none.
+    """
+    stats = stats if stats is not None else {}
     cached = _POPULATION.get(venue)
     if cached is not None and now_mono - cached[0] < POPULATION_TTL_S:
+        stats["population_cached"] = True
+        return cached[1]
+    name = _population_backoff_name(venue)
+    wait = max(backoff_remaining(name), _POPULATION_RETRY_AT.get(venue, 0.0) - now_mono)
+    if wait > 0:
+        stats["population_backoff_s"] = round(wait, 1)
+        if cached is None:
+            raise PopulationBackoff(venue)
+        stats["population_stale"] = True
         return cached[1]
     if venue == "kalshi":
         sql = kalshi_population_sql(_kalshi_open_arm())
     else:
         sql = polymarket_population_sql(_polymarket_open_arm())
-    rows = (
-        await session.execute(
-            text(sql),
-            population_binds(shown_market_ids()),
-        )
-    ).fetchall()
+    started = time.monotonic()
+    try:
+        rows = (
+            await session.execute(
+                text(sql),
+                population_binds(shown_market_ids()),
+            )
+        ).fetchall()
+    except Exception:
+        stats["population_read_s"] = round(time.monotonic() - started, 2)
+        fails = _POPULATION_FAILS[venue] = _POPULATION_FAILS.get(venue, 0) + 1
+        local = min(BACKOFF_BASE_S * 2 ** (fails - 1), BACKOFF_MAX_S)
+        seconds = max(start_backoff(name), local)
+        _POPULATION_RETRY_AT[venue] = now_mono + seconds
+        stats["population_backoff_started_s"] = seconds
+        raise  # the pass records it as `stopped: error`; later passes go stale
+    stats["population_read_s"] = round(time.monotonic() - started, 2)
+    stats["population_cached"] = False
+    clear_backoff(name)
+    _POPULATION_RETRY_AT.pop(venue, None)
+    _POPULATION_FAILS.pop(venue, None)
     units = build_units(venue, rows)
     _POPULATION[venue] = (now_mono, units)
     return units
@@ -625,6 +677,10 @@ class PollWrite:
     moved: list[tuple[int, dict]] = field(default_factory=list)
     #: outcome_id → (probability, yes_bid, yes_ask) read unchanged.
     unchanged: dict[int, tuple] = field(default_factory=dict)
+    #: The history bound. The defaults are this poll's; the 3-minute
+    #: Polymarket tail rotation passes its own.
+    min_interval_s: float = field(default_factory=lambda: HISTORY_MIN_INTERVAL_S)
+    big_move: float = field(default_factory=lambda: HISTORY_BIG_MOVE)
 
     def admit(self, outcome_id, prob, bid, ask, stats) -> bool:
         if outcome_id not in self.allowed:
@@ -654,12 +710,12 @@ class PollWrite:
         moved = abs(float(prob) - float(last[1]))
         if moved < _PROB_EPS:
             return None
-        if moved >= HISTORY_BIG_MOVE:
+        if moved >= self.big_move:
             return "big_move"
         captured_at = last[0]
         if captured_at is not None and captured_at.tzinfo is None:
             captured_at = captured_at.replace(tzinfo=timezone.utc)
-        if captured_at is None or (self.now - captured_at).total_seconds() >= HISTORY_MIN_INTERVAL_S:
+        if captured_at is None or (self.now - captured_at).total_seconds() >= self.min_interval_s:
             return "interval"
         return "deferred"
 
@@ -1002,7 +1058,13 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
         async with get_task_session(
             statement_timeout_ms=20_000, lock_timeout_ms=2_000
         ) as session:
-            units = await load_population(session, venue, now_mono=time.monotonic())
+            try:
+                units = await load_population(
+                    session, venue, now_mono=time.monotonic(), stats=stats
+                )
+            except PopulationBackoff:
+                stats["stopped"] = "population_backoff"
+                return stats
             stats["population_units"] = len(units)
             stats["population_legs"] = sum(u.leg_count() for u in units)
             if not units:
@@ -1089,7 +1151,11 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
     return stats
 
 
-async def _write_group(session, venue, group_units, found, fetched_at, stats) -> None:
+async def _write_group(
+    session, venue, group_units, found, fetched_at, stats, *, history=None
+) -> None:
+    """``history``: ``(min_interval_s, big_move)`` for a caller with its own
+    history bound (the tail rotation); None is this poll's."""
     outcome_ids = [
         oid for u in group_units for legs in u.legs.values() for oid, _ext in legs
     ]
@@ -1122,6 +1188,8 @@ async def _write_group(session, venue, group_units, found, fetched_at, stats) ->
                 stored=stored,
                 allowed=frozenset(oid for oid, _ext in legs),
             )
+            if history is not None:
+                poll.min_interval_s, poll.big_move = history
             try:
                 await write_market(
                     session, venue=venue, market_id=market_id, priced=priced,
@@ -1185,6 +1253,11 @@ async def poll_venue_prices(venues) -> dict:
         # the staleness this poll removes; `backoff` stays not-partial, like
         # the venue-level backoff.
         or any(r.get("clob_stopped") in ("timeout", "rate_limited") for r in results)
+        # A failed population read: the venue sat out, or ran on its last one.
+        or any(
+            r.get("stopped") == "population_backoff" or r.get("population_stale")
+            for r in results
+        )
     ):
         summary["terminal"] = "partial"
     else:

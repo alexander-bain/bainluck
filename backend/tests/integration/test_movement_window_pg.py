@@ -986,6 +986,55 @@ def test_a_move_the_series_cannot_support_is_retired() -> None:
     )
 
 
+def test_a_prepare_read_past_the_retirement_budget_is_cancelled_and_the_run_finishes(
+    monkeypatch,
+) -> None:
+    """#10090: the A4 read measured up to 96 s, and a started read kept a run
+    past its 120 s soft limit. On real Postgres the read is cancelled by its own
+    `statement_timeout` when the budget runs out, the session recovers, the run
+    reaches its tail and returns, and the row it never judged keeps its delta
+    for the next run.
+
+    The sleep makes the A4 read outlast a 0.4 s budget; the predicate is
+    otherwise the shipped one.
+    """
+    import app.tasks as tasks_mod
+
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "liar",
+                    "open",
+                    1,
+                    -0.740,
+                    0.740,
+                    None,
+                    0.069,
+                    [(1, 0.0985), (2, 0.0975), (13, 0.0525), (20, 0.1005)],
+                ),
+            ]
+        )
+    )
+    # `raising=False` so the same test runs, and fails on behaviour, against
+    # code that predates the budget.
+    monkeypatch.setattr(tasks_mod, "MOVEMENT_RETIRE_BUDGET_SECONDS", 0.4, raising=False)
+    monkeypatch.setattr(
+        tasks_mod,
+        "A4_UNOBSERVED_PREDICATE",
+        tasks_mod.A4_UNOBSERVED_PREDICATE + "  AND pg_sleep(2)::text = ''\n",
+    )
+    started = time.monotonic()
+    result = _run_task()
+    elapsed = time.monotonic() - started
+    after = asyncio.run(_read(ids))
+
+    assert elapsed < 1.5, f"the A4 read was not cut at the budget: {elapsed:.2f}s"
+    assert result["retire_deferred"]["A4"] is None, result
+    assert result["unobserved_retired"] == 0, result
+    assert after["liar"][0] is not None, after
+
+
 def test_a_vigged_sportsbook_series_can_never_condemn_a_de_vigged_blend() -> None:
     """THE scale control (CERT-3107): A4 may not subtract across two scales.
 
