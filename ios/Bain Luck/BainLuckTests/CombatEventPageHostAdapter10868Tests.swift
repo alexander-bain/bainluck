@@ -246,8 +246,12 @@ final class CombatEventPageHostAdapter10868Tests: XCTestCase {
     }
 
     private func route(_ market: String, _ side: Int) -> Details.Selection {
+        route(market, String(side))
+    }
+
+    private func route(_ market: String, _ side: String) -> Details.Selection {
         Details.Selection(scope: "combat:15318681:during:originals",
-                          identity: Details.Identity(source: "polymarket", market: market, side: String(side)))
+                          identity: Details.Identity(source: "polymarket", market: market, side: side))
     }
 
     /// Each card's own selected Details ref, as its leaf would send it with a callback.
@@ -368,9 +372,10 @@ final class CombatEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertNil(Host.detailsCallbacks(built) { _ in }.methods)
     }
 
-    func testACompositeRefIsNeverOneProviderOriginal() throws {
+    func testAJoinedIdentityTheCatalogueCarriesOnceRoutesExactlyAndAnUnmatchedOrRepeatedOneDoesNot() throws {
         // CONSTRUCTED: option o:240262496 and its raw row both carry two
-        // contributor ids, so the catalogue does hold the same composite side.
+        // contributor ids, so the matrix ref and the catalogue identity spell the
+        // same joined side ("240262496+240262497") under market 63786874.
         var edited = try body()
         try option(&edited, question: "m:63786874", option: "o:240262496",
                    ["contributor_outcome_ids": [Chosen.koYes, Chosen.koNo]])
@@ -378,16 +383,44 @@ final class CombatEventPageHostAdapter10868Tests: XCTestCase {
         let row = try XCTUnwrap(others.firstIndex { ($0["contributor_outcome_ids"] as? [Int]) == [Chosen.koYes] })
         others[row]["contributor_outcome_ids"] = [Chosen.koYes, Chosen.koNo]
         edited["other"] = others
-        let composite = "\(Chosen.koYes)+\(Chosen.koNo)"
+        let joined = "\(Chosen.koYes)+\(Chosen.koNo)"
         let event = try Fixtures.detail(Fixtures.mmaDetail)
-        let built = build(event, history: nil, markets: try markets(edited), membership: allFour,
-                          reading: Host.Reading(methods: .init(rowID: "ko", originalID: composite)))
-        XCTAssertEqual(CombatEventPageModel10868(built.input).methods?.selection.original?.id, composite)
-        XCTAssertTrue(built.originals.catalogue?.originals.contains { $0.identity.side == composite } ?? false)
-        XCTAssertNil(Host.detailsRoutes(built).methods)
-        XCTAssertNil(Host.detailsSelection(marketID: "63786874", originalID: composite, in: built.originals))
+        let pick = Host.Reading(methods: .init(rowID: "ko", originalID: joined))
+        let built = build(event, history: nil, markets: try markets(edited), membership: allFour, reading: pick)
+        XCTAssertEqual(CombatEventPageModel10868(built.input).methods?.selection.original?.id, joined,
+                       "the held selected identity is kept")
+        XCTAssertEqual(built.originals.catalogue?.originals.filter { $0.identity.side == joined }.count, 1)
+        let exact = route("63786874", joined)
+        XCTAssertEqual(Host.detailsRoutes(built).methods, exact, "a unique identity the catalogue admitted keeps Details")
+        XCTAssertEqual(Host.detailsSelection(marketID: "63786874", originalID: joined, in: built.originals), exact)
+        var opened: [Details.Selection] = []
+        let callbacks = Host.detailsCallbacks(built) { opened.append($0) }
+        let ref = try XCTUnwrap(leafRefs(built).methods)
+        XCTAssertEqual(ref.originalID, joined)
+        XCTAssertEqual(ref.marketID, "63786874")
+        try XCTUnwrap(callbacks.methods)(ref)
+        XCTAssertEqual(opened, [exact], "the callback opens exactly that selection")
 
-        // CONSTRUCTED: option o:240262497 names two markets.
+        // CONSTRUCTED: the same joined raw row served twice — ambiguous, so no route.
+        var repeated = edited
+        var twice = try XCTUnwrap(repeated["other"] as? [[String: Any]])
+        twice.insert(twice[row], at: row + 1)
+        repeated["other"] = twice
+        let ambiguous = build(event, history: nil, markets: try markets(repeated), membership: allFour, reading: pick)
+        XCTAssertEqual(ambiguous.originals.catalogue?.originals.filter { $0.identity.side == joined }.count, 2)
+        XCTAssertNil(Host.detailsRoutes(ambiguous).methods)
+        XCTAssertNil(Host.detailsCallbacks(ambiguous) { _ in XCTFail("ambiguous") }.methods)
+
+        // CONSTRUCTED: only the matrix option joined; its raw row keeps one id — unmatched, so no route.
+        var matrixOnly = try body()
+        try option(&matrixOnly, question: "m:63786874", option: "o:240262496",
+                   ["contributor_outcome_ids": [Chosen.koYes, Chosen.koNo]])
+        let unmatched = build(event, history: nil, markets: try markets(matrixOnly), membership: allFour, reading: pick)
+        XCTAssertEqual(leafRefs(unmatched).methods?.originalID, joined)
+        XCTAssertNil(Host.detailsRoutes(unmatched).methods)
+
+        // CONSTRUCTED: option o:240262497 names two markets; no catalogue identity
+        // carries that joined market, so no route.
         var twoMarkets = try body()
         try option(&twoMarkets, question: "m:63786874", option: "o:240262497", ["market_ids": [63786874, 63786875]])
         let split = build(event, history: nil, markets: try markets(twoMarkets), membership: allFour,

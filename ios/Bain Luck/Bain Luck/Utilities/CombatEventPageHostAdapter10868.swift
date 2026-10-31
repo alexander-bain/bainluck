@@ -58,7 +58,8 @@ import SwiftUI
 /// A STORY CARD'S DETAILS. The four cards read their originals from the game
 /// matrix; Details opens a catalogue original, which comes from the served raw
 /// rows. The two can disagree — a raw row withdrawn while its matrix option
-/// stays, a duplicated row, a composite matrix ref. So each card's Details
+/// stays, a duplicated row, a matrix ref (single or "+"-joined) that no
+/// catalogue identity carries. So each card's Details
 /// callback is offered only when that card's own selected Details action (the
 /// leaf's `detailsAction`, which names the selected original only) resolves
 /// through `detailsSelection` to exactly one current catalogue original
@@ -193,22 +194,19 @@ struct CombatEventPageHost10868: View {
 
     /// The catalogue selection a card's exact original names: exactly one
     /// current catalogue original whose identity carries this market and this
-    /// side. A composite ref — more than one provider id in its market or its
-    /// side, as part three joins them with "+" — is not one provider original,
-    /// so it resolves to nothing even when a catalogue row carries the same
-    /// composite. No catalogue, no match or more than one match: nothing, never
-    /// a neighbour.
+    /// side, compared exactly. The exact, unique match alone decides: a
+    /// "+"-joined side is how the shared catalogue identity
+    /// (`HockeyJourneyOriginalsAdapter10868.identity(of:)`) spells a row with
+    /// several contributor outcome ids, so a unique identity it admitted that
+    /// way opens like any other, while a joined ref no identity carries (a
+    /// multi-market matrix ref, say) or one carried twice opens nothing. No
+    /// catalogue, no match or more than one match: nothing, never a neighbour.
     static func detailsSelection(marketID: String, originalID: String,
                                  in originals: CombatEventPageOriginals10868) -> OriginalMarketDetails9483.Selection? {
-        guard let catalogue = originals.catalogue, !isComposite(marketID), !isComposite(originalID) else { return nil }
+        guard let catalogue = originals.catalogue else { return nil }
         let found = catalogue.originals.filter { $0.identity.market == marketID && $0.identity.side == originalID }
         guard found.count == 1 else { return nil }
         return OriginalMarketDetails9483.Selection(scope: catalogue.scope, identity: found[0].identity)
-    }
-
-    /// Part three's spelling of a multi-id ref ("240262496+240262497").
-    static func isComposite(_ id: String) -> Bool {
-        id.contains("+")
     }
 
     // MARK: - A story card's Details
