@@ -68,8 +68,18 @@
  * its own while closed) → the matrix (each column's role in its own title;
  * sources and clocks only in Info) → during play, the visible earlier forecast
  * directly under the matrix, beside the current projected final it is compared
- * with → the forecast control → the history chart (its own Details) → the
- * history control. Targets are 44 px (`min-h-11`); text wraps as words at 200%.
+ * with → the history chart (its own Details) → ONE wrapping action group under
+ * the chart: "Open forecast comparison" then "Open win history", each still
+ * behind its own admission and callback gate (Design FQ1 2026-10-31: the
+ * forecast action moved below the chart so the chart reaches the first phone
+ * screen). Targets are 44 px (`min-h-11`); text wraps as words at 200%.
+ *
+ * COMPACT MATRIX (Design FQ1). The matrix is asked for the shared opt-in
+ * `compactColumns` grid: at a phone width where four metrics overflow the
+ * aligned grid with full and with short names, it tries the same aligned grid
+ * with content-sized columns (no 4rem floor) before the labelled per-team
+ * pairs. Every value, role, order, identity and type size is unchanged; at an
+ * accessibility text size the matrix goes straight to the readable pairs.
  */
 
 import { useId, useState } from "react";
@@ -248,7 +258,7 @@ export default function FootballJourneySection({ model, onOpenForecast, onOpenHi
         )}
       </header>
 
-      <HockeyJourneyMatrix headline={headline} inlineProvenance={false} />
+      <HockeyJourneyMatrix headline={headline} inlineProvenance={false} compactColumns />
 
       {earlierForecast && (
         <div role="group" aria-labelledby={earlierId} data-football-earlier-forecast="" className="text-sm">
@@ -268,18 +278,21 @@ export default function FootballJourneySection({ model, onOpenForecast, onOpenHi
         </div>
       )}
 
-      {forecastControl && onOpenForecast && (
-        <button type="button" onClick={() => onOpenForecast()} className={CONTROL_CLASS} data-football-control="forecast">
-          {forecastControl.label}
-        </button>
-      )}
-
       <HockeyJourneyHistoryChart history={history} colors={lineColors} />
 
-      {historyControl && onOpenHistory && (
-        <button type="button" onClick={() => onOpenHistory()} className={CONTROL_CLASS} data-football-control="history">
-          {historyControl.label}
-        </button>
+      {(forecastControl || historyControl) && (
+        <div data-football-actions="" className="flex flex-wrap gap-2">
+          {forecastControl && onOpenForecast && (
+            <button type="button" onClick={() => onOpenForecast()} className={CONTROL_CLASS} data-football-control="forecast">
+              {forecastControl.label}
+            </button>
+          )}
+          {historyControl && onOpenHistory && (
+            <button type="button" onClick={() => onOpenHistory()} className={CONTROL_CLASS} data-football-control="history">
+              {historyControl.label}
+            </button>
+          )}
+        </div>
       )}
     </section>
   );

@@ -39,6 +39,7 @@ import FootballJourneySection, {
   type FootballJourneySectionModel,
   type FootballJourneySectionView,
 } from "@/components/event/eventpage10868/FootballJourneySection";
+import HockeyJourneyMatrix, { matrixArrangements } from "@/components/event/eventpage10868/HockeyJourneyMatrix";
 
 const detail = (x: unknown) => x as EventDetailResponse;
 const body = (x: unknown) => x as EventHistoryResponse;
@@ -303,8 +304,8 @@ describe("LIVE — Bears–Patriots t0 → t1 → t2 (retained)", () => {
       ["away", "New England Patriots", "24", "24 points"],
       ["home", "Chicago Bears", "27", "27 points"],
     ]);
-    // Reading order: matrix → earlier forecast → forecast control → history.
-    const order = ["[data-hockey-matrix]", "[data-football-earlier-forecast]", '[data-football-control="forecast"]', "[data-line-key]"].map(
+    // Reading order (Design FQ1: the forecast action sits under the chart): matrix → earlier forecast → history → actions.
+    const order = ["[data-hockey-matrix]", "[data-football-earlier-forecast]", "[data-line-key]", '[data-football-control="forecast"]'].map(
       (sel) => host.querySelector(sel) as Element,
     );
     for (let i = 1; i < order.length; i += 1) {
@@ -438,5 +439,236 @@ describe("refusals (TEST MUTATIONS)", () => {
     expect(refused.textContent).toContain("Postponed");
     expect(refused.textContent).toContain(PAGE_WORDS.matrixUnavailable);
     expect(host.querySelector("button")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Design FQ1 — the compact matrix and the action group under the chart.
+//
+// JSDOM lays nothing out, so a phone is CONSTRUCTED: `clientWidth` is the lab's
+// measured 317 px frame at 375, and `scrollWidth` answers per arrangement from
+// a rule the test states. This proves the fit STEPPING and the classes, never
+// the real fit, which only the browser lab measures.
+// ---------------------------------------------------------------------------
+
+/** `fits(arrangement, header cells)` decides each measured frame's overflow. CONSTRUCTED layout. */
+function withForcedLayout(fits: (arrangement: string, headerCells: number) => boolean, run: () => void) {
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+  Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => 317 });
+  Object.defineProperty(proto, "scrollWidth", {
+    configurable: true,
+    get(this: HTMLElement) {
+      const arrangement = this.dataset?.arrangement;
+      if (arrangement === undefined) return 0;
+      return fits(arrangement, this.querySelectorAll("thead th").length) ? 317 : 1000;
+    },
+  });
+  try {
+    run();
+  } finally {
+    delete proto.clientWidth;
+    delete proto.scrollWidth;
+  }
+}
+
+/** The phone the lab measured: a four-metric table (5 header cells) overflows the full and the short grid; the compact grid fits. */
+const PHONE = (arrangement: string, headerCells: number) => arrangement === "compactGrid" || headerCells < 5;
+/** A narrower phone: the compact grid overflows too. */
+const NARROW = (_arrangement: string, headerCells: number) => headerCells < 5;
+
+const arrangementNow = () => host.querySelector("[data-arrangement]")?.getAttribute("data-arrangement");
+
+function withRootFont(px: number) {
+  const real = window.getComputedStyle.bind(window);
+  jest.spyOn(window, "getComputedStyle").mockImplementation(((el: Element) =>
+    el === document.documentElement ? ({ fontSize: `${px}px` } as unknown as CSSStyleDeclaration) : real(el)) as typeof window.getComputedStyle);
+}
+
+/** Each compact/short grid row: the visible label, the spoken full name, and each cell's figure text and class. */
+function compactRows() {
+  return Array.from(host.querySelectorAll("table tbody tr")).map((tr) => {
+    const name = tr.querySelector("th span span") as HTMLElement;
+    const visible = name.querySelector("span")?.textContent ?? name.textContent;
+    return {
+      visible,
+      spokenName: name.querySelector(".sr-only")?.textContent ?? visible,
+      color: name.style.color,
+      cells: Array.from(tr.querySelectorAll("td")).map((td) => (td.querySelector('[aria-hidden="true"]') ?? td).textContent),
+      figureClasses: Array.from(tr.querySelectorAll("td")).map((td) => td.querySelector('[aria-hidden="true"]')?.className ?? ""),
+      spoken: Array.from(tr.querySelectorAll("td .sr-only")).map((x) => x.textContent),
+    };
+  });
+}
+
+describe("FQ1 — the shared matrix's opt-in compact grid", () => {
+  it("lists the arrangements: the default (hockey) path is exactly grid → shortGrid → pairs; only the opt-in adds compactGrid", () => {
+    expect(matrixArrangements(false)).toEqual(["grid", "shortGrid", "pairs"]);
+    expect(matrixArrangements(true)).toEqual(["pairs"]);
+    expect(matrixArrangements(false, false)).toEqual(["grid", "shortGrid", "pairs"]);
+    expect(matrixArrangements(false, true)).toEqual(["grid", "shortGrid", "compactGrid", "pairs"]);
+    expect(matrixArrangements(true, true)).toEqual(["pairs"]);
+  });
+
+  it("the DEFAULT matrix (what hockey renders) never reaches compactGrid and keeps its exact classes", () => {
+    const headline = view(model(bears[0], null, BEARS_NOW[0])).headline;
+    withForcedLayout(PHONE, () => {
+      render(<HockeyJourneyMatrix headline={headline} />);
+      expect(arrangementNow()).toBe("pairs");
+    });
+    // A fresh mount (the fit search keeps its step for unchanged content), where nothing overflows:
+    // the full grid with today's exact cell strings.
+    act(() => root.unmount());
+    root = createRoot(host);
+    withForcedLayout(() => true, () => {
+      render(<HockeyJourneyMatrix headline={headline} inlineProvenance={false} />);
+      expect(arrangementNow()).toBe("grid");
+      const th = host.querySelector("table thead th[scope='col']:not(:first-child)") as HTMLElement;
+      expect(th.className).toBe("px-1 py-2 text-center align-bottom text-sm font-semibold text-text-secondary");
+      expect(th.querySelector("span")?.className).toBe("mx-auto block min-w-16 max-w-[7.5rem]");
+      const td = host.querySelector("table tbody td") as HTMLElement;
+      expect(td.className).toBe("px-1 py-3 text-center align-middle");
+      expect(td.querySelector(":scope > span")?.className).toBe("mx-auto block min-w-16 max-w-[7.5rem]");
+    });
+  });
+
+  it("Bears t0 at a phone width: compactGrid with all eight values by side, away first, in display order, type sizes unchanged", () => {
+    const m = model(bears[0], null, BEARS_NOW[0]);
+    const v = view(m);
+    withForcedLayout(PHONE, () => {
+      render(<FootballJourneySection model={m} onOpenForecast={() => {}} />);
+      expect(arrangementNow()).toBe("compactGrid");
+      expect(headerTitles()).toEqual(["Team", "Opened chance", "Current chance", "Score", "Projected final"]);
+      const rows = compactRows();
+      expect(rows.map((r) => [r.visible, r.spokenName, r.cells])).toEqual([
+        ["Patriots", "New England Patriots", ["41%", "21%", "21", "28"]],
+        ["Bears", "Chicago Bears", ["59%", "79%", "27", "33"]],
+      ]);
+      expect(rows.flatMap((r) => r.cells)).toHaveLength(8);
+      expect(rows[0].spoken).toEqual(["41 percent", "21 percent", "21 points", "28 points"]);
+      expect(rows[1].spoken).toEqual(["59 percent", "79 percent", "27 points", "33 points"]);
+      // Type sizes unchanged: the lead (Current chance) is the large figure, every other value text-xl, headers text-sm.
+      for (const r of rows) {
+        expect(r.figureClasses.map((c) => (c.includes("text-3xl") ? "3xl" : c.includes("text-xl") ? "xl" : "?"))).toEqual([
+          "xl",
+          "3xl",
+          "xl",
+          "xl",
+        ]);
+      }
+      for (const th of Array.from(host.querySelectorAll("table thead th[scope='col']")).slice(1)) {
+        expect(th.className).toMatch(/\btext-sm\b/);
+        expect(th.className).toMatch(/\bpx-0\.5\b/);
+        expect(th.querySelector("span")?.className).toBe("mx-auto block min-w-0 max-w-[7.5rem]");
+      }
+      // Identity: each team's tint stays on its own name.
+      const asStyled = (tint: string | null) => {
+        const probe = document.createElement("span");
+        if (tint) probe.style.color = tint;
+        return probe.style.color;
+      };
+      expect(rows.map((r) => r.color)).toEqual([asStyled(v.headline.away.tint), asStyled(v.headline.home.tint)]);
+    });
+  });
+
+  it("falls back to the readable pairs when the compact grid overflows too, still all eight values by side", () => {
+    withForcedLayout(NARROW, () => {
+      render(<FootballJourneySection model={model(bears[0], null, BEARS_NOW[0])} />);
+      expect(arrangementNow()).toBe("pairs");
+      const blocks = Array.from(host.querySelectorAll('[data-arrangement] [role="group"]')).map((g) => [
+        g.getAttribute("aria-label"),
+        Array.from(g.querySelectorAll("dd")).map((dd) => (dd.querySelector('[aria-hidden="true"]') ?? dd).textContent),
+      ]);
+      expect(blocks).toEqual([
+        ["New England Patriots", ["41%", "21%", "21", "28"]],
+        ["Chicago Bears", ["59%", "79%", "27", "33"]],
+      ]);
+    });
+  });
+
+  it("at an accessibility text size (200%: root font 32 px) goes straight to pairs, compact option or not", () => {
+    withRootFont(32);
+    withForcedLayout(PHONE, () => {
+      render(<FootballJourneySection model={model(bears[0], null, BEARS_NOW[0])} />);
+      expect(arrangementNow()).toBe("pairs");
+    });
+  });
+
+  it("re-fits on the SAME mount: content changes reset the search and recover the compact grid when it fits again", () => {
+    let compactFits = true;
+    withForcedLayout((a, n) => (a === "compactGrid" ? compactFits : n < 5), () => {
+      // Narrow content first: two metrics fit the full grid.
+      render(<FootballJourneySection model={model(rams, ramsHistory, RAMS_NOW)} />);
+      expect(arrangementNow()).toBe("grid");
+      // Four metrics on the same mount: steps down to the compact grid.
+      render(<FootballJourneySection model={model(bears[0], null, BEARS_NOW[0])} />);
+      expect(arrangementNow()).toBe("compactGrid");
+      // TEST MUTATION of the layout: the compact grid stops fitting; a content change (t1) re-fits to pairs.
+      compactFits = false;
+      render(<FootballJourneySection model={model(bears[1], null, BEARS_NOW[1])} />);
+      expect(arrangementNow()).toBe("pairs");
+      // It fits again; the next content change (t2) starts the search over and recovers the compact grid.
+      compactFits = true;
+      render(<FootballJourneySection model={model(bears[2], null, BEARS_NOW[2])} />);
+      expect(arrangementNow()).toBe("compactGrid");
+      expect(compactRows().map((r) => r.cells)).toEqual([
+        ["41%", "21%", "21", "26"],
+        ["59%", "79%", "27", "32"],
+      ]);
+      // Three metrics (suspended, TEST MUTATION): the full grid, then back to compact for four.
+      render(<FootballJourneySection model={model(mutate(bears[0], { status: "suspended" }), null, BEARS_NOW[0])} />);
+      expect(arrangementNow()).toBe("grid");
+      render(<FootballJourneySection model={model(bears[0], null, BEARS_NOW[0])} />);
+      expect(arrangementNow()).toBe("compactGrid");
+    });
+  });
+});
+
+describe("FQ1 — one action group under the chart, each action behind its own gate", () => {
+  const actions = () =>
+    Array.from(host.querySelectorAll("[data-football-actions] > button")).map((b) => b.getAttribute("data-football-control"));
+
+  it("orders chart, then 'Open forecast comparison', then 'Open win history', with no action duplicated", () => {
+    const onOpenForecast = jest.fn();
+    const onOpenHistory = jest.fn();
+    render(<FootballJourneySection model={model(rams, ramsHistory, RAMS_NOW)} onOpenForecast={onOpenForecast} onOpenHistory={onOpenHistory} />);
+    const group = host.querySelector("[data-football-actions]") as HTMLElement;
+    const key = host.querySelector("[data-line-key]") as HTMLElement;
+    expect(key.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(actions()).toEqual(["forecast", "history"]);
+    expect(Array.from(group.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["Open forecast comparison", "Open win history"]);
+    expect(host.querySelectorAll('[data-football-control="forecast"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-football-control="history"]')).toHaveLength(1);
+    expect(group.className).toMatch(/\bflex-wrap\b/);
+    for (const b of Array.from(group.querySelectorAll("button"))) expect(b.className).toMatch(/\bmin-h-11\b/);
+    // Nothing above the chart is an action any more.
+    const matrix = host.querySelector("[data-hockey-matrix]") as HTMLElement;
+    for (const b of Array.from(host.querySelectorAll("[data-football-control]"))) {
+      expect(matrix.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(key.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(onOpenForecast).not.toHaveBeenCalled();
+    expect(onOpenHistory).not.toHaveBeenCalled();
+    click(control("forecast")!);
+    click(control("history")!);
+    expect([onOpenForecast.mock.calls.length, onOpenHistory.mock.calls.length]).toEqual([1, 1]);
+  });
+
+  it("keeps each gate: one callback gives one action; no callback, or no admitted destination, gives no group", () => {
+    const m = model(rams, ramsHistory, RAMS_NOW);
+    render(<FootballJourneySection model={m} onOpenHistory={() => {}} />);
+    expect(actions()).toEqual(["history"]);
+    render(<FootballJourneySection model={m} onOpenForecast={() => {}} />);
+    expect(actions()).toEqual(["forecast"]);
+    render(<FootballJourneySection model={m} />);
+    expect(host.querySelector("[data-football-actions]")).toBeNull();
+    // Bears holds no history body: only the forecast action, whatever the host passes.
+    render(<FootballJourneySection model={model(bears[0], null, BEARS_NOW[0])} onOpenForecast={() => {}} onOpenHistory={() => {}} />);
+    expect(actions()).toEqual(["forecast"]);
+    // Jaguars final admits neither destination: no group at all.
+    render(<FootballJourneySection model={model(jagFinal, null, JAG_FINAL_NOW)} onOpenForecast={() => {}} onOpenHistory={() => {}} />);
+    expect(host.querySelector("[data-football-actions]")).toBeNull();
+    // Jaguars live with its own history: only the history action.
+    render(<FootballJourneySection model={model(jagLive, jagLiveHistory, JAG_LIVE_NOW)} onOpenForecast={() => {}} onOpenHistory={() => {}} />);
+    expect(actions()).toEqual(["history"]);
   });
 });

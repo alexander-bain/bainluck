@@ -12,6 +12,11 @@
  *   1. aligned columns with full team names;
  *   2. aligned columns with the owner's short names (`teamShortNames`, the
  *      headline's `short`; a team without one keeps its full name);
+ *   2b. OPT-IN ONLY (`compactColumns`, default off): the same aligned columns
+ *      with short names and each column sized by its own content — no 4rem
+ *      per-column floor and 2px rather than 4px side padding. Type sizes are
+ *      unchanged. A caller that does not pass `compactColumns` never reaches
+ *      it: its arrangements, classes and fit key are exactly as before;
  *   3. one block per team of labelled metric pairs (`matrix.groups`), each pair
  *      side by side when it fits and one value per line when it does not.
  *
@@ -55,7 +60,7 @@ import type {
 } from "@/lib/eventPage10868/hockeyJourneyTypes";
 import { ACCESSIBILITY_ROOT_FONT_PX } from "./useFrameMeasure";
 
-export type HockeyJourneyMatrixArrangement = "grid" | "shortGrid" | "pairs";
+export type HockeyJourneyMatrixArrangement = "grid" | "shortGrid" | "compactGrid" | "pairs";
 
 /** The label over the columns stated once for both teams. */
 export const BOTH_TEAMS_LABEL = "Both teams";
@@ -63,9 +68,14 @@ export const BOTH_TEAMS_LABEL = "Both teams";
 // One threshold for the whole screen (the card's rail and chooser, the chart's axis use it too).
 export { ACCESSIBILITY_ROOT_FONT_PX };
 
-/** The arrangements to try, in order (native `arrangements(accessibilitySize:)`). */
-export function matrixArrangements(accessibilitySize: boolean): HockeyJourneyMatrixArrangement[] {
-  return accessibilitySize ? ["pairs"] : ["grid", "shortGrid", "pairs"];
+/**
+ * The arrangements to try, in order (native `arrangements(accessibilitySize:)`).
+ * `compactColumns` (opt-in, default off) inserts the content-sized grid before
+ * the labelled pairs; an accessibility text size still goes straight to pairs.
+ */
+export function matrixArrangements(accessibilitySize: boolean, compactColumns = false): HockeyJourneyMatrixArrangement[] {
+  if (accessibilitySize) return ["pairs"];
+  return compactColumns ? ["grid", "shortGrid", "compactGrid", "pairs"] : ["grid", "shortGrid", "pairs"];
 }
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -135,10 +145,13 @@ function ResultChip({ result }: { result: string | null }) {
 export default function HockeyJourneyMatrix({
   headline,
   inlineProvenance = true,
+  compactColumns = false,
 }: {
   headline: HockeyJourneyHeadline;
   /** Print each column's source and clock under the matrix (false once About holds them all). */
   inlineProvenance?: boolean;
+  /** Opt-in: try a content-sized grid (`compactGrid`) before falling back to labelled pairs. */
+  compactColumns?: boolean;
 }) {
   const { matrix } = headline;
   const teams: Record<"home" | "away", HockeyJourneyTeam> = { home: headline.home, away: headline.away };
@@ -155,11 +168,13 @@ export default function HockeyJourneyMatrix({
   // What the fit search is for: this content, at this width, at this text size.
   // A step found for another key is never reused — the search restarts at full
   // names in the same render that brings the new content (expansion OR contraction).
-  const fitKey = `${matrixFitContent(headline)}|${width}|${accessibilitySize ? "large" : "standard"}`;
+  const fitKey = `${matrixFitContent(headline)}|${width}|${accessibilitySize ? "large" : "standard"}${
+    compactColumns ? "|compact" : ""
+  }`;
   const [fit, setFit] = useState({ key: fitKey, step: 0 });
   const step = fit.key === fitKey ? fit.step : 0;
   // A short grid identical to the full one is not a different arrangement.
-  const order = matrixArrangements(accessibilitySize).filter(
+  const order = matrixArrangements(accessibilitySize, compactColumns).filter(
     (a) => a !== "shortGrid" || !!(headline.home.short || headline.away.short),
   );
   const arrangement = order[Math.min(step, order.length - 1)];
@@ -189,7 +204,11 @@ export default function HockeyJourneyMatrix({
     if (el.scrollWidth > el.clientWidth + 1) setFit({ key: fitKey, step: step + 1 });
   }, [arrangement, drawGrid, fitKey, step]);
 
-  const short = arrangement === "shortGrid";
+  const short = arrangement === "shortGrid" || arrangement === "compactGrid";
+  // Only the opt-in compact grid changes a class; every other arrangement keeps today's exact strings.
+  const compact = arrangement === "compactGrid";
+  const cell = compact ? "mx-auto block min-w-0 max-w-[7.5rem]" : "mx-auto block min-w-16 max-w-[7.5rem]";
+  const pad = compact ? "px-0.5" : "px-1";
 
   return (
     <div className="space-y-3" data-hockey-matrix={matrix.phase}>
@@ -232,8 +251,8 @@ export default function HockeyJourneyMatrix({
                   <span className="sr-only">Team</span>
                 </th>
                 {kept.map((i) => (
-                  <th key={matrix.columns[i].title} scope="col" className="px-1 py-2 text-center align-bottom text-sm font-semibold text-text-secondary">
-                    <span className="mx-auto block min-w-16 max-w-[7.5rem]">{matrix.columns[i].title}</span>
+                  <th key={matrix.columns[i].title} scope="col" className={`${pad} py-2 text-center align-bottom text-sm font-semibold text-text-secondary`}>
+                    <span className={cell}>{matrix.columns[i].title}</span>
                   </th>
                 ))}
               </tr>
@@ -254,8 +273,8 @@ export default function HockeyJourneyMatrix({
                       </span>
                     </th>
                     {kept.map((i) => (
-                      <td key={matrix.columns[i].title} className="px-1 py-3 text-center align-middle">
-                        <span className="mx-auto block min-w-16 max-w-[7.5rem]">
+                      <td key={matrix.columns[i].title} className={`${pad} py-3 text-center align-middle`}>
+                        <span className={cell}>
                           <SlotValue slot={row.values[i]} lead={i === matrix.lead} tint={team.tint} />
                         </span>
                       </td>
