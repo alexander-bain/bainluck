@@ -82,6 +82,10 @@ class _Result:
         return list(self._ids)
 
 
+class QueryCanceledError(Exception):
+    """Named as asyncpg names a statement_timeout cancellation."""
+
+
 class _RecordingSession:
     """Captures the statement stream, in order, with COMMIT as a real event.
 
@@ -121,6 +125,13 @@ class _RecordingSession:
         }
         # Relative order of the two out-of-band kinds above.
         self.out_of_band: list[str] = []
+        # Every `statement_timeout` value a prepare read set, in order, kept out
+        # of band for the lock budget's reason. `resting_statement_timeout` is
+        # what `current_setting` answers, so a control can see it restored.
+        self.statement_budgets: list[str] = []
+        self.resting_statement_timeout = "30min"
+        # A prepare label whose read is cancelled by its statement_timeout.
+        self.cancel_prepare: str | None = None
 
     async def execute(self, stmt, params=None):  # noqa: ANN001
         sql = " ".join(str(stmt).split())
@@ -134,9 +145,16 @@ class _RecordingSession:
             self.lock_budgets.append((len(self.events), params or {}))
             self.out_of_band.append("LOCK BUDGET")
             return _Result(0)
+        if sql == "SELECT current_setting('statement_timeout')":
+            return _Result(0, [self.resting_statement_timeout])
+        if "set_config('statement_timeout'" in sql:
+            self.statement_budgets.append((params or {})["ms"])
+            return _Result(0)
         if "/* movement prepare:" in sql:
             self.prepares.append((len(self.events), sql, params or {}))
             label = re.search(r"movement prepare: (\w+)", sql).group(1)
+            if label == self.cancel_prepare:
+                raise QueryCanceledError("canceling statement due to statement timeout")
             self.out_of_band.append(f"PREPARE {label}")
             return _Result(0, self.prepared_ids[label])
         self.calls.append((sql, params or {}))
@@ -543,6 +561,163 @@ def test_a_sweep_retires_its_prepared_ids_in_chunks_each_committed_with_its_maxi
         assert [p["market_ids"] for _, p in calls[1:]] == [[market], [market]], calls
     assert "resolution_source IS NOT NULL" in _units(session)[4][0]  # then A2
     assert result["expired"] == 5, result
+
+
+_RETIREMENTS = ("A", "A2", "A3", "A4", "A5", "A6", "A7")
+
+
+def _the_tail_ran(result: dict, session: _RecordingSession) -> None:
+    """The full B/C recompute, both dated banks and the warm all ran."""
+    full = [
+        params for sql, params in session.calls
+        if "SET max_movement_24h" in sql and not params.get("market_ids")
+    ]
+    assert len(full) == 2, session.calls  # B and C, unscoped
+    assert len(_dated_basis_statements(session)) == 2, session.calls
+    assert session.events[-1] == "COMMIT", session.events
+    assert session.warm_snapshots, "the movers warm never ran"
+    assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
+
+
+def test_a_spent_retirement_budget_starts_no_retirement_but_still_runs_the_tail(
+    run_task, monkeypatch,
+):
+    """#10090: the 120 s soft limit killed ~135 of 144 runs a day before the tail.
+
+    Past `MOVEMENT_RETIRE_BUDGET_SECONDS` no retirement read or write starts,
+    and the run still reaches B/C, both banks and the warm. Every statement it
+    stopped is reported, and the drain flags read False, never unverified.
+    """
+    import app.tasks as tasks_mod
+
+    monkeypatch.setattr(tasks_mod, "MOVEMENT_RETIRE_BUDGET_SECONDS", 0)
+    result, session = run_task()
+
+    assert session.prepares == [], session.prepares
+    assert not [s for s in session.events if s.startswith("UPDATE futures_outcomes")]
+    assert "unpriced_opening_ids" in session.events[0], session.events  # A10 still runs
+    _the_tail_ran(result, session)
+    assert result["retire_deferred"] == dict.fromkeys(_RETIREMENTS), result
+    assert result["backlog_drained"] is False, result
+    assert result["graded_backlog_drained"] is False, result
+    assert result["rank_backlog_drained"] is False, result
+
+
+def test_the_retirement_budget_stops_between_chunks_and_reports_what_it_left(
+    run_task, monkeypatch,
+):
+    """The budget is read before every chunk. The chunk in flight finishes and
+    commits; the ids after it are left for the next run and counted."""
+    import app.tasks as tasks_mod
+
+    monkeypatch.setattr(tasks_mod, "MOVEMENT_RETIRE_CHUNK", 2)
+    # Reads: run start, two per prepare (A4, A7, A), A's first chunk. The
+    # ninth read, before A's second chunk, is past the budget.
+    clock = iter([0.0] * 8)
+    monkeypatch.setattr(
+        tasks_mod, "_movement_run_clock", lambda: next(clock, 1e6),
+    )
+    real_init = _RecordingSession.__init__
+
+    def _init(self, *a, **k):
+        real_init(self, *a, **k)
+        self.prepared_ids["A"] = [1, 2, 3, 4, 5]
+
+    monkeypatch.setattr(_RecordingSession, "__init__", _init)
+    result, session = run_task(retired_ids=[[901]] + [[] for _ in range(8)])
+
+    writes = [
+        params for sql, params in session.calls
+        if sql.startswith("UPDATE futures_outcomes")
+    ]
+    assert [w["prepared_ids"] for w in writes] == [[1, 2]], writes
+    assert [label for _, sql, _ in session.prepares
+            for label in re.findall(r"movement prepare: (\w+)", sql)] == [
+        "A4", "A7", "A",
+    ]
+    assert _units(session)[1][-1] == "COMMIT"  # the started chunk committed
+    _the_tail_ran(result, session)
+    assert result["retire_deferred"] == {
+        "A": 3, "A2": None, "A3": None, "A4": 2, "A5": None, "A6": None, "A7": 1,
+    }, result
+    assert result["backlog_drained"] is False, result
+
+
+def test_the_budget_is_spent_at_exactly_its_constant(run_task, monkeypatch):
+    import app.tasks as tasks_mod
+
+    from app.tasks import MOVEMENT_RETIRE_BUDGET_SECONDS
+
+    clock = iter([0.0])
+    monkeypatch.setattr(
+        tasks_mod, "_movement_run_clock",
+        lambda: next(clock, float(MOVEMENT_RETIRE_BUDGET_SECONDS)),
+    )
+    result, session = run_task()
+
+    assert session.prepares == [], session.prepares
+    assert result["retire_deferred"] == dict.fromkeys(_RETIREMENTS), result
+
+
+def test_each_prepare_read_is_bounded_by_the_budget_left_and_then_restored(
+    run_task, monkeypatch,
+):
+    """A started read cannot outrun the budget: the A4 read alone measured up
+    to 96 s. Its `statement_timeout` is what is left of the budget, and the
+    resting value is set back after it, so no chunk UPDATE runs under it."""
+    import app.tasks as tasks_mod
+
+    from app.tasks import MOVEMENT_RETIRE_BUDGET_SECONDS
+
+    # The run starts at 0 and every later read is 30 s in.
+    clock = iter([0.0])
+    monkeypatch.setattr(tasks_mod, "_movement_run_clock", lambda: next(clock, 30.0))
+    _, session = run_task()
+
+    budget = f"{(MOVEMENT_RETIRE_BUDGET_SECONDS - 30) * 1000}ms"
+    assert len(session.prepares) == 6, session.prepares
+    assert session.statement_budgets == [budget, "30min"] * 6, session.statement_budgets
+
+
+def test_a_cancelled_prepare_read_is_deferred_and_the_run_goes_on(
+    run_task, monkeypatch,
+):
+    real_init = _RecordingSession.__init__
+
+    def _init(self, *a, **k):
+        real_init(self, *a, **k)
+        self.cancel_prepare = "A4"
+
+    monkeypatch.setattr(_RecordingSession, "__init__", _init)
+    result, session = run_task()
+
+    assert session.events[1:3] == ["COMMIT", "ROLLBACK"], session.events  # A10, then A4
+    writes = [s for s in session.events if s.startswith("UPDATE futures_outcomes")]
+    assert len(writes) == 6 and not any("obs.lo" in s for s in writes), writes
+    assert result["retire_deferred"] == {"A4": None}, result
+    _the_tail_ran(result, session)
+
+
+def test_a_prepare_read_error_that_is_not_its_timeout_still_fails_the_run(
+    run_task, monkeypatch,
+):
+    real_execute = _RecordingSession.execute
+
+    async def _execute(self, stmt, params=None):
+        if "/* movement prepare: A7" in str(stmt):
+            raise RuntimeError("relation does not exist")
+        return await real_execute(self, stmt, params)
+
+    monkeypatch.setattr(_RecordingSession, "execute", _execute)
+    with pytest.raises(RuntimeError, match="relation does not exist"):
+        run_task()
+
+
+def test_a_run_inside_its_budget_defers_nothing(run_task) -> None:
+    result, session = run_task()
+
+    assert result["retire_deferred"] == {}, result
+    assert len([s for s in session.events if s.startswith("UPDATE futures_outcomes")]) == 7
 
 
 def _statements(session: _RecordingSession) -> list[str]:
@@ -2011,3 +2186,26 @@ def test_every_retirement_bounds_its_own_idle_time(run_task):
         params == {"ms": f"{MOVEMENT_CHUNK_IDLE_TIMEOUT_MS}ms"}
         for _, params in session.idle_budgets
     ), session.idle_budgets
+
+
+def test_the_prepare_reads_bound_is_transaction_local_so_no_later_transaction_inherits_it(
+    run_task, monkeypatch,
+):
+    """Both `set_config` calls must pass `is_local = true`. A session-level bound
+    outlives the prepare read's transaction: the local restore ends with that
+    transaction and puts the cut value back, so every later chunk UPDATE, the
+    tail and the pooled connection would run under it."""
+    seen = []
+    real_execute = _RecordingSession.execute
+
+    async def _execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        if "set_config('statement_timeout'" in sql:
+            seen.append(sql)
+        return await real_execute(self, stmt, params)
+
+    monkeypatch.setattr(_RecordingSession, "execute", _execute)
+    run_task()
+
+    assert len(seen) == 12, seen  # bound + restore, six prepare reads
+    assert all(sql.endswith(", true)") for sql in seen), seen

@@ -14,6 +14,7 @@ Usage (Procfile):
 
 import argparse
 import asyncio
+import atexit
 import gc
 import logging
 import os
@@ -318,6 +319,8 @@ async def run_venue(venue):
         raise ValueError(f"unknown venue: {venue}")
 
     stop = asyncio.Event()
+    _tune_gc_young_generation(venue)
+    sampler = _start_cpu_sampler() if venue == "polymarket" else None
     with _stop_signals(stop):
         logger.info("Starting %s WebSocket process pid=%d", venue, os.getpid())
         tasks = [asyncio.create_task(arm()) for arm in arms]
@@ -338,6 +341,74 @@ async def run_venue(venue):
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, stopped, return_exceptions=True)
+            if sampler is not None:
+                sampler.stop()
+
+
+def _start_cpu_sampler():
+    """#10090 — the PM venue process's low-rate stack sampler, for THIS (the
+    loop's, the main) thread. ON by default; ``PM_CPU_SAMPLER=0`` at process
+    start leaves it off. A sampler that cannot start is logged and skipped: it
+    never stops the venue."""
+    try:
+        from app.utils.loop_cpu_sampler import LoopCpuSampler
+
+        sampler = LoopCpuSampler().start()
+        if sampler is not None:
+            # Every exit path, not only run_venue's finally: atexit runs before
+            # interpreter shutdown resets SIGPROF to SIG_DFL under an armed timer.
+            atexit.register(sampler.stop)
+        return sampler
+    except Exception:
+        logger.exception("PM CPU sampler did not start")
+        return None
+
+
+#: #10090 — the young-generation threshold for a venue child. Production
+#: 2026-10-30 23:27Z: both venue loops are CPU-saturated (Polymarket 0.97,
+#: Kalshi 0.94); Polymarket ran 48 full collections in one heartbeat line and
+#: Kalshi paused 211 ms in one. Generation 0's count is NET: a tracked
+#: container freed by reference counting takes its allocation back off the
+#: count, so a collection is triggered only by objects that are still alive
+#: (or cyclic garbage) after this many allocations. A larger young generation
+#: lets objects held across a few awaits (a flush chunk, a buffered quote) die
+#: before they are promoted, so fewer promotions re-arm the full collection.
+#: It is not free: each young collection walks the whole young generation on
+#: the loop. Lab (lane1, Python 3.12, 1.5M long-lived objects, one cyclic
+#: garbage per message): 700 -> one 125-166 ms full collection; 5,000 -> none,
+#: young pauses <= 2.6 ms, total collector time no higher; 50,000 -> none, but
+#: young pauses ~20-25 ms and total collector time about twice 700's.
+WS_GC_GEN0_ENV = "WS_GC_GEN0"
+WS_GC_GEN0_DEFAULT = 5_000
+
+
+def _tune_gc_young_generation(venue):
+    """Raise generation 0's threshold; the value set, or None if kept as is.
+
+    ``WS_GC_GEN0=0`` keeps the interpreter's thresholds (the undo); another
+    integer replaces the default. Older generations keep their thresholds.
+    Never stops the venue.
+    """
+    raw = os.getenv(WS_GC_GEN0_ENV, "").strip()
+    try:
+        gen0 = int(raw) if raw else WS_GC_GEN0_DEFAULT
+    except ValueError:
+        logger.warning("%s=%r is not an integer; using %d",
+                       WS_GC_GEN0_ENV, raw, WS_GC_GEN0_DEFAULT)
+        gen0 = WS_GC_GEN0_DEFAULT
+    try:
+        if gen0 <= 0:
+            logger.info("%s venue process: gc thresholds %s kept (%s=0)",
+                        venue, gc.get_threshold(), WS_GC_GEN0_ENV)
+            return None
+        _, gen1, gen2 = gc.get_threshold()
+        gc.set_threshold(gen0, gen1, gen2)
+    except Exception:
+        logger.exception("%s venue process: gc thresholds not changed", venue)
+        return None
+    logger.info("%s venue process: gc thresholds %s (%s)",
+                venue, gc.get_threshold(), WS_GC_GEN0_ENV)
+    return gen0
 
 
 async def _join_children(children, waiters):

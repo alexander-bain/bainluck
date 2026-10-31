@@ -230,6 +230,7 @@ def callbacks():
         trade_sets_a_price=pm.trade_sets_a_price,
         trade_prints_outside_wide_book=pm.trade_prints_outside_wide_book,
         _poly_book_is_untradeable=pm._poly_book_is_untradeable,
+        repeat_skip_s=0.0,  # #10090: today's path (`PM_WS_REPEAT_SKIP_MS=0`)
         tail_receipts=SimpleNamespace(
             note_raw=lambda _: None,
             note_input=lambda *args: marks.append(args) or SimpleNamespace(args=args),

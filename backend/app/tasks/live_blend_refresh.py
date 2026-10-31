@@ -4397,6 +4397,36 @@ class LiveBlendRefresher:
         if window is not None:
             window.closed = True
 
+    def shed_queued(self) -> frozenset:
+        """#10090 — `stop_admitting` for a drain that holds every flush while
+        it waits (the PM catalog handover's `stamps` phase): also hand back
+        each admitted attempt no worker has started, so the wait covers only
+        the attempts already running. A shed attempt read nothing and sent no
+        frame; its committed price stays owed with no failed-retry hold, as
+        a cancelled close leaves an admitted attempt whose worker never ran
+        (`_admission_close`), and the next call stamps it on the board as
+        it is then. Returns the shed events. Synchronous."""
+        window = self._admission
+        if window is None:
+            return frozenset()
+        window.closed = True
+        shed = [*window.live_queue, *window.queue]
+        window.live_queue.clear()
+        window.queue.clear()
+        if not shed:
+            return frozenset()
+        window.admitted.difference_update(shed)
+        for event_id in shed:
+            self._refresh_failed(
+                [event_id], window.retry, window.clocks.get(event_id, window.clock),
+                self.receipts,
+                {event_id: window.staged[event_id]} if event_id in window.staged else {},
+                window.stored_wall.get(event_id),
+                CancelledError(), hold=False,
+            )
+        window.release(shed)
+        return frozenset(shed)
+
     def admitting(self) -> bool:
         """#10090 — a running call is still taking later flushes' cohorts."""
         window = self._admission
