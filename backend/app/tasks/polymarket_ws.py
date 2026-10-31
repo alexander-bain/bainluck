@@ -143,6 +143,8 @@ class _PMCatalogFlushBoundary:
         self.side_writer = _PMSideWriter()
         #: #10090: bridged open cohorts written beside the game flush.
         self.bridges = _PMBridgeWriter(wake=self.flush_wake)
+        #: #10090: the flush scans' catalog-derived answers (`PMCatalogScans`).
+        self.scans = PMCatalogScans()
 
     def stamp_owner(self, refresher) -> "_PMStampOwner":
         if self.stamps is None:
@@ -668,6 +670,23 @@ def _bridged_side_first_env() -> bool:
             "Polymarket WS: PM_BRIDGED_SIDE_FIRST=%r is not on/off; using off", raw,
         )
     return False
+
+
+def _scan_prefilter_env() -> bool:
+    """#10090 — env `PM_SCAN_PREFILTER`, read once at import.
+
+    On (missing, blank, or anything but "0"/"false"/"off"/"no"), the two
+    whole-buffer scans — the flushes' `standalone_open_outcome_ids` and the
+    observation flush's `owners()` — are answered from `PMCatalogScans`. Off is
+    the Python walk over the price buffer they replaced, kept verbatim. Same
+    answers either way; production 2026-10-31 05:22Z had the two at ~17 % of
+    the Polymarket loop, growing with the buffer.
+    """
+    raw = os.environ.get("PM_SCAN_PREFILTER")
+    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
+
+
+PM_SCAN_PREFILTER = _scan_prefilter_env()
 
 
 #: #10090: how long a repeated top of book stays skippable, and how often the
@@ -2661,6 +2680,114 @@ def _pm_lock_isolated_chunks(
     return result
 
 
+def price_owned_events(
+    price_buffer: dict,
+    free: set,
+    event_id_by_outcome: dict,
+    non_blend_outcome_ids,
+    observation_continuity: dict,
+    observation_ack: dict,
+    legs_by_event: Optional[dict] = None,
+) -> set:
+    """#10090: which `free` events a buffered price owns for the observation flush.
+
+    PM buffers unchanged BBOs too. Only acknowledged uninterrupted values may
+    pass; another leg's queued change owns the whole event even before its
+    price chunk starts (including A-B-A).
+
+    With `legs_by_event` (the exact inverse of `event_id_by_outcome`, from
+    `PMCatalogScans`), only the legs of `free` events are read; the walk reads
+    every buffered leg on each call (10.8 % of the loop, 2026-10-31 05:22Z).
+    """
+    if legs_by_event is not None and None not in free:
+        owned = set()
+        for eid in free:
+            for oid in legs_by_event.get(eid, ()):
+                if (oid in price_buffer
+                        and oid not in non_blend_outcome_ids
+                        and (observation_continuity.get(oid) is None
+                             or observation_ack.get(oid) != observation_continuity[oid]
+                             or observation_continuity[oid][1]
+                             != round(float(price_buffer[oid]), 6))):
+                    owned.add(eid)
+                    break
+        return owned
+    return {
+        eid for oid, value in price_buffer.items()
+        if (eid := event_id_by_outcome.get(oid)) in free
+        and oid not in non_blend_outcome_ids
+        and (observation_continuity.get(oid) is None
+             or observation_ack.get(oid) != observation_continuity[oid]
+             or observation_continuity[oid][1] != round(float(value), 6))
+    }
+
+
+class PMCatalogScans:
+    """#10090: the two whole-buffer scans, answered from the installed catalog.
+
+    `standalone_open_outcome_ids` tests a leg against `open_outcome_ids`,
+    `event_id_by_outcome` and `open_complement_of` only, and the observation
+    scan needs only the legs of a few events. All three maps change in one
+    place, the catalog install ("maps change only with no flush of either
+    kind", `_PMCatalogFlushBoundary`), which calls `rebuild` before it
+    returns. So a flush answers with a set intersection and an index read
+    instead of a Python walk over the price buffer. Nothing is added to the
+    price-write path (#11832 indexed every write and was not faster).
+
+    An answer is used only for the exact maps it was built from, at the sizes
+    they had; anything else (or `PM_SCAN_PREFILTER=0`) takes the walk.
+    """
+
+    __slots__ = ("standalone_ids", "legs_by_event", "_built_from")
+
+    def __init__(self):
+        self.standalone_ids: set[int] = set()
+        self.legs_by_event: dict[int, list[int]] = {}
+        self._built_from: Optional[tuple] = None
+
+    def rebuild(self, open_outcome_ids, event_id_by_outcome: dict, complement_of: dict):
+        self._built_from = None
+        if not PM_SCAN_PREFILTER:
+            return
+        self.standalone_ids = standalone_open_outcome_ids(
+            open_outcome_ids, open_outcome_ids, event_id_by_outcome, complement_of,
+        )
+        legs: dict[int, list[int]] = {}
+        for oid, eid in event_id_by_outcome.items():
+            if eid is not None:
+                legs.setdefault(eid, []).append(oid)
+        self.legs_by_event = legs
+        self._built_from = (
+            open_outcome_ids, event_id_by_outcome, complement_of,
+            len(open_outcome_ids), len(event_id_by_outcome), len(complement_of),
+        )
+
+    def _events_current(self, event_id_by_outcome) -> bool:
+        built = self._built_from
+        return (PM_SCAN_PREFILTER and built is not None
+                and built[1] is event_id_by_outcome
+                and built[4] == len(event_id_by_outcome))
+
+    def standalone(self, walk, outcome_ids, open_outcome_ids, event_id_by_outcome,
+                   complement_of) -> set[int]:
+        """`walk(outcome_ids, ...)`'s answer (`standalone_open_outcome_ids`)."""
+        built = self._built_from
+        if (self._events_current(event_id_by_outcome)
+                and built[0] is open_outcome_ids and built[2] is complement_of
+                and built[3] == len(open_outcome_ids) and built[5] == len(complement_of)):
+            return self.standalone_ids.intersection(outcome_ids)
+        return walk(outcome_ids, open_outcome_ids, event_id_by_outcome, complement_of)
+
+    def price_owned(self, price_buffer, free, event_id_by_outcome, non_blend_outcome_ids,
+                    observation_continuity, observation_ack) -> set:
+        """`price_owned_events`, reading only the legs of `free` events."""
+        return price_owned_events(
+            price_buffer, free, event_id_by_outcome, non_blend_outcome_ids,
+            observation_continuity, observation_ack,
+            self.legs_by_event if self._events_current(event_id_by_outcome) else None,
+        )
+
+
 def standalone_open_outcome_ids(
     outcome_ids,
     open_outcome_ids,
@@ -4250,6 +4377,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # #10090: the installed open catalog is a successful `slate` scope, which
     # keeps the catalog-refresh loop even when the scope holds nothing.
     open_scope_installed = False
+    # #10090: the flush scans answer from the catalog these maps hold now.
+    catalog_boundary.scans.rebuild(open_outcome_ids, event_id_by_outcome, open_complement_of)
     # #9913: token → (latest, previous) distinct top of book, wide or not, so
     # a trade can be read against the book it hit. One entry per subscribed
     # token; rebuilt from the subscribe snapshot on every recycle.
@@ -4745,9 +4874,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if not final else set()
             )
             alone = (
-                standalone_open_outcome_ids(
-                    withdraw_buffer, open_outcome_ids, event_id_by_outcome,
-                    open_complement_of,
+                catalog_boundary.scans.standalone(
+                    standalone_open_outcome_ids, withdraw_buffer, open_outcome_ids,
+                    event_id_by_outcome, open_complement_of,
                 )
                 if standalone is not None
                 else set()
@@ -5104,9 +5233,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # released (Root's held-tail rig: 0.60 s held, 0.25 s unheld).
                 # Stage trace 43011 waited 4.67 s at that boundary; what held
                 # its flush there is not known.
-                for oid in standalone_open_outcome_ids(
-                    batch, open_outcome_ids, event_id_by_outcome,
-                    open_complement_of,
+                for oid in catalog_boundary.scans.standalone(
+                    standalone_open_outcome_ids, batch, open_outcome_ids,
+                    event_id_by_outcome, open_complement_of,
                 ):
                     del batch[oid]
                 for oid in [oid for oid in batch if oid in non_blend_outcome_ids]:
@@ -5122,9 +5251,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             withdraw_events = event_ids_for_outcomes(
                 event_id_by_outcome, withdraw_cohort_ids,
             )
-            side_books = standalone_open_outcome_ids(
-                withdraw_cohort_ids, open_outcome_ids, event_id_by_outcome,
-                open_complement_of,
+            side_books = catalog_boundary.scans.standalone(
+                standalone_open_outcome_ids, withdraw_cohort_ids, open_outcome_ids,
+                event_id_by_outcome, open_complement_of,
             )
             if not final:
                 side_books |= withdraw_cohort_ids & non_blend_outcome_ids
@@ -6099,9 +6228,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         the two loops write disjoint rows. ``flush_started`` is unused.
         """
         async with buffer_lock:
-            alone = standalone_open_outcome_ids(
-                price_buffer, open_outcome_ids, event_id_by_outcome,
-                open_complement_of,
+            alone = catalog_boundary.scans.standalone(
+                standalone_open_outcome_ids, price_buffer, open_outcome_ids,
+                event_id_by_outcome, open_complement_of,
             )
             batch = {oid: p for oid, p in price_buffer.items() if oid in alone}
         wrote_all = True
@@ -6147,9 +6276,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.polymarket_ws import _pm_lock_isolated_chunks
 
         async with buffer_lock:
-            alone = standalone_open_outcome_ids(
-                price_buffer, open_outcome_ids, event_id_by_outcome,
-                open_complement_of,
+            alone = catalog_boundary.scans.standalone(
+                standalone_open_outcome_ids, price_buffer, open_outcome_ids,
+                event_id_by_outcome, open_complement_of,
             )
             batch = [
                 oid for oid in price_buffer
@@ -6220,17 +6349,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             free = set(events) - busy
             if not free:
                 return busy
-            # PM buffers unchanged BBOs too. Only acknowledged uninterrupted
-            # values may pass; another leg's queued change owns the whole event
-            # even before its price chunk starts (including A-B-A).
-            return busy | {
-                eid for oid, value in price_buffer.items()
-                if (eid := event_id_by_outcome.get(oid)) in free
-                and oid not in non_blend_outcome_ids
-                and (observation_continuity.get(oid) is None
-                     or boundary.observation_ack.get(oid) != observation_continuity[oid]
-                     or observation_continuity[oid][1] != round(float(value), 6))
-            }
+            return busy | boundary.scans.price_owned(
+                price_buffer, free, event_id_by_outcome, non_blend_outcome_ids,
+                observation_continuity, boundary.observation_ack,
+            )
 
         async with buffer_lock:
             busy = owners({entry[0] for entry in boundary.observation_pending.values()})
@@ -7164,6 +7286,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     del open_complement_of[oid]
                 if admission is not None:
                     open_complement_of.update(admission.complement_of)
+                catalog_boundary.scans.rebuild(
+                    open_outcome_ids, event_id_by_outcome, open_complement_of,
+                )
                 open_scope_installed = (
                     admission is not None and admission.scope == OPEN_SCOPE_SLATE
                 )

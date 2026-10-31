@@ -599,6 +599,103 @@ STAMP_READ_JSON_ONCE_ENV = "STAMP_READ_JSON_ONCE"
 def stamp_read_json_once() -> bool:
     return os.getenv(STAMP_READ_JSON_ONCE_ENV, "1").strip() != "0"
 
+
+# #10090 `stamp_wait_reason` — why a LIVE game's oldest unstamped input is
+# still waiting once it is STAMP_WAIT_BUDGET_S old. Production 03:40Z
+# 2026-10-31 (Polymarket 15331470, live soccer): an input received 03:40:12.988
+# was stamped at 03:42:10.714, 117.7 s later, and nothing retained said whether
+# it was queued, held, refused or never owed. Classified from state this
+# refresher already holds, at debt selection (`refresh`, `admit_fresh`) and
+# after each attempted read (`_refresh_batch`); at most one line per event per
+# STAMP_WAIT_LINE_INTERVAL_S (an episode that printed one also prints its
+# closing STAMPED), plus a per-minute count of events by reason on the venue
+# minute line (`StampSpans.wait_reasons`). Log only: no await, lock or query.
+# ``STAMP_WAIT_REASON_LOG=0`` turns it off.
+STAMP_WAIT_REASON_ENV = "STAMP_WAIT_REASON_LOG"
+STAMP_WAIT_BUDGET_S = 5.0
+STAMP_WAIT_LINE_INTERVAL_S = 60.0
+#: What an attempted read did with the event (`_dispositions`), as a reason.
+#: `stamped` ends the wait; the rest say why the read did not.
+STAMP_WAIT_DISPOSITIONS = {
+    "stamped": "STAMPED",
+    "no_reading": "NO_VALID_READING",
+    "stale": "NO_VALID_READING",
+    "no_market": "CATALOG_CLOSED",
+    "no_row": "CATALOG_CLOSED",
+    "lock": "ROW_LOCK_SKIPPED",
+    "unchanged": "READ_UNCHANGED",
+    "unobserved": "READ_UNCHANGED",
+    "preview_only": "READ_UNCHANGED",
+    "error": "READ_ERROR",
+}
+
+
+def stamp_wait_reason_on() -> bool:
+    return os.getenv(STAMP_WAIT_REASON_ENV, "1").strip() != "0"
+
+
+class StampWaitLog:
+    """#10090 — the `stamp_wait_reason` lines' rate limit, per event.
+
+    An episode is one oldest-unstamped input (its `seq`); it ends when a read
+    stamps the event or that input stops being the oldest owed one. `seen`
+    counts every reason noted since the episode's last line, so a line names
+    each cause the wait passed through, not only the latest. Pure bookkeeping.
+    """
+
+    def __init__(self, source: str) -> None:
+        self.source = source
+        self._episodes: dict[int, dict] = {}
+        self._last_line: dict[int, float] = {}
+        self.lines = 0
+        self.errors = 0
+
+    def note(self, event_id: int, reason: str, obligation: tuple, now: float, *,
+             run: str, site: str) -> None:
+        seq, outcome_id, age, committed = obligation
+        episode = self._episodes.get(event_id)
+        if episode is None or episode["seq"] != seq:
+            episode = self._episodes[event_id] = {
+                "seq": seq, "seen": {}, "printed": False, "admitted_age": None,
+            }
+        seen = episode["seen"]
+        seen[reason] = seen.get(reason, 0) + 1
+        if reason == "ADMITTED" and episode["admitted_age"] is None:
+            episode["admitted_age"] = age
+        last = self._last_line.get(event_id)
+        due = last is None or now - last >= STAMP_WAIT_LINE_INTERVAL_S
+        if reason == "STAMPED":
+            del self._episodes[event_id]
+            if not (due or episode["printed"]):
+                return
+        elif not due:
+            return
+        else:
+            episode["printed"] = True
+        self._last_line[event_id] = now
+        self.lines += 1
+        logger.info(
+            "live_blend_refresh[%s]: stamp_wait_reason=%s run=%s venue=%s event=%s "
+            "outcome=%s seq=%s age_s=%.3f committed_seq=%s committed_age_s=%s "
+            "admitted_age_s=%s seen=%s site=%s",
+            self.source, reason, run, self.source, event_id, outcome_id, seq, age,
+            "-" if committed is None else committed[0],
+            "-" if committed is None else f"{committed[1]:.3f}",
+            "-" if episode["admitted_age"] is None else f"{episode['admitted_age']:.3f}",
+            ",".join(f"{name}:{count}" for name, count in sorted(seen.items())),
+            site,
+        )
+        episode["seen"] = {}
+
+    def retain(self, event_ids, now: float) -> None:
+        """Episodes of events no longer waiting end; rate-limit marks older
+        than the interval go."""
+        for event_id in [eid for eid in self._episodes if eid not in event_ids]:
+            del self._episodes[event_id]
+        for event_id in [eid for eid, at in self._last_line.items()
+                         if now - at >= STAMP_WAIT_LINE_INTERVAL_S]:
+            del self._last_line[event_id]
+
 # #10090 — an observation-preview read whose caller stopped waiting at its
 # 0.25 s deadline is left to end by itself instead of being cancelled. A
 # cancelled SELECT invalidates its pooled connection and then holds its slot
@@ -824,6 +921,8 @@ class StampSpans:
         self.slot_full = 0
         self.read_rows = 0
         self.read_json = 0
+        #: #10090 `stamp_wait_reason`: reason -> the events that waited for it.
+        self.wait_reasons: dict[str, set] = {}
 
     def add_prepared(self, slot_s: float, read_s: float) -> None:
         self.prepared += 1
@@ -847,6 +946,12 @@ class StampSpans:
             f"loop_busy={self.busy:.1f}s loop_idle={self.idle:.1f}s "
             f"workers={FRESH_STAMP_WORKERS} slots_max={self.slots_max} "
             f"slots_mean={mean:.1f} slot_full={self.slot_full}"
+        ) + (
+            " wait_reasons=" + ",".join(
+                f"{reason}:{len(events)}"
+                for reason, events in sorted(self.wait_reasons.items())
+            )
+            if self.wait_reasons else ""
         )
 
 
@@ -1482,6 +1587,28 @@ class TailReceipts:
                 break
             message = line()
         logger.info("%s", message)
+
+    def aged_obligations(self, wall: float, budget_s: float, event_ids=None) -> dict:
+        """#10090 `stamp_wait_reason` — each LIVE event's oldest input no
+        stamp has covered yet, once it is ``budget_s`` old (of ``event_ids``
+        only, when given): event id -> (seq, outcome id, age s, and the
+        newest committed input's (seq, age s) or None). Pure read."""
+        aged = {}
+        candidates = self._uncovered if event_ids is None else event_ids
+        for event_id in candidates:
+            pending = self._uncovered.get(event_id)
+            if not pending or event_id not in self._live_events:
+                continue
+            seq, recv_wall, outcome_id = pending[0]
+            age = wall - recv_wall
+            if age < budget_s:
+                continue
+            committed = self._committed.get(event_id)
+            aged[event_id] = (
+                seq, outcome_id, age,
+                None if committed is None else (committed.seq, wall - committed.recv_wall),
+            )
+        return aged
 
     def unowed(self, marks: Iterable[InputMark]) -> None:
         """#10090 (A1) — committed inputs no stamp reads (a live game's prop
@@ -3077,6 +3204,8 @@ class LiveBlendRefresher:
         self._session_slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
         #: #10090 — this minute's stamp transaction spans, for the venue line.
         self.stamp_spans = StampSpans()
+        #: #10090 `stamp_wait_reason` lines (`STAMP_WAIT_REASON_ENV`).
+        self.stamp_waits = StampWaitLog(source)
         self._history: list[tuple] = []
         self._history_task: Optional[asyncio.Task] = None
         self._history_count = 0  # committed debt plus pre-COMMIT reservations
@@ -3219,8 +3348,10 @@ class LiveBlendRefresher:
             if now < hold:
                 return False
             del self._failed_hold_until[event_id]
+        return self._floor_passed(event_id, now, self._current_clock(now))
+
+    def _floor_passed(self, event_id: int, now: float, current: float) -> bool:
         last = self._last_refresh_at.get(event_id)
-        current = self._current_clock(now)
         if last is None:
             return True
         floor = self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
@@ -3236,6 +3367,95 @@ class LiveBlendRefresher:
         # start + floor would stamp it again inside the floor.
         stamped = self._last_refresh_current.get(event_id, last)
         return current - max(stamped, last) >= floor
+
+    def _due_unchanged(self, event_id: int, now: float) -> bool:
+        """`_due`, changing nothing: no expired hold is dropped and no clock
+        is recorded (`stamp_wait_reason` only)."""
+        hold = self._failed_hold_until.get(event_id)
+        if hold is not None and now < hold:
+            return False
+        high = self._clock_high
+        current = now
+        if high is not None and now <= high[0]:
+            current = max(now, high[0] + max(0.0, _mono() - high[1]))
+        return self._floor_passed(event_id, now, current)
+
+    # ── #10090 `stamp_wait_reason`: why a live game's input still waits ──────
+
+    def _stamp_wait_reason(self, event_id: int, now: float, *, excluded=(),
+                           due_reason: str) -> str:
+        """The reason an owed LIVE event is not being stamped right now, from
+        state already held; ``due_reason`` is the caller's for one that is
+        owed, due and still not taken."""
+        window = self._admission
+        if window is not None and event_id in window.holding:
+            return "QUEUED_OR_RUNNING"
+        if event_id in excluded:
+            return "COHORT_UNFINISHED_OR_WITHDRAWAL"
+        hold = self._failed_hold_until.get(event_id)
+        if hold is not None and now < hold:
+            return "RETRY_HOLD"
+        if event_id in self._book_refused:
+            return "NO_VALID_READING"
+        if event_id not in self._lock_retry and event_id not in self._throttle_deferred:
+            # Nothing owed here: not committed yet (the writer's side), or a
+            # stamp that reread the board carried it without crediting it.
+            return "NOT_OWED"
+        if not self._due_unchanged(event_id, now):
+            return "NOT_DUE"
+        return due_reason
+
+    def _stamp_wait_sweep(self, site: str, now: float, *, taken=(), excluded=(),
+                          due_reason: str) -> None:
+        """Debt selection: one reason per live event whose oldest unstamped
+        input is past STAMP_WAIT_BUDGET_S; ``taken`` are ADMITTED. Never raises."""
+        receipts = getattr(self, "receipts", None)
+        waits = getattr(self, "stamp_waits", None)
+        if receipts is None or waits is None or not stamp_wait_reason_on():
+            return
+        try:
+            mono = _mono()
+            aged = receipts.aged_obligations(_wall(), STAMP_WAIT_BUDGET_S)
+            for event_id, obligation in aged.items():
+                reason = "ADMITTED" if event_id in taken else self._stamp_wait_reason(
+                    event_id, now, excluded=excluded, due_reason=due_reason,
+                )
+                self._stamp_wait_noted(waits, event_id, reason, obligation, mono, site)
+            waits.retain(aged, mono)
+        except Exception:
+            self._stamp_wait_failed(waits)
+
+    def _stamp_wait_read(self, event_ids, dispositions: dict) -> None:
+        """After an attempted read: what the read did with each aged live
+        event (`STAMP_WAIT_DISPOSITIONS`). Never raises."""
+        receipts = getattr(self, "receipts", None)
+        waits = getattr(self, "stamp_waits", None)
+        if receipts is None or waits is None or not stamp_wait_reason_on():
+            return
+        try:
+            mono = _mono()
+            aged = receipts.aged_obligations(_wall(), STAMP_WAIT_BUDGET_S, event_ids)
+            for event_id, obligation in aged.items():
+                disposition = dispositions.get(event_id) or ("no_market",)
+                reason = STAMP_WAIT_DISPOSITIONS.get(disposition[0], "READ_ERROR")
+                self._stamp_wait_noted(waits, event_id, reason, obligation, mono, "read")
+        except Exception:
+            self._stamp_wait_failed(waits)
+
+    def _stamp_wait_noted(self, waits, event_id, reason, obligation, mono, site) -> None:
+        spans = getattr(self, "stamp_spans", None)
+        if spans is not None:
+            spans.wait_reasons.setdefault(reason, set()).add(event_id)
+        waits.note(event_id, reason, obligation, mono,
+                   run=getattr(self.receipts, "run", "-"), site=site)
+
+    def _stamp_wait_failed(self, waits) -> None:
+        waits.errors += 1
+        if waits.errors == 1 or waits.errors % 1000 == 0:
+            logger.warning(
+                "live_blend_refresh[%s]: stamp_wait_reason failed (%d)",
+                self.source, waits.errors, exc_info=True,
+            )
 
     def _record_stamp_clock(self, event_ids: Iterable[int], now: float) -> None:
         """#10090 — the current clock as these events' stamp starts (`_due`'s
@@ -3421,6 +3641,11 @@ class LiveBlendRefresher:
         # this read parks it again with the inputs it was refused on.
         for event_id in due:
             self._book_refused.pop(event_id, None)
+        # Owed, due and not excluded, yet not taken: only the debt budget.
+        self._stamp_wait_sweep(
+            "refresh", clock, taken=due, excluded=excluded,
+            due_reason="DEBT_BUDGET_SPENT",
+        )
         self.stats["considered"] += len(due)
         # Counted once per throttled price, not once per flush it waits out.
         skipped = len(self._throttle_deferred.difference(deferred))
@@ -4220,6 +4445,12 @@ class LiveBlendRefresher:
         self._start_history()
         if (not self._lock_retry and not self._throttle_deferred
                 and not self._book_refused_woken(_mono())):
+            # Nothing owed is due here, so an aged input is not owed at all
+            # (or parked, or held): no `refresh` will run to say so.
+            self._stamp_wait_sweep(
+                "pending", _mono() if flush_started is None else flush_started,
+                excluded=set(defer_event_ids), due_reason="NOT_OWED",
+            )
             if self.receipts is not None:
                 # #10090: a quiet flush still closes a finished minute.
                 self._receipt_call(self.receipts.roll)
@@ -4559,6 +4790,7 @@ class LiveBlendRefresher:
         live = self._live_event_ids
         live_owed = (live & self._throttle_deferred) - self._lock_retry
         live_free = _admitted_live_debt_slots(slots) - len(window.live_debts)
+        debt_excluded = excluded
         if free > 0 or (live_free > 0 and live_owed):
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed events
@@ -4598,6 +4830,10 @@ class LiveBlendRefresher:
                         rotation.append(eid)
             self._debt_rotation = rotation
         if not taken:
+            self._stamp_wait_sweep(
+                "admit", flush_started, excluded=debt_excluded,
+                due_reason="LIVE_DEBT_SLOT_BUSY",
+            )
             return frozenset()
         # #10090: an event whose earlier stamp in this call has returned is
         # admitted again for its newer committed price. That attempt is retired
@@ -4680,6 +4916,11 @@ class LiveBlendRefresher:
                     task.exception()
             for _ in range(min(FRESH_STAMP_WORKERS - len(window.workers), len(due))):
                 window.workers.add(asyncio.create_task(self._admitted_worker(window)))
+        # Owed, due and not excluded, yet not taken: no debt slot was free.
+        self._stamp_wait_sweep(
+            "admit", flush_started, taken=frozenset(due), excluded=debt_excluded,
+            due_reason="LIVE_DEBT_SLOT_BUSY",
+        )
         return cohort
 
     def stop_admitting(self) -> None:
@@ -5543,6 +5784,7 @@ class LiveBlendRefresher:
                 else:
                     self._live_event_ids.discard(eid)
             if not grouped:
+                self._stamp_wait_read(event_ids, {})
                 if self.preview:
                     # #10090: this source spoke for none of these events, so
                     # none of its pending values may keep speaking.
@@ -6028,6 +6270,12 @@ class LiveBlendRefresher:
         # Session closed and committed — only now is the pushed number a number
         # the database actually kept, and only now is it "written".
         self._stage_trace("attempt_committed", event_ids, self._dispositions)
+        # Before `on_committed` resolves the receipts: the stamped input is
+        # still the oldest owed one, so its wait closes as STAMPED.
+        self._stamp_wait_read(event_ids, {
+            eid: self._dispositions.get(eid, ("error",))
+            for eid in event_ids if eid in grouped
+        })
         for event_id, value in written.items():
             self._last_write_at[event_id] = now
             self._last_written_value[event_id] = value
