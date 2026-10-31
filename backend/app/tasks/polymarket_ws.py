@@ -689,6 +689,20 @@ def _scan_prefilter_env() -> bool:
 PM_SCAN_PREFILTER = _scan_prefilter_env()
 
 
+def _pack_preview_cohorts_env() -> bool:
+    """#10090 — env `PM_PACK_PREVIEW_COHORTS`, read once at import.
+
+    On (the default), adjacent observed preview-cohort transactions share one
+    (`_pm_pack_preview_cohort_chunks`); `0`/`false`/`off`/`no` gives each its
+    own transaction, today's path exactly.
+    """
+    raw = os.environ.get("PM_PACK_PREVIEW_COHORTS")
+    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
+
+
+PM_PACK_PREVIEW_COHORTS = _pack_preview_cohorts_env()
+
+
 #: #10090: how long a repeated top of book stays skippable, and how often the
 #: per-token memo of the last handled book drops entries too old to skip on.
 PM_WS_REPEAT_SKIP_DEFAULT_MS = 250
@@ -2691,6 +2705,63 @@ def _pm_lock_isolated_chunks(
             events = {event_by_outcome[oid] for oid in chunk if oid in event_by_outcome}
             (first if events.intersection(first_events) else rest).append(chunk)
         result = first + rest
+    return result
+
+
+def _pm_pack_preview_cohort_chunks(
+    chunks: list[list[int]],
+    packable_events: set[int],
+    event_by_outcome: dict[int, int],
+    lock_retry_until: dict,
+    open_outcome_ids,
+    chunk_rows: int,
+) -> list[list[int]]:
+    """#10090: join ADJACENT preview-cohort transactions, up to ``chunk_rows``.
+
+    `_pm_lock_isolated_chunks` gives every observed preview event (changed or
+    unchanged) its own transaction, so a flush walks one transaction per live
+    game, each ~8 round trips (BEGIN, two lock SETs, two statement-timeout
+    SETs, the price UPDATE, rerank, COMMIT) on a loop already at cpu 0.95.
+    Production 2026-10-31 12:45-12:50Z, 67 live games: `phases` (chunks per
+    minute) flat at 744-1108 all night while `game_flush n` fell 164 -> 21-32
+    and `max` rose to 3.8-9.2 s. The isolation (ea917de9, 10/21) kept an
+    unchanged cohort out of an unrelated row-lock wait; since ac282ce0 (10/30)
+    a multi-event chunk holds back only a held unit (SKIP LOCKED) and commits
+    the rest, which is what the isolation bought.
+
+    Only whole chunks are joined, and only neighbours, so every row keeps its
+    position and no unit is split. A chunk joins only if every leg names a
+    ``packable_events`` event and none is open or lock-retried (its NOWAIT
+    probe or cooldown skip would refuse the whole joined transaction), so
+    lock retries stay alone exactly as before. ``PM_PACK_PREVIEW_COHORTS=0``
+    keeps the chunks as given.
+    """
+    if not PM_PACK_PREVIEW_COHORTS or not packable_events:
+        return chunks
+
+    def packable(chunk):
+        return bool(chunk) and all(
+            event_by_outcome.get(oid) in packable_events
+            and oid not in open_outcome_ids
+            and oid not in lock_retry_until
+            for oid in chunk
+        )
+
+    result: list[list[int]] = []
+    pack: list[int] = []
+    for chunk in chunks:
+        if not packable(chunk):
+            if pack:
+                result.append(pack)
+                pack = []
+            result.append(chunk)
+            continue
+        if pack and len(pack) + len(chunk) > chunk_rows:
+            result.append(pack)
+            pack = []
+        pack = pack + chunk
+    if pack:
+        result.append(pack)
     return result
 
 
@@ -5129,6 +5200,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.live_blend_refresh import _mono
         from app.tasks.polymarket_ws import (
             _PMHeadlineEvents, _pm_lock_isolated_chunks, _pm_pure_bridged_legs,
+            _pm_pack_preview_cohort_chunks,
             _pm_game_flush_span,
         )
 
@@ -5548,6 +5620,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     chunks, isolated_events, event_id_by_outcome,
                     market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
                     first_events=changed_events,
+                )
+                # #10090: one transaction per observed live game was the game
+                # flush's cost at 67 live games; neighbours now share one.
+                chunks = _pm_pack_preview_cohort_chunks(
+                    chunks, (isolated_events | changed_events) - lock_retry_events,
+                    event_id_by_outcome, lock_retry_until, open_outcome_ids,
+                    FLUSH_CHUNK_ROWS,
                 )
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
