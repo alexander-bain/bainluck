@@ -47,6 +47,16 @@
  *                     served, web's page line falls back to the ladders
  *                     (`pm_spread_data.projected_final`); this screen follows
  *                     native and says "No in-game forecast" (see report).
+ *                     The before-the-start ladder pair is read ONLY from this
+ *                     game's own `/history` body (`ownHockeyHistory`: exact
+ *                     `event_id`); another game's body supplies no forecast.
+ *   - history         `hockeyJourneyHistory` over the held `/history` body, only
+ *                     when it is this game's own (#10868 hockey F1). OWNERSHIP IS
+ *                     DECIDED ONCE in `buildHockeyJourney`, and the chart and the
+ *                     before-the-start forecast each check it again. A foreign
+ *                     body reads exactly as a missing one: "History unavailable",
+ *                     no borrowed point, series id, note or control. No name or
+ *                     time matching.
  *   - result          `servedOutcome` — the served verdict, else the scores.
  *   - names / tints   `teamShortNames` (teamShortName.ts:1220), `teamTextColor`
  *                     (teamColors.ts:140).
@@ -95,7 +105,7 @@ import {
   type HockeyJourneyPhase,
   type HockeyJourneySlot,
 } from "./hockeyJourneyCore";
-import { hockeyJourneyHistory, type HockeyJourneyHistory } from "./hockeyJourneyHistory";
+import { hockeyJourneyHistory, ownHockeyHistory, type HockeyJourneyHistory } from "./hockeyJourneyHistory";
 import {
   hockeyJourneyContribution,
   hockeyJourneyOriginals,
@@ -332,7 +342,9 @@ function liveOdds(event: EventDetailResponse): SportsbookProjectionFields | unde
 /**
  * Before the start: the pair `eventPageProjectedPair` hands the hero line,
  * under that line's own gates (page.tsx:1805-1866: a derived spread, a possible
- * result, both halves above zero), printed at its own precision.
+ * result, both halves above zero), printed at its own precision. The ladder
+ * pair comes only from this game's own body (`ownHockeyHistory`); a foreign or
+ * missing body supplies none, and the game's own sportsbook pair still prints.
  */
 export function beforeForecast(
   event: EventDetailResponse,
@@ -343,7 +355,7 @@ export function beforeForecast(
     sportKey: event.sport,
     commenceTime: event.commence_time,
     isLive: false,
-    ladderPair: history?.pm_spread_data?.projected_final,
+    ladderPair: ownHockeyHistory(history, event)?.pm_spread_data?.projected_final,
   });
   if (!pair) return null;
   const vocab = sportVocab(event.sport || undefined);
@@ -589,7 +601,10 @@ export function allPropsLabel(count: number | null): string | null {
 export interface HockeyJourneyInput {
   /** The event the page already holds (`["event", id]`). */
   event: EventDetailResponse;
-  /** The `/history` body the page already holds (`["history", id, full]`). */
+  /**
+   * The `/history` body the page already holds (`["history", id, full]`). Used
+   * only when its `event_id` is exactly `event.id`; any other body reads as missing.
+   */
   history: EventHistoryResponse | null | undefined;
   /** The `/game-markets` body the page already holds (its `gameMarkets` memo). */
   gameMarkets: GameMarketsResponse | null | undefined;
@@ -600,12 +615,15 @@ export interface HockeyJourneyInput {
  * The whole screen's view model. Pure: same inputs, same answer. A missing
  * history response (not arrived, or failed) leaves ONLY the chart slot
  * unavailable: the matrix, stories and All props compose from their own inputs
- * (native `HockeyJourneyEventPageHostAdapter10868.build`).
+ * (native `HockeyJourneyEventPageHostAdapter10868.build`). A body for another
+ * game is decided here, once, to be no body at all: the chart reads "History
+ * unavailable" and no forecast is read from it.
  */
 export function buildHockeyJourney({ event, history, gameMarkets, host }: HockeyJourneyInput): HockeyJourneyViewModel {
   const phase = hockeyJourneyPhase(event, host.nowMs);
-  const headline = hockeyJourneyHeadline(event, history, host);
-  const historyModel = hockeyJourneyHistory(history, event, phase, host.nowMs);
+  const own = ownHockeyHistory(history, event);
+  const headline = hockeyJourneyHeadline(event, own, host);
+  const historyModel = hockeyJourneyHistory(own, event, phase, host.nowMs);
   const points = hockeyJourneyContribution("points", event, gameMarkets, host.nowMs);
   const assists = hockeyJourneyContribution("assists", event, gameMarkets, host.nowMs);
   const originals = hockeyJourneyOriginals(event, gameMarkets, host.nowMs);

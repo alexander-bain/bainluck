@@ -91,6 +91,13 @@
  * `HockeyJourneyHistoryAdapter10868.unavailable`. A response with no readable
  * row is still "No recorded history".
  *
+ * Whose body (#10868 hockey F1): a held response is this game's ONLY when its
+ * `event_id` is exactly `event.id` (`ownHockeyHistory`) — no name or time
+ * matching. A body for another game (or with no id to check) is treated as no
+ * response at all: "History unavailable", no borrowed point, series id, note,
+ * Details or working control. The page decides this once at composition
+ * (`buildHockeyJourney`); this reader checks it again itself.
+ *
  * PURE: no fetch, no subscription, no timer. `nowMs` is a parameter.
  */
 
@@ -672,12 +679,31 @@ export function historyGameEnd(history: EventHistoryResponse, event: EventDetail
   return parseMs(domain?.end);
 }
 
-export function hockeyJourneyHistory(
+declare const OWN_HOCKEY_HISTORY: unique symbol;
+
+/**
+ * A held `/history` body PROVEN to be this game's: its `event_id` is exactly
+ * `event.id`. Only {@link ownHockeyHistory} makes one.
+ */
+export type OwnHockeyHistory = EventHistoryResponse & { readonly [OWN_HOCKEY_HISTORY]: true };
+
+/** The one ownership check: exact `event_id`, no name or time matching. Null for a missing or foreign body. */
+export function ownHockeyHistory(
   history: EventHistoryResponse | null | undefined,
+  event: EventDetailResponse,
+): OwnHockeyHistory | null {
+  if (!history || typeof history.event_id !== "number" || history.event_id !== event.id) return null;
+  return history as OwnHockeyHistory;
+}
+
+export function hockeyJourneyHistory(
+  held: EventHistoryResponse | null | undefined,
   event: EventDetailResponse,
   phase: HockeyJourneyPhase,
   nowMs: number,
 ): HockeyJourneyHistory {
+  // A missing body and another game's body read the same: "History unavailable".
+  const history = ownHockeyHistory(held, event);
   if (!history) return unavailableHistory(event, phase);
   const line = historyLine(history);
   // Null when the start is not a confirmed kick-off: the readings still draw, unsplit.

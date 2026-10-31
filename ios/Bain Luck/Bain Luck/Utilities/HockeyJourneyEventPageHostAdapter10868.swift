@@ -32,8 +32,6 @@ import SwiftUI
 ///         markets: vm.gameMarkets, boxScore: vm.relatedFutures?.boxScore,
 ///         probabilityObservedAt: vm.displayedProbabilityObservedAt(event),
 ///         deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
-///         ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
-///         ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
 ///         now: now,
 ///         onInteraction: { /* the page's existing reader hold */ })
 /// }
@@ -46,6 +44,15 @@ import SwiftUI
 /// working chart control and no retry. The real load/error/retry contract is
 /// Native's.
 ///
+/// WHOSE HISTORY (#10868 hockey F1): the held `history` is this game's only
+/// when its `eventId` is exactly `event.id` — no name or time matching —
+/// decided once in `build`. Another game's body is treated as no body: the
+/// chart says "History unavailable", and no before-the-start forecast is read
+/// from it. The forecast's ladder pair is taken from that same identity-checked
+/// body (`pmSpreadData.projectedFinal`), never from a separate value, so it
+/// cannot come from another game. The legacy `ladderHome` / `ladderAway`
+/// parameters stay for compatibility only and are not read.
+///
 /// History controls: only Full chart opens anything (the full-size history
 /// reader). The history adapter offers Details and Inspect as unavailable
 /// until their owner contracts exist, so the shared callback never enables a
@@ -57,6 +64,9 @@ struct HockeyJourneyEventPageHost10868: View {
     let boxScore: [String: [String: Double]]?
     let probabilityObservedAt: Date?
     var deliveryInterrupted: Bool = false
+    /// LEGACY, kept for compatibility and NOT trusted: the ladder pair is read
+    /// from the identity-checked `history` body itself, and these never
+    /// override it (#10868 hockey F1).
     var ladderHome: Double? = nil
     var ladderAway: Double? = nil
     var now: Date = Date()
@@ -189,17 +199,23 @@ struct HockeyJourneyEventPageHost10868: View {
 
     /// The page input and originals from the passed values alone — pure, so
     /// every changed value reaches the screen on the next pass. A missing
-    /// history response leaves only the chart slot unavailable.
+    /// history response leaves only the chart slot unavailable, and another
+    /// game's body (`eventId` not exactly `event.id`) is decided here, once, to
+    /// be no body at all. The forecast's ladder pair is the own body's
+    /// `pmSpreadData.projectedFinal`; the legacy `ladderHome` / `ladderAway`
+    /// arguments are accepted for compatibility and ignored.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
                       boxScore: [String: [String: Double]]?, probabilityObservedAt: Date?,
                       deliveryInterrupted: Bool = false, ladderHome: Double? = nil, ladderAway: Double? = nil,
                       now: Date, reading: Reading = Reading(),
                       calendar: Calendar = .current, locale: Locale = .current) -> Built {
+        let own = history.flatMap { $0.eventId == event.id ? $0 : nil }
+        let ladder = own?.pmSpreadData?.projectedFinal
         let host = HockeyJourneyPageAdapter10868.Host(
             probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
-            ladderHome: ladderHome, ladderAway: ladderAway, now: now, calendar: calendar, locale: locale)
+            ladderHome: ladder?.homeScore, ladderAway: ladder?.awayScore, now: now, calendar: calendar, locale: locale)
         let phase = HockeyJourneyPageAdapter10868.phase(event, now: now)
-        let historyInput = history.map {
+        let historyInput = own.map {
             HockeyJourneyHistoryAdapter10868.history(
                 $0, event: event, phase: phase,
                 host: HockeyJourneyHistoryAdapter10868.Host(now: now, calendar: calendar, locale: locale))

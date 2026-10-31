@@ -707,6 +707,148 @@ final class HockeyJourneyHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(input.caption, "Before game")
     }
 
+    // MARK: - Whose history (#10868 hockey F1)
+
+    private func relabelled(_ json: String, eventId: Int) throws -> EventHistoryResponse {
+        try decoder().decode(EventHistoryResponse.self, from: try edited(json, setting: ["event_id": eventId]))
+    }
+
+    /// The page as the host glue builds it, with no markets or box (they are not under test).
+    private func hostBuild(_ event: EventDetail, history: EventHistoryResponse?, now: String,
+                           ladderHome: Double? = nil, ladderAway: Double? = nil) throws -> HockeyJourneyPageInput10868 {
+        HockeyJourneyEventPageHost10868.build(
+            event: event, history: history, markets: nil, boxScore: nil,
+            probabilityObservedAt: event.heroProbabilityObservedAt?.asDate,
+            ladderHome: ladderHome, ladderAway: ladderAway,
+            now: try XCTUnwrap(now.asDate), calendar: Self.pacific, locale: Locale(identifier: "en_US")).input
+    }
+
+    /// The before matrix's two forecast slots, home then away; nil off the before phase.
+    private func forecast(_ input: HockeyJourneyPageInput10868) -> [HockeyJourneySlot10868]? {
+        guard case .before(let matrix) = input.headline.matrix else { return nil }
+        return [matrix.home.projectedGoals, matrix.away.projectedGoals]
+    }
+
+    private var noForecast: [HockeyJourneySlot10868] {
+        [.absent(A.Words.noPregameForecast), .absent(A.Words.noPregameForecast)]
+    }
+
+    /// TEST MUTATION: the retained Rams detail with its served sportsbook projections removed,
+    /// so the before-the-start pair in play can only be the ladders'.
+    private func ramsWithoutSportsbookPair() throws -> EventDetail {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.ramsDetail.utf8)) as? [String: Any])
+        var odds = try XCTUnwrap(object["current_odds"] as? [String: Any])
+        XCTAssertEqual(odds["projected_home_score"] as? Double, 29.0)
+        XCTAssertEqual(odds["projected_away_score"] as? Double, 25.4)
+        odds.removeValue(forKey: "projected_home_score")
+        odds.removeValue(forKey: "projected_away_score")
+        object["current_odds"] = odds
+        return try decoder().decode(EventDetail.self, from: try JSONSerialization.data(withJSONObject: object))
+    }
+
+    /// N1. The real 15169793 body (Wild–Bruins) held on the page of 15338496 (Devils at Golden
+    /// Knights) is drawn as no body at all, in every phase. The relabelled ids are TEST CONTROLS:
+    /// the same bytes under this game's id draw, and this game's own bytes under another id do not.
+    func testTheChartReaderDrawsAnotherGamesBodyAsNoBody() throws {
+        let event = try detail(Self.devilsKnightsDetail)
+        let foreign = try response(Self.wildBruinsHistory)
+        XCTAssertEqual(foreign.eventId, 15169793)
+        XCTAssertEqual(event.id, 15338496)
+        let host = readerHost("2026-10-30T20:13:55Z")
+        for phase in [HockeyJourneyPagePhase10868.before, .live, .final] {
+            XCTAssertEqual(H.history(foreign, event: event, phase: phase, host: host),
+                           H.unavailable(event: event, phase: phase))
+        }
+        let unavailable = H.unavailable(event: event, phase: .before)
+        XCTAssertNotEqual(H.history(try relabelled(Self.wildBruinsHistory, eventId: event.id),
+                                    event: event, phase: .before, host: host), unavailable)
+        XCTAssertEqual(H.history(try relabelled(Self.devilsKnightsHistory, eventId: 15169793),
+                                 event: event, phase: .before, host: host), unavailable)
+        XCTAssertNotEqual(H.history(try response(Self.devilsKnightsHistory), event: event, phase: .before, host: host),
+                          unavailable)
+    }
+
+    /// N2. The host builds exactly the no-body page from another game's body: "History
+    /// unavailable", no borrowed series id or note, no Full chart. The own chance, stories and
+    /// copy are those of the page with this game's own body.
+    func testTheHostBuildsTheNoBodyPageFromAnotherGamesBody() throws {
+        let event = try detail(Self.devilsKnightsDetail)
+        let now = "2026-10-30T20:13:55Z"
+        let page = try hostBuild(event, history: try response(Self.wildBruinsHistory), now: now)
+        let missing = try hostBuild(event, history: nil, now: now)
+        let own = try hostBuild(event, history: try response(Self.devilsKnightsHistory), now: now)
+        XCTAssertEqual(page, missing)
+        XCTAssertEqual(page.history, H.unavailable(event: event, phase: .before))
+        XCTAssertEqual(page.history.plotAbsence, FieldHistoryPlotAbsence10868(title: "History unavailable", words: nil))
+        XCTAssertNil(page.history.expand)
+        XCTAssertEqual(page.history.notes, [])
+        XCTAssertFalse(page.history.series.contains { $0.id.contains("15169793") })
+        XCTAssertEqual(page.headline, own.headline)
+        XCTAssertEqual(page.points, own.points)
+        XCTAssertEqual(page.assists, own.assists)
+        XCTAssertEqual(page.stories, own.stories)
+        XCTAssertEqual(page.copy, own.copy)
+        XCTAssertNotEqual(own.history, page.history)
+    }
+
+    /// N3. TEST CONTROL, NOT HOCKEY FORECAST EVIDENCE: `LiveProjectedFinalAdmission2920` refuses
+    /// every hockey pair, so a history-derived ladder pair is reached only through this NFL event
+    /// with its sportsbook projections removed (TEST MUTATION). Another game's ladder (3.7 / 2.4)
+    /// supplies no forecast; under this game's id the same bytes print; this game's own body's
+    /// verbatim `pm_spread_data.projected_final` (28.8 / 25.5, Kalshi) prints.
+    func testABeforeTheStartForecastIsNeverReadFromAnotherGamesBody() throws {
+        XCTAssertNil(LiveProjectedFinalAdmission2920.format(forSport: "icehockey_nhl"))
+        XCTAssertNotNil(LiveProjectedFinalAdmission2920.format(forSport: "americanfootball_nfl"))
+        let event = try ramsWithoutSportsbookPair()
+        let now = "2026-10-12T05:45:12Z"
+        let foreign = try response(Self.devilsKnightsHistory)
+        XCTAssertEqual(foreign.pmSpreadData?.projectedFinal?.homeScore, 3.7)
+        XCTAssertEqual(foreign.pmSpreadData?.projectedFinal?.awayScore, 2.4)
+        let page = try hostBuild(event, history: foreign, now: now)
+        XCTAssertEqual(page, try hostBuild(event, history: nil, now: now))
+        XCTAssertEqual(forecast(page), noForecast)
+        let relabelledPage = try hostBuild(event, history: try relabelled(Self.devilsKnightsHistory, eventId: event.id),
+                                           now: now)
+        XCTAssertEqual(forecast(relabelledPage), [A.forecastSlot(3.7), A.forecastSlot(2.4)])
+        let own = try response(Self.ramsHistory)
+        XCTAssertEqual(own.pmSpreadData?.projectedFinal?.homeScore, 28.8)
+        XCTAssertEqual(own.pmSpreadData?.projectedFinal?.awayScore, 25.5)
+        let ownPage = try hostBuild(event, history: own, now: now)
+        XCTAssertEqual(forecast(ownPage), [A.forecastSlot(28.8), A.forecastSlot(25.5)])
+        guard case .before(let matrix) = ownPage.headline.matrix else { return XCTFail("before matrix") }
+        XCTAssertEqual(matrix.projectedGoals.provenance, "Prediction-market lines before the start")
+    }
+
+    /// The preserved legacy scalars never replace the identity-bound pair. With this game's own
+    /// body held, the passed bare doubles (the other game's 3.7 / 2.4, TEST CONTROL) change
+    /// nothing; with no body, another game's body, or an own body without a ladder pair, they
+    /// supply nothing. Same NFL-keyed TEST MUTATION as N3.
+    func testPassedBareLadderDoublesNeverReplaceTheOwnBodysPair() throws {
+        let event = try ramsWithoutSportsbookPair()
+        let now = "2026-10-12T05:45:12Z"
+        let own = try response(Self.ramsHistory)
+        let bound = try hostBuild(event, history: own, now: now)
+        let withScalars = try hostBuild(event, history: own, now: now, ladderHome: 3.7, ladderAway: 2.4)
+        XCTAssertEqual(withScalars, bound)
+        XCTAssertEqual(forecast(withScalars), [A.forecastSlot(28.8), A.forecastSlot(25.5)])
+        let none = try hostBuild(event, history: nil, now: now, ladderHome: 3.7, ladderAway: 2.4)
+        XCTAssertEqual(none, try hostBuild(event, history: nil, now: now))
+        XCTAssertEqual(forecast(none), noForecast)
+        XCTAssertEqual(forecast(try hostBuild(event, history: try response(Self.devilsKnightsHistory), now: now,
+                                              ladderHome: 3.7, ladderAway: 2.4)), noForecast)
+        let unladdered = try decoder().decode(EventHistoryResponse.self,
+                                              from: try edited(Self.ramsHistory, removing: ["pm_spread_data"])) // CONSTRUCTED
+        XCTAssertEqual(unladdered.eventId, event.id)
+        XCTAssertNil(unladdered.pmSpreadData?.projectedFinal)
+        XCTAssertEqual(forecast(try hostBuild(event, history: unladdered, now: now, ladderHome: 3.7, ladderAway: 2.4)),
+                       noForecast)
+        // An NHL page with its own body: the scalars change nothing there either.
+        let nhl = try detail(Self.devilsKnightsDetail)
+        let nhlOwn = try response(Self.devilsKnightsHistory)
+        XCTAssertEqual(try hostBuild(nhl, history: nhlOwn, now: "2026-10-30T20:13:55Z", ladderHome: 3.7, ladderAway: 2.4),
+                       try hostBuild(nhl, history: nhlOwn, now: "2026-10-30T20:13:55Z"))
+    }
+
     // MARK: - Retained bodies
 
     private static let wildBruinsDetail = ##"""

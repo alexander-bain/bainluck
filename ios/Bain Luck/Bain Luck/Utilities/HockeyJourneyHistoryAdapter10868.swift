@@ -190,9 +190,15 @@ enum HockeyJourneyHistoryAdapter10868 {
 
     // MARK: - The history
 
+    /// The held body is drawn only when it is this game's own: `eventId`
+    /// exactly `event.id`, no name or time matching (#10868 hockey F1). Another
+    /// game's body reads as no body at all — `unavailable`, with no borrowed
+    /// point, series id, note, Details or Full chart. The host decides this
+    /// once; this reader checks it again itself.
     static func history(_ response: EventHistoryResponse, event: EventDetail,
                         phase: HockeyJourneyPagePhase10868, host: Host,
                         inGameStart: InGameStart = .lastPregameRow) -> FieldHistoryInput10868 {
+        guard response.eventId == event.id else { return unavailable(event: event, phase: phase) }
         let line = Self.line(response)
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)

@@ -86,6 +86,7 @@ import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastCo
 import { sportPricesADraw } from "@/lib/drawPricedWinner";
 import { teamShortNames } from "@/lib/teamShortName";
 import {
+  beforeForecast,
   buildHockeyJourney,
   dayWords,
   forecastSlot,
@@ -98,8 +99,10 @@ import {
   hockeyJourneyPhase,
   matrixProvenanceLine,
   NO_HELD_CHOICE,
+  ownHockeyHistory,
   resolveContributionChoice,
   timeWords,
+  unavailableHistory,
   type HockeyJourneyHost,
   type HockeyJourneySlot,
   MATRIX_WORDS,
@@ -726,6 +729,85 @@ describe("#10868 history — a future start never shortens the recorded day (Ram
     expect(awayPoints.map((p) => p.p)).toEqual(points.map((p) => 1 - p.p));
     expect(h.notes[0]).toBe("Source: Bain Luck");
   });
+
+  // #10868 hockey F1, W3. TEST CONTROL, NOT HOCKEY FORECAST EVIDENCE: the projected-final format
+  // authority refuses every hockey pregame pair, so a history-derived ladder can only be reached
+  // through this NFL event. The relabelled ids below are test controls.
+  describe("W3: a before-the-start forecast reads only this game's own body (NFL-keyed test control)", () => {
+    // The real 15338496 body (Devils at Golden Knights): `projected_final` 3.7 / 2.4, verbatim.
+    const foreign = pregameHistory;
+    // Retained `nfl-pregame-history.json` (sha256 c32ce440…8332) `pm_spread_data.projected_final`, verbatim.
+    const ownLadder = {
+      ...ramsHistory,
+      pm_spread_data: { projected_final: { home_score: 28.8, away_score: 25.5, spread_source: "kalshi", total_source: "kalshi" } },
+    } as unknown as EventHistoryResponse;
+    // Retained `nfl-pregame-detail.json` (sha256 1f81fa52…0eb9) `current_odds`, verbatim.
+    const ramsWithBooks = {
+      ...ramsDetail,
+      current_odds: {
+        captured_at: "2026-10-12T04:37:03.501709+00:00",
+        home_probability: 0.615,
+        away_probability: 0.385,
+        away_rendered_percent: 38,
+        home_rendered_percent: 62,
+        spread: -3.5,
+        over_under: 54.4,
+        projected_home_score: 29.0,
+        projected_away_score: 25.4,
+        bookmaker_count: 22,
+      },
+    } as unknown as EventDetailResponse;
+    const pair = (home: number, away: number, provenance: string) => ({
+      title: MATRIX_WORDS.projectedGoals,
+      home: forecastSlot(home),
+      away: forecastSlot(away),
+      provenance,
+    });
+    const LADDER = "Prediction-market lines before the start";
+    const relabelled = { ...foreign, event_id: ramsDetail.id } as EventHistoryResponse; // TEST CONTROL
+
+    it("is NFL-keyed because hockey's format authority refuses the pair", () => {
+      expect(projectedFinalFormat(pregameDetail.sport)).toBeNull();
+      expect(projectedFinalFormat(ramsDetail.sport)).not.toBeNull();
+      expect(foreign.event_id).toBe(15338496);
+      expect(foreign.pm_spread_data?.projected_final).toEqual({
+        home_score: 3.7,
+        away_score: 2.4,
+        spread_source: "sportsbook",
+        total_source: "sportsbook",
+      });
+    });
+
+    it("takes no ladder pair from another game's body", () => {
+      expect(beforeForecast(ramsDetail, foreign)).toBeNull();
+      expect(beforeForecast(ramsDetail, null)).toBeNull();
+      // The same bytes under this game's id print, so the id alone withholds them.
+      expect(beforeForecast(ramsDetail, relabelled)).toEqual(pair(3.7, 2.4, LADDER));
+    });
+
+    it("still prints this game's own ladder pair", () => {
+      expect(beforeForecast(ramsDetail, ownLadder)).toEqual(pair(28.8, 25.5, LADDER));
+    });
+
+    it("keeps the game's own sportsbook pair beside another game's body", () => {
+      const books = pair(29, 25.4, "Before the start · 22 sportsbooks");
+      expect(beforeForecast(ramsWithBooks, foreign)).toEqual(books);
+      expect(beforeForecast(ramsWithBooks, null)).toEqual(books);
+    });
+
+    it("the composed page with another game's body is exactly the page with none", () => {
+      const build = (history: EventHistoryResponse | null) =>
+        buildHockeyJourney({ event: ramsDetail, history, gameMarkets: null, host: host(RAMS_NOW) });
+      const page = build(foreign);
+      expect(page).toEqual(build(null));
+      expect(page.headline.matrix.rows.map((r) => r.values[1])).toEqual([
+        { kind: "absent", text: "No pregame forecast" },
+        { kind: "absent", text: "No pregame forecast" },
+      ]);
+      expect(page.history.absence).toEqual({ title: "History unavailable", words: null });
+      expect(build(relabelled).headline.matrix.rows.map((r) => text(r.values[1]))).toEqual(["3.7", "2.4"]);
+    });
+  });
 });
 
 // The FULL retained bodies, read-only, from `$BAINLUCK_ARTIFACTS_DIR` or the repo's own `artifacts/`
@@ -951,6 +1033,86 @@ describe("#10868 history — no history response (CONSTRUCTED: null / undefined)
       title: "No recorded history",
       words: null,
     });
+  });
+});
+
+describe("#10868 hockey F1 — another game's history body is never this page's (exact event_id)", () => {
+  // `finalHistory` is the REAL body of 15169793 (Wild–Bruins), held here on the page of 15338496
+  // (Devils at Golden Knights). TEST CONTROL overlay: it also carries the pregame body's own ladder
+  // pair (3.7 / 2.4), so nothing a foreign body holds can reach this page.
+  const observedAt = pregameDetail.hero_probability_observed_at ?? null;
+  const hero = pageHero(pregameDetail, pregameHistory, false);
+  const fresh = host(PREGAME_NOW, { hero, probabilityObservedAt: observedAt });
+  const build = (history: EventHistoryResponse | null) =>
+    buildHockeyJourney({ event: pregameDetail, history, gameMarkets: pregameMarkets, host: fresh });
+  const foreign = { ...finalHistory, pm_spread_data: pregameHistory.pm_spread_data } as EventHistoryResponse;
+  const missing = build(null);
+  const own = build(pregameHistory);
+
+  it("decides ownership by the exact event_id alone", () => {
+    expect(foreign.event_id).toBe(15169793);
+    expect(pregameDetail.id).toBe(15338496);
+    expect(ownHockeyHistory(pregameHistory, pregameDetail)).toBe(pregameHistory);
+    expect(ownHockeyHistory(foreign, pregameDetail)).toBeNull();
+    expect(ownHockeyHistory(null, pregameDetail)).toBeNull();
+    expect(ownHockeyHistory(undefined, pregameDetail)).toBeNull();
+    const { event_id: dropped, ...noId } = pregameHistory; // CONSTRUCTED: the id removed
+    expect(dropped).toBe(15338496);
+    expect(ownHockeyHistory(noId as unknown as EventHistoryResponse, pregameDetail)).toBeNull();
+    const textId = { ...pregameHistory, event_id: "15338496" } as unknown as EventHistoryResponse; // CONSTRUCTED
+    expect(ownHockeyHistory(textId, pregameDetail)).toBeNull();
+  });
+
+  it("W1: the page built with another game's body is exactly the page with no body", () => {
+    const page = build(foreign);
+    expect(page).toEqual(missing);
+    const h = page.history;
+    expect(h.absence).toEqual({ title: "History unavailable", words: null });
+    expect(h.series.map((s) => s.id)).toEqual(["history:15338496:home", "history:15338496:away"]);
+    expect(h.series.every((s) => s.runs.length === 0)).toBe(true);
+    expect([h.notes, h.guides, h.xTicks, h.domain, h.line]).toEqual([[], [], [], null, null]);
+    expect(JSON.stringify(h)).not.toContain("15169793");
+    expect(page.about).not.toContain("Gaps remain blank.");
+    expect(page.about.some((line) => line.startsWith("Source:"))).toBe(false);
+    // The forecast stays its absence words; the own chance, stories and catalogue are untouched.
+    expect(page.headline.matrix.rows.map((r) => r.values[1])).toEqual([
+      { kind: "absent", text: "No pregame forecast" },
+      { kind: "absent", text: "No pregame forecast" },
+    ]);
+    expect(page.headline.matrix.rows.map((r) => text(r.values[0]))).toEqual(["51%", "49%"]);
+    expect(page.headline).toEqual(own.headline);
+    expect([page.points, page.assists, page.stories, page.originals, page.copy]).toEqual([
+      own.points,
+      own.assists,
+      own.stories,
+      own.originals,
+      own.copy,
+    ]);
+  });
+
+  it("W1 control: the id is the only thing deciding", () => {
+    // The foreign bytes relabelled to this game's id draw (TEST CONTROL)…
+    const relabelled = build({ ...foreign, event_id: pregameDetail.id } as EventHistoryResponse);
+    expect(relabelled).not.toEqual(missing);
+    expect(relabelled.history.absence).toBeNull();
+    // …and this game's own bytes relabelled to another id read as no body (TEST CONTROL).
+    expect(build({ ...pregameHistory, event_id: 15169793 } as EventHistoryResponse)).toEqual(missing);
+    expect(own).not.toEqual(missing);
+  });
+
+  it("W2: the chart reader refuses another game's body itself", () => {
+    expect(hockeyJourneyHistory(foreign, pregameDetail, "before", PREGAME_NOW)).toEqual(
+      unavailableHistory(pregameDetail, "before"),
+    );
+    expect(hockeyJourneyHistory(pregameHistory, finalDetail, "final", FINAL_NOW)).toEqual(
+      unavailableHistory(finalDetail, "final"),
+    );
+    expect(hockeyJourneyHistory(pregameHistory, finalDetail, "live", FINAL_NOW)).toEqual(
+      unavailableHistory(finalDetail, "live"),
+    );
+    // The same bytes under this page's id draw (TEST CONTROL).
+    const relabelled = { ...foreign, event_id: pregameDetail.id } as EventHistoryResponse;
+    expect(hockeyJourneyHistory(relabelled, pregameDetail, "before", PREGAME_NOW).absence).toBeNull();
   });
 });
 
