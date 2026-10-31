@@ -28,7 +28,11 @@ venue process calls them through ``asyncio.to_thread``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+import math
+import os
+import threading
+import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from app.utils.live_push import event_channel
@@ -121,3 +125,105 @@ def served_market_ids() -> list[int]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("reader_presence: register signal unreadable: %s", exc)
     return sorted(ids)
+
+
+#: #10090 held-first stamps: how often a venue process re-reads the held event
+#: set, and how long the last good read stays in use while later reads fail.
+HELD_EVENTS_REFRESH_S = 2.0
+HELD_EVENTS_STALE_S = 30.0
+
+
+def _held_presence_read() -> ReaderPresence:
+    """`read_reader_presence` on a fast-fail client: a hung Redis costs this
+    background read, never a stamp."""
+    from app.tasks.redis_state import get_redis_client
+
+    return read_reader_presence(get_redis_client(
+        socket_timeout=1.0, socket_connect_timeout=1.0, fast_fail=True,
+    ))
+
+
+class HeldEventCache:
+    """#10090 — the event ids a reader holds, for ordering a venue's stamps.
+
+    Never blocks its caller: a call that finds the set older than
+    ``refresh_s`` starts ONE daemon thread running ``read`` and returns the set
+    it already has. A failed read keeps the last good set until ``stale_s``,
+    then the answer is empty, and empty means no preference (today's order).
+    A process forked while a read was in flight starts its own.
+    """
+
+    def __init__(
+        self,
+        read: Callable[[], ReaderPresence] = _held_presence_read,
+        *,
+        refresh_s: float = HELD_EVENTS_REFRESH_S,
+        stale_s: float = HELD_EVENTS_STALE_S,
+        clock: Callable[[], float] = time.monotonic,
+        start: Callable[[Callable[[], None]], None] | None = None,
+    ) -> None:
+        self._read = read
+        self._refresh_s = refresh_s
+        self._stale_s = stale_s
+        self._clock = clock
+        self._start = start or self._start_thread
+        self._lock = threading.Lock()
+        self._ids: frozenset = frozenset()
+        self._read_at: float | None = None
+        self._attempt_at = -math.inf
+        self._reading_pid: int | None = None
+        self.reads = 0
+        self.failures = 0
+
+    @staticmethod
+    def _start_thread(target: Callable[[], None]) -> None:
+        threading.Thread(target=target, name="reader-held-events", daemon=True).start()
+
+    def event_ids(self) -> frozenset:
+        now = self._clock()
+        with self._lock:
+            pid = os.getpid()
+            if self._reading_pid is not None and self._reading_pid != pid:
+                self._reading_pid = None
+            start = self._reading_pid is None and now - self._attempt_at >= self._refresh_s
+            if start:
+                self._attempt_at = now
+                self._reading_pid = pid
+            fresh = self._read_at is not None and now - self._read_at <= self._stale_s
+            ids = self._ids if fresh else frozenset()
+        if start:
+            try:
+                self._start(self._run)
+            except Exception:  # noqa: BLE001 — no thread: the next call tries again
+                with self._lock:
+                    self._reading_pid = None
+        return ids
+
+    def _run(self) -> None:
+        try:
+            ids = frozenset(self._read().event_ids)
+        except Exception as exc:  # noqa: BLE001 — the last good set stands until stale
+            with self._lock:
+                self._reading_pid = None
+                self.failures += 1
+                failures = self.failures
+            if failures == 1 or failures % 1000 == 0:
+                logger.warning("reader_presence: held events unreadable (%d): %s",
+                               failures, exc)
+            return
+        with self._lock:
+            self._reading_pid = None
+            self._ids = ids
+            self._read_at = self._clock()
+            self.reads += 1
+
+
+_HELD_EVENTS: HeldEventCache | None = None
+
+
+def held_event_cache() -> HeldEventCache:
+    """The process's held-event cache (one venue process per dyno run)."""
+    global _HELD_EVENTS
+    if _HELD_EVENTS is None:
+        _HELD_EVENTS = HeldEventCache()
+    return _HELD_EVENTS

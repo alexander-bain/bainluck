@@ -59,8 +59,12 @@ UX-P114 gave.
 
 from __future__ import annotations
 
+import os
+import threading
+import time
+from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence
 
 # #7514 — the same two predicates the served duel is withheld on (#6238), so the
 # payload and the pre-match row cannot disagree about which away figures are a
@@ -589,6 +593,180 @@ def prematch_prior_share_key(binds: Mapping[str, Any]) -> tuple:
     )
 
 
+# ── #10090: A KICKED-OFF GAME'S PRE-MATCH READING DOES NOT CHANGE ────────────
+#
+# Measured on production 2026-10-31 16:41–17:24Z (pg_stat_statements diff): this
+# statement ran 117 times for 1,088 s of execution and 899,585 blocks read —
+# 8.9% of every block the database read in that window, on a disk-saturated
+# Saturday, while Alex's signed-in feed requests were hitting the router's 25 s
+# limit. Every bind it is given is a SETTLED game's kickoff, and the answer for
+# a kickoff that has passed is the last row at or before it: the table can only
+# add to it by a late write stamped before kickoff. So each game's rows are kept
+# per `(event_id, cutoff, sources)` for a bounded TTL — long enough that the
+# feed, the event page, the hub and the team page stop re-reading the same
+# finished games, short enough that a late backfill row still lands — and only
+# the games not held are sent to the database.
+#
+# What it never does, each tested:
+#
+#   * hold a cutoff that has not passed (a rescheduled or future kickoff reads
+#     every time);
+#   * hold anything but the statement's own output rows, keyed by exactly the
+#     inputs that produced them — the 🔴 semantics above are the statement's,
+#     and the statement is unchanged;
+#   * split the positional arrays: the misses are re-bound in ONE pass over the
+#     caller's aligned pair, and a bind set that repeats an event id or whose
+#     arrays differ in length bypasses the cache and reads exactly as before.
+#
+# Process-local, not Redis: a hit costs no round trip and adds no failure mode
+# to a route that must not fail. `PREMATCH_READING_CACHE=0` turns it off; every
+# call then reads exactly as before this existed.
+
+PREMATCH_READING_CACHE_ENV = "PREMATCH_READING_CACHE"
+PREMATCH_READING_CACHE_TTL_S = 600.0
+PREMATCH_READING_CACHE_MAX_KEYS = 20_000
+
+
+class PrematchPriorRow(NamedTuple):
+    """One :data:`PREMATCH_PRIOR_SQL` row, held as plain data (gotcha #6)."""
+
+    event_id: int
+    source: str
+    home_win_probability: Any
+    away_win_probability: Any
+    draw_probability: Any
+
+
+_prematch_cache: "OrderedDict[tuple, tuple[float, tuple[PrematchPriorRow, ...]]]" = (
+    OrderedDict()
+)
+_prematch_cache_lock = threading.Lock()
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _reset_prematch_cache_for_tests() -> None:
+    with _prematch_cache_lock:
+        _prematch_cache.clear()
+
+
+def prematch_reading_cache_enabled() -> bool:
+    """The rollback without a deploy. Defaults ON."""
+    raw = os.environ.get(PREMATCH_READING_CACHE_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _as_utc(cutoff: datetime) -> datetime:
+    # Aware datetimes for one instant already compare and hash equal whatever
+    # their offset; only a naive one needs a zone to be compared at all.
+    if cutoff.tzinfo is None:
+        return cutoff.replace(tzinfo=timezone.utc)
+    return cutoff
+
+
+def _prematch_cache_key(
+    event_id: Any, cutoff: Any, sources_key: tuple, now: datetime
+) -> Optional[tuple]:
+    """The key one position is held under, or ``None`` if it must be read."""
+    if not isinstance(cutoff, datetime):
+        return None
+    cutoff = _as_utc(cutoff)
+    if cutoff >= now:
+        return None
+    return (event_id, cutoff, sources_key)
+
+
+def _plain_row(row: Any) -> PrematchPriorRow:
+    return PrematchPriorRow(
+        row.event_id,
+        row.source,
+        row.home_win_probability,
+        row.away_win_probability,
+        row.draw_probability,
+    )
+
+
+async def fetch_prematch_prior_rows(db: Any, binds: Mapping[str, Any]) -> list:
+    """Every :data:`PREMATCH_PRIOR_SQL` row for one bind set, kicked-off games cached.
+
+    The one place the statement executes, so every surface that prints a
+    settled game's pre-match reading reads it through the same cache. Off, it is
+    exactly the read each caller ran inline. Nothing is caught.
+    """
+    from sqlalchemy import text
+
+    ids = list(binds["ids"])
+    cutoffs = list(binds["cutoffs"])
+    if (
+        not prematch_reading_cache_enabled()
+        or len(ids) != len(cutoffs)
+        or len(set(ids)) != len(ids)
+    ):
+        return list((await db.execute(text(PREMATCH_PRIOR_SQL), dict(binds))).all())
+
+    sources_key = tuple(sorted(set(binds["sources"])))
+    now = _utcnow()
+    keys = [
+        _prematch_cache_key(event_id, cutoff, sources_key, now)
+        for event_id, cutoff in zip(ids, cutoffs)
+    ]
+
+    held: dict[int, tuple[PrematchPriorRow, ...]] = {}
+    clock = _monotonic()
+    with _prematch_cache_lock:
+        for event_id, key in zip(ids, keys):
+            if key is None:
+                continue
+            entry = _prematch_cache.get(key)
+            if entry is None:
+                continue
+            if entry[0] <= clock:
+                del _prematch_cache[key]
+                continue
+            _prematch_cache.move_to_end(key)
+            held[event_id] = entry[1]
+
+    # ONE pass over the caller's aligned pair, so the re-bound arrays stay
+    # index-aligned by construction (the 🔴 positional rule above).
+    miss_ids: list = []
+    miss_cutoffs: list = []
+    for event_id, cutoff in zip(ids, cutoffs):
+        if event_id not in held:
+            miss_ids.append(event_id)
+            miss_cutoffs.append(cutoff)
+
+    fetched: dict[Any, list[PrematchPriorRow]] = {}
+    if miss_ids:
+        miss_binds = {**dict(binds), "ids": miss_ids, "cutoffs": miss_cutoffs}
+        for row in (await db.execute(text(PREMATCH_PRIOR_SQL), miss_binds)).all():
+            fetched.setdefault(row.event_id, []).append(_plain_row(row))
+        expires = _monotonic() + PREMATCH_READING_CACHE_TTL_S
+        with _prematch_cache_lock:
+            for event_id, key in zip(ids, keys):
+                if key is None or event_id in held:
+                    continue
+                _prematch_cache[key] = (expires, tuple(fetched.get(event_id, ())))
+                _prematch_cache.move_to_end(key)
+            while len(_prematch_cache) > PREMATCH_READING_CACHE_MAX_KEYS:
+                _prematch_cache.popitem(last=False)
+
+    rows: list = []
+    for event_id in ids:
+        if event_id in held:
+            rows.extend(held[event_id])
+        else:
+            rows.extend(fetched.pop(event_id, ()))
+    for leftover in fetched.values():
+        rows.extend(leftover)
+    return rows
+
+
 async def read_prematch_priors(
     db: Any, binds: Mapping[str, Any]
 ) -> dict[int, dict[str, tuple]]:
@@ -597,11 +775,8 @@ async def read_prematch_priors(
     The read `_score_events` ran inline, moved here unchanged so the direct
     path and the shared builder are the same code. Nothing is caught.
     """
-    from sqlalchemy import text
-
     prematch_by_event: dict[int, dict[str, tuple]] = {}
-    pm_result = await db.execute(text(PREMATCH_PRIOR_SQL), dict(binds))
-    for row in pm_result.all():
+    for row in await fetch_prematch_prior_rows(db, binds):
         # #6277 — the row's shape is defined once, beside the statement that
         # produced it, so a member cannot be dropped here without a test
         # noticing.

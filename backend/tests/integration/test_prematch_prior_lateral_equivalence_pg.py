@@ -368,3 +368,57 @@ async def test_a_misaligned_cutoff_array_changes_the_answer(seeded_db):
     assert _key(
         (await session.execute(text(PREMATCH_PRIOR_SQL), rotated)).all()
     ) != _key(await _live(session, candidates))
+
+
+async def test_the_cached_read_returns_the_statements_rows_cold_warm_and_mixed(
+    seeded_db, monkeypatch
+):
+    """#10090 — the per-game cache is the statement's output, on a real server.
+
+    Cold (nothing held), warm (everything held, no read) and mixed (one game
+    held, the others re-bound beside their own cutoffs) must all equal the
+    statement run directly — real `Row`s, real `Decimal`s, real positional
+    pairing in the miss read.
+    """
+    import app.utils.prematch_reading as pr
+
+    monkeypatch.delenv("PREMATCH_READING_CACHE", raising=False)
+    # gotcha #44: a fixed clock every seeded kickoff is behind.
+    monkeypatch.setattr(pr, "_utcnow", lambda: _T0 + timedelta(days=30))
+    pr._reset_prematch_cache_for_tests()
+    session, candidates = seeded_db
+    binds = prematch_prior_binds(candidates)
+    direct = _key(await _live(session, candidates))
+
+    reads = []
+    real_execute = session.execute
+
+    async def counting_execute(stmt, params=None, *a, **k):
+        reads.append(params)
+        return await real_execute(stmt, params, *a, **k)
+
+    monkeypatch.setattr(session, "execute", counting_execute)
+
+    def cached_key(rows):
+        return _key(
+            [
+                (r.event_id, r.source, r.home_win_probability, r.away_win_probability)
+                for r in rows
+            ]
+        )
+
+    # cold
+    assert cached_key(await pr.fetch_prematch_prior_rows(session, binds)) == direct
+    assert len(reads) == 1 and len(pr._prematch_cache) == len(binds["ids"])
+    # warm: no read at all
+    assert cached_key(await pr.fetch_prematch_prior_rows(session, binds)) == direct
+    assert len(reads) == 1
+
+    # mixed: one game held, the rest read beside their own kickoffs
+    pr._reset_prematch_cache_for_tests()
+    await pr.fetch_prematch_prior_rows(session, prematch_prior_binds(candidates[1:2]))
+    assert cached_key(await pr.fetch_prematch_prior_rows(session, binds)) == direct
+    miss = reads[-1]
+    pairs = dict(zip(binds["ids"], binds["cutoffs"]))
+    assert candidates[1].id not in miss["ids"]
+    assert miss["cutoffs"] == [pairs[i] for i in miss["ids"]]

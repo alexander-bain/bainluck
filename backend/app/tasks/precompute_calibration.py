@@ -10203,6 +10203,14 @@ async def _precompute_calibration_main():
       only persisting it failed, so the next beat should re-publish from the
       carried reads rather than re-earn them.
     """
+    from app.utils import busy_db_defer
+
+    # #10090: the bucket build is a sustained multi-minute read; the served
+    # payload and its 7-day last-good copy stay up, and the checkpoint is left
+    # untouched, so the first evening beat resumes where the last one stopped.
+    if busy_db_defer.should_defer("precompute_calibration_main"):
+        return busy_db_defer.deferred_result("precompute_calibration_main")
+
     from app.tasks.calibration_main_build import (
         build_runner,
         checkpoint_terminal,
