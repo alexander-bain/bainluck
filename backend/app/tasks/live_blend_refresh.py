@@ -277,6 +277,10 @@ HANDOVER_FRESH_SWITCH = "handover_fresh"
 #: by period, read once per admitted worker turn that could batch
 #: (`_admitted_stamp_batch`).
 ADMITTED_STAMP_BATCH_SWITCH = "admitted_stamp_batch"
+#: `ADMITTED_LIVE_BATCH`'s runtime trial name: ``alternate`` between two values
+#: by period, read once per admitted worker turn whose pick is a live game with
+#: more live games queued (`_admitted_live_batch`).
+ADMITTED_LIVE_BATCH_SWITCH = "admitted_live_batch"
 #: #10090 runtime trial (``alternate`` 0/1, today 0), read once per debt drain
 #: that a caller says is deferred only by a buffered, not yet written withdrawal
 #: (`withdrawing_event_ids`): on, an already committed throttle-deferred price
@@ -375,6 +379,14 @@ def _admitted_stamp_batch() -> int:
         return _optional_db_trial().value(ADMITTED_STAMP_BATCH_SWITCH, ADMITTED_STAMP_BATCH)
     except Exception:  # noqa: BLE001 — a switch read never fails a stamp
         return ADMITTED_STAMP_BATCH
+
+
+def _admitted_live_batch() -> int:
+    """This worker turn's LIVE batch size: a running alternation's arm, else the setting."""
+    try:
+        return _optional_db_trial().value(ADMITTED_LIVE_BATCH_SWITCH, ADMITTED_LIVE_BATCH)
+    except Exception:  # noqa: BLE001 — a switch read never fails a stamp
+        return ADMITTED_LIVE_BATCH
 
 
 def _release_unattempted_debt() -> bool:
@@ -564,6 +576,25 @@ ADMITTED_DEBT_SLOTS = _owed_budget_env("ADMITTED_DEBT_SLOTS", 1, int, 1, 3)
 # same admitted cohort (same flush clock and stored wall); a live game is never
 # in one. Env `ADMITTED_STAMP_BATCH` (1..8); 1 is today's behaviour.
 ADMITTED_STAMP_BATCH = _owed_budget_env("ADMITTED_STAMP_BATCH", 1, int, 1, 8)
+# #10090 — how many queued LIVE admitted events of ONE cohort one stamp worker
+# takes into one transaction (the live counterpart of ADMITTED_STAMP_BATCH):
+# one session slot, one checkout, one read statement, one COMMIT and one
+# publication for all of them, each event in its own savepoint with its own
+# lock budget, locked in ascending id (`_refresh_batch`). Production
+# 16:01-16:35Z 2026-10-31 (Polymarket, v6005, ~180 live games): every minute
+# line read `stamp_tx` = `events` — one event per transaction — because the
+# live lane is FIFO singletons by construction and `_admitted_batch` batches
+# non-live heads only, and only while no live game waits, which on a Saturday
+# is never. 600-740 transactions a minute on three workers ~97% busy, ~250
+# attempts queued, so each live game's turn came every ~15-20 s. Taken from
+# the HEAD of the live queue only, in pick order, same flush clock and stored
+# wall as the picked event (one admission's cohort), stopping at the first
+# event that differs or is no longer live; a reader-held pick taken from the
+# middle of the queue is joined only by head events of its own cohort. Nothing
+# is reordered or skipped. The extra events count against ADMITTED_LIVE_RUN
+# exactly as their own picks would, so pre-game stamps keep today's share.
+# Env `ADMITTED_LIVE_BATCH` (1..8); 1 is today's behaviour.
+ADMITTED_LIVE_BATCH = _owed_budget_env("ADMITTED_LIVE_BATCH", 1, int, 1, 8)
 _OWED_BUDGET_LOGGED = False
 #: #10090 — the pid that printed the speed-switch start line (a forked venue
 #: process prints its own).
@@ -5217,9 +5248,46 @@ class LiveBlendRefresher:
                 self._reader_held_ids() if live_waiting else frozenset()
             )
             group_ids = [event_id]
+            live_batch = False
             if not live_waiting and window.queue:
                 group_ids = self._admitted_batch(window, event_id)
-            await self._stamp_admitted(window, group_ids)
+            elif live_waiting and window.live_queue and event_id in self._live_event_ids:
+                # #10090 `admitted_live_batch`: the picked live game and the
+                # head live games of its own cohort share one transaction.
+                group_ids = self._admitted_live_batch(window, event_id)
+                live_batch = len(group_ids) > 1
+            await self._stamp_admitted(window, group_ids, live_batch=live_batch)
+
+    def _admitted_live_batch(self, window: _FreshAdmission, head: int) -> list[int]:
+        """#10090 — the picked LIVE event and, when an `ADMITTED_LIVE_BATCH`
+        above one is in force, the queued live events at the head of the live
+        queue from the same cohort: head of the queue only, in queue order,
+        stopping at the first event that is no longer live by now or carries
+        another flush clock or stored wall. Nothing is reordered or skipped;
+        an event not taken stays at the head for the next turn. Each extra
+        event counts against ADMITTED_LIVE_RUN as its own pick would, so a
+        waiting pre-game event keeps today's one turn in ADMITTED_LIVE_RUN + 1
+        live EVENTS, not live transactions."""
+        limit = _admitted_live_batch()
+        live = self._live_event_ids
+        if limit <= 1 or head not in live:
+            return [head]
+        clock = window.clocks.get(head, window.clock)
+        stored_wall = window.stored_wall.get(head)
+        group_ids = [head]
+        live_queue = window.live_queue
+        while live_queue and len(group_ids) < limit:
+            event_id = live_queue[0]
+            if (
+                event_id not in live
+                or window.clocks.get(event_id, window.clock) != clock
+                or window.stored_wall.get(event_id) != stored_wall
+            ):
+                break
+            group_ids.append(live_queue.popleft())
+            if window.queue:
+                window.live_run += 1
+        return group_ids
 
     def _admitted_batch(self, window: _FreshAdmission, head: int) -> list[int]:
         """#10090 — the non-live head and, when an `ADMITTED_STAMP_BATCH`
@@ -5247,15 +5315,19 @@ class LiveBlendRefresher:
             group_ids.append(queue.popleft())
         return group_ids
 
-    async def _stamp_admitted(self, window: _FreshAdmission, group_ids: list[int]) -> None:
+    async def _stamp_admitted(
+        self, window: _FreshAdmission, group_ids: list[int], *, live_batch: bool = False,
+    ) -> None:
         """Admitted events read in their own session after their cohort
         committed, exactly as a singleton stamp reads, published through the
         running call's one sender. Never raises but for cancellation.
 
         One event (today) owns its whole transaction. Several (an
-        `ADMITTED_STAMP_BATCH` above one, `_admitted_batch`) share one session,
-        read and COMMIT, each in its own savepoint with its own lock budget;
-        they share one flush clock and stored wall by construction."""
+        `ADMITTED_STAMP_BATCH` above one, `_admitted_batch`, or an
+        `ADMITTED_LIVE_BATCH` above one, `_admitted_live_batch` — ``live_batch``)
+        share one session, read and COMMIT, each in its own savepoint with its
+        own lock budget; they share one flush clock and stored wall by
+        construction."""
         receipts = self.receipts
         staged = {
             event_id: window.staged[event_id]
@@ -5293,7 +5365,12 @@ class LiveBlendRefresher:
                 # process (automatic switch-back on error); the stamps already
                 # in flight finish and no new debt rides past the setting.
                 _optional_db_trial().trip(ADMITTED_DEBT_SLOTS_SWITCH, exc)
-            if len(group_ids) > ADMITTED_STAMP_BATCH:
+            if live_batch and len(group_ids) > ADMITTED_LIVE_BATCH:
+                # A live batch only an `admitted_live_batch` trial formed has
+                # failed: that trial switches off in this process; its events
+                # stay owed exactly as a failed singleton's do.
+                _optional_db_trial().trip(ADMITTED_LIVE_BATCH_SWITCH, exc)
+            elif not live_batch and len(group_ids) > ADMITTED_STAMP_BATCH:
                 # A batch only an `admitted_stamp_batch` trial formed has
                 # failed: that trial switches off in this process; its events
                 # stay owed exactly as a failed singleton's do.
