@@ -287,14 +287,34 @@ async def test_a_naive_cutoff_shares_the_aware_cutoffs_key(clock):
 
 
 @pytest.mark.asyncio
-async def test_a_repeated_event_id_bypasses_the_cache(clock):
-    """Rows carry no cutoff, so a repeated id cannot be attributed — read as before."""
+async def test_an_id_repeated_with_two_cutoffs_bypasses_the_cache(clock):
+    """Rows carry no cutoff, so an id at two cutoffs cannot be attributed — read as before."""
     db = _FakeDb(_slate())
     binds = _binds([(1, KICK_1), (1, KICK_1 - timedelta(hours=1))])
     await fetch_prematch_prior_rows(db, binds)
     await fetch_prematch_prior_rows(db, binds)
     assert db.calls == [binds, binds]
     assert pr._prematch_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_id_and_cutoff_reads_once_and_answers_every_position(clock):
+    """The speed ask: dedupe instead of bypass, keeping each id's own cutoff."""
+    db = _FakeDb(_slate())
+    pairs = [(1, KICK_1), (2, KICK_2), (1, KICK_1.replace(tzinfo=None)), (3, KICK_3)]
+    rows = await fetch_prematch_prior_rows(db, _binds(pairs))
+
+    assert db.calls[0]["ids"] == [1, 2, 3]
+    assert db.calls[0]["cutoffs"] == [KICK_1, KICK_2, KICK_3]
+    # Postgres compares the naive stamp as UTC; the fake oracle needs it aware.
+    aware = [(e, pr._as_utc(c)) for e, c in pairs]
+    oracle = await _FakeDb(_slate()).execute(pr_text(), _binds(aware))
+    assert _sorted(rows) == _sorted(oracle.all())
+    assert [r.event_id for r in rows] == [1, 1, 2, 1, 1]
+
+    again = await fetch_prematch_prior_rows(db, _binds(pairs))
+    assert len(db.calls) == 1
+    assert _sorted(again) == _sorted(rows)
 
 
 @pytest.mark.asyncio
@@ -379,6 +399,283 @@ def test_no_surface_executes_the_statement_around_the_cache():
         and path.name != "prematch_reading.py"
     ]
     assert offenders == []
+
+
+# ── the Redis tier ──────────────────────────────────────────────────────────
+
+
+class _FakeRedis:
+    """The two sync-client calls the tier makes, over a dict."""
+
+    def __init__(self):
+        self.store: dict[str, str] = {}
+        self.expiry: dict[str, int] = {}
+        self.mgets: list[list[str]] = []
+        self.fail = False
+
+    def mget(self, keys):
+        if self.fail:
+            raise ConnectionError("redis down")
+        self.mgets.append(list(keys))
+        return [self.store.get(k) for k in keys]
+
+    def pipeline(self, transaction=True):
+        fake = self
+        ops = []
+
+        class _Pipe:
+            def set(self, key, value, ex=None):
+                ops.append((key, value, ex))
+
+            def execute(self):
+                if fake.fail:
+                    raise ConnectionError("redis down")
+                for key, value, ex in ops:
+                    fake.store[key] = value.encode()
+                    fake.expiry[key] = ex
+
+        return _Pipe()
+
+
+@pytest.fixture
+def redis(clock, monkeypatch):
+    fake = _FakeRedis()
+    state = {"wall": 1_800_000_000.0}
+    clock["wall"] = state
+    monkeypatch.setattr(pr, "_wall", lambda: state["wall"])
+    monkeypatch.setattr(pr, "_shared_client", lambda: fake)
+    monkeypatch.setenv("PREMATCH_READING_CACHE_SHARED", "1")
+    return fake
+
+
+def _another_process():
+    """A different worker: its own empty dict, the same Redis."""
+    pr._prematch_cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_a_game_held_by_one_process_is_not_read_again_by_another(redis):
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1), (2, KICK_2), (3, KICK_3)])
+    first = await fetch_prematch_prior_rows(db, binds)
+
+    _another_process()
+    second = await fetch_prematch_prior_rows(db, binds)
+
+    assert len(db.calls) == 1
+    assert [_key(r) for r in second] == [_key(r) for r in first]
+    # Exactly invertible: a Decimal comes back a Decimal, a None a None.
+    assert all(type(r.home_win_probability) is Decimal for r in second)
+    assert all(type(r) is pr.PrematchPriorRow for r in second)
+    assert all(ex == int(PREMATCH_READING_CACHE_TTL_S) + 1 for ex in redis.expiry.values())
+
+
+@pytest.mark.asyncio
+async def test_only_the_positions_the_process_missed_go_to_redis(redis):
+    db = _FakeDb(_slate())
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1), (2, KICK_2)]))
+    redis.mgets.clear()
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1), (2, KICK_2), (3, KICK_3)]))
+    assert len(redis.mgets) == 1 and len(redis.mgets[0]) == 1
+    assert redis.mgets[0][0].endswith(f":3:{KICK_3.isoformat()}")
+    assert db.calls[1]["ids"] == [3]
+
+
+@pytest.mark.asyncio
+async def test_an_l1_hit_never_touches_redis(redis):
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1)])
+    await fetch_prematch_prior_rows(db, binds)
+    redis.mgets.clear()
+    await fetch_prematch_prior_rows(db, binds)
+    assert redis.mgets == []
+
+
+@pytest.mark.asyncio
+async def test_a_redis_entry_keeps_its_age_so_the_late_backfill_still_lands(redis, clock):
+    db = _FakeDb(_slate())
+    binds = _binds([(3, KICK_3)])
+    assert await fetch_prematch_prior_rows(db, binds) == []
+    db.snapshots.append(_snap(3, "kalshi", 0.55, KICK_3 - timedelta(minutes=2), away=0.45))
+
+    # Another process picks it up 590 s later: held for the remaining 10 s only.
+    clock["wall"]["wall"] += PREMATCH_READING_CACHE_TTL_S - 10
+    _another_process()
+    assert await fetch_prematch_prior_rows(db, binds) == []
+    assert len(db.calls) == 1
+
+    clock["mono"] += 10
+    clock["wall"]["wall"] += 10
+    rows = await fetch_prematch_prior_rows(db, binds)
+    assert len(db.calls) == 2
+    assert _sorted(rows) == [(3, "kalshi", Decimal("0.55"), Decimal("0.45"), None)]
+
+
+@pytest.mark.asyncio
+async def test_a_redis_entry_past_the_ttl_by_wall_clock_is_a_miss(redis, clock):
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1)])
+    await fetch_prematch_prior_rows(db, binds)
+    clock["wall"]["wall"] += PREMATCH_READING_CACHE_TTL_S
+    _another_process()
+    await fetch_prematch_prior_rows(db, binds)
+    assert len(db.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_envelope_for_another_key_is_a_miss(redis):
+    db = _FakeDb(_slate())
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    (only,) = redis.store
+    other = pr._l2_key((2, KICK_2, ("kalshi", "polymarket")))
+    redis.store[other] = redis.store[only]
+    _another_process()
+    await fetch_prematch_prior_rows(db, _binds([(2, KICK_2)]))
+    assert len(db.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_garbled_envelope_is_a_miss(redis):
+    db = _FakeDb(_slate())
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    (only,) = redis.store
+    redis.store[only] = b"{not json"
+    _another_process()
+    rows = await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    assert len(db.calls) == 2 and len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_redis_down_reads_the_database_and_says_so(redis, caplog):
+    redis.fail = True
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1)])
+    rows = await fetch_prematch_prior_rows(db, binds)
+    assert len(db.calls) == 1 and len(rows) == 2
+    assert pr._stats["l2_errors"] == 2  # the read and the publish
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_redis_is_cut_at_the_deadline(redis, monkeypatch):
+    import time as _time
+
+    monkeypatch.setattr(pr, "PREMATCH_READING_CACHE_L2_DEADLINE_S", 0.05)
+    redis.mget = lambda keys: _time.sleep(0.5)
+    db = _FakeDb(_slate())
+    started = _time.monotonic()
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    assert _time.monotonic() - started < 0.4
+    assert len(db.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_kickoff_not_yet_passed_is_never_published(redis):
+    db = _FakeDb([])
+    await fetch_prematch_prior_rows(db, _binds([(9, _NOW + timedelta(minutes=5))]))
+    assert redis.store == {} and redis.mgets == []
+
+
+@pytest.mark.asyncio
+async def test_the_shared_switch_off_leaves_redis_alone(redis, monkeypatch):
+    monkeypatch.setenv("PREMATCH_READING_CACHE_SHARED", "0")
+    db = _FakeDb(_slate())
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    _another_process()
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    assert redis.store == {} and redis.mgets == []
+    assert len(db.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_whole_switch_off_leaves_redis_alone_too(redis, monkeypatch):
+    monkeypatch.setenv("PREMATCH_READING_CACHE", "0")
+    db = _FakeDb(_slate())
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    assert redis.store == {} and redis.mgets == []
+
+
+@pytest.mark.asyncio
+async def test_the_tier_speaks_the_real_redis_py_client(clock, monkeypatch):
+    """The fake above is ours; this runs the same path on redis-py's own API."""
+    fakeredis = pytest.importorskip("fakeredis")
+    client = fakeredis.FakeRedis()
+    monkeypatch.setattr(pr, "_shared_client", lambda: client)
+    monkeypatch.setenv("PREMATCH_READING_CACHE_SHARED", "1")
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1), (2, KICK_2), (3, KICK_3)])
+    first = await fetch_prematch_prior_rows(db, binds)
+    _another_process()
+    second = await fetch_prematch_prior_rows(db, binds)
+    assert len(db.calls) == 1
+    assert [_key(r) for r in second] == [_key(r) for r in first]
+    ttl = client.ttl(pr._l2_key((1, KICK_1, ("kalshi", "polymarket"))))
+    assert 0 < ttl <= int(PREMATCH_READING_CACHE_TTL_S) + 1
+
+
+def test_the_l2_key_names_the_statement_the_sources_the_game_and_the_kickoff():
+    key = pr._l2_key((7, KICK_1, ("kalshi", "polymarket")))
+    assert key == (
+        f"bl:prematch_prior:v1:{pr._SQL_DIGEST}:kalshi,polymarket:7:"
+        f"{KICK_1.isoformat()}"
+    )
+    shifted = KICK_1.astimezone(timezone(timedelta(hours=-7)))
+    assert pr._l2_key((7, shifted, ("kalshi", "polymarket"))) == key
+
+
+@pytest.mark.parametrize("value", [None, Decimal("0.4213"), 0.25])
+def test_the_number_codec_is_exactly_invertible(value):
+    back = pr._decode_number(pr._encode_number(value))
+    assert back == value and type(back) is type(value)
+
+
+def test_the_number_codec_refuses_what_it_cannot_invert():
+    with pytest.raises(TypeError):
+        pr._encode_number("0.4")
+
+
+# ── the once-a-minute line ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_stats_line_reports_hits_misses_and_bypasses_once_a_minute(
+    redis, clock, caplog, monkeypatch
+):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="app.utils.prematch_reading")
+    monkeypatch.setenv("DYNO", "web.1")
+    db = _FakeDb(_slate())
+    binds = _binds([(1, KICK_1), (2, KICK_2), (9, _NOW + timedelta(minutes=5))])
+
+    await fetch_prematch_prior_rows(db, binds)  # opens the interval
+    await fetch_prematch_prior_rows(db, binds)
+    _another_process()
+    await fetch_prematch_prior_rows(db, binds)
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1), (1, KICK_2)]))
+    assert not [r for r in caplog.records if "prematch reading cache:" in r.message]
+
+    clock["mono"] += pr.PREMATCH_READING_CACHE_STATS_INTERVAL_S
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1), (1, KICK_1)]))
+
+    (line,) = [r.message for r in caplog.records if "prematch reading cache:" in r.message]
+    fields = dict(part.split("=", 1) for part in line.split(": ", 1)[1].split())
+    assert fields["dyno"] == "web.1"
+    assert fields["calls"] == "5"
+    assert fields["l1_hits"] == "3"  # call 2 (two games) + call 5 (one game)
+    assert fields["l2_hits"] == "2"  # call 3, the other process
+    assert fields["misses"] == "2"  # call 1
+    assert fields["not_kicked_off"] == "3"
+    assert fields["deduped"] == "1"
+    assert fields["bypass_conflicting_cutoff"] == "1"
+    assert fields["db_reads"] == "4"  # calls 1-3 for game 9, and the bypass
+    assert fields["keys_held"] == "2"
+    assert fields["hit_pct"] == "71.4"
+
+    # …and the interval resets.
+    caplog.clear()
+    await fetch_prematch_prior_rows(db, _binds([(1, KICK_1)]))
+    assert not [r for r in caplog.records if "prematch reading cache:" in r.message]
+    assert pr._stats["calls"] == 1
 
 
 def pr_text():
