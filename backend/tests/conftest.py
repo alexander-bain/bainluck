@@ -212,6 +212,7 @@ def _reset_loaded_request_caches(retained=None):
         ("app.utils.candidate_base", ("_reset_l0_for_tests",)),
         ("app.utils.principal_independent_cache", ("clear_shared_builds",)),
         ("app.utils.event_history_cache", ("_reset_for_tests",)),
+        ("app.utils.prematch_reading", ("_reset_prematch_cache_for_tests",)),
         ("app.routes.calibration", ()),
     )
     found = {}
