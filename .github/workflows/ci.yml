@@ -4979,6 +4979,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \
+            tests/integration/test_stamp_fused_intent_10090_pg.py \
             tests/integration/test_nonvenue_live_push_pg_8761.py \
             tests/integration/test_nonvenue_trace_pg_10090.py \
             tests/integration/test_probability_publication_pg_4971.py \
@@ -5363,8 +5364,8 @@ jobs:
             echo "::error::#10702 exact trace real PostgreSQL gate skipped"
             exit 1
           fi
-          grep -qE "(^|[^0-9])12 passed([,[:space:]]|$)" /tmp/trace10702.txt || {
-            echo "::error::#10702 exact trace gate did not run all twelve on/off, repeat-race and rollback cases"
+          grep -qE "(^|[^0-9])24 passed([,[:space:]]|$)" /tmp/trace10702.txt || {
+            echo "::error::#10702 exact trace gate did not run all 24 cases"
             exit 1
           }
 

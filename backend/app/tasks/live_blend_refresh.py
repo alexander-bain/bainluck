@@ -2079,6 +2079,57 @@ def observation_admits_clause(source: str, observed_basis):
     )
 
 
+#: #10090 — set to 1, a stamp writes its `<source>_price_publish` intent in the
+#: stamping statement itself (`stamp_with_publication_intent`) instead of a
+#: second INSERT round trip after it. Default off. Read at call time.
+STAMP_FUSED_INTENT_ENV = "LIVE_STAMP_FUSED_INTENT"
+
+
+def stamp_fuses_intent() -> bool:
+    return os.getenv(STAMP_FUSED_INTENT_ENV, "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def stamp_with_publication_intent(stamp, *, source: str, intent_source: str,
+                                  event_id: int, value: float):
+    """The stamp UPDATE and its publication intent as ONE statement.
+
+    ``stamp`` is the stamp's UPDATE with its RETURNING of the bag and revision.
+    It becomes a data-modifying CTE; the intent INSERT selects from that CTE's
+    output, and the statement returns the same row the UPDATE alone returned
+    (no row when it matched nothing or the admits guard refused). The INSERT
+    reads only the RETURNING row, never a snapshot of `events`, so the revision
+    is the trigger's post-wait value and `updated_at` the clock the bag stored,
+    exactly as the separate INSERT read them back from Python. Its filter is
+    the separate path's skip: no bag (SQL or JSON null), or no revision, owes
+    no intent. A bag of any other non-object shape raised in Python before the
+    INSERT and rolled the stamp back; it still does, taking this row too. One
+    statement, one `statement_timeout`; the INSERT takes no row lock (no
+    foreign key), and any failure rolls both back with the stamp's scope.
+    """
+    from sqlalchemy import Float, Integer, String, func, insert, literal, select
+
+    from app.models.models import OwedChartPoint
+
+    stamped = stamp.cte("stamped")
+    bag = stamped.c.win_probability_sources
+    rev = stamped.c.win_probability_sources_rev
+    intent = insert(OwedChartPoint).from_select(
+        ["source", "event_id", "value", "reading"],
+        select(
+            literal(intent_source, String),
+            literal(event_id, Integer),
+            literal(value, Float),
+            func.jsonb_build_object(
+                literal("rev", String), rev,
+                literal("updated_at", String), bag[source]["updated_at"],
+            ),
+        # `jsonb_typeof` is NULL for SQL NULL and 'null' for JSON null; both
+        # decode to Python None, which the separate path skips.
+        ).where(func.jsonb_typeof(bag) != "null", rev.is_not(None)),
+    ).cte("publication_intent")
+    return select(bag, rev).add_cte(intent)
+
+
 def restamp_records_no_observation(
     value: float, observed_at, sources, source: str,
 ) -> bool:
@@ -6191,22 +6242,25 @@ class LiveBlendRefresher:
                             stamp = stamp.where(admits)
                         # #9051: the row's revision rides the same RETURNING,
                         # so the frame names exactly the write it reports.
-                        stamped_row = (
-                            await session.execute(
-                                stamp.values(
-                                    win_probability_sources=atomic_stamp_expression(
-                                        self.source,
-                                        value,
-                                        eligibility=reading.eligibility,
-                                        observed_basis=basis,
-                                    )
-                                )
-                                .returning(
-                                    Event.win_probability_sources,
-                                    Event.win_probability_sources_rev,
-                                )
+                        stamp = stamp.values(
+                            win_probability_sources=atomic_stamp_expression(
+                                self.source,
+                                value,
+                                eligibility=reading.eligibility,
+                                observed_basis=basis,
                             )
-                        ).first()
+                        ).returning(
+                            Event.win_probability_sources,
+                            Event.win_probability_sources_rev,
+                        )
+                        fused_intent = stamp_fuses_intent()
+                        if fused_intent:
+                            stamp = stamp_with_publication_intent(
+                                stamp, source=self.source,
+                                intent_source=self._normal_source,
+                                event_id=event_id, value=value,
+                            )
+                        stamped_row = (await session.execute(stamp)).first()
                         new_sources, new_rev = (
                             (None, None) if stamped_row is None else stamped_row
                         )
@@ -6238,7 +6292,10 @@ class LiveBlendRefresher:
                         # Same revision rule as `build_frame`: a writer with no
                         # integer revision makes no claim, so it owes no intent
                         # and its stamp is not refused for lacking one.
-                        if isinstance(new_rev, int) and not isinstance(new_rev, bool):
+                        # With `fused_intent` the stamping statement already
+                        # wrote it, under the same condition.
+                        if (not fused_intent and isinstance(new_rev, int)
+                                and not isinstance(new_rev, bool)):
                             from sqlalchemy import insert
                             from app.models.models import OwedChartPoint
                             await session.execute(insert(OwedChartPoint).values(
