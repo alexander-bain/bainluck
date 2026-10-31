@@ -43,7 +43,7 @@ final class TennisEventPageHostAdapter10868Tests: XCTestCase {
             history, event: event, phase: .during, host: historyHost(Fixtures.liveReadAt)))
         XCTAssertEqual(built.input.history.series[0].runs.count, 1)
         let series = try XCTUnwrap(built.series)
-        XCTAssertEqual(series.points.count, 104)
+        XCTAssertEqual(series.points.count, 89, "the chart's own drawn rows 510–598, the same as the history")
         XCTAssertEqual(built.input.reading, TennisReadingAdapter10868.reading(
             series, held: nil, event: event, now: Fixtures.liveReadAt.asDate!))
         XCTAssertEqual(built.originals.catalogue?.originals.count, 12)
