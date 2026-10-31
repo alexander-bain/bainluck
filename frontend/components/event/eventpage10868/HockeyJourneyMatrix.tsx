@@ -33,12 +33,21 @@
  * (NFLEventCards.tsx) reads enlarged text — the root font size — at or above
  * `ACCESSIBILITY_ROOT_FONT_PX` (150% of the 16 px default).
  *
+ * A column with NO value for either team, whose two absence words are the same
+ * (`matrixSharedAbsences` — a channel missing for the whole game, not for one
+ * side), leaves the grid and the team blocks and is stated once beneath them,
+ * under "Both teams", in column order with its own title and words. Nothing is
+ * dropped, only not repeated per team: a degraded live read keeps its chance
+ * rows compact, so the history starts on a phone's first screen. A column with
+ * a value for either team, or different words per team, stays in the grid. No
+ * metric column left and no result: no grid at all, only the shared lines.
+ *
  * Each column's source and clock is printed here only when `inlineProvenance`
  * is set; the page leaves them to About once it has verified About carries
  * every one (`provenanceInAbout`).
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type {
   HockeyJourneyHeadline,
   HockeyJourneySlot,
@@ -47,6 +56,9 @@ import type {
 import { ACCESSIBILITY_ROOT_FONT_PX } from "./useFrameMeasure";
 
 export type HockeyJourneyMatrixArrangement = "grid" | "shortGrid" | "pairs";
+
+/** The label over the columns stated once for both teams. */
+export const BOTH_TEAMS_LABEL = "Both teams";
 
 // One threshold for the whole screen (the card's rail and chooser, the chart's axis use it too).
 export { ACCESSIBILITY_ROOT_FONT_PX };
@@ -74,6 +86,17 @@ export function matrixFitContent(headline: HockeyJourneyHeadline): string {
     matrix.rows.map((r) => [r.side, r.values.map((v) => v.text), r.result]),
     [headline.home.name, headline.home.short, headline.away.name, headline.away.short],
   ]);
+}
+
+/**
+ * The columns absent for BOTH teams in the same words, in column order: stated
+ * once under the grid instead of in every team's row or block.
+ */
+export function matrixSharedAbsences(matrix: HockeyJourneyHeadline["matrix"]): number[] {
+  return matrix.columns.flatMap((_, i) => {
+    const [home, away] = matrix.rows.map((row) => row.values[i]);
+    return home?.kind === "absent" && away?.kind === "absent" && home.text === away.text ? [i] : [];
+  });
 }
 
 function SlotValue({ slot, lead, tint }: { slot: HockeyJourneySlot; lead: boolean; tint: string | null }) {
@@ -120,6 +143,11 @@ export default function HockeyJourneyMatrix({
   const { matrix } = headline;
   const teams: Record<"home" | "away", HockeyJourneyTeam> = { home: headline.home, away: headline.away };
   const provenance = inlineProvenance ? matrix.columns.filter((c) => c.provenance) : [];
+  const shared = matrixSharedAbsences(matrix);
+  const kept = matrix.columns.map((_, i) => i).filter((i) => !shared.includes(i));
+  const groups = matrix.groups.map((group) => group.filter((i) => kept.includes(i))).filter((group) => group.length > 0);
+  const drawGrid = kept.length > 0 || matrix.rows.some((row) => row.result);
+  const sharedLabelId = useId();
 
   const frame = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -157,16 +185,16 @@ export default function HockeyJourneyMatrix({
   // drawn arrangement changes, so new headline content is always measured.
   useIsomorphicLayoutEffect(() => {
     const el = frame.current;
-    if (!el || arrangement === "pairs") return;
+    if (!el || arrangement === "pairs" || !drawGrid) return;
     if (el.scrollWidth > el.clientWidth + 1) setFit({ key: fitKey, step: step + 1 });
-  }, [arrangement, fitKey, step]);
+  }, [arrangement, drawGrid, fitKey, step]);
 
   const short = arrangement === "shortGrid";
 
   return (
     <div className="space-y-3" data-hockey-matrix={matrix.phase}>
-      <div ref={frame} className="w-full overflow-x-auto" data-arrangement={arrangement}>
-        {arrangement === "pairs" ? (
+      <div ref={frame} hidden={!drawGrid} className="w-full overflow-x-auto" data-arrangement={arrangement}>
+        {!drawGrid ? null : arrangement === "pairs" ? (
           <div className="space-y-4">
             {matrix.rows.map((row) => {
               const team = teams[row.side];
@@ -178,7 +206,7 @@ export default function HockeyJourneyMatrix({
                     </span>
                     <ResultChip result={row.result} />
                   </p>
-                  {matrix.groups.map((group) => (
+                  {groups.map((group) => (
                     // One comparison pair: side by side when it fits, one value per line when not.
                     <dl key={group.join(":")} className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
                       {group.map((column) => (
@@ -203,9 +231,9 @@ export default function HockeyJourneyMatrix({
                 <th scope="col" className="py-2 pr-2 text-left">
                   <span className="sr-only">Team</span>
                 </th>
-                {matrix.columns.map((column) => (
-                  <th key={column.title} scope="col" className="px-1 py-2 text-center align-bottom text-sm font-semibold text-text-secondary">
-                    <span className="mx-auto block min-w-16 max-w-[7.5rem]">{column.title}</span>
+                {kept.map((i) => (
+                  <th key={matrix.columns[i].title} scope="col" className="px-1 py-2 text-center align-bottom text-sm font-semibold text-text-secondary">
+                    <span className="mx-auto block min-w-16 max-w-[7.5rem]">{matrix.columns[i].title}</span>
                   </th>
                 ))}
               </tr>
@@ -225,10 +253,10 @@ export default function HockeyJourneyMatrix({
                         <ResultChip result={row.result} />
                       </span>
                     </th>
-                    {row.values.map((slot, i) => (
-                      <td key={matrix.columns[i]?.title ?? i} className="px-1 py-3 text-center align-middle">
+                    {kept.map((i) => (
+                      <td key={matrix.columns[i].title} className="px-1 py-3 text-center align-middle">
                         <span className="mx-auto block min-w-16 max-w-[7.5rem]">
-                          <SlotValue slot={slot} lead={i === matrix.lead} tint={team.tint} />
+                          <SlotValue slot={row.values[i]} lead={i === matrix.lead} tint={team.tint} />
                         </span>
                       </td>
                     ))}
@@ -239,6 +267,22 @@ export default function HockeyJourneyMatrix({
           </table>
         )}
       </div>
+
+      {shared.length > 0 && (
+        <div role="group" aria-labelledby={sharedLabelId} data-matrix-shared-absences="" className="text-sm">
+          <p id={sharedLabelId} className="font-semibold text-text-primary">
+            {BOTH_TEAMS_LABEL}
+          </p>
+          <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-text-secondary">
+            {shared.map((i) => (
+              <div key={matrix.columns[i].title} className="flex min-w-0 flex-wrap gap-x-1">
+                <dt className="font-medium">{matrix.columns[i].title}:</dt>
+                <dd className="min-w-0 break-words">{matrix.rows[0].values[i].text}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
 
       {provenance.length > 0 && (
         <dl className="space-y-1 text-sm text-text-secondary">

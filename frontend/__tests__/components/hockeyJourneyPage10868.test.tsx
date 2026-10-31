@@ -32,7 +32,11 @@ import {
 import HockeyJourneyPage from "@/components/event/eventpage10868/HockeyJourneyPage";
 import HockeyJourneyAllProps from "@/components/event/eventpage10868/HockeyJourneyAllProps";
 import HockeyJourneyContributionCard from "@/components/event/eventpage10868/HockeyJourneyContributionCard";
-import HockeyJourneyMatrix, { matrixArrangements } from "@/components/event/eventpage10868/HockeyJourneyMatrix";
+import HockeyJourneyMatrix, {
+  BOTH_TEAMS_LABEL,
+  matrixArrangements,
+  matrixSharedAbsences,
+} from "@/components/event/eventpage10868/HockeyJourneyMatrix";
 import HockeyJourneyHistoryChart, {
   axisLabelSubset,
   estimateLabelWidth,
@@ -80,7 +84,11 @@ it("prints the final matrix's values and verdicts as text", () => {
   expect(table?.textContent).toContain("34%");
   expect(table?.textContent).toContain("Won");
   expect(table?.textContent).toContain("Lost");
-  expect(table?.textContent).toContain("No pregame forecast");
+  // Neither team has a pregame forecast: said once for both, not in each row.
+  expect(table?.textContent).not.toContain("No pregame forecast");
+  expect(host.querySelector("[data-matrix-shared-absences]")?.textContent).toBe(
+    `${BOTH_TEAMS_LABEL}Pregame forecast:No pregame forecast`,
+  );
   expect(host.querySelector("h2")?.textContent).toBe("Final: Minnesota Wild 4–1 Boston Bruins");
 });
 
@@ -302,13 +310,16 @@ it("steps to short names, then to labelled pairs, only when the wider arrangemen
     act(() => root.render(<HockeyJourneyMatrix key="b" headline={headline} inlineProvenance={false} />));
     expect(host.querySelector("[data-arrangement]")?.getAttribute("data-arrangement")).toBe("pairs");
     expect(host.querySelector("table")).toBeNull();
-    const blocks = Array.from(host.querySelectorAll('[role="group"]'));
+    const blocks = Array.from(host.querySelectorAll('[data-arrangement] [role="group"]'));
     expect(blocks.map((b) => b.getAttribute("aria-label"))).toEqual([headline.home.name, headline.away.name]);
-    expect(blocks[0].querySelectorAll("dl")).toHaveLength(headline.matrix.groups.length);
-    expect(Array.from(blocks[0].querySelectorAll("dt")).map((dt) => dt.textContent)).toEqual(
-      headline.matrix.columns.map((c) => c.title),
-    );
+    // The pregame forecast both teams lack is stated once, below the blocks, not in each.
+    expect(blocks[0].querySelectorAll("dl")).toHaveLength(2);
+    expect(Array.from(blocks[0].querySelectorAll("dt")).map((dt) => dt.textContent)).toEqual([
+      "Pregame chance",
+      "Final goals",
+    ]);
     expect(blocks[0].textContent).toContain("66%");
+    expect(host.querySelectorAll("[data-matrix-shared-absences]")).toHaveLength(1);
   } finally {
     delete proto.clientWidth;
     delete proto.scrollWidth;
@@ -317,18 +328,19 @@ it("steps to short names, then to labelled pairs, only when the wider arrangemen
 
 /**
  * Forced layout for the same-component reflow cases: the matrix frame is 300 px
- * wide, and a GRID with four metric columns (five header cells) is 1000 px
- * wide — it overflows — while two or three columns fit. Every other element
- * reports 0. jsdom lays nothing out, so this proves the re-measure, not real fit.
+ * wide, and a GRID with `overflowAt` or more header cells (the team cell plus
+ * its metric columns) is 1000 px wide — it overflows — while a narrower grid
+ * fits. Every other element reports 0. jsdom lays nothing out, so this proves
+ * the re-measure, not real fit.
  */
-function withForcedMatrixLayout(run: () => void) {
+function withForcedMatrixLayout(overflowAt: number, run: () => void) {
   const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
   Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => 300 });
   Object.defineProperty(proto, "scrollWidth", {
     configurable: true,
     get(this: HTMLElement) {
       if (this.dataset?.arrangement === undefined) return 0;
-      return this.querySelectorAll("thead th").length >= 5 ? 1000 : 300;
+      return this.querySelectorAll("thead th").length >= overflowAt ? 1000 : 300;
     },
   });
   try {
@@ -341,14 +353,22 @@ function withForcedMatrixLayout(run: () => void) {
 
 const arrangementNow = () => host.querySelector("[data-arrangement]")?.getAttribute("data-arrangement");
 
+/**
+ * CONSTRUCTED host: the hero pair the lab's production resolver printed for the
+ * retained 15338496 bodies (51% / 49%), with a price clock. jsdom has no
+ * resolver; the null-host cases above show every chance absent instead.
+ */
+const LAB_HERO = { homeProb: 0.51, awayProb: 0.49, homePct: 51, awayPct: 49, probSourceLabel: null };
+const heroHost = (nowMs: number, probabilityObservedAt: string) => ({ nowMs, hero: LAB_HERO, probabilityObservedAt });
+
 it("re-fits the SAME matrix when its content changes: before fits, live overflows to pairs, a narrower final climbs back", () => {
   const history = fixtures.finalHistory as unknown as EventHistoryResponse;
-  const hostAt = (nowMs: number) => ({ nowMs, hero: null, probabilityObservedAt: null });
-  // CONSTRUCTED lifecycle of 15169793 (status, scores, score clock and ESPN period/clock edited):
+  // CONSTRUCTED lifecycle of 15169793 (status, scores, score clock and ESPN period/clock edited), with
+  // the constructed hero pair before and during play so each phase has a chance to draw:
   const before = hockeyJourneyHeadline(
     { ...finalEvent, status: "scheduled", home_score: null, away_score: null } as unknown as EventDetailResponse,
     history,
-    hostAt(Date.parse("2026-10-03T23:00:00Z")),
+    heroHost(Date.parse("2026-10-03T23:00:00Z"), "2026-10-03T22:59:00Z"),
   );
   const live = hockeyJourneyHeadline(
     {
@@ -360,12 +380,14 @@ it("re-fits the SAME matrix when its content changes: before fits, live overflow
       espn: { ...finalEvent.espn, period: "2nd Period", game_clock: "4:09" },
     } as EventDetailResponse,
     history,
-    hostAt(Date.parse("2026-10-04T01:46:00Z")),
+    heroHost(Date.parse("2026-10-04T01:46:00Z"), "2026-10-04T01:45:50Z"),
   );
-  const final = hockeyJourneyHeadline(finalEvent, history, hostAt(FINAL_NOW));
-  expect([before.matrix.columns.length, live.matrix.columns.length, final.matrix.columns.length]).toEqual([2, 4, 3]);
+  const final = hockeyJourneyHeadline(finalEvent, history, { nowMs: FINAL_NOW, hero: null, probabilityObservedAt: null });
+  // Grid columns once the forecasts neither team has are stated below it: 1, 3, 2.
+  const drawn = (h: typeof before) => h.matrix.columns.length - matrixSharedAbsences(h.matrix).length;
+  expect([drawn(before), drawn(live), drawn(final)]).toEqual([1, 3, 2]);
 
-  withForcedMatrixLayout(() => {
+  withForcedMatrixLayout(4, () => {
     // One element type, no key, no resize event: only the headline prop changes.
     act(() => root.render(<HockeyJourneyMatrix headline={before} inlineProvenance={false} />));
     expect(arrangementNow()).toBe("grid");
@@ -387,27 +409,143 @@ it("re-fits the SAME matrix when its content changes: before fits, live overflow
 
 it("reflows the page's matrix from before to live without remounting or losing the held player", () => {
   const pregameDetail = fixtures.pregameDetail as unknown as EventDetailResponse;
-  const build = (event: EventDetailResponse, nowMs: number) =>
+  const build = (event: EventDetailResponse, nowMs: number, observedAt: string) =>
     buildHockeyJourney({
       event,
       history: fixtures.pregameHistory as unknown as EventHistoryResponse,
       gameMarkets: fixtures.pregameMarkets as unknown as GameMarketsResponse,
-      host: { nowMs, hero: null, probabilityObservedAt: null },
+      host: heroHost(nowMs, observedAt),
     });
-  withForcedMatrixLayout(() => {
-    act(() => root.render(<HockeyJourneyPage journey={build(pregameDetail, Date.parse("2026-10-30T20:13:55Z"))} />));
+  // Before: one chance column (two header cells). Live with a score: chance + goals (three) — overflows.
+  withForcedMatrixLayout(3, () => {
+    act(() => root.render(<HockeyJourneyPage journey={build(pregameDetail, Date.parse("2026-10-30T20:13:55Z"), "2026-10-30T20:13:00Z")} />));
     expect(arrangementNow()).toBe("grid");
     const select = () => host.querySelector("article select") as HTMLSelectElement;
     choose(select(), "player:jack hughes");
     expect(host.querySelector('[aria-label="Jack Hughes milestones"]')).not.toBeNull();
 
-    // CONSTRUCTED: the same game read live (status only); same page element, no key change.
-    const live = { ...pregameDetail, status: "live" } as EventDetailResponse;
-    act(() => root.render(<HockeyJourneyPage journey={build(live, Date.parse("2026-10-30T22:30:00Z"))} />));
+    // CONSTRUCTED: the same game read live at 1–0 (status, scores, score clock); same page element, no key change.
+    const live = {
+      ...pregameDetail,
+      status: "live",
+      home_score: 1,
+      away_score: 0,
+      score_observed_at: "2026-10-30T22:29:30Z",
+    } as EventDetailResponse;
+    act(() => root.render(<HockeyJourneyPage journey={build(live, Date.parse("2026-10-30T22:30:00Z"), "2026-10-30T20:13:55Z")} />));
     expect(arrangementNow()).toBe("pairs");
     expect(select().value).toBe("player:jack hughes");
     expect(host.querySelector('[aria-label="Jack Hughes milestones"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Selected player unavailable.");
+  });
+});
+
+// ─── Channels neither team has, stated once (Design P1, 2026-10-31) ──────────
+
+describe("a column absent for both teams in the same words is stated once, not in every team's row", () => {
+  const pregameDetail = fixtures.pregameDetail as unknown as EventDetailResponse;
+  const pregameHistory = fixtures.pregameHistory as unknown as EventHistoryResponse;
+  const LIVE_NOW = Date.parse("2026-10-30T22:30:00Z");
+  // CONSTRUCTED: the lab's live-constructed case — retained 15338496 bodies, status 'live' only, at 22:30Z.
+  const liveStatusOnly = { ...pregameDetail, status: "live" } as EventDetailResponse;
+  const sharedLines = () =>
+    Array.from(host.querySelectorAll("[data-matrix-shared-absences] dl > div")).map((d) => d.textContent);
+  const headerCells = () => Array.from(host.querySelectorAll("thead th")).map((th) => th.textContent);
+
+  it("degraded live read (the lab's 375 px case): one chance column in the grid, the other three said once", () => {
+    const headline = hockeyJourneyHeadline(liveStatusOnly, pregameHistory, heroHost(LIVE_NOW, "2026-10-30T20:13:55Z"));
+    act(() => root.render(<HockeyJourneyMatrix headline={headline} inlineProvenance={false} />));
+    expect(arrangementNow()).toBe("grid");
+    expect(headerCells()).toEqual(["Team", "Last recorded chance"]);
+    const rows = Array.from(host.querySelectorAll("tbody tr"));
+    expect(rows.map((r) => r.querySelector("td span[aria-hidden]")?.textContent)).toEqual(["51%", "49%"]);
+    // The lead stays the largest figure.
+    expect(rows[0].querySelector("td span[aria-hidden]")?.className).toContain("text-3xl");
+    // Each missing channel keeps its own title and words, once, in column order.
+    expect(sharedLines()).toEqual([
+      "Pregame chance:No recorded chance",
+      "Goals:Score unavailable",
+      "Projected final:No in-game forecast",
+    ]);
+    const group = host.querySelector("[data-matrix-shared-absences]")!;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent).toBe(BOTH_TEAMS_LABEL);
+    const text = host.querySelector("[data-hockey-matrix]")?.textContent ?? "";
+    for (const words of ["No recorded chance", "Score unavailable", "No in-game forecast"]) {
+      expect(text.split(words)).toHaveLength(2);
+    }
+  });
+
+  it("the same read at an accessibility size: team blocks hold only the chance; the shared lines follow once", () => {
+    withRootFont(32);
+    const headline = hockeyJourneyHeadline(liveStatusOnly, pregameHistory, heroHost(LIVE_NOW, "2026-10-30T20:13:55Z"));
+    act(() => root.render(<HockeyJourneyMatrix headline={headline} inlineProvenance={false} />));
+    expect(arrangementNow()).toBe("pairs");
+    const blocks = Array.from(host.querySelectorAll('[data-arrangement] [role="group"]'));
+    expect(blocks.map((b) => b.getAttribute("aria-label"))).toEqual([headline.home.name, headline.away.name]);
+    for (const block of blocks) {
+      expect(Array.from(block.querySelectorAll("dt")).map((dt) => dt.textContent)).toEqual(["Last recorded chance"]);
+      expect(block.textContent).not.toContain("No recorded chance");
+    }
+    expect(host.querySelectorAll("[data-matrix-shared-absences]")).toHaveLength(1);
+    expect(sharedLines()).toHaveLength(3);
+  });
+
+  it("unavailable (no chance, no score, no forecast for either team): no grid, every column said once", () => {
+    const headline = hockeyJourneyHeadline(liveStatusOnly, pregameHistory, { nowMs: LIVE_NOW, hero: null, probabilityObservedAt: null });
+    act(() => root.render(<HockeyJourneyMatrix headline={headline} inlineProvenance={false} />));
+    expect(host.querySelector("table")).toBeNull();
+    expect((host.querySelector("[data-arrangement]") as HTMLElement).hidden).toBe(true);
+    expect(sharedLines()).toEqual([
+      "Pregame chance:No recorded chance",
+      "Last recorded chance:No recorded chance",
+      "Goals:Score unavailable",
+      "Projected final:No in-game forecast",
+    ]);
+  });
+
+  it("complete live read: every column with a value stays in the grid; only the forecast neither team has moves", () => {
+    const live = hockeyJourneyHeadline(
+      {
+        ...finalEvent,
+        status: "live",
+        home_score: 2,
+        away_score: 1,
+        score_observed_at: "2026-10-04T01:45:25Z",
+        espn: { ...finalEvent.espn, period: "2nd Period", game_clock: "4:09" },
+      } as EventDetailResponse, // CONSTRUCTED: the refit test's live edit of 15169793
+      finalHistory,
+      heroHost(Date.parse("2026-10-04T01:46:00Z"), "2026-10-04T01:45:50Z"),
+    );
+    act(() => root.render(<HockeyJourneyMatrix headline={live} inlineProvenance={false} />));
+    expect(headerCells()).toEqual(["Team", "Pregame chance", "Current chance", "Goals"]);
+    expect(sharedLines()).toEqual(["Projected final:No in-game forecast"]);
+  });
+
+  it("a column one team has (mixed), or absent in different words, stays in the grid with both slots", () => {
+    const base = hockeyJourneyHeadline(liveStatusOnly, pregameHistory, heroHost(LIVE_NOW, "2026-10-30T20:13:55Z"));
+    // CONSTRUCTED slots on the real live headline: home has a goals count, away does not; the
+    // pregame-chance absences are worded differently per team.
+    const [home, away] = base.matrix.rows;
+    const mixed = {
+      ...base,
+      matrix: {
+        ...base.matrix,
+        rows: [
+          { ...home, values: home.values.map((v, i) => (i === 2 ? { kind: "value", text: "1", spoken: "1 goal" } : v)) },
+          { ...away, values: away.values.map((v, i) => (i === 0 ? { kind: "absent", text: "Not offered" } : v)) },
+        ],
+      },
+    } as typeof base;
+    expect(matrixSharedAbsences(mixed.matrix)).toEqual([3]);
+    act(() => root.render(<HockeyJourneyMatrix headline={mixed} inlineProvenance={false} />));
+    expect(headerCells()).toEqual(["Team", "Pregame chance", "Last recorded chance", "Goals"]);
+    const rows = Array.from(host.querySelectorAll("tbody tr")).map((r) => Array.from(r.querySelectorAll("td")).map((td) => td.textContent));
+    expect(rows[0][0]).toBe("No recorded chance");
+    expect(rows[1][0]).toBe("Not offered");
+    expect(rows[0][2]).toContain("1");
+    expect(rows[1][2]).toBe("Score unavailable");
+    expect(sharedLines()).toEqual(["Projected final:No in-game forecast"]);
   });
 });
 
