@@ -81,6 +81,10 @@ nonisolated enum PreEventShiftGlyph10868: Equatable, CaseIterable {
     case circle
     case triangle
     case diamond
+    /// Additive (#10868 field page, Design 2026-10-31): the third field
+    /// contender's square, the same mark its headline key and history line
+    /// carry. Existing owners never receive it unless they pass it.
+    case square
 }
 
 /// One displayed skater, in the owner's order.
@@ -206,12 +210,16 @@ nonisolated enum PreEventShiftGeometry10868 {
 
     /// Each glyph's reach from its centre in multiples of r — the reference
     /// `SkatingTradeMark`: a circle of radius r, a triangle 1.1 r wide either
-    /// side with its apex 1.25 r up and its base r down, a diamond 1.2 r.
+    /// side with its apex 1.25 r up and its base r down, a diamond 1.2 r. The
+    /// square's half-side is 0.85 r, the history chart's approved square
+    /// (`FieldHistoryGeometry10868.markPath`); it reaches less than the diamond,
+    /// so the shared marker box and track inset are unchanged by it.
     static func reach(_ glyph: PreEventShiftGlyph10868) -> (half: CGFloat, up: CGFloat, down: CGFloat) {
         switch glyph {
         case .circle: (1, 1, 1)
         case .triangle: (1.1, 1.25, 1)
         case .diamond: (1.2, 1.2, 1.2)
+        case .square: (0.85, 0.85, 0.85)
         }
     }
 
@@ -246,6 +254,8 @@ nonisolated enum PreEventShiftGeometry10868 {
             path.addLine(to: CGPoint(x: box.minX, y: center.y))
             path.closeSubpath()
             return path
+        case .square:
+            return Path(box)
         }
     }
 

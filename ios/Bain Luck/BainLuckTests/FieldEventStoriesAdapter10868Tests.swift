@@ -72,7 +72,7 @@ final class FieldEventStoriesAdapter10868Tests: XCTestCase {
 
     func testTheChosenContenderIsTheFieldCardsSelection() throws {
         let market = try F.market(F.rugbyBefore)
-        let input = try XCTUnwrap(S.field(market, host: F.host(F.rugbyCapture, chosen: F.france)))
+        let input = try XCTUnwrap(S.field(market, host: F.host(F.rugbyCapture, chosen: F.choice(F.france, in: market))))
         XCTAssertEqual(input.selected?.ref.outcomeID, String(F.france))
         XCTAssertEqual(input.selected?.words, "In your chart")
         let model = FieldOutlookModel10868(input)
@@ -82,8 +82,20 @@ final class FieldEventStoriesAdapter10868Tests: XCTestCase {
         // The chosen team leads the chart, so its bar carries the chart's first colour.
         XCTAssertEqual(model.selectedOriginal?.accent, A.tint(0))
         XCTAssertNil(input.catalogue.first { $0.name == "New Zealand" }?.accent)
-        // CONSTRUCTED: an id the board does not serve selects nothing.
-        XCTAssertNil(try XCTUnwrap(S.field(market, host: F.host(F.rugbyCapture, chosen: 999))).selected)
+        // CONSTRUCTED: this board's identity with an id it does not serve is still the
+        // choice — handed over by its identity, so the chooser's own words say it is
+        // unavailable, and nothing else is selected in its place.
+        let missing = try XCTUnwrap(S.field(market, host: F.host(F.rugbyCapture, chosen: F.choice(999, in: market))))
+        XCTAssertEqual(missing.selected?.ref.outcomeID, "999")
+        let unresolved = FieldOutlookModel10868(missing)
+        XCTAssertNil(unresolved.selectedOriginal)
+        XCTAssertEqual(unresolved.notice, "Chosen team unavailable in this update")
+        XCTAssertFalse(unresolved.bars.contains(where: unresolved.isSelected))
+        // CONSTRUCTED: another market's choice with an outcome id this board serves selects nothing.
+        let foreign = A.Choice(source: "kalshi", marketID: "62383719", outcomeID: String(F.france))
+        let other = try XCTUnwrap(S.field(market, host: F.host(F.rugbyCapture, chosen: foreign)))
+        XCTAssertNil(other.selected)
+        XCTAssertNil(FieldOutlookModel10868(other).notice)
     }
 
     // MARK: The movement card
@@ -94,7 +106,8 @@ final class FieldEventStoriesAdapter10868Tests: XCTestCase {
         let input = try XCTUnwrap(S.movement(try F.history(F.chessHistory), market: market, host: host))
         XCTAssertEqual(input.phase, .before)
         XCTAssertEqual(input.displayed.map(\.name), ["Alice Lee", "Rachael Li", "Thalia Cervantes"])
-        XCTAssertEqual(input.displayed.map(\.glyph), [.circle, .diamond, .triangle])
+        // The third contender's square: the same mark as its headline key and chart line.
+        XCTAssertEqual(input.displayed.map(\.glyph), [.circle, .diamond, .square])
         XCTAssertEqual(sides(input), [["33%", "69%"], ["5%", "5%"], ["6%", "5%"]])
         let alice = try XCTUnwrap(PreEventShiftModel10868(input).rows.first)
         XCTAssertEqual(alice.first?.chance, .value(probability: 0.325, fraction: 0.325))
@@ -115,7 +128,7 @@ final class FieldEventStoriesAdapter10868Tests: XCTestCase {
         // Texas A&M has exactly one served point in the REAL volleyball history.
         let market = try F.market(F.volleyballBefore)
         let input = try XCTUnwrap(S.movement(try F.history(F.volleyballHistory), market: market,
-                                             host: F.host(F.volleyballCapture, chosen: F.texasAM)))
+                                             host: F.host(F.volleyballCapture, chosen: F.choice(F.texasAM, in: market))))
         XCTAssertEqual(input.displayed.map(\.name), ["Texas A&M", "Nebraska", "Pittsburgh"])
         XCTAssertEqual(sides(input), [["Only one reading in this history", "1%"], ["63%", "45%"], ["74%", "32%"]])
         XCTAssertEqual(PreEventShiftModel10868(input).rows.first?.first?.key, nil)

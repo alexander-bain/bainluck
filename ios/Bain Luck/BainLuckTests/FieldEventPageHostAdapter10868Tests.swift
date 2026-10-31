@@ -51,7 +51,7 @@ final class FieldEventPageHostAdapter10868Tests: XCTestCase {
 
     func testTheReadersScaleChoiceAndChosenContenderReachEveryPart() throws {
         let market = try F.market(F.chessBefore)
-        let reading = Host.Reading(chosen: F.carissaYip, full: true, displayed: .movement)
+        let reading = Host.Reading(chosen: F.choice(F.carissaYip, in: market), full: true, displayed: .movement)
         let built = Host.build(field: market, history: try F.history(F.chessHistory), now: F.chessCapture.asDate!,
                                reading: reading, calendar: F.pacific, locale: F.enUS)
         XCTAssertEqual(built.input.history.ceiling, 1)
@@ -99,7 +99,8 @@ final class FieldEventPageHostAdapter10868Tests: XCTestCase {
         let rugby = try F.market(F.rugbyBefore)
         let card = try XCTUnwrap(FieldEventStoriesAdapter10868.field(rugby, host: F.host(F.rugbyCapture)))
         let france = try XCTUnwrap(card.displayed.first { $0.label == "France" }).ref
-        XCTAssertEqual(Host.chosenID(france, in: rugby), F.france)
+        XCTAssertEqual(Host.choice(france, in: rugby),
+                       FieldEventPageAdapter10868.Choice(source: "kalshi", marketID: "60473053", outcomeID: String(F.france)))
         // CONSTRUCTED refs: another market, another source key, an unserved id.
         let otherMarket = FieldChooserOriginalRef10868(scope: france.scope, source: "kalshi", marketID: "62383719",
                                                        outcomeID: france.outcomeID)
@@ -107,8 +108,90 @@ final class FieldEventPageHostAdapter10868Tests: XCTestCase {
                                                        outcomeID: france.outcomeID)
         let unserved = FieldChooserOriginalRef10868(scope: france.scope, source: "kalshi", marketID: "60473053",
                                                     outcomeID: "999")
-        XCTAssertNil(Host.chosenID(otherMarket, in: rugby))
-        XCTAssertNil(Host.chosenID(otherSource, in: rugby))
-        XCTAssertNil(Host.chosenID(unserved, in: rugby))
+        XCTAssertNil(Host.choice(otherMarket, in: rugby))
+        XCTAssertNil(Host.choice(otherSource, in: rugby))
+        XCTAssertNil(Host.choice(unserved, in: rugby))
+    }
+
+    // MARK: The held choice across refreshes
+
+    func testAHeldChoiceSurvivesARefreshThatOmitsItAndIsRestoredWhenServedAgain() throws {
+        let rugby = try F.market(F.rugbyBefore)
+        let history = try F.history(F.rugbyHistory)
+        let now = F.rugbyCapture.asDate!
+        func build(_ field: FuturesMarketDetail, _ reading: Host.Reading) -> Host.Built {
+            Host.build(field: field, history: history, now: now, reading: reading, calendar: F.pacific, locale: F.enUS)
+        }
+        // The reader chooses France through the REAL field card's own ref.
+        let card = try XCTUnwrap(build(rugby, Host.Reading()).input.field)
+        let france = try XCTUnwrap(card.displayed.first { $0.label == "France" }).ref
+        let reading = Host.Reading(chosen: try XCTUnwrap(Host.choice(france, in: rugby)))
+
+        // Present.
+        let present = build(rugby, reading)
+        XCTAssertEqual(present.input.headline.displayed.map(\.name), ["France", "Ireland", "South Africa"])
+        XCTAssertEqual(present.input.headline.displayed.map(\.keyShape), [.circle, .diamond, .square])
+        XCTAssertEqual(present.input.movement?.displayed.map(\.glyph), [.circle, .diamond, .square])
+        let presentCard = FieldOutlookModel10868(try XCTUnwrap(present.input.field))
+        XCTAssertEqual(presentCard.selectedOriginal?.name, "France")
+        XCTAssertNil(presentCard.notice)
+
+        // CONSTRUCTED refresh: the same REAL board with France's served row removed.
+        let omittedBody = try F.market(F.omitting(F.rugbyBefore, outcome: F.france))
+        XCTAssertEqual(omittedBody.outcomes.count, 23)
+        let omitted = build(omittedBody, reading)
+        // The choice keeps the first slot, unavailable; no other team is promoted into it,
+        // and the served teams keep their own key shapes.
+        let headline = omitted.input.headline
+        XCTAssertEqual(headline.displayed.map(\.ref.outcomeID), [String(F.france), String(F.ireland), String(F.southAfrica)])
+        XCTAssertEqual(headline.displayed.map(\.keyShape), [.circle, .diamond, .square])
+        let competitors = FieldHeadlineModel10868(headline).competitors
+        XCTAssertEqual(competitors.map(\.resolution.original?.name), [nil, "Ireland", "South Africa"])
+        XCTAssertTrue(competitors[0].metrics.isEmpty)
+        XCTAssertEqual(FieldHeadlineModel10868(headline).competitorSummary(competitors[0]),
+                       "Chosen team unavailable in this update")
+        // The field card hands the chooser the held identity; its own words say it is unavailable.
+        let omittedField = try XCTUnwrap(omitted.input.field)
+        XCTAssertEqual(omittedField.selected?.ref.outcomeID, String(F.france))
+        let omittedCard = FieldOutlookModel10868(omittedField)
+        XCTAssertNil(omittedCard.selectedOriginal)
+        XCTAssertEqual(omittedCard.notice, "Chosen team unavailable in this update")
+        XCTAssertFalse(omittedCard.bars.contains(where: omittedCard.isSelected))
+        // No figure of France is kept: no bar, chance, line or movement row.
+        XCTAssertFalse(omittedField.chances.contains { $0.ref.outcomeID == String(F.france) })
+        XCTAssertEqual(omitted.input.history.series.map(\.name), ["Ireland", "South Africa"])
+        XCTAssertEqual(omitted.input.history.series.map(\.shape), [.diamond, .square])
+        XCTAssertEqual(omitted.input.movement?.displayed.map(\.name), ["Ireland", "South Africa"])
+        XCTAssertEqual(omitted.input.movement?.displayed.map(\.glyph), [.diamond, .square])
+        XCTAssertEqual(omitted.originals.catalogue?.originals.map(\.outcome), omittedBody.outcomes.map(\.name))
+
+        // Served again: the same choice, restored exactly.
+        let restored = build(rugby, reading)
+        XCTAssertEqual(restored.input, present.input)
+    }
+
+    func testAChoiceIsNeverCarriedOntoAnotherMarketsCoincidentOutcomeID() throws {
+        let rugby = try F.market(F.rugbyBefore)
+        let card = try XCTUnwrap(FieldEventStoriesAdapter10868.field(rugby, host: F.host(F.rugbyCapture)))
+        let france = try XCTUnwrap(card.displayed.first { $0.label == "France" }).ref
+        let reading = Host.Reading(chosen: try XCTUnwrap(Host.choice(france, in: rugby)))
+        // CONSTRUCTED: the REAL chess board (same venue) with Carissa Yip's served id
+        // replaced by France's, so the held rugby choice's outcome id is served here.
+        let chess = try F.market(F.replacing(F.chessBefore, "\"id\":\(F.carissaYip),", with: "\"id\":\(F.france),"))
+        XCTAssertEqual(chess.outcomes.filter { $0.id == F.france }.map(\.name), ["Carissa Yip"])
+        let history = try F.history(F.chessHistory)
+        let now = F.chessCapture.asDate!
+        let carried = Host.build(field: chess, history: history, now: now, reading: reading,
+                                 calendar: F.pacific, locale: F.enUS)
+        let fresh = Host.build(field: chess, history: history, now: now, calendar: F.pacific, locale: F.enUS)
+        // Nothing of the rugby choice reaches the chess page: no selection, no held
+        // slot, no notice — exactly the page with no choice.
+        XCTAssertEqual(carried.input, fresh.input)
+        XCTAssertNil(carried.input.field?.selected)
+        XCTAssertEqual(carried.input.headline.displayed.map(\.name), ["Alice Lee", "Rachael Li", "Thalia Cervantes"])
+        XCTAssertEqual(carried.input.headline.unavailableWords, "Player unavailable in this update")
+        // Back on the rugby board, the choice is still that board's.
+        XCTAssertEqual(Host.build(field: rugby, history: nil, now: F.rugbyCapture.asDate!, reading: reading,
+                                  calendar: F.pacific, locale: F.enUS).input.headline.displayed.first?.name, "France")
     }
 }

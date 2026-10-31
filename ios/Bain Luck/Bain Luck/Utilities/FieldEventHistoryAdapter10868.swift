@@ -49,7 +49,10 @@ import SwiftUI
 ///                     routes `GolfFieldHistoryAdapter10868.scaleActionID`.
 ///   - every percent   `formatProbability`; clocks part one's; venue `SourceLabels`.
 ///   - key and tint    part one's display position: the headline key shapes
-///                     (circle, diamond, square) and the chart palette.
+///                     (circle, diamond, square) and the chart palette. A held
+///                     choice an update omits draws no line (this update names
+///                     nothing to draw it as) but keeps its position, so every
+///                     drawn line keeps its own shape and colour.
 ///   - results         final only: the key context `Result · Won / Lost` from
 ///                     `FuturesDetailRowValue.of`, never a chart point.
 ///
@@ -112,7 +115,7 @@ enum FieldEventHistoryAdapter10868 {
         guard response.marketId == market.id else { return unavailable(market, host: host) }
         let phase = Page.phase(market)
         let shown = Page.cohort(market, host: host)
-        let drawn: [[[Golf.Observation]]] = shown.map { runs($0, response: response, now: host.now) }
+        let drawn: [[[Golf.Observation]]] = shown.served.map { runs($0, response: response, now: host.now) }
         let noteLines = notes(market, phase: phase)
         let dates: [Date] = drawn.flatMap { runs in runs.flatMap { run in run.map(\.date) } }
         guard let first = dates.min(), let last = dates.max() else {
@@ -122,15 +125,16 @@ enum FieldEventHistoryAdapter10868 {
         let peak: Double = drawn.flatMap { runs in runs.flatMap { run in run.map(\.probability) } }.max() ?? 0
         let top: Double = Golf.ceiling(peak: peak, full: full)
         var series: [FieldHistorySeries10868] = []
-        for (position, outcome) in shown.enumerated() {
-            series.append(Self.series(outcome, position: position, runs: drawn[position], market: market, host: host))
+        for (index, outcome) in shown.served.enumerated() {
+            series.append(Self.series(outcome, position: shown.position(index), runs: drawn[index],
+                                      market: market, host: host))
         }
         // Each part on its own line, so the one large initializer stays cheap to type-check.
         let plotted = FieldHistoryDomain10868(lower: domain.lowerBound.timeIntervalSince1970,
                                               upper: domain.upperBound.timeIntervalSince1970)
         let xTicks: [FieldHistoryTick10868] = Golf.xTicks(domain, host: host.golf)
         let yTicks: [FieldHistoryTick10868] = Golf.yTicks(ceiling: top)
-        let spoken: String = summary(shown, drawn: drawn, market: market)
+        let spoken: String = summary(shown.served, drawn: drawn, market: market)
         let scale: FieldHistoryAction10868 = Golf.scaleAction(ceiling: top, full: full)
         let details: FieldHistoryAction10868 = action(detailsActionID, Words.details, available: false)
         let expand: FieldHistoryAction10868 = action(expandActionID, Words.expand, spoken: Words.expandSpoken)
@@ -271,10 +275,11 @@ enum FieldEventHistoryAdapter10868 {
 
     /// Nothing to draw, in the owner's words: no point, axis or guide under it,
     /// and a placeholder domain the leaf never draws under an absence.
-    static func placeholder(_ market: FuturesMarketDetail, shown: [FuturesOutcome], words: String,
+    static func placeholder(_ market: FuturesMarketDetail, shown: Page.Cohort, words: String,
                             notes: [String]) -> FieldHistoryInput10868 {
         var series: [FieldHistorySeries10868] = []
-        for (position, outcome) in shown.enumerated() {
+        for (index, outcome) in shown.served.enumerated() {
+            let position = shown.position(index)
             series.append(FieldHistorySeries10868(
                 id: seriesID(market, outcome), name: outcome.name, shape: shape(position), tint: Page.tint(position),
                 runs: [], links: [], labelPointID: nil, before: .absent(words: words),

@@ -594,9 +594,25 @@ enum FieldEventAdapterFixtures10868 {
     static let enUS = Locale(identifier: "en_US")
 
     /// The reader's clock and calendar (CONSTRUCTED: Pacific, en_US).
-    static func host(_ now: String, cohort: [Int]? = nil, chosen: Int? = nil) -> FieldEventPageAdapter10868.Host {
+    static func host(_ now: String, cohort: [Int]? = nil,
+                     chosen: FieldEventPageAdapter10868.Choice? = nil) -> FieldEventPageAdapter10868.Host {
         FieldEventPageAdapter10868.Host(now: now.asDate!, calendar: pacific, locale: enUS,
                                         cohort: cohort, chosen: chosen)
+    }
+
+    /// A CONSTRUCTED held choice on this market's exact identity (its venue key
+    /// and market id) for an outcome id — served or not.
+    static func choice(_ id: Int, in market: FuturesMarketDetail) -> FieldEventPageAdapter10868.Choice {
+        FieldEventPageAdapter10868.Choice(source: FieldEventPageAdapter10868.venueKey(market),
+                                          marketID: String(market.id), outcomeID: String(id))
+    }
+
+    /// A CONSTRUCTED refresh: the body with exactly one served outcome row
+    /// removed — its whole line, proven to occur once and not to be the last row.
+    static func omitting(_ json: String, outcome id: Int) -> String {
+        let rows = json.components(separatedBy: "\n").filter { $0.hasPrefix("{\"id\":\(id),") }
+        precondition(rows.count == 1 && rows[0].hasSuffix(","), "not exactly one non-final row: \(id)")
+        return replacing(json, rows[0] + "\n", with: "")
     }
 
     // MARK: Capture instants (each body's own manifest time)
@@ -786,17 +802,40 @@ final class FieldEventPageAdapter10868Tests: XCTestCase {
 
     func testTheChosenContenderLeadsThenServedOrderFillsToThree() throws {
         let market = try F.market(F.rugbyBefore)
-        let chosen = A.headline(market, host: F.host(F.rugbyCapture, chosen: F.england))
+        let chosen = A.headline(market, host: F.host(F.rugbyCapture, chosen: F.choice(F.england, in: market)))
         XCTAssertEqual(chosen.displayed.map(\.name), ["England", "Ireland", "South Africa"])
         XCTAssertEqual(chosen.displayed.map(\.keyShape), [.circle, .diamond, .square])
         XCTAssertEqual(figures(chosen), [["1%"], ["59%"], ["40%"]])
-        // CONSTRUCTED: an id the board does not serve is no choice.
-        let unknown = A.headline(market, host: F.host(F.rugbyCapture, chosen: 999))
-        XCTAssertEqual(unknown.displayed.map(\.name), ["Ireland", "South Africa", "France"])
+        XCTAssertEqual(chosen.unavailableWords, "Team unavailable in this update")
         // CONSTRUCTED held cohort: kept in its order, once each, served ids only.
         let held = A.headline(market, host: F.host(F.rugbyCapture, cohort: [F.france, F.ireland, F.france, 999],
-                                                    chosen: F.england))
+                                                    chosen: F.choice(F.england, in: market)))
         XCTAssertEqual(held.displayed.map(\.name), ["France", "Ireland"])
+    }
+
+    func testAChoiceThisUpdateDoesNotServeKeepsTheFirstSlotUnavailableAndPromotesNoOne() throws {
+        let market = try F.market(F.rugbyBefore)
+        // CONSTRUCTED: this board's own identity with an outcome id it does not serve.
+        let missing = A.headline(market, host: F.host(F.rugbyCapture, chosen: F.choice(999, in: market)))
+        XCTAssertEqual(missing.displayed.map(\.ref.outcomeID), ["999", String(F.ireland), String(F.southAfrica)])
+        XCTAssertEqual(missing.displayed.map(\.name), ["", "Ireland", "South Africa"])
+        XCTAssertEqual(missing.displayed.map(\.keyShape), [.circle, .diamond, .square])
+        XCTAssertEqual(missing.pairs.map(\.ref.outcomeID), [String(F.ireland), String(F.southAfrica)])
+        XCTAssertEqual(missing.unavailableWords, "Chosen team unavailable in this update")
+        let model = FieldHeadlineModel10868(missing)
+        XCTAssertEqual(model.competitors[0].resolution, .unavailable)
+        XCTAssertTrue(model.competitors[0].metrics.isEmpty, "no figure for the omitted choice")
+        XCTAssertEqual(model.competitorSummary(model.competitors[0]), "Chosen team unavailable in this update")
+        XCTAssertEqual(figures(missing), [[], ["59%"], ["40%"]])
+        // The two served teams keep the catalogue colours of their display positions.
+        let ireland = try XCTUnwrap(missing.catalogue.first { $0.ref.outcomeID == String(F.ireland) })
+        XCTAssertEqual(ireland.accent, A.tint(1))
+        XCTAssertNil(missing.catalogue.first { $0.ref.outcomeID == String(F.france) }?.accent)
+        // CONSTRUCTED: another market's choice with an outcome id this board serves is no choice here.
+        let foreign = A.Choice(source: "kalshi", marketID: "62383719", outcomeID: String(F.england))
+        let other = A.headline(market, host: F.host(F.rugbyCapture, chosen: foreign))
+        XCTAssertEqual(other.displayed.map(\.name), ["Ireland", "South Africa", "France"])
+        XCTAssertEqual(other.unavailableWords, "Team unavailable in this update")
     }
 
     // MARK: Final — a settled value is a result

@@ -72,7 +72,7 @@ final class FieldEventHistoryAdapter10868Tests: XCTestCase {
         // Scotland is served on the board and has no line in the REAL response at all.
         let market = try F.market(F.rugbyBefore)
         let input = H.history(try F.history(F.rugbyHistory), market: market,
-                              host: F.host(F.rugbyCapture, chosen: F.scotland))
+                              host: F.host(F.rugbyCapture, chosen: F.choice(F.scotland, in: market)))
         XCTAssertEqual(input.series.map(\.name), ["Scotland", "Ireland", "South Africa"])
         XCTAssertEqual(input.series[0].runs, [])
         XCTAssertEqual(input.series[0].before, .absent(words: "No readings in this history"))

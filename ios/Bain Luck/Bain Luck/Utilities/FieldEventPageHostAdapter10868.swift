@@ -11,7 +11,18 @@ import SwiftUI
 ///
 /// What it owns is only the screen's own reading state: which mode is shown,
 /// the held original, the chosen contender, the chart's Auto / Full scale and
-/// the displayed story. It builds the page input from the values the page
+/// the displayed story.
+///
+/// THE CHOICE survives an update that omits it. It is held by its exact served
+/// identity (venue key, market id, outcome id — `FieldEventPageAdapter10868.Choice`),
+/// never by name or position, and only a field-card ref this market serves sets
+/// it. While a refresh omits that outcome the page keeps it as the chosen
+/// contender, unavailable in this update (the headline's first slot and the
+/// field card's selection notice), keeps no figure of it, and promotes no other
+/// contender into its place; when a refresh serves it again it is restored as
+/// the same choice. A different market passed to this host does not inherit it
+/// onto a coincident outcome id: the adapters read a choice only on its own
+/// market. It builds the page input from the values the page
 /// already holds (passed in — it reads no view model, opens no network,
 /// subscribes to nothing, runs no timer and ranks nothing). The input is
 /// recomputed from those values on every body pass: no owner supplies a
@@ -103,8 +114,8 @@ struct FieldEventPageHost10868: View {
     /// The screen's own reading state, as the builders take it.
     struct Reading: Equatable {
         var selection: OriginalMarketDetails9483.Selection? = nil
-        /// The contender chosen in the field card, by served outcome id.
-        var chosen: Int? = nil
+        /// The contender chosen in the field card, by exact identity.
+        var chosen: FieldEventPageAdapter10868.Choice? = nil
         /// The chart's Full scale; false is Auto.
         var full = false
         var displayed: FieldEventPageCard10868? = nil
@@ -114,7 +125,7 @@ struct FieldEventPageHost10868: View {
 
     @State private var presented: Presented?
     @State private var selection: OriginalMarketDetails9483.Selection?
-    @State private var chosen: Int?
+    @State private var chosen: FieldEventPageAdapter10868.Choice?
     @State private var full = false
     @State private var displayed: FieldEventPageCard10868?
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -172,17 +183,15 @@ struct FieldEventPageHost10868: View {
         }
     }
 
-    /// The field card's exact contender, kept only while it is this market's.
+    /// The field card's exact contender. A ref that is not a served outcome of
+    /// this market changes nothing; the held choice is never cleared by a refresh.
     private func choose(_ ref: FieldChooserOriginalRef10868) {
-        chosen = Self.chosenID(ref, in: field)
+        if let choice = Self.choice(ref, in: field) { chosen = choice }
     }
 
-    /// The served outcome id an exact field-card ref names in this market, or nil.
-    static func chosenID(_ ref: FieldChooserOriginalRef10868, in market: FuturesMarketDetail) -> Int? {
-        guard ref.marketID == String(market.id), ref.source == FieldEventPageAdapter10868.venueKey(market),
-              let id = Int(ref.outcomeID), FieldEventPageAdapter10868.outcome(id, in: market) != nil
-        else { return nil }
-        return id
+    /// The exact choice a field-card ref names in this market, or nil.
+    static func choice(_ ref: FieldChooserOriginalRef10868, in market: FuturesMarketDetail) -> FieldEventPageAdapter10868.Choice? {
+        FieldEventPageAdapter10868.choice(ref, in: market)
     }
 
     private func handle(_ intent: StoryStreamPresentation10868.Intent, scope: String) {

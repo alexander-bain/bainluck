@@ -41,9 +41,18 @@ import SwiftUI
 ///                     for the categories a retained body proves; anything else
 ///                     is "contender". Never parsed from a name.
 ///   - venue words     `SourceLabels.label(for:)`; an unnamed venue stays unnamed.
-///   - the cohort      the host's held ids; else the host's chosen contender
+///   - the cohort      the host's held ids; else the reader's chosen contender
 ///                     first, then the production chart's default — outcomes in
 ///                     served order (`EvolutionChartView` `prefix(3)`) — to three.
+///   - the choice      held by its exact served identity (venue key, market id,
+///                     outcome id) — never a name, a rank or a position. While an
+///                     update omits it, it keeps the first display position as an
+///                     unavailable slot (the chooser's own unresolved-identity
+///                     contract): no other contender is promoted into it, no figure
+///                     of it is kept, and the served contenders keep their own
+///                     positions, key shapes and colours. When it is served again
+///                     it resolves again, unchanged. Another market's choice is
+///                     never this market's, however its outcome id coincides.
 ///   - key and tint    by display position: the chart palette
 ///                     (`EvolutionOutcomeColour.markHex`) and the headline key
 ///                     shapes, so a headline key always matches its chart line.
@@ -65,11 +74,11 @@ enum FieldEventPageAdapter10868 {
         /// The host's held cohort, by served outcome id, in its order. Nil: the
         /// chosen contender, then the production chart's default.
         let cohort: [Int]?
-        /// The contender the reader chose in the field card, by served outcome id.
-        let chosen: Int?
+        /// The contender the reader chose in the field card, by exact identity.
+        let chosen: Choice?
 
         init(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current,
-             cohort: [Int]? = nil, chosen: Int? = nil) {
+             cohort: [Int]? = nil, chosen: Choice? = nil) {
             self.now = now
             self.calendar = calendar
             self.locale = locale
@@ -86,6 +95,15 @@ enum FieldEventPageAdapter10868 {
         var golf: GolfFieldPageAdapter10868.Host {
             GolfFieldPageAdapter10868.Host(now: now, calendar: calendar, locale: locale)
         }
+    }
+
+    /// The reader's choice, held by the exact served identity it was made on.
+    /// No name, no figure and no scope: the scope says the phase, and a choice
+    /// outlives a phase change.
+    struct Choice: Hashable {
+        let source: String
+        let marketID: String
+        let outcomeID: String
     }
 
     /// What one contender is called on this page.
@@ -152,6 +170,10 @@ enum FieldEventPageAdapter10868 {
 
         static func empty(_ contender: Contender) -> String { "No \(contender.plural) in this update" }
         static func unavailable(_ contender: Contender) -> String { "\(contender.title) unavailable in this update" }
+        /// The held choice while this update does not serve it.
+        static func chosenUnavailable(_ contender: Contender) -> String {
+            "Chosen \(contender.singular) unavailable in this update"
+        }
         static func openHint(_ contender: Contender) -> String { "Opens this \(contender.singular)’s win history" }
     }
 
@@ -215,19 +237,81 @@ enum FieldEventPageAdapter10868 {
         return matches.count == 1 ? matches[0] : nil
     }
 
+    // MARK: - The reader's choice
+
+    /// The choice a field-card ref names: only this market's (same venue key and
+    /// market id) and only an outcome this update serves exactly once.
+    static func choice(_ ref: FieldChooserOriginalRef10868, in market: FuturesMarketDetail) -> Choice? {
+        guard ref.marketID == String(market.id), ref.source == venueKey(market),
+              let id = Int(ref.outcomeID), outcome(id, in: market) != nil
+        else { return nil }
+        return Choice(source: ref.source, marketID: ref.marketID, outcomeID: ref.outcomeID)
+    }
+
+    /// The host's choice when it was made on THIS market. Another market's
+    /// choice is not carried onto this one, however its outcome id coincides.
+    static func heldChoice(_ market: FuturesMarketDetail, host: Host) -> Choice? {
+        guard let chosen = host.chosen, chosen.marketID == String(market.id), chosen.source == venueKey(market)
+        else { return nil }
+        return chosen
+    }
+
+    /// The served outcome this market's held choice names in this update, or nil.
+    static func chosenOutcome(_ market: FuturesMarketDetail, host: Host) -> FuturesOutcome? {
+        guard let choice = heldChoice(market, host: host), let id = Int(choice.outcomeID) else { return nil }
+        return outcome(id, in: market)
+    }
+
+    /// This market's held choice while this update does not serve it exactly
+    /// once. It stays the choice — shown unavailable, never replaced.
+    static func missingChoice(_ market: FuturesMarketDetail, host: Host) -> Choice? {
+        guard let choice = heldChoice(market, host: host), chosenOutcome(market, host: host) == nil else { return nil }
+        return choice
+    }
+
+    /// The choice's exact identity in a scope: it resolves while the choice is
+    /// served and is unavailable while an update omits it.
+    static func ref(_ choice: Choice, scope: String) -> FieldChooserOriginalRef10868 {
+        FieldChooserOriginalRef10868(scope: scope, source: choice.source,
+                                     marketID: choice.marketID, outcomeID: choice.outcomeID)
+    }
+
     // MARK: - The cohort
 
+    /// The displayed contenders by display position.
+    struct Cohort {
+        /// This market's held choice while this update omits it: display
+        /// position 0, unavailable. Nil otherwise.
+        let missing: Choice?
+        /// The served contenders shown, in display order after any held position.
+        let served: [FuturesOutcome]
+
+        /// The display position of `served[index]`: after the held position, so
+        /// each served contender keeps its key shape and colour across an omission.
+        func position(_ index: Int) -> Int {
+            index + (missing == nil ? 0 : 1)
+        }
+
+        /// The display position of a served outcome, or nil when it is not shown.
+        func position(of outcome: FuturesOutcome) -> Int? {
+            served.firstIndex { $0.id == outcome.id }.map { position($0) }
+        }
+    }
+
     /// The host's held ids, each kept once and only while it names exactly one
-    /// served outcome. Without them: the host's chosen contender (when it names
-    /// exactly one served outcome), then served order, to three.
-    static func cohort(_ market: FuturesMarketDetail, host: Host) -> [FuturesOutcome] {
-        if let held = host.cohort { return Racing.cohort(market, held: held) }
+    /// served outcome. Without them: this market's held choice first — served,
+    /// or holding position 0 as unavailable while omitted — then served order,
+    /// to three.
+    static func cohort(_ market: FuturesMarketDetail, host: Host) -> Cohort {
+        if let held = host.cohort { return Cohort(missing: nil, served: Racing.cohort(market, held: held)) }
+        let missing = missingChoice(market, host: host)
         var ids: [Int] = []
-        if let chosen = host.chosen, outcome(chosen, in: market) != nil { ids.append(chosen) }
-        for served in market.outcomes where ids.count < defaultCohortSize && !ids.contains(served.id) {
+        if let chosen = chosenOutcome(market, host: host) { ids.append(chosen.id) }
+        let room = defaultCohortSize - (missing == nil ? 0 : 1)
+        for served in market.outcomes where ids.count < room && !ids.contains(served.id) {
             if outcome(served.id, in: market) != nil { ids.append(served.id) }
         }
-        return ids.compactMap { outcome($0, in: market) }
+        return Cohort(missing: missing, served: ids.compactMap { outcome($0, in: market) })
     }
 
     /// The chart's colour for a display position.
@@ -284,12 +368,11 @@ enum FieldEventPageAdapter10868 {
 
     /// Every served outcome once, in served order. A displayed contender
     /// carries its chart colour; the rest keep the default.
-    static func catalogue(_ market: FuturesMarketDetail, cohort: [FuturesOutcome],
+    static func catalogue(_ market: FuturesMarketDetail, cohort: Cohort,
                           phase: FieldOutlookPhase10868, host: Host) -> [FieldChooserOriginal10868] {
         let scope = Self.scope(market, phase: phase)
-        let positions = cohort.map(\.id)
         return market.outcomes.map { outcome in
-            let accent: Color? = positions.firstIndex(of: outcome.id).map(tint)
+            let accent: Color? = cohort.position(of: outcome).map(tint)
             return FieldChooserOriginal10868(
                 ref: ref(outcome, in: market, scope: scope),
                 name: outcome.name,
@@ -309,21 +392,31 @@ enum FieldEventPageAdapter10868 {
         let phase = Self.phase(market)
         let scope = Self.scope(market, phase: phase)
         let shown = cohort(market, host: host)
-        let slots = shown.enumerated().map { position, outcome in
-            FieldHeadlineSlot10868(ref: ref(outcome, in: market, scope: scope), name: outcome.name,
-                                   compactName: nil, keyShape: keyShape(position))
+        var slots: [FieldHeadlineSlot10868] = []
+        if let missing = shown.missing {
+            // The held choice, omitted by this update: its exact identity, which
+            // the catalogue cannot resolve, so the slot shows the unavailable
+            // words and no figure. No name is held, so none is shown.
+            slots.append(FieldHeadlineSlot10868(ref: ref(missing, scope: scope), name: "",
+                                                compactName: nil, keyShape: keyShape(0)))
+        }
+        for (index, outcome) in shown.served.enumerated() {
+            slots.append(FieldHeadlineSlot10868(ref: ref(outcome, in: market, scope: scope), name: outcome.name,
+                                                compactName: nil, keyShape: keyShape(shown.position(index))))
         }
         let contender = Self.contender(market)
         return FieldHeadlineInput10868(
             scope: scope,
             catalogue: catalogue(market, cohort: shown, phase: phase, host: host),
             displayed: slots,
-            pairs: shown.map { pair($0, in: market, phase: phase, host: host) },
+            pairs: shown.served.map { pair($0, in: market, phase: phase, host: host) },
             finishes: [],
             state: nil,
             phase: phase,
             copy: headlineCopy(market, phase: phase, compact: compact),
-            unavailableWords: Words.unavailable(contender),
+            // Every served slot resolves by construction, so the only slot that can
+            // be unavailable while a choice is omitted is that choice.
+            unavailableWords: shown.missing == nil ? Words.unavailable(contender) : Words.chosenUnavailable(contender),
             // No start reaches the app, so no reading is a qualified pre-event
             // baseline: the keys stay neutral and recorded, like the chart's marks
             // (Design-approved package-34 amendment, 5e6d8c05).

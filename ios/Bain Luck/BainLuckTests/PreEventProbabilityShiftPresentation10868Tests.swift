@@ -464,6 +464,67 @@ final class PreEventProbabilityShiftPresentation10868Tests: XCTestCase {
         }
     }
 
+    // MARK: Additive square (#10868 field page, Design 2026-10-31)
+
+    /// CONSTRUCTED: the square is the field page's third-contender glyph; no
+    /// skater carries it. The three existing glyphs, their order, the shared
+    /// marker box and the track inset are unchanged by it.
+    func testAdditiveSquareKeepsTheExistingGlyphsAndSharedBoxAndIsTheHistoryChartsSquare() {
+        XCTAssertEqual(PreEventShiftGlyph10868.allCases, [.circle, .triangle, .diamond, .square])
+
+        let center = CGPoint(x: 50, y: 50)
+        let square = PreEventShiftGeometry10868.bounds(.square, center: center, radius: 10)
+        XCTAssertEqual(square.minX, 41.5, accuracy: 0.0001)
+        XCTAssertEqual(square.minY, 41.5, accuracy: 0.0001)
+        XCTAssertEqual(square.width, 17, accuracy: 0.0001)
+        XCTAssertEqual(square.height, 17, accuracy: 0.0001)
+        // Drawn by the one shared path: a square filling its own bounds, corners included.
+        let path = PreEventShiftGeometry10868.path(.square, center: center, radius: 10)
+        XCTAssertEqual(path.boundingRect.minX, square.minX, accuracy: 0.0001)
+        XCTAssertEqual(path.boundingRect.maxY, square.maxY, accuracy: 0.0001)
+        XCTAssertTrue(path.contains(CGPoint(x: 42, y: 42)), "a square's corner is inside it")
+        XCTAssertFalse(PreEventShiftGeometry10868.path(.diamond, center: center, radius: 10).contains(CGPoint(x: 42, y: 42)),
+                       "the diamond keeps its own shape")
+
+        // Each glyph is the same mark the field history chart draws for that shape.
+        let pairs: [(PreEventShiftGlyph10868, FieldHistoryShape10868)] = [
+            (.circle, .circle), (.triangle, .triangle), (.diamond, .diamond), (.square, .square),
+        ]
+        for (glyph, shape) in pairs {
+            let history = FieldHistoryGeometry10868.markPath(shape, at: center, radius: 10).boundingRect
+            let shift = PreEventShiftGeometry10868.path(glyph, center: center, radius: 10).boundingRect
+            XCTAssertEqual(shift.minX, history.minX, accuracy: 0.0001, "\(glyph)")
+            XCTAssertEqual(shift.maxX, history.maxX, accuracy: 0.0001, "\(glyph)")
+            XCTAssertEqual(shift.minY, history.minY, accuracy: 0.0001, "\(glyph)")
+            XCTAssertEqual(shift.maxY, history.maxY, accuracy: 0.0001, "\(glyph)")
+        }
+
+        // The square reaches less than the diamond: every existing marker box and
+        // track inset keeps the diamond's 1.2 r rule.
+        for radius: CGFloat in [7, 14, 4.2] {
+            XCTAssertEqual(PreEventShiftGeometry10868.markExtent(radius: radius, lineWidth: 2), 2 * 1.2 * radius + 2,
+                           accuracy: 0.0001, "r\(radius)")
+        }
+        XCTAssertEqual(PreEventShiftGeometry10868.inset(radius: 7, lineWidth: 2),
+                       FieldExpectationsGeometry10868.inset(markDiameter: 2 * 1.2 * 7 + 2), accuracy: 0.0001)
+
+        // Centred in its track, the first mark small inside the latest.
+        let plan = PreEventShiftGeometry10868.trackPlan(glyph: .square, first: 0.04, latest: 0.2257564719, ticks: [],
+                                                        in: CGSize(width: 300, height: 24), radius: 7, lineWidth: 2,
+                                                        connectorWidth: 3)!
+        XCTAssertEqual(plan.centerY, 12, accuracy: 0.0001)
+        XCTAssertEqual(PreEventShiftGeometry10868.bounds(.square, center: plan.latest!.center, radius: 7).midY, 12, accuracy: 0.0001)
+        XCTAssertEqual(plan.first!.radius, 7 * PreEventShiftGeometry10868.firstScale, accuracy: 0.0001)
+        XCTAssertEqual(plan.latest!.radius, 7, accuracy: 0.0001)
+
+        // An owner that passes the square gets it on that row; the skaters keep theirs.
+        let squared = Side(marketID: Self.jackson.marketID, name: Self.jackson.name, token: Self.jackson.token,
+                           glyph: .square, first: Self.jackson.first, last: Self.jackson.last)
+        XCTAssertEqual(Self.model(Self.input(sides: [Self.kok, Self.leerdam, squared])).rows.map(\.slot.glyph),
+                       [.circle, .triangle, .square])
+        XCTAssertEqual(Self.model().rows.map(\.slot.glyph), [.circle, .triangle, .diamond])
+    }
+
     func testScaleTicksShareTheMeasuredAxisInsetAndCompactOrAccessibilityArrangements() {
         let scale = FieldOutlookScale10868(ceiling: 1, ticks: Self.scale.ticks + [
             FieldOutlookTick10868(probability: 1.2, label: "120%"),

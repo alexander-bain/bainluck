@@ -20,8 +20,13 @@ import SwiftUI
 ///   - each value      the raw probability behind that row's own plan reading —
 ///                     the very reading the headline and catalogue show — so the
 ///                     card cannot print one contender two ways.
-///   - selection       the host's chosen contender (choose a bar), resolved by the
-///                     chooser's own resolver; previous / next walk the bars.
+///   - selection       this market's held choice by its exact identity, resolved
+///                     by the chooser's own resolver; previous / next walk the bars.
+///                     While an update omits it, the identity is still handed
+///                     over, so the chooser's unresolved-selection words say the
+///                     chosen contender is unavailable — nothing else is selected
+///                     in its place, and no figure of it is kept. Served again, it
+///                     resolves again. Another market's choice is never handed over.
 ///   - scale           0–100%, golf's contender ticks
 ///                     (`GolfFieldChooserAdapter10868.scaleTicks`).
 ///   - phase           before only. A resolved market has no current chance, so
@@ -30,8 +35,11 @@ import SwiftUI
 ///
 /// THE MOVEMENT CARD (`PreEventShiftInput10868`, "dated probability movement")
 /// reads the same `/history` body as part two, under the same identity rule:
-///   - rows            part one's cohort — the contenders in the chart — in its
-///                     order, with the chart's tint (catalogue accent).
+///   - rows            part one's served cohort — the contenders drawn in the
+///                     chart — in its order, each with its display position's
+///                     glyph and the chart's tint (catalogue accent). A held
+///                     choice an update omits has no history row to draw here; it
+///                     keeps its position, so the others keep their glyphs.
 ///   - endpoints       each contender's FIRST and LAST drawn observation from part
 ///                     two's own runs (`FieldEventHistoryAdapter10868.runs`:
 ///                     settlement removed, breaks kept), each with its own clock.
@@ -48,11 +56,9 @@ import SwiftUI
 ///                     never says the readings were before the event — no start
 ///                     reaches the app.
 ///
-/// CONTRACT GAP, NAMED: `PreEventShiftGlyph10868` has circle, triangle and
-/// diamond; the headline keys are circle, diamond and square. The first two
-/// display positions match; the third contender's movement glyph is a triangle
-/// while its chart key is a square (its tint matches). Owner: the pre-event
-/// shift package / Design.
+/// Glyphs follow the headline keys and chart marks by display position —
+/// circle, diamond, square — through the shared card's additive `square`
+/// (Design 2026-10-31), so a contender carries one mark in all three places.
 ///
 /// Nothing here fetches, subscribes, schedules, ranks or holds state.
 enum FieldEventStoriesAdapter10868 {
@@ -96,15 +102,15 @@ enum FieldEventStoriesAdapter10868 {
         static func detailsHint(_ contender: Page.Contender) -> String { "Opens this \(contender.singular)’s original outcome" }
         static func chooseHint(_ contender: Page.Contender) -> String { "Shows this \(contender.singular) in the chart" }
         static func chosenUnavailable(_ contender: Page.Contender) -> String {
-            "Chosen \(contender.singular) unavailable in this update"
+            Page.Words.chosenUnavailable(contender)
         }
         static func openHint(_ contender: Page.Contender) -> String { "Opens this \(contender.singular)’s win history" }
     }
 
     /// The movement card's 0–100% ticks.
     static let movementTicks: [Double] = [0, 0.5, 1]
-    /// The movement glyphs by display position (see the contract gap above).
-    static let glyphs: [PreEventShiftGlyph10868] = [.circle, .diamond, .triangle]
+    /// The movement glyphs by display position: the headline key shapes.
+    static let glyphs: [PreEventShiftGlyph10868] = [.circle, .diamond, .square]
 
     // MARK: - The field card
 
@@ -154,10 +160,11 @@ enum FieldEventStoriesAdapter10868 {
             chooseHint: Words.chooseHint(contender))
     }
 
-    /// The host's chosen contender, when it names exactly one served outcome.
+    /// This market's held choice by its exact identity — served or not. The
+    /// chooser's resolver decides whether it resolves; unresolved, its words say so.
     static func selected(_ market: FuturesMarketDetail, scope: String, host: Page.Host) -> FieldChooserSelected10868? {
-        guard let chosen = host.chosen, let outcome = Page.outcome(chosen, in: market) else { return nil }
-        return FieldChooserSelected10868(ref: Page.ref(outcome, in: market, scope: scope), words: Words.inChart,
+        guard let choice = Page.heldChoice(market, host: host) else { return nil }
+        return FieldChooserSelected10868(ref: Page.ref(choice, scope: scope), words: Words.inChart,
                                          unavailableWords: Words.chosenUnavailable(Page.contender(market)))
     }
 
@@ -175,9 +182,10 @@ enum FieldEventStoriesAdapter10868 {
         var slots: [PreEventShiftSlot10868] = []
         var readings: [PreEventShiftReading10868] = []
         var observations: [PreEventShiftObservation10868] = []
-        for (position, outcome) in cohort.enumerated() {
+        for (index, outcome) in cohort.served.enumerated() {
             let ref = Page.ref(outcome, in: market, scope: scope)
-            slots.append(PreEventShiftSlot10868(ref: ref, name: outcome.name, glyph: glyphs[position % glyphs.count]))
+            let glyph = glyphs[cohort.position(index) % glyphs.count]
+            slots.append(PreEventShiftSlot10868(ref: ref, name: outcome.name, glyph: glyph))
             let drawn = History.runs(outcome, response: response, now: host.now).flatMap { $0 }
             guard let latest = drawn.last else { continue }
             let seriesID = History.seriesID(market, outcome)
