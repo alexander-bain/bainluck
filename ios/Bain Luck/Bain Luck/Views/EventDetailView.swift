@@ -34,6 +34,9 @@ struct EventDetailView: View {
     /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
     @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
+    /// #10090 (Alex 67) — the heartbeat under the big percentage. Stepped only
+    /// when its evidence moves (`ekgObservation`), never by a render.
+    @State private var ekgTracker = EkgTracker.empty
     @ScaledMetric(relativeTo: .largeTitle) private var eventHeadlineChanceSize9483: CGFloat = 44
     /// v476 — actual score and projected final share one scaled figure style.
     @ScaledMetric(relativeTo: .title2) private var eventHeadlineScoreSize9483: CGFloat = 24
@@ -147,6 +150,16 @@ struct EventDetailView: View {
         return away ? vm.priceActivity?.awayRising : vm.priceActivity?.homeRising
     }
     private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
+    /// #10090 (Alex 67) — the heartbeat's inputs, the web's two clocks:
+    /// decision J as the page gates it, and the clock of the number the hero
+    /// prints (preview included). See `EkgTracker`.
+    private var ekgObservation: EkgTracker.Observation? {
+        guard let event = vm.event else { return nil }
+        return EkgTracker.Observation(eventId: event.id,
+                                      transportOpen: EkgHeartbeat.transportOpen(vm.liveUpdateStatus),
+                                      confirmedAt: vm.confirmedAtCoveringShown(event),
+                                      priceObservedAt: vm.displayedProbabilityObservedAt(event))
+    }
     private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }
     /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`
     /// already owns, and `suspended` (live/048) matched none of its arms. So
@@ -399,6 +412,13 @@ struct EventDetailView: View {
             .onChange(of: eventId) { _, _ in
                 nflCards.resetNBAStream()
                 showProbabilityDetails = false
+            }
+            // #10090 (Alex 67) — the EKG beats on evidence: J or the printed
+            // number's clock advancing while the stream delivers. A re-render
+            // or a reconnect moves no input, so it cannot beat.
+            .onChange(of: ekgObservation, initial: true) { _, observation in
+                guard let observation else { return }
+                ekgTracker = ekgTracker.stepped(observation, now: displayNow())
             }
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
@@ -1064,6 +1084,32 @@ struct EventDetailView: View {
         let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
                                             sportKey: event.sport)
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
+    }
+
+    /// #10090 (Alex 67) — the heartbeat under the big percentage, on by
+    /// default on a live game (`EkgHeartbeat.isVisible`). A tap opens the
+    /// page's one details popover — the same state the info control toggles,
+    /// anchored there — never a copy of it.
+    @ViewBuilder
+    private func heroEkg(_ event: EventDetail, isOpeningLine: Bool) -> some View {
+        if EkgHeartbeat.isVisible(
+            eventStatus: event.status, finished: isFinished,
+            venueSettledVerdict: EventState.showsVenueSettledVerdict(
+                event.status, venueSettled: event.venueSettled,
+                commenceTime: event.commenceTime?.asDate, now: displayNow()),
+            isOpeningLine: isOpeningLine) {
+            Button { showProbabilityDetails = true } label: {
+                EkgHeartbeatView(tracker: ekgTracker, status: vm.liveUpdateStatus, asOf: displayAsOf)
+                    // A 44pt target that lays out as a short row: it overhangs
+                    // the gaps above and below, as the adopted disclosure does.
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .padding(.vertical, -14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the probability update details.")
+            .accessibilityIdentifier("ekg-heartbeat-button")
+        }
     }
 
     /// Routine delivery/confidence details open through the info control.
@@ -1866,6 +1912,8 @@ struct EventDetailView: View {
                                                              color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
                         }
+                        // #10090 (Alex 67) — the heartbeat, under the big percentage.
+                        heroEkg(event, isOpeningLine: shown.isOpeningLine)
                         // #9483 — the pair's subject, now that "Win Probability"
                         // sits behind the info button. Live, the pre-game
                         // baseline rides under it (before the off the
@@ -2482,6 +2530,9 @@ struct EventDetailView: View {
                 // chances they describe, above the score/projection divider.
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     nflPairedPhase(event)
+                    // #10090 (Alex 67) — the heartbeat beside the pair's subject.
+                    heroEkg(event, isOpeningLine: false)
+                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                     Spacer(minLength: 0)
                     if priceStreamingEligible { movementCaptionSlot(event, colors: colors) }
                 }
@@ -2490,8 +2541,16 @@ struct EventDetailView: View {
                 // The pair's subject and its age, as the hero words it (#9483
                 // F1), on one line with the delivery control where it fits.
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { nflPairedPhase(event); nflPairedDetails(event) }
-                    VStack(spacing: 2) { nflPairedPhase(event); nflPairedDetails(event) }
+                    HStack(spacing: 8) {
+                        nflPairedPhase(event)
+                        heroEkg(event, isOpeningLine: false)
+                        nflPairedDetails(event)
+                    }
+                    VStack(spacing: 2) {
+                        nflPairedPhase(event)
+                        heroEkg(event, isOpeningLine: false)
+                        nflPairedDetails(event)
+                    }
                 }
             }
             // Before the game the row would hold a lone "vs"; it shows only with a
