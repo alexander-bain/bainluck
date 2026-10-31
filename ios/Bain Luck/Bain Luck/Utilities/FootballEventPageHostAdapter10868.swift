@@ -495,11 +495,14 @@ struct FootballEventPageHost10868: View {
             guard let prop = match.source.prop else { continue }
             byID[HockeyJourneyContributionAdapter10868.milestoneID(prop), default: []].append(match)
         }
+        // Each catalogue identity's count, read once per pass rather than once per id.
+        var listed: [OriginalMarketDetails9483.Identity: Int] = [:]
+        for original in catalogue.originals { listed[original.identity, default: 0] += 1 }
         var routes: [String: OriginalMarketDetails9483.Selection] = [:]
         for (id, matches) in byID {
             guard matches.count == 1, let match = matches.first else { continue }
             let identity = HockeyJourneyOriginalsAdapter10868.identity(of: match.source)
-            guard catalogue.originals.filter({ $0.identity == identity }).count == 1 else { continue }
+            guard listed[identity] == 1 else { continue }
             routes[id] = OriginalMarketDetails9483.Selection(scope: catalogue.scope, identity: identity)
         }
         return routes
