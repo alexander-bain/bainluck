@@ -70,7 +70,7 @@
  * no-break space before AM/PM.
  */
 
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import fixtures from "./hockeyJourney10868.fixtures.json";
@@ -105,6 +105,7 @@ import {
   MATRIX_WORDS,
 } from "@/lib/eventPage10868/hockeyJourney";
 import { CONTRIBUTION_WORDS, ORIGINALS_WORDS } from "@/lib/eventPage10868/hockeyJourneyProps";
+import { BEFORE_WINDOW_MS } from "@/lib/eventPage10868/hockeyJourneyHistory";
 
 const finalDetail = fixtures.finalDetail as unknown as EventDetailResponse;
 const finalHistory = fixtures.finalHistory as unknown as EventHistoryResponse;
@@ -404,14 +405,17 @@ describe("#10868 history — before the start", () => {
   const [home, away] = history.series;
   const points = home.runs.flat();
 
-  it("draws the pregame day, ending at the last recorded row and never the pinned edge", () => {
-    expect(points[0].t).toBe(ms("2026-10-29T22:00:00+00:00"));
-    expect(points.some((p) => p.t < ms("2026-10-29T22:00:00+00:00"))).toBe(false);
+  it("draws the recorded day ending at the last pregame reading, never the pinned edge", () => {
+    // The day is measured back from the last pregame reading (20:11), not from the listed start
+    // (22:00): the subset's 21:58 and 21:59 the day before are recorded readings inside it.
+    const lastPregame = ms("2026-10-30T20:11:00+00:00");
+    expect(points[0].t).toBe(ms("2026-10-29T21:58:00+00:00"));
+    expect(points.some((p) => p.t < lastPregame - BEFORE_WINDOW_MS)).toBe(false);
     const pin = pregameHistory.aggregate_line![pregameHistory.aggregate_line!.length - 1];
     expect(pin.timestamp).toBe("2026-10-30T20:12:00+00:00");
     expect(points.some((p) => p.t === ms(pin.timestamp))).toBe(false);
-    expect(points[points.length - 1]).toMatchObject({ t: ms("2026-10-30T20:11:00+00:00"), hollow: true });
-    expect(points).toHaveLength(23);
+    expect(points[points.length - 1]).toMatchObject({ t: lastPregame, hollow: true });
+    expect(points).toHaveLength(25);
     expect(home.runs).toHaveLength(1);
   });
 
@@ -436,6 +440,404 @@ describe("#10868 history — before the start", () => {
     }
   });
 
+});
+
+describe("#10868 history — before the start, each side's own recorded day (CONSTRUCTED consensus bodies)", () => {
+  // CONSTRUCTED: the pregame body with only its consensus `history` replaced (no venue series, no
+  // blend, nothing pinned), so each team reads its OWN served value and the two can stop apart.
+  // Kick-off 22:00Z (confirmed); read at 20:13:55Z.
+  const consensusBody = (rows: Array<[string, number | null, number | null]>) =>
+    ({
+      ...pregameHistory,
+      history: rows.map(([timestamp, home, away]) => ({
+        timestamp,
+        home_probability: home,
+        away_probability: away,
+        bookmaker_count: 5,
+      })),
+      aggregate_line: [],
+      win_prob_history: {},
+      bookmaker_history: {},
+      blend_edge_pinned: false,
+    }) as unknown as EventHistoryResponse;
+  const times = (series: { runs: Array<Array<{ t: number }>> }) => series.runs.flat().map((p) => p.t);
+
+  it("anchors each team to its own last pregame reading; the shared frame may span more than a day", () => {
+    const body = consensusBody([
+      ["2026-10-29T10:00:00Z", 0.6, 0.4],
+      ["2026-10-29T12:00:00Z", 0.61, 0.39],
+      ["2026-10-30T10:00:00Z", 0.62, 0.38], // the away side's last reading
+      ["2026-10-30T11:30:00Z", 0.63, null], // the home side's last reading; no away value
+      ["2026-10-30T21:00:00Z", 0.64, 0.36], // after now: not a reading yet
+    ]);
+    const h = hockeyJourneyHistory(body, pregameDetail, "before", PREGAME_NOW);
+    expect(h.line).toBe("consensus");
+    const [home, away] = h.series;
+    expect(times(home)).toEqual(["2026-10-29T12:00:00Z", "2026-10-30T10:00:00Z", "2026-10-30T11:30:00Z"].map(ms));
+    expect(times(away)).toEqual(["2026-10-29T10:00:00Z", "2026-10-29T12:00:00Z", "2026-10-30T10:00:00Z"].map(ms));
+    // Each side ends at its own reading, hollow; neither borrows the other's clock.
+    expect(home.runs.flat().filter((p) => p.hollow).map((p) => p.t)).toEqual([ms("2026-10-30T11:30:00Z")]);
+    expect(away.runs.flat().filter((p) => p.hollow).map((p) => p.t)).toEqual([ms("2026-10-30T10:00:00Z")]);
+    expect(times(away)).not.toContain(ms("2026-10-30T11:30:00Z"));
+    expect(times(home)).not.toContain(ms("2026-10-29T10:00:00Z"));
+    expect(home.before).toMatchObject({ kind: "reading", provenance: `Last pregame · ${stamp("2026-10-30T11:30:00Z")}` });
+    expect(away.before).toMatchObject({ kind: "reading", provenance: `Last pregame · ${stamp("2026-10-30T10:00:00Z")}` });
+    // Each side's own window is at most a day; the shared frame is NOT promised to be.
+    for (const series of [home, away]) {
+      const t = times(series);
+      expect(t[t.length - 1] - t[0]).toBeLessThanOrEqual(BEFORE_WINDOW_MS);
+    }
+    expect(h.domain).toEqual({ lower: ms("2026-10-29T10:00:00Z"), upper: ms("2026-10-30T11:30:00Z") });
+    expect(h.domain!.upper - h.domain!.lower).toBeGreaterThan(BEFORE_WINDOW_MS);
+    expect([...times(home), ...times(away)].every((t) => t <= PREGAME_NOW)).toBe(true);
+  });
+
+  it("opens exactly one day before the last pregame reading, inclusive, whatever the listed start", () => {
+    const body = consensusBody([
+      ["2026-10-29T14:00:00Z", 0.55, 0.45], // 30 h before the last reading: outside
+      ["2026-10-29T19:59:00Z", 0.56, 0.44], // one day and one minute before: outside
+      ["2026-10-29T20:00:00Z", 0.57, 0.43], // exactly one day before: inside
+      ["2026-10-30T08:00:00Z", 0.58, 0.42],
+      ["2026-10-30T20:00:00Z", 0.59, 0.41], // the last pregame reading
+    ]);
+    const h = hockeyJourneyHistory(body, pregameDetail, "before", PREGAME_NOW);
+    const expected = ["2026-10-29T20:00:00Z", "2026-10-30T08:00:00Z", "2026-10-30T20:00:00Z"].map(ms);
+    expect(times(h.series[0])).toEqual(expected);
+    expect(times(h.series[1])).toEqual(expected);
+    // Older than the listed start less one day, and still drawn: the start is still in the future.
+    expect(expected[0]).toBeLessThan(ms(pregameDetail.commence_time) - BEFORE_WINDOW_MS);
+    expect(h.series[0].runs).toHaveLength(1);
+  });
+
+  it("a side with no pregame reading draws nothing, and the other side keeps its own day", () => {
+    const body = consensusBody([
+      ["2026-10-29T12:00:00Z", 0.61, null],
+      ["2026-10-30T10:00:00Z", 0.62, null],
+    ]);
+    const h = hockeyJourneyHistory(body, pregameDetail, "before", PREGAME_NOW);
+    const [home, away] = h.series;
+    expect(times(home)).toEqual(["2026-10-29T12:00:00Z", "2026-10-30T10:00:00Z"].map(ms));
+    expect(away.runs).toEqual([]);
+    expect(away.before).toEqual({ kind: "absent", words: "Not recorded" });
+    expect(h.summary).toBe(
+      "Vegas Golden Knights win probability, recorded observations only. No recorded history for New Jersey Devils.",
+    );
+  });
+
+  it("with no pregame reading on either side it is still \"No recorded history\"", () => {
+    const body = consensusBody([
+      ["2026-10-30T21:00:00Z", 0.64, 0.36], // after now
+      ["2026-10-30T22:30:00Z", 0.66, 0.34], // after the start
+    ]);
+    const h = hockeyJourneyHistory(body, pregameDetail, "before", PREGAME_NOW);
+    expect(h.series.map((s) => s.runs)).toEqual([[], []]);
+    expect(h.absence).toEqual({ title: "No recorded history", words: null });
+    expect(h.domain).toBeNull();
+  });
+});
+
+describe("#10868 history — the pregame window never reaches the live, final or unconfirmed frames", () => {
+  // CONSTRUCTED: the line's rows older than `t` made unreadable — the same rows, indexes and clocks,
+  // with no value. Live and final open AT the last pregame reading, so nothing older can move them.
+  const blankLineBefore = (body: EventHistoryResponse, t: number) =>
+    ({
+      ...body,
+      aggregate_line: (body.aggregate_line ?? []).map((p) =>
+        Date.parse(p.timestamp) < t ? { ...p, home_probability: null } : p,
+      ),
+    }) as unknown as EventHistoryResponse;
+  const hollowOf = (h: ReturnType<typeof hockeyJourneyHistory>) => {
+    const hollow = h.series[0].runs.flat().find((p) => p.hollow);
+    expect(hollow).toBeDefined();
+    return hollow!.t;
+  };
+
+  it("the final frame is identical with or without every row older than its last pregame reading", () => {
+    const full = hockeyJourneyHistory(finalHistory, finalDetail, "final", FINAL_NOW);
+    const t = hollowOf(full);
+    expect(t).toBe(ms("2026-10-03T23:59:00+00:00"));
+    expect(hockeyJourneyHistory(blankLineBefore(finalHistory, t), finalDetail, "final", FINAL_NOW)).toEqual(full);
+  });
+
+  it("the live frame (CONSTRUCTED status-only replay) is identical too", () => {
+    const live = { ...finalDetail, status: "live" } as EventDetailResponse;
+    const now = ms("2026-10-04T01:46:00Z");
+    const full = hockeyJourneyHistory(finalHistory, live, "live", now);
+    const t = hollowOf(full);
+    expect(hockeyJourneyHistory(blankLineBefore(finalHistory, t), live, "live", now)).toEqual(full);
+  });
+
+  it("an unconfirmed start keeps every recorded row, older than any day, as before", () => {
+    const unconfirmed = { ...pregameHistory, commence_time_is_kickoff: false } as EventHistoryResponse;
+    const h = hockeyJourneyHistory(unconfirmed, pregameDetail, "before", PREGAME_NOW);
+    expect(h.series[0].runs.flat()).toHaveLength(25);
+    expect(h.markKey).toBeNull();
+  });
+
+  it("positive control: the same blanking DOES change the before frame, which reads the older rows", () => {
+    const full = hockeyJourneyHistory(pregameHistory, pregameDetail, "before", PREGAME_NOW);
+    const t = hollowOf(full);
+    const blanked = hockeyJourneyHistory(blankLineBefore(pregameHistory, t), pregameDetail, "before", PREGAME_NOW);
+    expect(blanked).not.toEqual(full);
+    expect(blanked.series[0].runs.flat().map((p) => p.t)).toEqual([t]);
+  });
+});
+
+describe("#10868 history — a future start never shortens the recorded day (Rams 14780558, retained subset)", () => {
+  // Retained `probability-movement-v89/raw/nfl-pregame-detail.json` (sha256 1f81fa52…0eb9) and
+  // `nfl-pregame-history.json` (sha256 c32ce440…8332), Rams vs Bills, kick-off 2026-10-13T00:15Z
+  // (confirmed), read 2026-10-12T05:45:12Z — about 18.5 h early. SUBSET, every kept value verbatim:
+  // the detail keys this helper reads; history aggregate_line rows 0, 831, 832, 1141, 1142 of 1143
+  // (1142 is the pinned edge), consensus rows 0 and 74 of 75, the first kalshi and polymarket points,
+  // and the served flags. bookmaker_history is EMPTIED here (21 books served; none is read for the
+  // window). The full bodies are read below where present.
+  const ramsDetail = {
+    "id": 14780558,
+    "sport": "americanfootball_nfl",
+    "home_team": "Los Angeles Rams",
+    "away_team": "Buffalo Bills",
+    "commence_time": "2026-10-13T00:15:00+00:00",
+    "start_is_tbd": false,
+    "completed_at": null,
+    "status": "scheduled",
+    "home_score": null,
+    "away_score": null
+  } as unknown as EventDetailResponse;
+  const ramsHistory = {
+    "event_id": 14780558,
+    "commence_time": "2026-10-13T00:15:00+00:00",
+    "completed_at": null,
+    "status": "scheduled",
+    "commence_time_is_kickoff": true,
+    "blend_edge_pinned": true,
+    "blend_edge_observed_at": "2026-10-12T05:45:00.084170+00:00",
+    "evidence_contract": {
+      "v": "7878.v1",
+      "resolution_s": 300
+    },
+    "history": [
+      {
+        "timestamp": "2026-10-11T05:45:00+00:00",
+        "home_probability": 0.6098,
+        "away_probability": 0.3902,
+        "over_under": 54.6,
+        "projected_home_score": 29.0,
+        "projected_away_score": 25.6,
+        "bookmaker_count": 21,
+        "probability_range": {
+          "min": 0.5951,
+          "max": 0.6211
+        }
+      },
+      {
+        "timestamp": "2026-10-12T04:37:00+00:00",
+        "home_probability": 0.6092,
+        "away_probability": 0.3908,
+        "over_under": null,
+        "projected_home_score": null,
+        "projected_away_score": null,
+        "bookmaker_count": 2,
+        "probability_range": {
+          "min": 0.6092,
+          "max": 0.6092
+        }
+      }
+    ],
+    "bookmaker_history": {},
+    "espn_history": [],
+    "score_history": [],
+    "scoring_plays": [],
+    "period_markers": [],
+    "win_prob_history": {
+      "kalshi": [
+        {
+          "timestamp": "2026-10-11T05:45:42.061922+00:00",
+          "home_probability": 0.615,
+          "away_probability": 0.385,
+          "draw_probability": null,
+          "game_state": null
+        }
+      ],
+      "polymarket": [
+        {
+          "timestamp": "2026-10-11T05:45:15.598351+00:00",
+          "home_probability": 0.615,
+          "away_probability": 0.385,
+          "draw_probability": null,
+          "game_state": null
+        }
+      ]
+    },
+    "aggregate_line": [
+      {
+        "timestamp": "2026-10-11T05:45:00+00:00",
+        "home_probability": 0.615
+      },
+      {
+        "timestamp": "2026-10-12T00:14:00+00:00",
+        "home_probability": 0.6145
+      },
+      {
+        "timestamp": "2026-10-12T00:15:00+00:00",
+        "home_probability": 0.6145
+      },
+      {
+        "timestamp": "2026-10-12T05:44:00+00:00",
+        "home_probability": 0.615
+      },
+      {
+        "timestamp": "2026-10-12T05:45:00+00:00",
+        "home_probability": 0.615
+      }
+    ]
+  } as unknown as EventHistoryResponse;
+  const RAMS_NOW = ms("2026-10-12T05:45:12.645Z");
+  const h = hockeyJourneyHistory(ramsHistory, ramsDetail, "before", RAMS_NOW);
+  const [home, away] = h.series;
+  const points = home.runs.flat();
+  const kickoff = ms(ramsDetail.commence_time);
+
+  it("draws the readings older than the start less one day, up to the last real reading", () => {
+    expect(h.line).toBe("blend");
+    expect(h.caption).toBe("Before game");
+    expect(points.map((p) => p.t)).toEqual(
+      ["2026-10-11T05:45:00+00:00", "2026-10-12T00:14:00+00:00", "2026-10-12T00:15:00+00:00", "2026-10-12T05:44:00+00:00"].map(ms),
+    );
+    // Two of them sit before the start less one day: the window a future start used to cut off.
+    expect(points.filter((p) => p.t < kickoff - BEFORE_WINDOW_MS)).toHaveLength(2);
+    // The pinned 05:45 edge is the hero's, never a reading; the last real reading is hollow.
+    expect(points.some((p) => p.t === ms("2026-10-12T05:45:00+00:00"))).toBe(false);
+    expect(points.filter((p) => p.hollow).map((p) => p.t)).toEqual([ms("2026-10-12T05:44:00+00:00")]);
+    expect(home.runs).toHaveLength(1);
+    expect(h.domain).toEqual({ lower: ms("2026-10-11T05:45:00+00:00"), upper: ms("2026-10-12T05:44:00+00:00") });
+    expect(h.guides).toEqual([]);
+    expect(h.xTicks.length).toBeGreaterThan(0);
+    expect(h.xTicks.length).toBeLessThanOrEqual(4);
+    for (const tick of h.xTicks) {
+      expect(tick.t).toBeGreaterThanOrEqual(h.domain!.lower);
+      expect(tick.t).toBeLessThanOrEqual(h.domain!.upper);
+    }
+  });
+
+  it("keeps the away side the other side of the same rows, at the same clocks", () => {
+    expect(sportPricesADraw(ramsDetail.sport)).toBe(false);
+    const awayPoints = away.runs.flat();
+    expect(awayPoints.map((p) => p.t)).toEqual(points.map((p) => p.t));
+    expect(awayPoints.map((p) => p.p)).toEqual(points.map((p) => 1 - p.p));
+    expect(h.notes[0]).toBe("Source: Bain Luck");
+  });
+});
+
+// The FULL retained bodies, read-only, from `$BAINLUCK_ARTIFACTS_DIR` or the repo's own `artifacts/`
+// (UNTRACKED: present only where a reader put them). Every byte is pinned by sha256 before a single
+// assertion; where they are absent the block is SKIPPED (named), and the embedded subsets above
+// remain the permanent guard.
+const RETAINED_DESIGN = "discovery-containers-release-plan/event-page-design-20261011";
+const RETAINED_PAYLOADS = `${RETAINED_DESIGN}/shipping-adoption-20261027/cli-candidate-20261030/retained-payloads`;
+const RETAINED: Record<string, [string, string]> = {
+  ramsDetail: [`${RETAINED_DESIGN}/probability-movement-v89/raw/nfl-pregame-detail.json`,
+    "1f81fa527d56660a7c3fb0b495b0a8489aa7b202a9cc200558c3b817940b0eb9"],
+  ramsHistory: [`${RETAINED_DESIGN}/probability-movement-v89/raw/nfl-pregame-history.json`,
+    "c32ce4402faf5849afd93802eb4918d5b92a4d50f576bc2538c422f80d588332"],
+  knightsDetail: [`${RETAINED_PAYLOADS}/nhl-15338496-detail-20261030T201355Z.json`,
+    "50fbf4678a308e40481340e9b998a2a0870795dd8b04dfdfb05e31caf3dcc1da"],
+  knightsHistory: [`${RETAINED_PAYLOADS}/nhl-15338496-history-20261030T201355Z.json`,
+    "0fe7e8cd334d2b32b5d808bd2dbdec974bef052a53775991b1457bd37fafe812"],
+  finishedDetail: [`${RETAINED_PAYLOADS}/nhl-15338034-detail-20261030T201355Z.json`,
+    "4bd4832c10c7f31626a9cd31df415ef806db1f5a8c9ac1934aba3386d7fbd6e4"],
+  finishedHistory: [`${RETAINED_PAYLOADS}/nhl-15338034-history-20261030T201355Z.json`,
+    "f82a66d49b870f4df63e52f3639981e22e6efd321921238eabc8a59512759d8d"],
+};
+const RETAINED_ROOTS = [process.env.BAINLUCK_ARTIFACTS_DIR, join(__dirname, "../../../artifacts")].filter(
+  (root): root is string => !!root,
+);
+const retainedPath = (key: string) =>
+  RETAINED_ROOTS.map((root) => join(root, RETAINED[key][0])).find((path) => existsSync(path)) ?? null;
+const retainedPresent = Object.keys(RETAINED).every((key) => retainedPath(key) !== null);
+function retained<T>(key: string): T {
+  const raw = readFileSync(retainedPath(key)!);
+  expect(createHash("sha256").update(raw).digest("hex")).toBe(RETAINED[key][1]);
+  return JSON.parse(raw.toString("utf8")) as T;
+}
+
+(retainedPresent ? describe : describe.skip)("#10868 history — FULL retained bodies through the actual helper (skipped where absent)", () => {
+  const blankLineBefore = (body: EventHistoryResponse, t: number) =>
+    ({
+      ...body,
+      aggregate_line: (body.aggregate_line ?? []).map((p) =>
+        Date.parse(p.timestamp) < t ? { ...p, home_probability: null } : p,
+      ),
+    }) as unknown as EventHistoryResponse;
+  const summary = (h: ReturnType<typeof hockeyJourneyHistory>, oldFloor: number) =>
+    h.series.map((s) => {
+      const points = s.runs.flat();
+      return {
+        points: points.length,
+        runs: s.runs.length,
+        first: points.length ? new Date(points[0].t).toISOString() : null,
+        last: points.length ? new Date(points[points.length - 1].t).toISOString() : null,
+        hollow: points.filter((p) => p.hollow).map((p) => new Date(p.t).toISOString()),
+        olderThanStartLessADay: points.filter((p) => p.t < oldFloor).length,
+      };
+    });
+
+  it("Rams 14780558, read 18.5 h before the start: the whole recorded day, 1,142 readings a side", () => {
+    const event = retained<EventDetailResponse>("ramsDetail");
+    const body = retained<EventHistoryResponse>("ramsHistory");
+    expect(body.aggregate_line).toHaveLength(1143);
+    const h = hockeyJourneyHistory(body, event, "before", ms("2026-10-12T05:45:12.645Z"));
+    expect(h.line).toBe("blend");
+    const side = {
+      points: 1142,
+      runs: 1,
+      first: "2026-10-11T05:45:00.000Z",
+      last: "2026-10-12T05:44:00.000Z",
+      hollow: ["2026-10-12T05:44:00.000Z"],
+      olderThanStartLessADay: 832,
+    };
+    expect(summary(h, ms(event.commence_time) - BEFORE_WINDOW_MS)).toEqual([side, side]);
+    expect(h.domain).toEqual({ lower: ms("2026-10-11T05:45:00Z"), upper: ms("2026-10-12T05:44:00Z") });
+  });
+
+  it("Golden Knights 15338496, read 1 h 46 min before the start: 1,102 readings a side", () => {
+    const event = retained<EventDetailResponse>("knightsDetail");
+    const body = retained<EventHistoryResponse>("knightsHistory");
+    expect(body.aggregate_line).toHaveLength(1103);
+    const h = hockeyJourneyHistory(body, event, "before", PREGAME_NOW);
+    const side = {
+      points: 1102,
+      runs: 1,
+      first: "2026-10-29T20:13:00.000Z",
+      last: "2026-10-30T20:11:00.000Z",
+      hollow: ["2026-10-30T20:11:00.000Z"],
+      olderThanStartLessADay: 56,
+    };
+    expect(summary(h, ms(event.commence_time) - BEFORE_WINDOW_MS)).toEqual([side, side]);
+  });
+
+  it("the finished 15338034's final and live frames do not depend on anything older than the last pregame reading", () => {
+    const event = retained<EventDetailResponse>("finishedDetail");
+    const body = retained<EventHistoryResponse>("finishedHistory");
+    const now = ms("2026-10-30T20:13:55Z");
+    const final = hockeyJourneyHistory(body, event, "final", now);
+    const t = final.series[0].runs.flat().find((p) => p.hollow)!.t;
+    // The final frame as the helper draws it on the full body (unchanged by this correction).
+    const side = {
+      points: 165,
+      runs: 1,
+      first: "2026-10-29T23:59:00.000Z",
+      last: "2026-10-30T02:43:00.000Z",
+      hollow: ["2026-10-29T23:59:00.000Z"],
+      olderThanStartLessADay: 0,
+    };
+    expect(summary(final, ms(event.commence_time) - BEFORE_WINDOW_MS)).toEqual([side, side]);
+    expect(hockeyJourneyHistory(blankLineBefore(body, t), event, "final", now)).toEqual(final);
+    const live = { ...event, status: "live" } as EventDetailResponse; // CONSTRUCTED: status only
+    const liveNow = ms("2026-10-30T01:30:00Z");
+    const during = hockeyJourneyHistory(body, live, "live", liveNow);
+    const tl = during.series[0].runs.flat().find((p) => p.hollow)!.t;
+    expect(hockeyJourneyHistory(blankLineBefore(body, tl), live, "live", liveNow)).toEqual(during);
+  });
 });
 
 describe("#10868 history — a start that is not a confirmed kick-off (CONSTRUCTED one-key variants)", () => {

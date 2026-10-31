@@ -72,13 +72,18 @@
  *                     through `renderedComplementPercents` (renderedPercent.ts:478)
  *                     so one instant never reads 51% beside 50%.
  *
- * Phase scopes (the accepted screen's own): before — readable pregame rows from
- * the listed start less one day up to the last pregame row, no guides; live —
+ * Phase scopes (the accepted screen's own): before — each team's readable
+ * pregame rows from ITS OWN last pregame reading less one day (inclusive) up to
+ * that reading, no guides — the recorded day of movement ending at the last
+ * real reading, never a window measured back from a start still in the future
+ * (#10868 shared pregame window). Each side is anchored to its own reading, so
+ * the two sides' windows can end at different times and the shared frame can
+ * span more than a day; nothing is synthesized at the window's edge; live —
  * the last pregame row, then the game's rows up to now; final — the last
  * pregame row, then the game's rows up to the game's end, without the
  * settlement row. No confirmed start, any phase — every readable dated row up
  * to now (a finished game's end), unsplit; no one-day floor (it is measured
- * from a confirmed start).
+ * from a last pregame reading, and only a confirmed start makes one).
  *
  * No `/history` response at all (not arrived, or failed — the page does not
  * say which, so neither is claimed): "History unavailable", no source note,
@@ -139,7 +144,7 @@ export const HISTORY_WORDS = {
   details: "History & source details",
 } as const;
 
-/** The before frame reaches back one day from the listed start. */
+/** The before frame reaches back one day from each team's own last pregame reading. */
 export const BEFORE_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** A single drawn instant still needs a frame to sit in. */
 const SINGLE_INSTANT_PAD_MS = 30 * 60 * 1000;
@@ -403,8 +408,11 @@ function drawnSeries(
       if (e.t !== null && e.t <= limit) stop = i;
     });
   } else if (phase === "before") {
-    const floor = kickoff - BEFORE_WINDOW_MS;
-    start = entries.findIndex((e) => e.t !== null && e.t >= floor);
+    // The day ending at THIS side's last pregame reading, inclusive. No reading: no frame.
+    if (lastPregame !== null) {
+      const floor = lastPregame.t - BEFORE_WINDOW_MS;
+      start = entries.findIndex((e) => e.t !== null && e.t >= floor);
+    }
     stop = lastPregamePosition;
   } else {
     start = lastPregamePosition >= 0 ? lastPregamePosition : entries.findIndex((e) => e.t !== null && e.t >= kickoff);

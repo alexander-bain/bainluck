@@ -145,9 +145,13 @@ final class CombatHistoryAdapter10868Tests: XCTestCase {
         let input = H.history(try Self.response(), event: event, phase: .before, host: host("2026-10-04T00:43:00Z"))
         let points = input.series[0].runs.flatMap(\.points)
         XCTAssertEqual(input.series[0].runs.count, 1, "pre-fight intervals are never judged")
-        XCTAssertEqual(points.count, 26)
-        XCTAssertEqual(points.first?.x, x("2026-10-03T01:01:00+00:00"), "the frame opens one day before the start")
-        XCTAssertFalse(points.contains { $0.x == x("2026-10-03T00:58:00+00:00") })
+        XCTAssertEqual(points.count, 28)
+        XCTAssertEqual(points.first?.x, x("2026-10-03T00:54:00+00:00"),
+                       "the frame opens one day before the last pre-fight reading (00:36), not before the start")
+        XCTAssertTrue(points.contains { $0.x == x("2026-10-03T00:58:00+00:00") },
+                      "inside the last reading's day, though older than the start less one day")
+        XCTAssertFalse(points.contains { $0.x < x("2026-10-04T00:36:00+00:00") - HockeyJourneyHistoryAdapter10868.beforeWindow },
+                       "the September 20 rows stay outside the day")
         XCTAssertEqual(points.last?.x, x("2026-10-04T00:36:00+00:00"))
         XCTAssertEqual(points.last?.style, .hollow)
         XCTAssertEqual(input.readout, .singleBefore(label: "Pre-fight"))

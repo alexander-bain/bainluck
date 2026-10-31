@@ -220,23 +220,28 @@ describe("BEFORE — Rams–Bills 14780558 (retained)", () => {
     expect(view.earlierForecast).toBeNull();
   });
 
-  it("draws what the 24-hour before window actually holds: 310 of 1,143 served blend rows", () => {
+  it("draws the day ending at the last pregame reading: 1,142 of 1,143 served blend rows", () => {
     const h = view.history;
     const kickoff = Date.parse(rams.commence_time);
     const served = ramsHistory.aggregate_line ?? [];
-    const floor = kickoff - BEFORE_WINDOW_MS;
+    // The window's floor is each side's own last pregame reading (05:44 Oct 12, the last row before
+    // the pinned 05:45 edge) less one day, inclusive — not the listed start less one day, which
+    // would drop 832 earlier real rows from a capture that ended 18.5 h before kick-off.
+    const lastPregame = Date.parse("2026-10-12T05:44:00Z");
+    const floor = lastPregame - BEFORE_WINDOW_MS;
     expect(served).toHaveLength(1143);
-    expect(served.filter((p) => Date.parse(p.timestamp) < floor)).toHaveLength(832);
+    expect(served.filter((p) => Date.parse(p.timestamp) < kickoff - BEFORE_WINDOW_MS)).toHaveLength(832);
+    expect(served.filter((p) => Date.parse(p.timestamp) < floor)).toHaveLength(0);
     expect(h.line).toBe("blend");
     expect(h.caption).toBe(HISTORY_WORDS.beforeCaption);
     for (const series of h.series) {
       expect(series.runs).toHaveLength(1);
-      expect(series.runs[0]).toHaveLength(310);
+      expect(series.runs[0]).toHaveLength(1142);
     }
-    // The capture ended 18.5 h before kick-off, so the one-day window shows only its last 5 h 29 min:
-    // from the floor itself to the last pregame row; the pinned 05:45 edge row is removed.
+    // The whole recorded day ending at the last pregame row: 05:45 Oct 11 to 05:44 Oct 12; the
+    // pinned 05:45 edge row is removed.
     expect(h.domain && [iso(h.domain.lower), iso(h.domain.upper)]).toEqual([
-      "2026-10-12T00:15:00.000Z",
+      "2026-10-11T05:45:00.000Z",
       "2026-10-12T05:44:00.000Z",
     ]);
     expect(h.series[0].before).toMatchObject({ kind: "reading", figure: "62%" });

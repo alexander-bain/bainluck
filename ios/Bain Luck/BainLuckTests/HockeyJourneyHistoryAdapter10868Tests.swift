@@ -384,16 +384,18 @@ final class HockeyJourneyHistoryAdapter10868Tests: XCTestCase {
         let home = input.series[0]
         let points = home.runs.flatMap(\.points)
 
-        let floor = "2026-10-29T22:00:00+00:00"
-        XCTAssertEqual(points.first?.x, x(floor), "the listed start less one day, inclusive")
-        XCTAssertFalse(points.contains { $0.x < x(floor) })
+        // The day reaches back from the last pregame reading (20:11), not from the listed start
+        // (22:00): the subset's 21:58 and 21:59 the day before are recorded readings inside it.
+        let floor = x("2026-10-30T20:11:00+00:00") - H.beforeWindow
+        XCTAssertEqual(points.first?.x, x("2026-10-29T21:58:00+00:00"), "the last pregame reading less one day, inclusive")
+        XCTAssertFalse(points.contains { $0.x < floor })
         let pin = try XCTUnwrap(history.aggregateLine?.last)
         XCTAssertEqual(pin.timestamp, "2026-10-30T20:12:00+00:00")
         XCTAssertFalse(points.contains { $0.x == x(pin.timestamp) }, "the pinned edge is the hero's, not a recorded row")
         let lastPregame = "2026-10-30T20:11:00+00:00"
         XCTAssertEqual(points.last?.x, x(lastPregame))
         XCTAssertEqual(points.last?.style, .hollow)
-        XCTAssertEqual(points.count, 23)
+        XCTAssertEqual(points.count, 25)
         XCTAssertEqual(home.runs.count, 1,
                        "the chart never breaks a pre-match interval (OddsChartView.observationSegments); "
                        + "the full body holds the rows this subset leaves out")
@@ -525,6 +527,184 @@ final class HockeyJourneyHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(input.details?.isAvailable, false)
         XCTAssertNil(input.expand)
         XCTAssertNil(input.inspect)
+    }
+
+    // MARK: - Before: each side's own recorded day (#10868 shared pregame window)
+
+    /// CONSTRUCTED: the scheduled game's body with its consensus `history` replaced and no
+    /// venue series, blend or pin, so each team reads its OWN served value and the two can stop
+    /// apart. Listed start 22:00Z, a confirmed kick-off.
+    private func consensusBody(_ rows: [(String, Double?, Double?)]) throws -> EventHistoryResponse {
+        let served: [[String: Any]] = rows.map { row in
+            ["timestamp": row.0,
+             "home_probability": row.1.map { $0 as Any } ?? NSNull(),
+             "away_probability": row.2.map { $0 as Any } ?? NSNull(),
+             "bookmaker_count": 5]
+        }
+        return try decoder().decode(EventHistoryResponse.self, from: edited(
+            Self.devilsKnightsHistory,
+            setting: ["history": served, "aggregate_line": [Any](), "win_prob_history": [String: Any](),
+                      "bookmaker_history": [String: Any](), "blend_edge_pinned": false]))
+    }
+
+    private func xs(_ series: FieldHistorySeries10868) -> [Double] { series.runs.flatMap(\.points).map(\.x) }
+
+    func testBeforeTheStartEachSideReadsItsOwnDayAndTheSharedFrameMaySpanMoreThanADay() throws {
+        let body = try consensusBody([
+            ("2026-10-29T10:00:00Z", 0.6, 0.4),
+            ("2026-10-29T12:00:00Z", 0.61, 0.39),
+            ("2026-10-30T10:00:00Z", 0.62, 0.38), // the away side's last reading
+            ("2026-10-30T11:30:00Z", 0.63, nil), // the home side's last reading; no away value
+            ("2026-10-30T21:00:00Z", 0.64, 0.36), // after now: not a reading yet
+        ])
+        XCTAssertEqual(H.line(body), .consensus)
+        let host = readerHost("2026-10-30T20:13:55Z")
+        let input = H.history(body, event: try detail(Self.devilsKnightsDetail), phase: .before, host: host)
+        let home = input.series[0], away = input.series[1]
+        XCTAssertEqual(xs(home), ["2026-10-29T12:00:00Z", "2026-10-30T10:00:00Z", "2026-10-30T11:30:00Z"].map(x))
+        XCTAssertEqual(xs(away), ["2026-10-29T10:00:00Z", "2026-10-29T12:00:00Z", "2026-10-30T10:00:00Z"].map(x))
+        // Each side ends at its own reading, hollow; neither borrows the other's clock.
+        XCTAssertEqual(home.runs.flatMap(\.points).filter { $0.style == .hollow }.map(\.x), [x("2026-10-30T11:30:00Z")])
+        XCTAssertEqual(away.runs.flatMap(\.points).filter { $0.style == .hollow }.map(\.x), [x("2026-10-30T10:00:00Z")])
+        XCTAssertFalse(xs(away).contains(x("2026-10-30T11:30:00Z")), "the away side never takes the home side's time")
+        XCTAssertFalse(xs(home).contains(x("2026-10-29T10:00:00Z")), "outside the home side's own day")
+        guard case let .observation(homeID, _, homeWords) = home.before,
+              case let .observation(awayID, _, awayWords) = away.before else {
+            return XCTFail("each side keeps its own last pregame reading")
+        }
+        XCTAssertEqual(homeID, H.pointID(home.id, "2026-10-30T11:30:00Z"))
+        XCTAssertEqual(awayID, H.pointID(away.id, "2026-10-30T10:00:00Z"))
+        XCTAssertEqual(homeWords, "Last pregame · \(A.clockWords("2026-10-30T11:30:00Z".asDate!, host: host.words))")
+        XCTAssertEqual(awayWords, "Last pregame · \(A.clockWords("2026-10-30T10:00:00Z".asDate!, host: host.words))")
+        // Each side's own window is at most a day; the shared frame is NOT promised to be.
+        for series in [home, away] {
+            let first = try XCTUnwrap(xs(series).first)
+            let last = try XCTUnwrap(xs(series).last)
+            XCTAssertLessThanOrEqual(last - first, H.beforeWindow)
+        }
+        XCTAssertEqual(input.domain, FieldHistoryDomain10868(lower: x("2026-10-29T10:00:00Z"),
+                                                            upper: x("2026-10-30T11:30:00Z")))
+        XCTAssertGreaterThan(input.domain.upper - input.domain.lower, H.beforeWindow)
+        XCTAssertTrue((xs(home) + xs(away)).allSatisfy { $0 <= host.now.timeIntervalSince1970 })
+    }
+
+    func testBeforeTheStartTheDayOpensExactlyOneDayBeforeTheLastPregameReadingInclusive() throws {
+        let body = try consensusBody([
+            ("2026-10-29T14:00:00Z", 0.55, 0.45), // 30 h before the last reading: outside
+            ("2026-10-29T19:59:00Z", 0.56, 0.44), // one day and one minute before: outside
+            ("2026-10-29T20:00:00Z", 0.57, 0.43), // exactly one day before: inside
+            ("2026-10-30T08:00:00Z", 0.58, 0.42),
+            ("2026-10-30T20:00:00Z", 0.59, 0.41), // the last pregame reading
+        ])
+        let input = H.history(body, event: try detail(Self.devilsKnightsDetail), phase: .before,
+                              host: readerHost("2026-10-30T20:13:55Z"))
+        let expected = ["2026-10-29T20:00:00Z", "2026-10-30T08:00:00Z", "2026-10-30T20:00:00Z"].map(x)
+        XCTAssertEqual(xs(input.series[0]), expected)
+        XCTAssertEqual(xs(input.series[1]), expected)
+        XCTAssertLessThan(expected[0], x("2026-10-30T22:00:00+00:00") - H.beforeWindow,
+                          "older than the listed start less one day, and drawn: that start is still in the future")
+        XCTAssertEqual(input.series[0].runs.count, 1)
+    }
+
+    func testBeforeTheStartASideWithNoPregameReadingDrawsNothingAndTheOtherKeepsItsOwnDay() throws {
+        let body = try consensusBody([("2026-10-29T12:00:00Z", 0.61, nil), ("2026-10-30T10:00:00Z", 0.62, nil)])
+        let input = H.history(body, event: try detail(Self.devilsKnightsDetail), phase: .before,
+                              host: readerHost("2026-10-30T20:13:55Z"))
+        XCTAssertEqual(xs(input.series[0]), ["2026-10-29T12:00:00Z", "2026-10-30T10:00:00Z"].map(x))
+        XCTAssertTrue(input.series[1].runs.isEmpty)
+        XCTAssertEqual(input.series[1].before, .absent(words: "Not recorded"))
+        XCTAssertEqual(input.summary, "Vegas Golden Knights win probability, recorded observations only. "
+                       + "No recorded history for New Jersey Devils.")
+    }
+
+    func testBeforeTheStartWithNoPregameReadingOnEitherSideItIsStillNoRecordedHistory() throws {
+        let body = try consensusBody([
+            ("2026-10-30T21:00:00Z", 0.64, 0.36), // after now
+            ("2026-10-30T22:30:00Z", 0.66, 0.34), // after the start
+        ])
+        let input = H.history(body, event: try detail(Self.devilsKnightsDetail), phase: .before,
+                              host: readerHost("2026-10-30T20:13:55Z"))
+        XCTAssertTrue(input.series.allSatisfy { $0.runs.isEmpty })
+        XCTAssertEqual(input.plotAbsence, FieldHistoryPlotAbsence10868(title: "No recorded history", words: nil))
+    }
+
+    /// CONSTRUCTED: the served body re-serialized, every blend row older than `cut` made
+    /// unreadable (home outside 0…1) — the same rows, indexes and clocks, no value. Both sides of
+    /// each comparison take this same path, so serialization cannot differ between them.
+    private func blankingBlend(_ json: String, before cut: Double?) throws -> EventHistoryResponse {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let rows = try XCTUnwrap(object["aggregate_line"] as? [[String: Any]])
+        object["aggregate_line"] = rows.map { row -> [String: Any] in
+            guard let cut, let stamp = row["timestamp"] as? String, let date = stamp.asDate,
+                  date.timeIntervalSince1970 < cut else { return row }
+            var blank = row
+            blank["home_probability"] = -1.0
+            return blank
+        }
+        return try decoder().decode(EventHistoryResponse.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    private func hollowX(_ input: FieldHistoryInput10868) throws -> Double {
+        try XCTUnwrap(input.series[0].runs.flatMap(\.points).first { $0.style == .hollow }?.x)
+    }
+
+    func testThePregameWindowNeverReachesTheLiveOrFinalFrames() throws {
+        let event = try detail(Self.wildBruinsDetail)
+        let whole = try blankingBlend(Self.wildBruinsHistory, before: nil)
+
+        let finalHost = readerHost("2026-10-11T04:56:41Z")
+        let finished = H.history(whole, event: event, phase: .final, host: finalHost)
+        let finalCut = try hollowX(finished)
+        XCTAssertEqual(finalCut, x("2026-10-03T23:59:00+00:00"))
+        let finalBlanked = try blankingBlend(Self.wildBruinsHistory, before: finalCut)
+        XCTAssertEqual(H.history(finalBlanked, event: event, phase: .final, host: finalHost), finished)
+
+        let liveHost = readerHost("2026-10-04T01:45:25Z")
+        let during = H.history(whole, event: event, phase: .live, host: liveHost)
+        let liveCut = try hollowX(during)
+        let liveBlanked = try blankingBlend(Self.wildBruinsHistory, before: liveCut)
+        XCTAssertEqual(H.history(liveBlanked, event: event, phase: .live, host: liveHost), during)
+
+        // Positive control: the same blanking DOES change the before frame, which reads the older rows.
+        let knights = try detail(Self.devilsKnightsDetail)
+        let beforeHost = readerHost("2026-10-30T20:13:55Z")
+        let before = H.history(try blankingBlend(Self.devilsKnightsHistory, before: nil), event: knights,
+                               phase: .before, host: beforeHost)
+        let beforeCut = try hollowX(before)
+        let beforeBlanked = try blankingBlend(Self.devilsKnightsHistory, before: beforeCut)
+        let blanked = H.history(beforeBlanked, event: knights, phase: .before, host: beforeHost)
+        XCTAssertNotEqual(blanked, before)
+        XCTAssertEqual(xs(blanked.series[0]), [beforeCut])
+    }
+
+    /// Rams vs Bills (14780558), read 18.5 h before a confirmed kick-off: the readings older than
+    /// the start less one day are drawn, up to the last real reading.
+    func testAFutureStartNeverShortensTheRecordedDay() throws {
+        func sha256(_ text: String) -> String {
+            SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+        XCTAssertEqual(sha256(Self.ramsDetail), "1f81fa527d56660a7c3fb0b495b0a8489aa7b202a9cc200558c3b817940b0eb9")
+        let event = try detail(Self.ramsDetail)
+        let history = try response(Self.ramsHistory)
+        XCTAssertEqual(history.aggregateLine?.count, 5)
+        XCTAssertEqual(H.line(history), .blend)
+        let input = H.history(history, event: event, phase: .before, host: readerHost("2026-10-12T05:45:12Z"))
+        let home = input.series[0], away = input.series[1]
+        let points = home.runs.flatMap(\.points)
+        XCTAssertEqual(points.map(\.x), ["2026-10-11T05:45:00+00:00", "2026-10-12T00:14:00+00:00",
+                                         "2026-10-12T00:15:00+00:00", "2026-10-12T05:44:00+00:00"].map(x))
+        let kickoff = x("2026-10-13T00:15:00+00:00")
+        XCTAssertEqual(points.filter { $0.x < kickoff - H.beforeWindow }.count, 2,
+                       "the readings a window measured from the future start used to cut off")
+        XCTAssertFalse(points.contains { $0.x == x("2026-10-12T05:45:00+00:00") }, "the pinned edge is the hero's, not a reading")
+        XCTAssertEqual(points.filter { $0.style == .hollow }.map(\.x), [x("2026-10-12T05:44:00+00:00")])
+        XCTAssertEqual(home.runs.count, 1)
+        XCTAssertEqual(away.runs.flatMap(\.points).map(\.x), points.map(\.x), "the other side of the same rows")
+        XCTAssertEqual(away.runs.flatMap(\.points).map(\.probability), points.map { 1 - $0.probability })
+        XCTAssertEqual(input.domain, FieldHistoryDomain10868(lower: x("2026-10-11T05:45:00+00:00"),
+                                                            upper: x("2026-10-12T05:44:00+00:00")))
+        XCTAssertEqual(input.guides, [])
+        XCTAssertEqual(input.caption, "Before game")
     }
 
     // MARK: - Retained bodies
@@ -783,6 +963,53 @@ final class HockeyJourneyHistoryAdapter10868Tests: XCTestCase {
 "points":62,
 "bookmaker_count":19,
 "snapshot_count":476,
+"espn_snapshot_count":0,
+"on_demand_backfill":null}
+"""##
+
+    /// `probability-movement-v89/raw/nfl-pregame-detail.json`, BYTE FOR BYTE
+    /// (sha256 1f81fa527d56660a7c3fb0b495b0a8489aa7b202a9cc200558c3b817940b0eb9; the Rams test
+    /// re-hashes it). Rams vs Bills, scheduled 2026-10-13T00:15Z, captured 2026-10-12T05:45Z.
+    private static let ramsDetail = ##"""
+{"id":14780558,"external_id":"e6d00eedd87d367e510314bd8cab8f6f","sport":"americanfootball_nfl","sport_name":"NFL","home_team":"Los Angeles Rams","away_team":"Buffalo Bills","commence_time":"2026-10-13T00:15:00+00:00","start_is_tbd":false,"completed_at":null,"status":"scheduled","started_without_result":false,"home_score":null,"away_score":null,"home_team_data":{"team_id":544,"slug":"los-angeles-rams","primary_color":"#003594","secondary_color":"#ffd100","logo_small":"https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/lar.png","logo_large":"https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/lar.png","record":"2-2","abbreviation":"LAR","standings":{"pct":".500","ties":0,"wins":2,"losses":2,"streak":"W1","div_rank":3,"division":"NFC West","conference":"National Football Conference","home_record":"1-1","road_record":"1-1"}},"away_team_data":{"team_id":538,"slug":"buffalo-bills","primary_color":"#00338d","secondary_color":"#d50a0a","logo_small":"https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/buf.png","logo_large":"https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/buf.png","record":"3-1","abbreviation":"BUF","standings":{"pct":".750","ties":0,"wins":3,"losses":1,"streak":"L1","div_rank":1,"division":"AFC East","conference":"American Football Conference","home_record":"2-1","road_record":"1-0"}},"metadata":{"gender":"men","level":"professional","league":"NFL","importance":"regular_season"},"espn":{"espn_id":"401872994","broadcast":"ESPN, ABC","probability_sources":{"kalshi":0.615,"betting":0.614,"polymarket":0.615,"betting_book_count":11.0}},"win_probability_sources":{"kalshi":{"value":0.615,"display_name":"Kalshi","type":"market","color":"#22c55e","updated_at":"2026-10-12T05:44:33.447691+00:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031"},"betting":{"value":0.614,"display_name":"Betting Odds","type":"market","color":"#374151","updated_at":"2026-10-12T05:40:56.558654+00:00","evidence_status":"not_applicable"},"polymarket":{"value":0.615,"display_name":"Polymarket","type":"market","color":"#3b82f6","updated_at":"2026-10-12T05:45:00.084170+00:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031","price_evidence":"unproven"},"betting_book_count":{"value":11.0,"display_name":"betting_book_count","type":"model","color":"#6b7280","evidence_status":"not_applicable"}},"event_tags":["class:pro_major","gender:men","importance:regular_season","league:nfl","level:professional","sport:football","status:scheduled","tier:1","timing:national_tv","timing:primetime"],"standings_context":{"home":"2-2, #3 NFC West","away":"3-1, #1 AFC East"},"current_odds":{"captured_at":"2026-10-12T04:37:03.501709+00:00","home_probability":0.615,"away_probability":0.385,"away_rendered_percent":38,"home_rendered_percent":62,"spread":-3.5,"over_under":54.4,"projected_home_score":29.0,"projected_away_score":25.4,"bookmaker_count":22},"bookmaker_odds":[{"bookmaker":"ballybet","home_moneyline":-177,"away_moneyline":145,"home_probability":0.6102,"away_probability":0.3898,"captured_at":"2026-10-11T11:30:46.854796+00:00","spread":-3.5,"over_under":54.0,"projected_home_score":28.8,"projected_away_score":25.2},{"bookmaker":"betanysports","home_moneyline":-180,"away_moneyline":155,"home_probability":0.6211,"away_probability":0.3789,"captured_at":"2026-10-11T11:30:46.902672+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"betmgm","home_moneyline":-185,"away_moneyline":150,"home_probability":0.6187,"away_probability":0.3813,"captured_at":"2026-10-12T04:06:08.526928+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"betonlineag","home_moneyline":-173,"away_moneyline":152,"home_probability":0.6149,"away_probability":0.3851,"captured_at":"2026-10-12T04:06:08.512845+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"betparx","home_moneyline":-177,"away_moneyline":145,"home_probability":0.6102,"away_probability":0.3898,"captured_at":"2026-10-11T11:30:46.842691+00:00","spread":-3.5,"over_under":54.0,"projected_home_score":28.8,"projected_away_score":25.2},{"bookmaker":"betrivers","home_moneyline":-177,"away_moneyline":145,"home_probability":0.6102,"away_probability":0.3898,"captured_at":"2026-10-12T04:06:08.519770+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"betus","home_moneyline":-175,"away_moneyline":150,"home_probability":0.614,"away_probability":0.386,"captured_at":"2026-10-12T04:06:08.504581+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"bovada","home_moneyline":-175,"away_moneyline":150,"home_probability":0.614,"away_probability":0.386,"captured_at":"2026-10-12T04:06:08.530318+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"courtside","home_moneyline":-176,"away_moneyline":153,"home_probability":0.6173,"away_probability":0.3827,"captured_at":"2026-10-11T21:54:03.736548+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"draftkings","home_moneyline":-175,"away_moneyline":145,"home_probability":0.6092,"away_probability":0.3908,"captured_at":"2026-10-12T04:37:03.455739+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"espnbet","home_moneyline":-175,"away_moneyline":150,"home_probability":0.614,"away_probability":0.386,"captured_at":"2026-10-11T21:54:27.431504+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"fanatics","home_moneyline":-175,"away_moneyline":145,"home_probability":0.6092,"away_probability":0.3908,"captured_at":"2026-10-12T04:37:03.501709+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"fanduel","home_moneyline":-176,"away_moneyline":148,"home_probability":0.6126,"away_probability":0.3874,"captured_at":"2026-10-12T04:06:08.494089+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"fliff","home_moneyline":-175,"away_moneyline":135,"home_probability":0.5993,"away_probability":0.4007,"captured_at":"2026-10-11T13:51:51.226636+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"hardrockbet","home_moneyline":-175,"away_moneyline":145,"home_probability":0.6092,"away_probability":0.3908,"captured_at":"2026-10-11T11:30:46.940574+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"hardrockbet_fl","home_moneyline":-175,"away_moneyline":145,"home_probability":0.6092,"away_probability":0.3908,"captured_at":"2026-10-11T11:30:46.935082+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"hardrockbet_oh","home_moneyline":-175,"away_moneyline":145,"home_probability":0.6092,"away_probability":0.3908,"captured_at":"2026-10-11T11:30:46.928015+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"lowvig","home_moneyline":-173,"away_moneyline":152,"home_probability":0.6149,"away_probability":0.3851,"captured_at":"2026-10-12T04:06:08.508141+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"mybookieag","home_moneyline":-186,"away_moneyline":150,"home_probability":0.6192,"away_probability":0.3808,"captured_at":"2026-10-12T04:06:08.501199+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"polymarket","home_moneyline":-163,"away_moneyline":156,"home_probability":0.6134,"away_probability":0.3866,"captured_at":"2026-10-08T08:35:27.709524+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null},{"bookmaker":"rebet","home_moneyline":-182,"away_moneyline":154,"home_probability":0.6211,"away_probability":0.3789,"captured_at":"2026-10-11T11:30:46.802372+00:00","spread":-3.5,"over_under":54.5,"projected_home_score":29.0,"projected_away_score":25.5},{"bookmaker":"williamhill_us","home_moneyline":-176,"away_moneyline":147,"home_probability":0.6117,"away_probability":0.3883,"captured_at":"2026-10-12T04:06:08.461562+00:00","spread":null,"over_under":null,"projected_home_score":null,"projected_away_score":null}],"hero_probability_observed_at":"2026-10-12T05:45:00.084170+00:00","blend_fold_revision":{"14780558":12497},"hero_probability":0.615,"hero_probability_away":0.385,"hero_probability_source":"blend","hero_sportsbook_count":11}
+"""##
+
+    /// A REDUCED VERBATIM SUBSET of `probability-movement-v89/raw/nfl-pregame-history.json`
+    /// (488,773 bytes, sha256 c32ce4402faf5849afd93802eb4918d5b92a4d50f576bc2538c422f80d588332).
+    /// Every top-level key, in source order, is the source's bytes, one key per line, except
+    /// (0-based element indexes kept, in source order):
+    ///   `history`            2 of 75: 0, 74
+    ///   `bookmaker_history`  emptied to {}
+    ///   `win_prob_history`   polymarket 0 of 146; kalshi 0 of 1157
+    ///   `aggregate_line`     5 of 1143: 0, 831, 832, 1141, 1142 (1142 is the pinned edge)
+    private static let ramsHistory = ##"""
+{"event_id":14780558,
+"home_team":"Los Angeles Rams",
+"away_team":"Buffalo Bills",
+"commence_time":"2026-10-13T00:15:00+00:00",
+"completed_at":null,
+"status":"scheduled",
+"time_domain":{"start":"2026-10-11T05:45:00+00:00","end":"2026-10-12T05:45:12.645807+00:00","is_live":false,"min_window_seconds":1800},
+"history":[{"timestamp":"2026-10-11T05:45:00+00:00","home_probability":0.6098,"away_probability":0.3902,"over_under":54.6,"projected_home_score":29.0,"projected_away_score":25.6,"bookmaker_count":21,"probability_range":{"min":0.5951,"max":0.6211}},{"timestamp":"2026-10-12T04:37:00+00:00","home_probability":0.6092,"away_probability":0.3908,"over_under":null,"projected_home_score":null,"projected_away_score":null,"bookmaker_count":2,"probability_range":{"min":0.6092,"max":0.6092}}],
+"bookmaker_history":{},
+"score_history":[],
+"espn_history":[],
+"win_prob_history":{"polymarket":[{"timestamp":"2026-10-11T05:45:15.598351+00:00","home_probability":0.615,"away_probability":0.385,"draw_probability":null,"game_state":null}],"kalshi":[{"timestamp":"2026-10-11T05:45:42.061922+00:00","home_probability":0.615,"away_probability":0.385,"draw_probability":null,"game_state":null}]},
+"evidence_contract":{"v":"7878.v1","resolution_s":300},
+"win_prob_sources":{"polymarket":{"display_name":"Polymarket","type":"market","color":"#3b82f6","dash_pattern":"8 4","description":"Win probability from Polymarket, the world's largest prediction market by volume. Polymarket prices reflect the consensus of thousands of traders betting real money on game outcomes.","methodology":"The outcome price from Polymarket's CLOB (Central Limit Order Book). Prices range from $0.00 to $1.00 and directly represent implied probability. For binary markets, the 'Yes' price equals the market's probability estimate.","attribution_url":"https://polymarket.com","attribution_name":"Polymarket","snapshot_count":146},"kalshi":{"display_name":"Kalshi","type":"market","color":"#22c55e","dash_pattern":"8 4","description":"Win probability from Kalshi, a CFTC-regulated prediction market where real money is traded on event outcomes. Kalshi odds represent the consensus of market participants betting on game outcomes.","methodology":"The midpoint of the bid/ask spread for the 'Yes' contract on the game outcome market. Kalshi contracts settle at $1 if the event occurs and $0 otherwise, so the price directly represents the market's implied probability.","attribution_url":"https://kalshi.com","attribution_name":"Kalshi","snapshot_count":1157}},
+"scoring_plays":[],
+"moments":[],
+"period_markers":[],
+"aggregate_line":[{"timestamp":"2026-10-11T05:45:00+00:00","home_probability":0.615},{"timestamp":"2026-10-12T00:14:00+00:00","home_probability":0.6145},{"timestamp":"2026-10-12T00:15:00+00:00","home_probability":0.6145},{"timestamp":"2026-10-12T05:44:00+00:00","home_probability":0.615},{"timestamp":"2026-10-12T05:45:00+00:00","home_probability":0.615}],
+"blend_edge_pinned":true,
+"blend_edge_observed_at":"2026-10-12T05:45:00.084170+00:00",
+"blend_edge_fold_revision":{"14780558":12497},
+"pre_window_omitted":false,
+"commence_time_is_kickoff":true,
+"pm_spread_data":{"implied_spreads":{"kalshi":{"spread":-3.2,"home_margin":3.2,"confidence":0.95,"contracts":[{"threshold":-14.5,"probability":0.915},{"threshold":-13.5,"probability":0.895},{"threshold":-10.5,"probability":0.865},{"threshold":-9.5,"probability":0.855},{"threshold":-7.5,"probability":0.825},{"threshold":-6.5,"probability":0.775},{"threshold":-5.5,"probability":0.765},{"threshold":-4.5,"probability":0.745},{"threshold":-3.5,"probability":0.725},{"threshold":-2.5,"probability":0.655},{"threshold":-1.5,"probability":0.635},{"threshold":1.5,"probability":0.585},{"threshold":2.5,"probability":0.565},{"threshold":3.5,"probability":0.475},{"threshold":4.5,"probability":0.435},{"threshold":5.5,"probability":0.425},{"threshold":6.5,"probability":0.385},{"threshold":7.5,"probability":0.325},{"threshold":9.5,"probability":0.285},{"threshold":10.5,"probability":0.265},{"threshold":13.5,"probability":0.215},{"threshold":14.5,"probability":0.175},{"threshold":16.5,"probability":0.165},{"threshold":17.5,"probability":0.135},{"threshold":20.5,"probability":0.095}]}},"implied_totals":{"kalshi":{"total":54.3,"confidence":0.9,"contracts":[{"threshold":33.5,"probability":0.945},{"threshold":36.5,"probability":0.915},{"threshold":39.5,"probability":0.875},{"threshold":42.5,"probability":0.815},{"threshold":45.5,"probability":0.745},{"threshold":48.5,"probability":0.675},{"threshold":51.5,"probability":0.585},{"threshold":52.5,"probability":0.56},{"threshold":53.5,"probability":0.525},{"threshold":54.5,"probability":0.495},{"threshold":55.5,"probability":0.455},{"threshold":56.5,"probability":0.425},{"threshold":57.5,"probability":0.405},{"threshold":60.5,"probability":0.325},{"threshold":63.5,"probability":0.255},{"threshold":66.5,"probability":0.195},{"threshold":69.5,"probability":0.145},{"threshold":72.5,"probability":0.105},{"threshold":75.5,"probability":0.075}]},"polymarket":{"total":54.2,"confidence":0.8,"contracts":[{"threshold":24.5,"probability":0.94},{"threshold":26.5,"probability":0.975},{"threshold":28.5,"probability":0.926},{"threshold":30.5,"probability":0.9345},{"threshold":32.5,"probability":0.9545},{"threshold":34.5,"probability":0.945},{"threshold":36.5,"probability":0.915},{"threshold":38.5,"probability":0.89},{"threshold":40.5,"probability":0.855},{"threshold":42.5,"probability":0.815},{"threshold":44.5,"probability":0.78},{"threshold":46.5,"probability":0.73},{"threshold":48.5,"probability":0.665},{"threshold":50.5,"probability":0.625},{"threshold":52.5,"probability":0.565},{"threshold":54.5,"probability":0.49},{"threshold":56.5,"probability":0.425},{"threshold":58.5,"probability":0.37},{"threshold":60.5,"probability":0.32},{"threshold":62.5,"probability":0.295},{"threshold":64.5,"probability":0.235},{"threshold":66.5,"probability":0.195},{"threshold":68.5,"probability":0.175},{"threshold":70.5,"probability":0.135},{"threshold":72.5,"probability":0.105},{"threshold":74.5,"probability":0.085}]}},"projected_final":{"home_score":28.8,"away_score":25.5,"spread_source":"kalshi","total_source":"kalshi"}},
+"points":75,
+"bookmaker_count":21,
+"snapshot_count":793,
 "espn_snapshot_count":0,
 "on_demand_backfill":null}
 """##

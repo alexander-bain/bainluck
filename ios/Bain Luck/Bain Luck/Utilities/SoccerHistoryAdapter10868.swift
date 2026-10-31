@@ -47,8 +47,8 @@ import SwiftUI
 ///     baselines are #1011 (Live owns the forward writer) with group coherence
 ///     under #5328.
 ///
-/// Phase scopes are H2's (before: the listed start less one day up to the last
-/// pre-match row; live: the last pre-match row, then the match up to now;
+/// Phase scopes are H2's (before: the last pre-match row less one day, inclusive,
+/// up to that row; live: the last pre-match row, then the match up to now;
 /// final: the same up to the match's end, without the settlement row). Where
 /// the in-game frame opens is still the host's (H2's `inGameStart`, default
 /// last pre-match row). The host's held inspection, the window and scale

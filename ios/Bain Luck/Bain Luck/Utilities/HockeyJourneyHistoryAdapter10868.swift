@@ -87,8 +87,14 @@ import SwiftUI
 ///                      "Sportsbook Consensus (market)" for the consensus.
 ///
 /// Phase scopes (the accepted screen's own, kept):
-///   before — readable pregame rows from the listed start less one day up to
-///            the last pregame row; no guides.
+///   before — each team's readable pregame rows from ITS OWN last pregame
+///            reading less one day (inclusive) up to that reading; no guides.
+///            The recorded day of movement ending at the last real reading,
+///            never a window measured back from a start still in the future
+///            (#10868 shared pregame window). Each side is anchored to its own
+///            reading, so the two windows can end at different times and the
+///            shared frame can span more than a day; nothing is synthesized at
+///            the window's edge.
 ///   live   — the last pregame row, then the game's rows up to now.
 ///   final  — the last pregame row, then the game's rows up to the game's end,
 ///            without the settlement row.
@@ -177,7 +183,7 @@ enum HockeyJourneyHistoryAdapter10868 {
     /// Offered unavailable until an owner-admitted inspection and its held reader exist.
     static let inspectActionID = "history.inspect"
 
-    /// The before frame reaches back one day from the listed start.
+    /// The before frame reaches back one day from each team's own last pregame reading.
     static let beforeWindow: TimeInterval = 86_400
     static let plotHeight: CGFloat = 230
     static let yTickValues: [Double] = [0, 0.5, 1]
@@ -449,8 +455,13 @@ enum HockeyJourneyHistoryAdapter10868 {
         if let kickoff {
             switch phase {
             case .before:
-                let floor = kickoff.addingTimeInterval(-beforeWindow)
-                start = entries.firstIndex { $0.date.map { $0 >= floor } ?? false }
+                // The day ending at THIS side's last pregame reading, inclusive. No reading: no frame.
+                if let lastPregame {
+                    let floor = lastPregame.date.addingTimeInterval(-beforeWindow)
+                    start = entries.firstIndex { $0.date.map { $0 >= floor } ?? false }
+                } else {
+                    start = nil
+                }
                 stop = lastPregamePosition
             case .live, .final:
                 if let opening {

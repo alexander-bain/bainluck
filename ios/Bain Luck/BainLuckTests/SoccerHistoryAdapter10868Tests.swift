@@ -98,11 +98,22 @@ final class SoccerHistoryAdapter10868Tests: XCTestCase {
 
         XCTAssertEqual(input.caption, S.Words.beforeCaption)
         XCTAssertEqual(input.readout, .singleBefore(label: S.Words.preMatch))
-        // Rows older than a day before kickoff are outside the window; the
-        // pinned 04:57 edge is not a reading.
-        XCTAssertEqual(pointIDs(input.series[0]), [[id + "2026-10-11T04:53:00+00:00",
+        // The day ending at the last pre-match reading (04:56) is the window, not the
+        // day before kickoff (13:00): the 10 October rows are inside it. The pinned
+        // 04:57 edge is not a reading.
+        XCTAssertEqual(pointIDs(input.series[0]), [[id + "2026-10-10T04:57:00+00:00",
+                                                     id + "2026-10-10T05:03:00+00:00",
+                                                     id + "2026-10-10T05:07:00+00:00",
+                                                     id + "2026-10-11T04:53:00+00:00",
                                                      id + "2026-10-11T04:54:00+00:00",
                                                      id + "2026-10-11T04:56:00+00:00"]])
+        // UNCHANGED gap authority, flagged rather than fixed here: pre-match intervals are never
+        // judged, so 05:07 → 04:53 (23 h 46 min with no reading) stays inside ONE run. The points
+        // keep their own clocks; nothing is observed between them.
+        let drawn = input.series[0].runs.flatMap(\.points).map(\.x)
+        XCTAssertEqual(input.series[0].runs.count, 1)
+        guard drawn.count == 6 else { return XCTFail("six pre-match readings") }
+        XCTAssertEqual(drawn[3] - drawn[2], 23 * 3_600 + 46 * 60)
         XCTAssertTrue(input.guides.isEmpty)
         XCTAssertNil(input.inspect)
         XCTAssertTrue(input.series[1].runs.isEmpty)

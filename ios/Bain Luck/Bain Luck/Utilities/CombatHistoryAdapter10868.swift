@@ -57,8 +57,8 @@ import SwiftUI
 /// (home circle, away diamond — the headline's), and the provenance lines.
 ///
 /// Phase scopes (the hockey screen's, read in fight words):
-///   before — readable pre-fight rows from the listed start less one day up to
-///            the last pre-fight row; no guides.
+///   before — readable pre-fight rows from each side's own last pre-fight row
+///            less one day (inclusive) up to that row; no guides.
 ///   during — the last pre-fight row, then the fight's rows up to now.
 ///   final  — the last pre-fight row, then the fight's rows up to the event's
 ///            end, without the settlement row.

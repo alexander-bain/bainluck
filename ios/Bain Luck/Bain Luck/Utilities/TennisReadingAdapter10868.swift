@@ -26,8 +26,8 @@ import SwiftUI
 ///                    chart breaks it — at an unreadable, non-advancing or
 ///                    value-missing row, and by `OddsChartView.observationSegments`
 ///                    inside each stretch; cut at the page phase (`Rows.drawn`'s
-///                    own start and stop: before play the day before the
-///                    scheduled start up to its last reading; during and after,
+///                    own start and stop: before play the day ending at its
+///                    last reading before the scheduled start; during and after,
 ///                    that last reading, then the match up to now or the match's
 ///                    end, `OddsChartView.gameEndDate`). So the panel can never
 ///                    hold a point the chart beside it refuses to draw, never

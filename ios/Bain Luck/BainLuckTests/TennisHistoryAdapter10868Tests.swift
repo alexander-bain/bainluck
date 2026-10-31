@@ -210,9 +210,13 @@ final class TennisHistoryAdapter10868Tests: XCTestCase {
         let input = H.history(try Self.live(), event: event, phase: .before, host: host(Fixtures.liveReadAt))
         let points = input.series[0].runs.flatMap(\.points)
         XCTAssertEqual(input.series[0].runs.count, 1, "intervals before the start are never judged")
-        XCTAssertEqual(points.count, 101)
-        XCTAssertEqual(points.first?.x, x("2026-10-11T13:00:00+00:00"), "the frame opens one day before the scheduled start")
-        XCTAssertFalse(points.contains { $0.x == x("2026-10-11T12:59:00+00:00") })
+        XCTAssertEqual(points.count, 104)
+        XCTAssertEqual(points.first?.x, x("2026-10-11T12:24:00+00:00"),
+                       "the frame opens one day before the last reading (12:23), not before the scheduled start")
+        XCTAssertTrue(points.contains { $0.x == x("2026-10-11T12:59:00+00:00") },
+                      "inside the last reading's day, though older than the start less one day")
+        XCTAssertFalse(points.contains { $0.x < x("2026-10-12T12:23:00+00:00") - HockeyJourneyHistoryAdapter10868.beforeWindow },
+                       "never older than one day before the last reading")
         XCTAssertEqual(points.last?.x, x("2026-10-12T12:23:00+00:00"))
         XCTAssertEqual(points.last?.style, .hollow)
         XCTAssertEqual(input.readout, .singleBefore(label: "Before scheduled start"))

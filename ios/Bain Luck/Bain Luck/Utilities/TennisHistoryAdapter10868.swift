@@ -59,8 +59,8 @@ import SwiftUI
 /// (home circle, away diamond — the headline's), and the provenance lines.
 ///
 /// Phase scopes (the hockey screen's, read in match words):
-///   before — readable rows from the listed start less one day up to the last
-///            row before the scheduled start; no guides.
+///   before — readable rows from the last row before the scheduled start less
+///            one day (inclusive) up to that row; no guides.
 ///   during — the last row before the scheduled start, then the match's rows up
 ///            to now.
 ///   final  — the last row before the scheduled start, then the match's rows up

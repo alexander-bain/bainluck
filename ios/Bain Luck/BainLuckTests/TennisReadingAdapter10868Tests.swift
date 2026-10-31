@@ -97,7 +97,7 @@ final class TennisReadingAdapter10868Tests: XCTestCase {
         let cases: [(EventDetail, EventHistoryResponse, Date, Int, Int)] = [
             (live, liveHistory, at(Fixtures.liveReadAt), 89, 1),
             (finished, finalHistory, at(Fixtures.finalReadAt), 20, 2),
-            (before, liveHistory, at(Fixtures.liveReadAt), 101, 1),
+            (before, liveHistory, at(Fixtures.liveReadAt), 104, 1),
             (unconfirmed, liveHistory, at(Fixtures.liveReadAt), 104, 1),
         ]
         for (event, history, now, count, runs) in cases {
@@ -108,6 +108,10 @@ final class TennisReadingAdapter10868Tests: XCTestCase {
             XCTAssertEqual(series.segments.count, runs)
             XCTAssertEqual(R.points(history, event: event, now: now).map(\.date), series.points.map(\.date))
         }
+        // Before the start the series is the day ending at the last reading (12:23), not the start's day.
+        let beforeSeries = try XCTUnwrap(R.series(liveHistory, event: before, now: at(Fixtures.liveReadAt)))
+        XCTAssertEqual(beforeSeries.points.first?.date, at("2026-10-11T12:24:00+00:00"))
+        XCTAssertEqual(beforeSeries.points.last?.date, at("2026-10-12T12:23:00+00:00"))
     }
 
     // MARK: - The series is the history's readings

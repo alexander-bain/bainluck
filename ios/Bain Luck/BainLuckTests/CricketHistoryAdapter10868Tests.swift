@@ -87,12 +87,16 @@ final class CricketHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(input.series.map(\.id), ["aggregate:15338496:home", "aggregate:15338496:away",
                                                 "aggregate:15338496:draw"])
 
-        // The home line: the reviewed rule's pregame day, one run, the pin removed.
+        // The home line: the reviewed rule's pregame day, ending at the last pregame
+        // reading (20:11), one run, the pin removed.
         let home = input.series[0]
         let points = home.segments.flatMap(\.points)
         XCTAssertEqual(home.segments.count, 1)
-        XCTAssertEqual(points.count, 23)
-        XCTAssertEqual(points.first?.x, x("2026-10-29T22:00:00+00:00"), "the listed start less one day")
+        XCTAssertEqual(points.count, 25)
+        XCTAssertEqual(points.first?.x, x("2026-10-29T21:58:00+00:00"),
+                       "the last pregame reading less one day — not the listed start less one day (22:00)")
+        XCTAssertTrue(points.allSatisfy { $0.x >= x("2026-10-30T20:11:00+00:00") - Rules.beforeWindow },
+                      "never older than one day before the last pregame reading")
         let pin = try XCTUnwrap(history.aggregateLine?.last)
         XCTAssertFalse(points.contains { $0.x == x(pin.timestamp) }, "the pinned edge is the hero's, not a recorded row")
         XCTAssertEqual(points.last?.x, x("2026-10-30T20:11:00+00:00"))
@@ -110,12 +114,12 @@ final class CricketHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(draw.segments, [])
         XCTAssertEqual(draw.absentWords, "Draw chance unavailable")
 
-        XCTAssertEqual(input.domain, CricketHistoryDomain10868(lower: x("2026-10-29T22:00:00+00:00"),
+        XCTAssertEqual(input.domain, CricketHistoryDomain10868(lower: x("2026-10-29T21:58:00+00:00"),
                                                                upper: x("2026-10-30T20:11:00+00:00")))
         XCTAssertEqual(input.yTicks, [CricketHistoryTick10868(value: 0, lines: ["0%"]),
                                       CricketHistoryTick10868(value: 0.5, lines: ["50%"]),
                                       CricketHistoryTick10868(value: 1, lines: ["100%"])])
-        let domain = "2026-10-29T22:00:00+00:00".asDate!..."2026-10-30T20:11:00+00:00".asDate!
+        let domain = "2026-10-29T21:58:00+00:00".asDate!..."2026-10-30T20:11:00+00:00".asDate!
         XCTAssertEqual(input.xTicks.map(\.value), Rules.xTicks(domain, host: host).map(\.value))
         XCTAssertEqual(input.pregameKey, "Pregame")
         let context = try XCTUnwrap(input.context)
@@ -144,7 +148,9 @@ final class CricketHistoryAdapter10868Tests: XCTestCase {
         let input = H.history(history, event: event, phase: .before, host: readerHost("2026-10-30T20:13:55Z"))
         let home = input.series[0]
         XCTAssertEqual(home.id, "consensus:15338496:home")
-        XCTAssertEqual(home.segments.flatMap(\.points).count, 7, "22:04 Oct 29 through 20:11 Oct 30")
+        XCTAssertEqual(home.segments.flatMap(\.points).count, 9, "21:36 Oct 29 through 20:11 Oct 30")
+        XCTAssertEqual(home.segments.flatMap(\.points).first?.x, x("2026-10-29T21:36:00+00:00"),
+                       "the sportsbook line's own last pregame reading (20:11) less one day")
         XCTAssertEqual(input.series[1].segments, [])
         XCTAssertTrue(try XCTUnwrap(input.context).hasPrefix("Source: Sportsbook Consensus (market)."))
     }
