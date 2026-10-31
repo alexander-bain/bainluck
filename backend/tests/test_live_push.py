@@ -51,6 +51,16 @@ def _frame(**over):
     return build_frame(**base)
 
 
+def _string_literals(source: str) -> list[str]:
+    """Every str constant in ``source``, f-string parts included."""
+    import ast
+
+    return [
+        node.value for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+
+
 class TestChannelAgreement:
     """The publisher and the subscriber are in different processes on
     different dynos. A drifted channel string cannot fail loudly — it delivers
@@ -79,9 +89,18 @@ class TestChannelAgreement:
 
         assert route.event_channel is event_channel
         # The refresher imports it indirectly via `build_frame`/`publish_frame`,
-        # which is the whole point — it never names a channel itself.
-        source = inspect.getsource(refresher)
-        assert "live:event:" not in source
+        # which is the whole point — it never names a channel itself. Read the
+        # string literals (f-string parts included), not the raw source: a
+        # comment that names the stream builds no channel and cannot drift.
+        literals = _string_literals(inspect.getsource(refresher))
+        assert not [s for s in literals if "live:event:" in s], literals
+
+    def test_the_literal_scan_sees_an_inlined_channel(self):
+        """THE CONTROL: the scan above catches the drift it guards against —
+        an inlined f-string or literal — and ignores a comment."""
+        assert _string_literals('ch = f"live:event:{eid}"\n') == ["live:event:"]
+        assert _string_literals('ch = "live:event:" + str(eid)\n') == ["live:event:"]
+        assert _string_literals("# the `live:event:<id>` stream\nx = 1\n") == []
 
 
 class TestBuildFrame:
