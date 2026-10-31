@@ -113,6 +113,38 @@ async def test_shed_attempts_are_the_next_calls_fresh_population_when_on(
     assert x.r.stats["errors"] == 0
 
 
+@pytest.mark.parametrize("on", [1, 0])
+async def test_every_shed_attempt_is_carried_not_only_the_first(monkeypatch, trial, on):
+    # Authority N2 on 574fa549 (mutant M4, carrying `shed[:1]`, survived the
+    # two-event control above: today's one old attempt covers the second).
+    # Their probe P1: seven shed attempts, so a partial carry leaves debt owed.
+    trial["value"] = on
+    x = refresher_rig(monkeypatch, count=12, block=True, blocked=(1,))
+    holds = _held_reads(x, 2, 3, 4)
+    running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    await settle_until(lambda: "update" in x.commands)
+    for i, event_id in enumerate(range(2, 12)):
+        assert x.r.admit_fresh([event_id], flush_started=1002 + 2 * i) == {event_id}
+    window = x.r._admission
+    await settle_until(lambda: len(window.queue) == 7)
+    try:
+        assert x.r.shed_queued() == frozenset(range(5, 12))
+    finally:
+        _release(x, holds)
+    await asyncio.wait_for(running, 2)
+    assert x.r.pending_event_ids() == frozenset(range(5, 12))
+    await asyncio.wait_for(x.r.refresh([12], flush_started=1030), 2)
+    if on:
+        assert sorted(x.published) == list(range(1, 13))
+        assert x.r.pending_event_ids() == frozenset()
+    else:
+        # Today: the fresh price and ONE old attempt; six stay owed (P1 reads
+        # 7-11 owed only after a second call drains one more).
+        assert sorted(x.published) == [1, 2, 3, 4, 5, 12]
+        assert x.r.pending_event_ids() == frozenset(range(6, 12))
+    assert x.r.stats["errors"] == 0
+
+
 async def test_shed_reads_the_arm_once_and_an_empty_shed_carries_nothing(
     monkeypatch, trial,
 ):

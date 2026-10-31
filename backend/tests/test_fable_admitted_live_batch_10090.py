@@ -124,6 +124,52 @@ async def test_two_live_cohorts_never_share_a_transaction(live_batch_trial):
     await _finish(r, task)
 
 
+class _WallReceipts:
+    """Receipts that stage the cohort's marks under one stored wall and keep
+    the wall each stamp's receipt is resolved against."""
+
+    def __init__(self, wall):
+        self.wall = wall
+        self.resolved: list[tuple[list[int], object]] = []
+
+    def staged_for(self, marks):
+        return {mark.event_id: mark for mark in marks}, self.wall
+
+    def observe(self, staged, stored_wall, due, now):
+        pass
+
+    def resolve(self, due, dispositions, staged, stored_wall, now):
+        self.resolved.append((sorted(due), stored_wall))
+
+
+async def test_a_live_debt_rider_with_another_stored_wall_never_joins_the_cohort(
+        live_batch_trial):
+    # Authority N1 on db6cb107 (mutant M1 survived): owed live game 13 rides in
+    # behind cohort 10-12 on the SAME flush clock, but its stored wall is not
+    # the cohort's (no staged mark: None). Batched with them, its receipt would
+    # be dated with the head's wall.
+    from types import SimpleNamespace
+
+    r = _Recorded(blocked={99})
+    task = await _running_call(r)
+    receipts = _WallReceipts(wall=1_790_000_000.0)
+    r.receipts = receipts
+    r._live_event_ids.update({10, 11, 12, 13})
+    r.adopt_pending([13])
+    marks = [SimpleNamespace(event_id=event_id) for event_id in (10, 11, 12)]
+    assert r.admit_fresh([10, 11, 12], flush_started=1001, marks=marks) == frozenset(
+        {10, 11, 12})
+    window = r._admission
+    assert list(window.live_queue) == [10, 11, 12, 13]
+    assert window.clocks[13] == window.clocks[10] == 1001
+    assert window.stored_wall.get(13) is None
+    await _settle()
+    assert _own_groups(r) == [[10, 11, 12], [13]]
+    assert receipts.resolved == [([10, 11, 12], 1_790_000_000.0), ([13], None)]
+    assert not r.pending_event_ids()
+    await _finish(r, task)
+
+
 async def test_a_game_no_longer_live_ends_the_live_batch(live_batch_trial):
     r = _Recorded(blocked={99})
     task = await _running_call(r)
