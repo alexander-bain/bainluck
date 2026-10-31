@@ -341,6 +341,40 @@ PREVIEW_GRAPH_MAX_EVENTS = 512
 #: The outcome columns a committed price write returns and the patch replaces.
 #: A row missing any of them is not patched (its event is not composed).
 COMMIT_PATCH_FIELDS = ("current_probability", "last_updated", "is_winner", "resolution_source")
+#: #10090 `preview_at_receipt` (speed switch, default off): a live event's
+#: preview is composed from the prices the socket just RECEIVED, before their
+#: price write, on the refresher's last read graph (the stamp's own read: its
+#: rows, ticket, revision and committed bag), and proposed through the same
+#: ledger. The write and the stamp run unchanged behind it; the stamp's commit
+#: retires the preview once it carries that observation. Composition runs on
+#: its own task, never in a flush or a stamp. Which venues it applies to is
+#: `PREVIEW_AT_RECEIPT_VENUES_ENV`.
+PREVIEW_AT_RECEIPT_SWITCH = "preview_at_receipt"
+#: ``polymarket`` (default), ``kalshi`` or ``all``: the venues whose refresher
+#: the switch turns on. Both reach the same receipt seam (`HeldRowQuotes.
+#: note_input`), so one switch serves both; anything else reads ``polymarket``.
+PREVIEW_AT_RECEIPT_VENUES_ENV = "PREVIEW_AT_RECEIPT_VENUES"
+#: At most one receipt preview per event per this long. A burst of ticks for
+#: one game is coalesced into its newest prices; an event quiet for this long
+#: is composed on its first tick with no wait. 0.25 s adds at most a quarter
+#: second to a moved price (the target is well under one second) and caps one
+#: game at four compositions a second however fast its book ticks.
+RECEIPT_PREVIEW_INTERVAL_S = 0.25
+#: Speed may set the interval (seconds, 0.05-2.0) without a release; anything
+#: else keeps `RECEIPT_PREVIEW_INTERVAL_S`. Read per worker pass.
+RECEIPT_PREVIEW_INTERVAL_ENV = "PREVIEW_AT_RECEIPT_INTERVAL_S"
+#: How old the read graph a receipt is composed onto may be. Only the rows'
+#: structure (markets, ranks, statuses, the committed bag) comes from it: every
+#: leg the socket received since is overlaid from memory. A write by another
+#: process to a leg NOT received since, a settlement or an event status change
+#: is unseen for up to this long; the stamp behind it corrects or revokes the
+#: preview. A TRUTH window like `PREVIEW_GRAPH_MAX_AGE_S`: wider because a
+#: held game's next stamp read is 13-21 s away under load (2026-10-31), and a
+#: graph that old is exactly the case this exists for. Review before raising.
+RECEIPT_GRAPH_MAX_AGE_S = 15.0
+#: Received quotes are kept this long for the overlay: the preview's own
+#: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
+RECEIPT_QUOTE_RETENTION_S = 60.0
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -468,6 +502,23 @@ def _patched_group(group, returned: dict) -> Optional[list]:
     return patched
 
 
+def _unoverlaid_group(group, original_rows: dict, originals: dict) -> Optional[list]:
+    """``group`` with every held-quote copy (`HeldRowQuotes.overlay_event`)
+    replaced by the row as read; None if one cannot be found. New entries:
+    the caller's group is never mutated."""
+    restored = []
+    for entry in group:
+        if all(id(row) in original_rows for row in entry.outcomes):
+            restored.append(entry)
+            continue
+        outcomes = [row if id(row) in original_rows else originals.get(row.id)
+                    for row in entry.outcomes]
+        if any(row is None for row in outcomes):
+            return None
+        restored.append(_replace(entry, outcomes=outcomes))
+    return restored
+
+
 def _prune_notes(notes: dict, now: float, noted_at) -> None:
     """Drop notes older than `PREVIEW_NOTE_RETENTION_S` (oldest first)."""
     while notes:
@@ -504,6 +555,48 @@ def _preview_from_commit(event_id) -> bool:
         if trial.state(PREVIEW_FROM_COMMIT_SWITCH).mode == "ab":
             return trial.arm(PREVIEW_FROM_COMMIT_SWITCH, int(event_id))
         return bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a write
+        return False
+
+
+def _receipt_interval() -> float:
+    """`RECEIPT_PREVIEW_INTERVAL_ENV` when set to 0.05-2.0, else the default."""
+    try:
+        value = float(os.environ[RECEIPT_PREVIEW_INTERVAL_ENV])
+    except (KeyError, ValueError):
+        return RECEIPT_PREVIEW_INTERVAL_S
+    return value if 0.05 <= value <= 2.0 else RECEIPT_PREVIEW_INTERVAL_S
+
+
+def _receipt_venue(source) -> bool:
+    """Whether `PREVIEW_AT_RECEIPT_VENUES_ENV` names this source's venue."""
+    venues = os.getenv(PREVIEW_AT_RECEIPT_VENUES_ENV, "").strip().lower()
+    if venues not in ("polymarket", "kalshi", "all"):
+        venues = "polymarket"
+    return venues == "all" or venues == source
+
+
+def _preview_at_receipt_possible(source) -> bool:
+    """Whether any of this source's events may preview at receipt now."""
+    try:
+        if not _receipt_venue(source):
+            return False
+        trial = _optional_db_trial()
+        return (trial.state(PREVIEW_AT_RECEIPT_SWITCH).mode != "off"
+                or bool(trial.value(PREVIEW_AT_RECEIPT_SWITCH, 0)))
+    except Exception:  # noqa: BLE001 — a switch read never fails a read or write
+        return False
+
+
+def _preview_at_receipt(source, event_id) -> bool:
+    """This event's `preview_at_receipt` arm; off on any switch error."""
+    try:
+        if not _receipt_venue(source):
+            return False
+        trial = _optional_db_trial()
+        if trial.state(PREVIEW_AT_RECEIPT_SWITCH).mode == "ab":
+            return trial.arm(PREVIEW_AT_RECEIPT_SWITCH, int(event_id))
+        return bool(trial.value(PREVIEW_AT_RECEIPT_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a write
         return False
 
@@ -2787,6 +2880,9 @@ class HeldRowQuotes:
         # Idle bound (class doc). The owning refresher installs its CURRENT
         # preview events; empty means no idle sampling at all.
         self.preview_events: Callable[[], Container[int]] = frozenset
+        #: #10090 `preview_at_receipt`: the owning refresher's receipt seam,
+        #: told every accepted input with its frozen bound. None: nothing.
+        self.on_receipt: Optional[Callable[[Any, Optional[float]], None]] = None
         self._sessions = None
         self._idle_task: Optional[asyncio.Task] = None
         self._closed = False
@@ -2900,6 +2996,12 @@ class HeldRowQuotes:
         self._input_bounds[mark.outcome_id] = (
             mark.seq, round(float(mark.probability), 6), self._database_bound,
         )
+        on_receipt = self.on_receipt
+        if on_receipt is not None:
+            try:
+                on_receipt(mark, self._database_bound)
+            except Exception:  # noqa: BLE001 — a preview never fails an input
+                pass
         now = self._now()
         if self._last_input_at <= self._last_sample_started:
             self._phase_grace_started = now
@@ -3376,6 +3478,8 @@ class LiveBlendRefresher:
             # #10090 idle bound: this refresher's CURRENT preview events gate
             # the owner's idle sampler (legacy single-source and ledger alike).
             quotes.preview_events = lambda: getattr(self, "preview_events", frozenset())
+            # #10090 `preview_at_receipt`: every accepted input, both venues.
+            quotes.on_receipt = self._note_receipt_input
 
     def __init__(
         self,
@@ -3707,6 +3811,35 @@ class LiveBlendRefresher:
         self._forgotten_outcomes: dict[int, float] = {}
         self._commit_preview_task: Optional[asyncio.Task] = None
         self.commit_preview_stats: dict[str, int] = {"proposed": 0, "errors": 0}
+        #: #10090 `preview_at_receipt` — outcome id -> the newest received
+        #: quote: (price as the row stores it, frozen DB-clock bound, input seq,
+        #: event id, routing token, `_mono` noted). Oldest note first.
+        self._receipt_quotes: dict[int, tuple] = {}
+        #: Events with a quote not yet composed (insertion order); one worker.
+        self._receipt_due: dict[int, None] = {}
+        #: Events whose previewed legs a withdrawal or settlement took away.
+        self._receipt_withdrawn: dict[int, None] = {}
+        #: event id -> every leg of the markets its last receipt reading was
+        #: derived from (empty: it had none). A tick on any other leg (a prop,
+        #: a spread) is kept for the overlay but composes nothing. Dropped
+        #: whenever the event's graph is replaced, so a change of speaking
+        #: market is found by the next tick's composition.
+        self._receipt_speaking: dict[int, frozenset] = {}
+        #: event id -> (`_mono` of its last receipt composition, the ledger seq
+        #: of the receipt proposal still pending or None, its whole-percent blend).
+        self._receipt_last: dict[int, tuple] = {}
+        self._receipt_task: Optional[asyncio.Task] = None
+        self._receipt_wake: Optional[asyncio.Event] = None
+        #: Installed by a consumer whose routing can change under it (the
+        #: Polymarket catalog handover): the current routing token, or None
+        #: while the maps are changing. None installed: one fixed routing.
+        self.receipt_route: Optional[Callable[[], Any]] = None
+        self.receipt_preview_stats: dict[str, int] = {
+            "noted": 0, "proposed": 0, "unchanged": 0, "no_graph": 0, "old_graph": 0,
+            "ambiguous": 0, "not_admitted": 0, "returned": 0, "withdrawn": 0, "errors": 0,
+        }
+        #: Wall seconds spent composing receipt previews (local CPU, no await).
+        self.receipt_compose_s = 0.0
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -6386,6 +6519,10 @@ class LiveBlendRefresher:
         except asyncio.CancelledError as exc:
             interrupted = exc
         try:
+            await self._close_receipt_preview()
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+        try:
             await self._close_normal_recovery()
         except asyncio.CancelledError as exc:
             interrupted = exc
@@ -8151,9 +8288,11 @@ class LiveBlendRefresher:
         Never raises.
         """
         graphs = getattr(self, "_preview_graphs", None)
-        if graphs is None or not _preview_from_commit_possible():
+        receipt = _preview_at_receipt_possible(getattr(self, "source", None))
+        if graphs is None or not (receipt or _preview_from_commit_possible()):
             return
         try:
+            originals = None
             for event_id, (event, group) in grouped.items():
                 if event_id not in self.preview_events:
                     continue
@@ -8166,11 +8305,22 @@ class LiveBlendRefresher:
                         continue
                 if (getattr(event, "status", None) != "live"
                         or getattr(event, "completed_at", None) is not None
-                        or getattr(event, "preview_read_ticket", None) is None
-                        or any(id(row) not in original_rows
-                               for entry in group for row in entry.outcomes)):
+                        or getattr(event, "preview_read_ticket", None) is None):
                     self._forget_preview_graph(event_id)
                     continue
+                if any(id(row) not in original_rows
+                       for entry in group for row in entry.outcomes):
+                    # A held-quote overlay. `preview_at_receipt` keeps the rows
+                    # as read (its own overlay carries the held quotes);
+                    # `preview_from_commit` alone drops the graph, as before.
+                    if originals is None and receipt:
+                        values = getattr(original_rows, "values", None)
+                        originals = ({row.id: row for row in values()}
+                                     if callable(values) else {})
+                    group = _unoverlaid_group(group, original_rows, originals) if receipt else None
+                    if group is None:
+                        self._forget_preview_graph(event_id)
+                        continue
                 forgotten = self._forgotten_outcomes
                 if any(forgotten.get(row.id, -math.inf) >= read_started
                        for entry in group for row in entry.outcomes):
@@ -8200,6 +8350,7 @@ class LiveBlendRefresher:
                 self._preview_graph_outcomes[row.id] = event_id
 
     def _forget_preview_graph(self, event_id: int) -> None:
+        self._receipt_speaking.pop(event_id, None)
         entry = self._preview_graphs.pop(event_id, None)
         if entry is None:
             return
@@ -8271,18 +8422,24 @@ class LiveBlendRefresher:
         started before now is kept for them. Called after that write's COMMIT,
         or when its outcome is unknown. Never raises."""
         graphs = getattr(self, "_preview_graphs", None)
-        if graphs is None or not _preview_from_commit_possible():
+        receipt = _preview_at_receipt_possible(getattr(self, "source", None))
+        if graphs is None or not (receipt or _preview_from_commit_possible()):
             return
         try:
             now = _mono()
             forgotten = self._forgotten_outcomes
+            outcome_ids = list(outcome_ids)
+            events = []
             for oid in outcome_ids:
                 forgotten.pop(oid, None)
                 forgotten[oid] = now
                 event_id = self._preview_graph_outcomes.get(oid)
                 if event_id is not None:
+                    events.append(event_id)
                     self._forget_preview_graph(event_id)
             _prune_notes(forgotten, now, lambda at: at)
+            if receipt:
+                self.note_receipt_withdrawn(outcome_ids, events)
         except Exception:
             self.commit_preview_stats["errors"] += 1
             logger.warning("live_blend_refresh[%s]: changed rows not forgotten", self.source,
@@ -8428,6 +8585,414 @@ class LiveBlendRefresher:
     async def _close_commit_preview(self) -> None:
         """Cancel and join the composition worker before the sessions close."""
         task, self._commit_preview_task = getattr(self, "_commit_preview_task", None), None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        interrupted = None
+        while not task.done():
+            try:
+                await asyncio.wait({task})
+            except CancelledError as exc:
+                interrupted = exc
+        if not task.cancelled():
+            task.exception()
+        if interrupted is not None:
+            raise interrupted
+
+    # ── #10090 `preview_at_receipt` ─────────────────────────────────────────
+
+    def _note_receipt_input(self, mark, bound) -> None:
+        """An accepted input (`HeldRowQuotes.note_input`, under the consumer's
+        buffer lock, so in input-seq order): keep its price, queue its event.
+
+        Receive-path cost only: a switch read and two dict writes. Composition
+        runs on `_drain_receipt_previews`. An input with no frozen DB-clock
+        ``bound`` cannot be ordered against the stored row and is not kept,
+        nor one received while the routing is changing (`receipt_route`).
+        Never raises (its caller swallows anyway).
+        """
+        event_id = getattr(mark, "event_id", None)
+        oid = getattr(mark, "outcome_id", None)
+        if (bound is None or event_id is None or oid is None
+                or not _preview_at_receipt(self.source, event_id)):
+            return
+        route = self.receipt_route
+        token = route() if route is not None else 0
+        if token is None:
+            return
+        quotes = self._receipt_quotes
+        prior = quotes.pop(oid, None)
+        if prior is not None and getattr(prior[2], "seq", -1) >= getattr(mark, "seq", 0):
+            quotes[oid] = prior  # an older input never replaces a newer one
+            return
+        now = _mono()
+        quotes[oid] = (round(float(mark.probability), 6), float(bound), mark, event_id, token, now)
+        self.receipt_preview_stats["noted"] += 1
+        if self._preview_graph_outcomes.get(oid) != event_id:
+            return  # kept for the overlay; no graph to compose it on yet
+        speaking = self._receipt_speaking.get(event_id)
+        if speaking is not None and oid not in speaking:
+            return  # kept for the overlay; not a leg of the market that speaks
+        self._receipt_due[event_id] = None
+        last = self._receipt_last.get(event_id)
+        self._wake_receipt(last is None or now - last[0] >= _receipt_interval())
+
+    def note_receipt_withdrawn(self, outcome_ids, event_ids=()) -> None:
+        """Legs a withdrawal (a book that prices them out) or a settlement took
+        away: their received quotes are dropped and a receipt preview still
+        pending for their events is revoked by the worker. Never raises."""
+        if not _preview_at_receipt_possible(self.source):
+            return
+        try:
+            events = dict.fromkeys(event_ids)
+            for oid in outcome_ids:
+                quote = self._receipt_quotes.pop(oid, None)
+                if quote is not None:
+                    events[quote[3]] = None
+                event_id = self._preview_graph_outcomes.get(oid)
+                if event_id is not None:
+                    events[event_id] = None
+            events.pop(None, None)
+            if events:
+                self._receipt_withdrawn.update(events)
+                self._wake_receipt(True)
+        except Exception:
+            self.receipt_preview_stats["errors"] += 1
+
+    def _wake_receipt(self, now: bool) -> None:
+        task = self._receipt_task
+        if task is None or task.done():
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            self._receipt_wake = asyncio.Event()
+            self._receipt_task = loop.create_task(
+                self._drain_receipt_previews(), name=f"receipt-preview-{self.source}",
+            )
+        elif now and self._receipt_wake is not None:
+            self._receipt_wake.set()
+
+    async def _drain_receipt_previews(self) -> None:
+        """The one receipt-preview worker. Each pass composes every due event
+        last composed at least `RECEIPT_PREVIEW_INTERVAL_S` ago (the rest wait
+        for their interval, or a wake for an event that need not), and exits
+        when nothing is left."""
+        while self._receipt_due or self._receipt_withdrawn:
+            now = _mono()
+            interval = _receipt_interval()
+            due, deferred = [], {}
+            for event_id in self._receipt_due:
+                last = self._receipt_last.get(event_id)
+                if last is not None and now - last[0] < interval:
+                    deferred[event_id] = None
+                else:
+                    due.append(event_id)
+            self._receipt_due = deferred
+            withdrawn, self._receipt_withdrawn = list(self._receipt_withdrawn), {}
+            if due or withdrawn:
+                try:
+                    await self._preview_at_receipt_rows(due, withdrawn)
+                except Exception:
+                    self.receipt_preview_stats["errors"] += 1
+                    logger.warning("live_blend_refresh[%s]: receipt preview not sent",
+                                   self.source, exc_info=True)
+                continue
+            wake = self._receipt_wake
+            wait = min(self._receipt_last[eid][0] for eid in deferred) + interval - now
+            if wake is None:
+                await asyncio.sleep(max(0.0, wait))
+                continue
+            wake.clear()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(wake.wait(), max(0.0, wait))
+
+    def _prune_receipt_quotes(self, now: float) -> None:
+        quotes = self._receipt_quotes
+        while quotes:
+            oid = next(iter(quotes))
+            if now - quotes[oid][5] <= RECEIPT_QUOTE_RETENTION_S:
+                break
+            del quotes[oid]
+        last = self._receipt_last
+        for event_id in [eid for eid, entry in last.items()
+                         if now - entry[0] > RECEIPT_QUOTE_RETENTION_S]:
+            del last[event_id]
+
+    def _receipt_blend(self, event, source_value, eligibility, basis) -> Optional[int]:
+        """The whole-percent blend ``event``'s committed bag composes to with
+        this source at ``source_value`` (None: the committed value), as the
+        preview composer does; None when there is none."""
+        from types import SimpleNamespace
+
+        from app.utils.aggregation import compute_aggregate_probability, stamp_source_reading
+
+        bag = getattr(event, "preview_sources", None)
+        if not isinstance(bag, dict):
+            return None
+        if source_value is not None:
+            bag = stamp_source_reading(dict(bag), self.source, source_value,
+                                       eligibility=eligibility, observed_basis=basis)
+        probability = compute_aggregate_probability(SimpleNamespace(
+            win_probability_sources=bag, status=event.status,
+            espn_win_prob_home=getattr(event, "espn_win_prob_home", None),
+            opening_home_probability=getattr(event, "opening_home_probability", None),
+        ), event.status)
+        return None if probability is None else round(float(probability) * 100)
+
+    def _receipt_preview_plan(self, event_id: int, now: float, preview):
+        """What a receipt composition does for this event: None (nothing),
+        ``("returned",)`` (the reading is back at the stored value: retire a
+        receipt preview) or ``("propose", event, reading, value, contributing,
+        newest_mark)``.
+
+        On the cached read graph (`_preview_graphs`), never older than
+        `RECEIPT_GRAPH_MAX_AGE_S`, of a live event that needs no current-book
+        proof: every row with a received quote strictly newer than the stored
+        row (its frozen bound after the row's `last_updated`) is a copy at
+        that price and bound, each changed market re-ranked as its write's
+        re-rank will store it. A row stored at or after a quote's bound at a
+        DIFFERENT price is ambiguous (the stored row may be newer): the whole
+        event waits for its stamp, as `HeldRowQuotes.overlay_event` does.
+        Then `_commit_preview_plan`'s checks: a proven orientation, every
+        contributor read, an overlaid one among them, open unsettled markets.
+        Skipped when the whole-percent blend is what the event already shows.
+        """
+        from types import SimpleNamespace
+
+        from app.utils.aggregation import (
+            _coerce_timestamp, observation_basis, oldest_observation_time,
+        )
+        from app.utils.live_blend import (
+            compute_source_home_probability, has_proven_home_orientation,
+        )
+        from app.utils.settledness import market_assigned_settled
+
+        stats = self.receipt_preview_stats
+        cached = self._preview_graphs.get(event_id)
+        if cached is None:
+            stats["no_graph"] += 1
+            return None
+        read_at, event, group = cached
+        if now - read_at > RECEIPT_GRAPH_MAX_AGE_S:
+            stats["old_graph"] += 1
+            return None
+        route = self.receipt_route
+        token = route() if route is not None else 0
+        if (token is None or event.status != "live" or event.completed_at is not None
+                or getattr(event, "preview_read_ticket", None) is None
+                or type(getattr(event, "preview_rev", None)) is not int
+                or not _preview_at_receipt(self.source, event_id)
+                or self._current_reading_proof(event_id, group, [], park_refused=False)):
+            stats["not_admitted"] += 1
+            return None
+        quotes = self._receipt_quotes
+        patched, overlaid, newest = [], set(), None
+        for entry in group:
+            outcomes, changed = [], False
+            for row in entry.outcomes:
+                quote = quotes.get(row.id)
+                if quote is None or quote[3] != event_id or quote[4] != token:
+                    outcomes.append(row)
+                    continue
+                price, bound, mark = quote[0], quote[1], quote[2]
+                stored = _coerce_timestamp(getattr(row, "last_updated", None))
+                if stored is not None and stored.timestamp() >= bound:
+                    current = getattr(row, "current_probability", None)
+                    if current is not None and round(float(current), 6) == price:
+                        outcomes.append(row)  # the row already holds this quote
+                        continue
+                    stats["ambiguous"] += 1
+                    return None
+                outcomes.append(SimpleNamespace(**{
+                    **vars(row), "current_probability": price,
+                    "last_updated": datetime.fromtimestamp(bound, timezone.utc),
+                }))
+                overlaid.add(row.id)
+                changed = True
+                if newest is None or mark.recv_mono > newest.recv_mono:
+                    newest = mark
+            if changed:
+                ranks = _field_ranks([row.current_probability for row in outcomes])
+                outcomes = [row if getattr(row, "rank", None) == rank
+                            else SimpleNamespace(**{**vars(row), "rank": rank})
+                            for row, rank in zip(outcomes, ranks)]
+                patched.append(_replace(entry, outcomes=outcomes))
+            else:
+                patched.append(entry)
+        if not overlaid:
+            return None  # nothing received since the graph: the stamp's own path
+        reading = compute_source_home_probability(
+            patched, event.home_team_name, event.away_team_name,
+        )
+        if reading is None:
+            self._receipt_speaking[event_id] = frozenset()
+        if reading is None or not has_proven_home_orientation(reading):
+            stats["not_admitted"] += 1
+            return None
+        contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
+        rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
+        ids = {getattr(row, "id", None) for row in contributing}
+        self._receipt_speaking[event_id] = frozenset(
+            row.id for oid in ids if oid in rows for row in rows[oid][0].outcomes)
+        if ids.isdisjoint(overlaid) or not ids.issubset(rows):
+            return None  # the received legs are not this reading's
+        if any(entry.market.status != "open"
+               or market_assigned_settled(entry.market, entry.outcomes)
+               or any(row.resolution_source is not None or row.is_winner is True
+                      for row in entry.outcomes)
+               for entry in {id(rows[oid][0]): rows[oid][0] for oid in ids}.values()):
+            stats["not_admitted"] += 1
+            return None
+        value = round(reading.home_probability, 4)
+        basis = observation_basis(contributing)
+        if not basis or restamp_records_no_observation(
+                value, oldest_observation_time(contributing),
+                getattr(event, "win_probability_sources", None), self.source):
+            stats["not_admitted"] += 1
+            return None
+        pending = preview.pending_entry(event_id, self.source)
+        if self._last_written_value.get(event_id) == value:
+            return ("returned",)
+        eligibility = getattr(reading, "eligibility", None)
+        shown = self._receipt_blend(event, None if pending is None else pending.value,
+                                    getattr(pending, "eligibility", None),
+                                    getattr(pending, "observed_basis", None))
+        if shown is not None and shown == self._receipt_blend(event, value, eligibility, basis):
+            stats["unchanged"] += 1
+            return None
+        return ("propose", event, reading, value, contributing, newest)
+
+    async def _preview_at_receipt_rows(self, due: list, withdrawn: list) -> None:
+        """Compose ``due`` events at receipt and revoke ``withdrawn`` ones'.
+
+        Live events first and, among them, the ones a reader holds open
+        (`reader_held`). Composition is local (no read, no await); the
+        proposals and revokes are made under the publication's claim lock
+        (`prepare_frames`), so they are ordered with every other publisher.
+        A revoke or a return to the stored value retires only a pending value
+        this path proposed (`at_receipt`): a stamp's own preview is the
+        stamp's to settle.
+        """
+        from datetime import datetime as _dt
+
+        from app.utils.blend_preview import registry
+
+        started = time.perf_counter()
+        now = _mono()
+        preview = registry()
+        self._prune_receipt_quotes(now)
+        held = frozenset()
+        if self.reader_held is not None:
+            with contextlib.suppress(Exception):
+                held = self.reader_held()
+        due = sorted(due, key=lambda eid: eid not in held)
+        plans = []
+        for event_id in due:
+            # The interval bounds compositions, not only proposals.
+            self._receipt_last[event_id] = (now,)
+            try:
+                plan = self._receipt_preview_plan(event_id, now, preview)
+            except Exception:
+                self.receipt_preview_stats["errors"] += 1
+                logger.warning("live_blend_refresh[%s]: receipt preview for event %s not composed",
+                               self.source, event_id, exc_info=True)
+                continue
+            if plan is not None:
+                plans.append((event_id, plan))
+        self.receipt_compose_s += time.perf_counter() - started
+        withdrawn = [eid for eid in withdrawn
+                     if getattr(preview.pending_entry(eid, self.source), "at_receipt", False)]
+        if not plans and not withdrawn:
+            return
+        proposals = [event_id for event_id, plan in plans if plan[0] == "propose"]
+        confirmed = getattr(self.receipts, "confirmed", None)
+        if confirmed is not None and proposals:
+            # #10090 decision J, as `_preview_from_commit_rows`: readers may
+            # see this preview before any batch holds these events.
+            self._receipt_call(confirmed.previewed, proposals)
+
+        async def prepare_frames():
+            from app.utils.aggregation import observation_basis
+
+            frames = preview.expire()
+            stats = self.receipt_preview_stats
+            for event_id in withdrawn:
+                entry = preview.pending_entry(event_id, self.source)
+                if entry is not None and entry.at_receipt:
+                    frames.extend(preview.refused(event_id, self.source, "withdrawn"))
+                    stats["withdrawn"] += 1
+            for event_id, plan in plans:
+                entry = preview.pending_entry(event_id, self.source)
+                if plan[0] == "returned":
+                    if entry is not None and entry.at_receipt:
+                        frames.extend(preview.refused(event_id, self.source, "returned"))
+                        stats["returned"] += 1
+                    continue
+                _kind, event, reading, value, contributing, newest = plan
+                stamped_at = _dt.now(timezone.utc)
+                frames.extend(preview.propose(
+                    event_id, self.source, value=value, event=event,
+                    row_sources=event.preview_sources, row_rev=event.preview_rev,
+                    eligibility=getattr(reading, "eligibility", None),
+                    observed_basis=observation_basis(contributing),
+                    stamped_at=stamped_at, at_receipt=True,
+                ))
+                pending = preview.pending_entry(event_id, self.source)
+                if pending is None or not pending.at_receipt or pending.value != value:
+                    continue  # refused locally (stale, expired value, capacity)
+                stats["proposed"] += 1
+                if self.preview_receipt is not None and newest is not None:
+                    self._receipt_call(self.preview_receipt.carried, event_id,
+                                       stamped_at.isoformat(), newest)
+            return frames
+
+        await self._publish_previews([], prepare_frames=prepare_frames)
+
+    async def revoke_receipt_previews(self, outcome_ids) -> None:
+        """Prices whose write will never happen (the final drain stranded
+        them): every receipt preview still pending for their events is
+        revoked now, on the caller's task (the worker may already be gone).
+        A write that fails and stays buffered is retried, so its preview
+        stands. Never raises."""
+        if not _preview_at_receipt_possible(self.source):
+            return
+        try:
+            from app.utils.blend_preview import registry
+
+            events = set()
+            for oid in outcome_ids:
+                quote = self._receipt_quotes.pop(oid, None)
+                if quote is not None:
+                    events.add(quote[3])
+                if oid in self._preview_graph_outcomes:
+                    events.add(self._preview_graph_outcomes[oid])
+            preview = registry()
+
+            def ours():
+                return [eid for eid in events
+                        if getattr(preview.pending_entry(eid, self.source), "at_receipt", False)]
+
+            if not ours():
+                return
+
+            async def prepare_frames():
+                frames = []
+                for event_id in ours():
+                    frames.extend(preview.refused(event_id, self.source, "write_failed"))
+                    self.receipt_preview_stats["withdrawn"] += 1
+                return frames
+
+            await self._publish_previews([], prepare_frames=prepare_frames)
+        except Exception:
+            self.receipt_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: receipt previews not revoked",
+                           self.source, exc_info=True)
+
+    async def _close_receipt_preview(self) -> None:
+        """Cancel and join the receipt-preview worker before the sessions close."""
+        task, self._receipt_task = getattr(self, "_receipt_task", None), None
         if task is None:
             return
         if not task.done():
