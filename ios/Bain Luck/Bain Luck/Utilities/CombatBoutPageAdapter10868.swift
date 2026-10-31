@@ -25,6 +25,14 @@ import SwiftUI
 ///   - pre-fight pair  `PrematchReading.resolve` with its served percents (the
 ///                     fallback is the sportsbooks' opening line, labelled so).
 ///                     It carries no clock of its own, so none is printed.
+///                     NOT the approved reference's figure: on the retained mma
+///                     bout no `prematch_odds` is served, so this prints the
+///                     opening line 68% / 32%, where the reference shows
+///                     67.2% / 32.8% (the history's last pre-fight blend row).
+///                     The two are different readings and never interchangeable;
+///                     a last pre-fight blend row is not a pre-match pin until
+///                     the baseline owner admits that comparison (Design,
+///                     2026-10-31).
 ///   - in-fight chance during play only, the hero's pair, and only while
 ///                     `EventHeadlinePhase9483.resolve` calls it current — a
 ///                     suspended fight, an opening line, a stale or undated
