@@ -141,6 +141,14 @@ def _llm_budget_ledger_in_memory():
 
 
 @pytest.fixture(autouse=True)
+def _prematch_reading_cache_process_tier_only(monkeypatch):
+    """#10090: the pre-match reading cache's Redis tier is OFF in tests unless a
+    test installs a fake client and turns it on — a developer's local Redis
+    would otherwise carry one test's held rows into the next."""
+    monkeypatch.setenv("PREMATCH_READING_CACHE_SHARED", "0")
+
+
+@pytest.fixture(autouse=True)
 def _thaw_gc_freeze(monkeypatch):
     """#10090: a real Polymarket consumer run freezes the process's heap at its
     catalog installs (`app/utils/ws_gc.py`), after one full collection on the
