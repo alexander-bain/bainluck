@@ -12626,20 +12626,25 @@ async def _score_sports_mode_futures(
     if not market_ids:
         return []
 
-    # Q480 / CERT-622: ONE shared projection — see `_futures_feed_load_options`.
-    # Inlining a second copy here is what let `external_id` be read at this call
-    # site and loaded at neither.
-    base_options = _futures_feed_load_options()
+    # #10090: only unchanged metadata is shared. The ID selection above and
+    # current outcomes/Sport/truth reads remain request-side; no finished
+    # anonymous cards or reader state enter this artifact. Default off.
+    from app.utils.sports_market_metadata_reuse import load_sports_markets
 
-    markets_result = await db.execute(
-        select(FuturesMarket)
-        .options(*base_options)
-        .where(FuturesMarket.id.in_(market_ids))
-    )
-    markets_by_id = {
-        market.id: market for market in markets_result.scalars().unique().all()
-    }
-    markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
+    markets = await load_sports_markets(db, market_ids)
+    if markets is None:
+        # Q480 / CERT-622: keep the original one-projection loader on the off
+        # arm and every failed/unsupported cache path.
+        base_options = _futures_feed_load_options()
+        markets_result = await db.execute(
+            select(FuturesMarket)
+            .options(*base_options)
+            .where(FuturesMarket.id.in_(market_ids))
+        )
+        markets_by_id = {
+            market.id: market for market in markets_result.scalars().unique().all()
+        }
+        markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
 
     if not markets:
         return []
