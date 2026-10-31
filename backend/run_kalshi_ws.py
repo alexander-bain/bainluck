@@ -367,15 +367,19 @@ def _start_cpu_sampler():
 #: #10090 — the young-generation threshold for a venue child. Production
 #: 2026-10-30 23:27Z: both venue loops are CPU-saturated (Polymarket 0.97,
 #: Kalshi 0.94); Polymarket ran 48 full collections in one heartbeat line and
-#: Kalshi paused 211 ms in one. At the interpreter's 700, a loop allocating
-#: ~60k containers a second collects ~80 times a second, and whatever is in
-#: flight at each collection is promoted, which re-arms the full collection.
-#: A larger young generation lets in-flight frame objects die by reference
-#: counting first, so every older collection runs ~70x less often. Reference
-#: counting is unchanged, so nothing is freed later than before except cyclic
-#: garbage, which waits for at most this many allocations.
+#: Kalshi paused 211 ms in one. Generation 0's count is NET: a tracked
+#: container freed by reference counting takes its allocation back off the
+#: count, so a collection is triggered only by objects that are still alive
+#: (or cyclic garbage) after this many allocations. A larger young generation
+#: lets objects held across a few awaits (a flush chunk, a buffered quote) die
+#: before they are promoted, so fewer promotions re-arm the full collection.
+#: It is not free: each young collection walks the whole young generation on
+#: the loop. Lab (lane1, Python 3.12, 1.5M long-lived objects, one cyclic
+#: garbage per message): 700 -> one 125-166 ms full collection; 5,000 -> none,
+#: young pauses <= 2.6 ms, total collector time no higher; 50,000 -> none, but
+#: young pauses ~20-25 ms and total collector time about twice 700's.
 WS_GC_GEN0_ENV = "WS_GC_GEN0"
-WS_GC_GEN0_DEFAULT = 50_000
+WS_GC_GEN0_DEFAULT = 5_000
 
 
 def _tune_gc_young_generation(venue):

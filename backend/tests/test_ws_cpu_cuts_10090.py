@@ -177,8 +177,8 @@ def thresholds(monkeypatch):
 
 def test_by_default_a_venue_child_raises_only_generation_0(monkeypatch, thresholds):
     monkeypatch.delenv(run_kalshi_ws.WS_GC_GEN0_ENV, raising=False)
-    assert run_kalshi_ws._tune_gc_young_generation("kalshi") == 50_000
-    assert thresholds == [(50_000, 10, 10)]
+    assert run_kalshi_ws._tune_gc_young_generation("kalshi") == 5_000
+    assert thresholds == [(5_000, 10, 10)]
 
 
 def test_ws_gc_gen0_0_keeps_the_interpreter_thresholds(monkeypatch, thresholds):
@@ -198,8 +198,8 @@ def test_a_non_integer_uses_the_default_with_one_warning(
 ):
     monkeypatch.setenv(run_kalshi_ws.WS_GC_GEN0_ENV, "lots")
     with caplog.at_level(logging.WARNING, logger=run_kalshi_ws.logger.name):
-        assert run_kalshi_ws._tune_gc_young_generation("kalshi") == 50_000
-    assert thresholds == [(50_000, 10, 10)]
+        assert run_kalshi_ws._tune_gc_young_generation("kalshi") == 5_000
+    assert thresholds == [(5_000, 10, 10)]
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
 
 
