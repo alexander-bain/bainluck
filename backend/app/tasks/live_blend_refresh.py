@@ -696,6 +696,42 @@ class StampWaitLog:
                          if now - at >= STAMP_WAIT_LINE_INTERVAL_S]:
             del self._last_line[event_id]
 
+
+# #10090 `price_commit_ack_wall` — when the price transaction that carried a
+# tail receipt's held input (`rev`) returned successfully, on this process's
+# wall clock. Production 03:00-05:36Z 2026-10-31 (Argon, 89 PM chains):
+# receive -> `stored_wall` was p50 0.53 s / p90 4.0 s against Kalshi's 0.10 /
+# 0.21, and `stored_wall` is sampled when marks are OFFERED to the refresher,
+# so a slow price COMMIT and a committed price waiting to be offered read the
+# same. Sampled at the writer's synchronous success seam, bound to that
+# write's own frozen marks for the rows it returned, kept on the chain's
+# original input (a later superseding write never fills it). None for an
+# overlay-only, skipped, non-returning or unacknowledged input; an overlay
+# offer that precedes the acknowledgement keeps that order. A local
+# acknowledgement clock, not the database COMMIT time. Log only: no await,
+# lock or query. ``PRICE_COMMIT_ACK_LOG=0`` turns it off.
+PRICE_COMMIT_ACK_LOG_ENV = "PRICE_COMMIT_ACK_LOG"
+#: Acknowledgements waiting for their chain: per event, and events in all.
+PRICE_COMMIT_ACK_PER_EVENT = 8
+PRICE_COMMIT_ACK_EVENTS = 2048
+
+
+def price_commit_ack_log_on() -> bool:
+    return os.getenv(PRICE_COMMIT_ACK_LOG_ENV, "1").strip() != "0"
+
+
+def note_price_commit_ack(receipts, marks, wall: Optional[float]) -> None:
+    """A writer's `price_commit_ack_wall`: ``marks`` are the inputs of the
+    rows its committed transaction returned, ``wall`` the clock it sampled at
+    the success seam (None: switch off, or no acknowledgement). Never raises."""
+    if wall is None or receipts is None:
+        return
+    try:
+        receipts.note_commit_ack(marks, wall)
+    except Exception:
+        logger.warning("tail receipt: price commit ack failed", exc_info=True)
+
+
 # #10090 — an observation-preview read whose caller stopped waiting at its
 # 0.25 s deadline is left to end by itself instead of being cancelled. A
 # cancelled SELECT invalidates its pooled connection and then holds its slot
@@ -1201,6 +1237,8 @@ class _TailChain:
     lock_retries: int = 0
     commit_failures: int = 0
     batch_failures: int = 0
+    #: #10090 `price_commit_ack_wall` of `rev` itself, never of `stamp_rev`.
+    commit_ack_wall: Optional[float] = None
 
 
 class TailReceipts:
@@ -1254,6 +1292,9 @@ class TailReceipts:
         self._staged: dict[int, InputMark] = {}
         self._staged_wall: Optional[float] = None
         self._open: dict[int, _TailChain] = {}
+        #: #10090 `price_commit_ack_wall`s no chain has taken yet: event id ->
+        #: {input seq: wall}. Bounded (`PRICE_COMMIT_ACK_*`).
+        self._commit_acks: dict[int, dict[int, float]] = {}
         self._last_logged: dict[int, float] = {}
         self._coalesced: dict[int, int] = {}
         self.stats: dict[str, int] = {
@@ -1655,6 +1696,41 @@ class TailReceipts:
         self._staged, self._staged_wall = {}, None
         return staged, wall
 
+    # ── #10090 `price_commit_ack_wall` (the writer's side) ───────────────────
+
+    def note_commit_ack(self, marks: Iterable[Optional[InputMark]], wall: float) -> None:
+        """The price transaction carrying these exact inputs returned at
+        ``wall``. An open chain held on one of them takes it now (its offer
+        came first); otherwise it waits for the chain that input opens. An
+        input's first acknowledgement is its clock."""
+        for mark in marks:
+            if mark is None:
+                continue
+            chain = self._open.get(mark.event_id)
+            if chain is not None and chain.rev.seq == mark.seq:
+                if chain.commit_ack_wall is None:
+                    chain.commit_ack_wall = wall
+                continue
+            acks = self._commit_acks.get(mark.event_id)
+            if acks is None:
+                if len(self._commit_acks) >= PRICE_COMMIT_ACK_EVENTS:
+                    del self._commit_acks[next(iter(self._commit_acks))]
+                acks = self._commit_acks[mark.event_id] = {}
+            acks.setdefault(mark.seq, wall)
+            if len(acks) > PRICE_COMMIT_ACK_PER_EVENT:
+                del acks[min(acks)]
+
+    def _prune_commit_acks(self, event_id: int, below_seq: int) -> None:
+        """Acknowledgements of this event's inputs older than ``below_seq``:
+        a staging that offered a newer input superseded them."""
+        acks = self._commit_acks.get(event_id)
+        if acks is None:
+            return
+        for seq in [seq for seq in acks if seq < below_seq]:
+            del acks[seq]
+        if not acks:
+            del self._commit_acks[event_id]
+
     # ── the refresher's side ─────────────────────────────────────────────────
 
     def _open_chain(self, origin, mark, stored_wall, now) -> _TailChain:
@@ -1663,6 +1739,11 @@ class TailReceipts:
             stored_wall=stored_wall if stored_wall is not None else _wall(),
             opened_wall=_wall(), opened_mono=now,
         )
+        acks = self._commit_acks.get(mark.event_id)
+        if acks is not None:
+            chain.commit_ack_wall = acks.pop(mark.seq, None)
+            if not acks:
+                del self._commit_acks[mark.event_id]
         self._open[mark.event_id] = chain
         self.stats["opened"] += 1
         return chain
@@ -1672,6 +1753,8 @@ class TailReceipts:
         chain is a later write inside the hold; one for an event the throttle
         is holding opens a chain."""
         for event_id, mark in staged.items():
+            if self._commit_acks:
+                self._prune_commit_acks(event_id, mark.seq)
             held = self._committed.get(event_id)
             if event_id in self._live_events and (held is None or mark.seq > held.seq):
                 self._committed[event_id] = mark
@@ -1761,6 +1844,7 @@ class TailReceipts:
         open_at_close = len(self._open)
         for event_id in sorted(self._open):
             self._close(event_id, reason, now)
+        self._commit_acks.clear()
         # #10090 — the partial minute the run ended in, with its real length,
         # and the live games for the next run of this source.
         self._roll(_wall(), final=True)
@@ -1810,7 +1894,7 @@ class TailReceipts:
             "held_wall=%s stamp_rev_seq=%s stamped_at=%s value=%s previous=%s "
             "later_inputs=%d later_committed=%d last_input_seq=%s "
             "lock_retries=%d commit_failures=%d batch_failures=%d held_s=%.3f "
-            "recv_to_close_s=%.3f coalesced=%d error=%s%s",
+            "recv_to_close_s=%.3f coalesced=%d error=%s%s%s",
             self.source, self.run, event_id, result, quiet, moved, chain.origin,
             rev.seq, rev.outcome_id, rev.probability, rev.kind,
             _iso(rev.recv_wall), rev.venue_ts_ms, _iso(chain.stored_wall),
@@ -1821,7 +1905,10 @@ class TailReceipts:
             self._last_seq_by_event.get(event_id), chain.lock_retries,
             chain.commit_failures, chain.batch_failures,
             now - chain.opened_mono, now - rev.recv_mono,
-            self._coalesced.pop(event_id, 0), error, _switch_tags(event_id),
+            self._coalesced.pop(event_id, 0), error,
+            f" price_commit_ack_wall={_iso(chain.commit_ack_wall)}"
+            if price_commit_ack_log_on() else "",
+            _switch_tags(event_id),
         )
 
 

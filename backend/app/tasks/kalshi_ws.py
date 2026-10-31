@@ -2739,6 +2739,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     held_quotes.release(phase)
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
+                # #10090 `price_commit_ack_wall`, the PM parity column: the
+                # phase's frozen marks for the rows it returned.
+                from app.tasks.live_blend_refresh import (
+                    _wall, note_price_commit_ack, price_commit_ack_log_on,
+                )
+
+                if written_outcome_ids and price_commit_ack_log_on():
+                    note_price_commit_ack(
+                        tail_receipts,
+                        [batch_marks.get(oid) for oid in written_outcome_ids],
+                        _wall(),
+                    )
                 prices.committed_outcome_ids.update(written_outcome_ids)
                 primary_quote_custody.committed(batch_primary_inputs, primary_observations)
                 for oid in phase:

@@ -925,6 +925,9 @@ class _PMBridgeWriter:
         #: seconds in its own write; sums since start, maxima since the last
         #: minute line (`take_timing`).
         self.timing = dict.fromkeys(_PM_BRIDGE_TIMING_KEYS, 0.0)
+        #: #10090 `price_commit_ack_wall`: the run's `TailReceipts` (wired by
+        #: the consumer); None records nothing.
+        self.receipts = None
 
     def take_timing(self) -> dict:
         """The open-contract minute line's bridged fields; resets the maxima."""
@@ -1087,6 +1090,13 @@ class _PMBridgeWriter:
                     finally:
                         self._note_timing("write", time.monotonic() - took)
                     if wrote and entry["committed"] is not None:
+                        from app.tasks.live_blend_refresh import note_price_commit_ack
+
+                        note_price_commit_ack(
+                            self.receipts,
+                            [entry["marks"].get(oid) for oid in getattr(wrote, "written_ids", ())],
+                            getattr(wrote, "commit_ack_wall", None),
+                        )
                         entry["committed"] = list(getattr(wrote, "written_ids", chunk))
                         # #10090: an event a row lock held back wrote no leg
                         # here (`skip_units`); its rows stay buffered and it
@@ -2237,11 +2247,15 @@ class _PMPriceWriteResult:
     next flush, and handled by callers exactly as a lock-held chunk's rows.
     """
 
-    def __init__(self, written_ids, *, clock_owner=None, skipped_ids=(), skipped_events=()):
+    def __init__(self, written_ids, *, clock_owner=None, skipped_ids=(), skipped_events=(),
+                 commit_ack_wall=None):
         self.written_ids = tuple(written_ids)
         self.clock_owner = clock_owner
         self.skipped_ids = frozenset(skipped_ids)
         self.skipped_events = frozenset(skipped_events)
+        #: #10090 `price_commit_ack_wall`: the wall clock at this write's
+        #: synchronous success seam, for `written_ids` only (None when off).
+        self.commit_ack_wall = commit_ack_wall
 
 
 PM_QUOTE_LIVENESS_SECONDS = 30.0
@@ -4317,6 +4331,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # entry per subscribed outcome) and holds the mark of the buffered value.
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
+    catalog_boundary.bridges.receipts = tail_receipts
     # #10090 decision J: `confirmed_at` for this venue's events. A buffered
     # withdrawal whose book prices a published leg out is a pending change
     # (the rule `flush_withdrawals` applies to the stored price).
@@ -4420,7 +4435,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # and the write lost the batch with `errors=0, requeued=0` — invisible.
         # Entries now leave only after the write lands, so nothing needs to be
         # "put back", because it was never taken away.
-        from app.tasks.live_blend_refresh import _mono
+        from app.tasks.live_blend_refresh import _mono, _wall, price_commit_ack_log_on
         from app.tasks.polymarket_ws import (
             _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
             DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
@@ -4758,6 +4773,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
 
         # Only a successful session exit proves this price write committed.
+        # #10090 `price_commit_ack_wall`: sampled here, before publication or
+        # cleanup can yield; each caller binds it to its own frozen marks.
+        commit_ack_wall = _wall() if price_commit_ack_log_on() else None
         # Adopt before publication/cleanup can yield; accepted inputs keep their
         # frozen bounds. A replaced owner cannot inherit this proof.
         if (clock_ticket is not None
@@ -4811,6 +4829,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             (row.id for row in written_rows), clock_owner=clock_owner,
             skipped_ids=held_back,
             skipped_events=event_ids_for_outcomes(event_id_by_outcome, held_back),
+            commit_ack_wall=commit_ack_wall,
         )
 
     async def flush_withdrawals(
@@ -5731,6 +5750,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 batch_marks[oid] = input_marks[oid]
                             else:
                                 batch_marks.pop(oid, None)
+                        # #10090 `price_commit_ack_wall`: this chunk's marks,
+                        # frozen with its values (`batch_marks` moves on).
+                        chunk_marks = {
+                            oid: batch_marks[oid] for oid in chunk_ids if oid in batch_marks
+                        }
                         # #11138: each input's frozen DB bound travels WITH this
                         # snapshot. A newer tick during the write and sample below moves
                         # only the live record, never this chunk's (lane1 B1).
@@ -5746,6 +5770,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     wrote = await write_chunk(
                         current_chunk, final=final,
                         start_market_publish=start_market_publish,
+                    )
+                    from app.tasks.live_blend_refresh import note_price_commit_ack
+
+                    note_price_commit_ack(
+                        tail_receipts,
+                        [chunk_marks.get(oid) for oid in getattr(wrote, "written_ids", ())],
+                        getattr(wrote, "commit_ack_wall", None),
                     )
                     if traced is not None:
                         stage_trace.chunk_end(traced, wrote)
