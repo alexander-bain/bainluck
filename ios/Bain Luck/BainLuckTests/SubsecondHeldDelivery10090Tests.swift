@@ -479,8 +479,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         XCTAssertEqual(of(.modelPreviewAdopted).map(\.mark.probability), ["0.7", "0.7", "0.75"])
         XCTAssertEqual(changes(of(.viewHeadlineUpdated)), [s1, s2, "rev:4242=21", s3, "rev:4242=21"],
                        "the hero prints each adopted preview, the outranking commit, and the commit again after expiry")
-        XCTAssertEqual(changes(of(.viewChartUpdated)), [s1, s2, "-", s3, "-"],
-                       "the chart ends on each preview's projection, then on the committed point")
+        XCTAssertEqual(changes(of(.viewChartUpdated)),
+                       [s1, s2, "rev:4242=21", s3, "rev:4242=21"],
+                       "the chart ends on each preview's projection, then on the committed point under its own commit")
         // Ordering: each preview's receipt, adoption and printing, in that order.
         var line = "SUBSECOND-10090 depth=view-input case=preview-v3 \(coverage)"
         for preview in [s1, s2, s3] {
@@ -953,7 +954,13 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                        "every adopted quote reaches the hero's input once, in order")
         // The chart's input: one new edge per quote, the edges the model appended.
         let stampToBasis = Dictionary(r.charted.map { ($0.mark.stamp, $0.mark.basis) }, uniquingKeysWith: { a, _ in a })
-        XCTAssertEqual(r.viewChart.map { stampToBasis[$0.mark.stamp] ?? "unmatched:\($0.mark.stamp)" }, expected,
+        // #10090 — before the first appended frame passes the read's edge the
+        // chart draws the read's own end, a `served:` mark. Only those may lead.
+        let served = r.viewChart.prefix { $0.mark.basis.hasPrefix("served:") }
+        XCTAssertTrue(served.allSatisfy { stampToBasis[$0.mark.stamp] == nil },
+                      "a served chart end is the read's point, not an appended one")
+        let appended = Array(r.viewChart.dropFirst(served.count))
+        XCTAssertEqual(appended.map { stampToBasis[$0.mark.stamp] ?? "unmatched:\($0.mark.stamp)" }, expected,
                        "every appended point reaches the chart's input once, in order")
 
         let headLags = lags(headline, basis: { $0.basis }, emitted: r.emitted)

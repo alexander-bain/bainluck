@@ -306,8 +306,13 @@ final class PublicationAxisInk4974Tests: XCTestCase {
     /// `drawnWindow` (memoized by the view model), so both are pinned.
     func testTheChartsFilterRunsTheseStepsInOrder() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
+        // #10090 — the view's window is the static composition the timing seam
+        // also reads, handed the view's own inputs.
         XCTAssertTrue(chart.contains(
-            "DrawnWindow(finishedEnd:EventState.isFinished(status)?gameEndDate:nil,forcedDomain:forcedDomain,legacyDataDomain:legacyDataDomain,started:isGameStarted,range:drawnRange,sinceStart:isGameStarted?sinceStartDate:nil)"),
+            "privatevardrawnWindow:DrawnWindow{Self.drawnWindow(status:status,commenceTime:commenceTime,history:vm.history,forcedDomain:forcedDomain,legacyDataDomain:legacyDataDomain,selectedRange:selectedRange,playStart:{vm.observedPlayStart(scheduled:$0,sportKey:sportKey)})}"),
+                      "the view's drawn window is not the static composition over its own inputs")
+        XCTAssertTrue(chart.contains(
+            "returnDrawnWindow(finishedEnd:EventState.isFinished(status)?gameEndDate(status:status,history:history):nil,forcedDomain:forcedDomain,legacyDataDomain:legacyDataDomain,started:started,range:offersSinceStart(isGameStarted:started,kickoff:kickoff)?selectedRange:.all,sinceStart:started?kickoff.map{playStart($0)??$0}:nil)"),
                       "the drawn window no longer carries the view's clip, windows and Since Start")
         XCTAssertTrue(chart.contains("privatefuncfilterPoints()->[ChartDataPoint]{vm.drawnPoints(liveFrames:liveFrames,window:drawnWindow)}"))
         let start = try XCTUnwrap(chart.range(of: "staticfuncdrawnPoints(_points:[ChartDataPoint],window:DrawnWindow)->[ChartDataPoint]{"))
