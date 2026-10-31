@@ -72,6 +72,28 @@ import SwiftUI
 /// open that exact original's catalogue Details, which print the same admitted
 /// pregame trade; its open control shows it full size.
 ///
+/// ONE HOLD PER ACTION (`routes`, the tennis/MLB convention). The page's hold
+/// (`onInteraction`) is asked for exactly once before each page action lands,
+/// and never again by the route after it. A story card's select, Details,
+/// expand and the stream's open all reach the stream first, which sends its
+/// `.interaction` — that is the hold — so the card's callback and the open land
+/// with no second one. Full-size content calls the same callbacks with no
+/// activation and is already held while it is open, so nothing there holds
+/// again (its headline forecast control included). The anchor's Full chart, the
+/// headline forecast control, All props and a catalogue original's selection
+/// have no stream hook, so each holds once here, then lands. Appearance and
+/// binding reads ask for nothing.
+///
+/// WORKING DETAILS (`detailsControls`, `offeringDetails`, tennis's
+/// convention). Before any control is drawn, each period-winner original is
+/// resolved against THIS pass's catalogue (`periodOriginal`); the card's input
+/// names only those (`detailsOriginalIDs`), and the card's Details callback is
+/// offered only while its shown original is one of them. A withdrawn or
+/// unrouted original keeps its dot, its result and its selection with no
+/// Details control; a routed neighbour keeps its Details. Never another
+/// original in its place, never a stand-in catalogue entry, never the whole
+/// card hidden.
+///
 /// The ladders' projected-final pair is no longer passed in beside the history:
 /// it is read from the scoped history, so it can never be another game's.
 struct FootballEventPageHost10868: View {
@@ -87,8 +109,9 @@ struct FootballEventPageHost10868: View {
     /// offers no period-winner story.
     var periodBinding: FootballPeriodWinnersAdapter10868.Binding? = nil
     var now: Date = Date()
-    /// The page's existing hold, requested BEFORE any reader action the stream
-    /// or a card starts. Appearance and reads call nothing.
+    /// The page's existing hold, requested exactly once BEFORE each page
+    /// action (see `routes`). Appearance, reads and full-size content call
+    /// nothing.
     var onInteraction: (() -> Void)? = nil
 
     /// NFL games only — the one sport the production deck's player milestones
@@ -172,64 +195,172 @@ struct FootballEventPageHost10868: View {
     }
 
     private func page(_ built: Built, mode: FootballEventPageMode10868) -> FootballEventPagePresentation10868 {
-        FootballEventPagePresentation10868(
+        let routes = Self.routes(
+            built, mode: mode, event: event, now: now, hold: onInteraction,
+            present: { presented = Presented(mode: $0) },
+            select: { selection = $0 },
+            browse: { story = $0 })
+        return FootballEventPagePresentation10868(
             input: built.input, cardState: cardState, mode: mode, originals: built.originals,
             showsMilestoneDetails: true,
             onAbout: nil,
-            onAllProps: { open(.catalogue) },
-            onOriginalSelect: { chosen in
-                selection = chosen
-                open(.original)
-            },
+            onAllProps: routes.allProps,
+            onOriginalSelect: routes.originalSelect,
             onOriginalHistory: nil,
-            onStoryIntent: { intent in handle(intent, input: built.input) },
-            onHistoryAction: { id in
-                if id == HockeyJourneyHistoryAdapter10868.expandActionID { open(.reader(.history)) }
-            },
+            onStoryIntent: routes.storyIntent,
+            onHistoryAction: routes.historyAction,
             onHistoryInspectionChoice: nil,
             onHistoryPlotPosition: nil,
-            onForecastInspection: { _ in open(.reader(.finish)) },
+            onForecastInspection: routes.forecastInspection,
             onTeamMilestoneSelect: { card, id in
                 if card == .teamSacks { sacksGroup = id } else { fieldGoalGroup = id }
             },
-            onTeamMilestoneDetails: { _, id in
-                guard let chosen = Self.teamOriginal(id, event: event, markets: built.scoped.markets, now: now,
-                                                     scope: built.originals)
-                else { return }
-                selection = chosen
-                open(.original)
-            },
-            onTeamMilestoneExpand: { card, _ in open(.reader(card)) },
+            onTeamMilestoneDetails: routes.teamDetails,
+            onTeamMilestoneExpand: routes.teamExpand,
             onSplitDetails: nil,
             onPeriodSelect: { id in periodSelection = id },
-            onPeriodDetails: { id in
-                guard let chosen = Self.periodOriginal(id, admitted: built.periodWinners, scope: built.originals)
-                else { return }
-                selection = chosen
-                open(.original)
-            },
-            onPeriodExpand: { open(.reader(.periodWinners)) })
+            onPeriodDetails: routes.periodDetails,
+            onPeriodExpand: routes.periodExpand)
     }
 
-    /// The hold first, then the exact mode — never the reverse.
-    private func open(_ mode: FootballEventPageMode10868) {
-        onInteraction?()
-        presented = Presented(mode: mode)
+    /// Where each page action lands, with the page's one hold.
+    struct Routes {
+        /// All props: one hold, then the catalogue.
+        let allProps: () -> Void
+        /// A catalogue original: one hold, then the exact selection, then its Details.
+        let originalSelect: (OriginalMarketDetails9483.Selection) -> Void
+        /// The anchor's Full chart: one hold on the page (none full size), then
+        /// the full-size history. Any other id lands nowhere and holds nothing.
+        let historyAction: (String) -> Void
+        /// A headline forecast control: one hold on the page (none full size),
+        /// then the full-size projected finish.
+        let forecastInspection: (Bool) -> Void
+        /// The stream's requests: `.interaction` is the hold; `.browse` and
+        /// `.open` (each sent after it) land with no hold of their own.
+        let storyIntent: (StoryStreamPresentation10868.Intent) -> Void
+        /// A team card's Details and expand: no hold of their own — on the page
+        /// the card's stream hook already asked, and full-size content is held.
+        let teamDetails: (FootballEventPageCard10868, String) -> Void
+        let teamExpand: (FootballEventPageCard10868, String) -> Void
+        /// The period-winner card's Details, or nil while its shown original
+        /// opens nothing (`detailsControls`). No hold of its own.
+        let periodDetails: ((String) -> Void)?
+        /// The period-winner card full size, from the stream only. No hold of its own.
+        let periodExpand: () -> Void
     }
 
-    private func handle(_ intent: StoryStreamPresentation10868.Intent, input: FootballEventPageInput10868) {
-        switch intent {
-        case .interaction:
-            onInteraction?()
-        case .browse(_, let target):
-            guard target.scope == input.stream.scope else { return }
-            story = Self.card(target.id, in: input.stories)
-        case .open(let target):
-            guard target.scope == input.stream.scope else { return }
-            if let card = Self.card(target.id, in: input.stories) { open(.reader(card)) }
-        case .pause, .resume, .applyUpdates:
-            break // the manual stream offers none of these controls
+    /// One pass's routes — pure: building them calls nothing. `hold` is the
+    /// page's hold; `present`, `select` and `browse` are the host's own
+    /// writes, each handed the exact mode, selection or card. `mode` is the
+    /// content these callbacks serve: full-size content (`.reader`) is already
+    /// held, so none of its actions holds again. A Details id resolves only the
+    /// exact catalogue original it names (`teamOriginal`, `periodOriginal`);
+    /// one that resolves none opens nothing.
+    static func routes(_ built: Built, mode: FootballEventPageMode10868, event: EventDetail, now: Date,
+                       hold: (() -> Void)?,
+                       present: @escaping (FootballEventPageMode10868) -> Void,
+                       select: @escaping (OriginalMarketDetails9483.Selection) -> Void,
+                       browse: @escaping (FootballEventPageCard10868?) -> Void) -> Routes {
+        let input = built.input
+        let markets = built.scoped.markets
+        let originals = built.originals
+        // The hold for an action with no stream hook: none full size.
+        let pageHold: (() -> Void)? = {
+            if case .reader = mode { return nil }
+            return hold
+        }()
+        let show: (OriginalMarketDetails9483.Selection) -> Void = { chosen in
+            select(chosen)
+            present(.original)
         }
+        let details = Self.detailsControls(built, open: show)
+        return Routes(
+            allProps: {
+                pageHold?()
+                present(.catalogue)
+            },
+            originalSelect: { chosen in
+                pageHold?()
+                show(chosen)
+            },
+            historyAction: { id in
+                guard id == HockeyJourneyHistoryAdapter10868.expandActionID else { return }
+                pageHold?()
+                present(.reader(.history))
+            },
+            forecastInspection: { _ in
+                pageHold?()
+                present(.reader(.finish))
+            },
+            storyIntent: { intent in
+                switch intent {
+                case .interaction:
+                    hold?()
+                case .browse(_, let target):
+                    guard target.scope == input.stream.scope else { return }
+                    browse(Self.card(target.id, in: input.stories))
+                case .open(let target):
+                    guard target.scope == input.stream.scope, let shown = Self.card(target.id, in: input.stories)
+                    else { return }
+                    present(.reader(shown))
+                case .pause, .resume, .applyUpdates:
+                    break // the manual stream offers none of these controls
+                }
+            },
+            teamDetails: { _, id in
+                guard let chosen = Self.teamOriginal(id, event: event, markets: markets, now: now, scope: originals)
+                else { return }
+                show(chosen)
+            },
+            teamExpand: { card, _ in present(.reader(card)) },
+            periodDetails: details.period,
+            periodExpand: { present(.reader(.periodWinners)) })
+    }
+
+    /// The story cards' Details callbacks for one pass (tennis's
+    /// `DetailsControls`).
+    struct DetailsControls {
+        /// The period-winner card's Details: offered only while the card is
+        /// mounted and its shown original resolves to exactly one original of
+        /// THIS pass's catalogue.
+        var period: ((String) -> Void)? = nil
+    }
+
+    /// Each card's Details callback, or nil — decided from THIS pass's mounted
+    /// card and catalogue before any control is drawn. The period-winner card
+    /// draws one Details, for its shown original, so the decision is exactly
+    /// that original's: withdrawn, absent from the catalogue, listed twice, or
+    /// not held at all closes it. A card that was not narrowed for this
+    /// catalogue (`offeringDetails`) fails closed. A supplied callback still
+    /// resolves the id it is handed and opens only exactly that catalogue
+    /// original; it never opens another in its place.
+    static func detailsControls(_ built: Built,
+                                open: @escaping (OriginalMarketDetails9483.Selection) -> Void) -> DetailsControls {
+        let admitted = built.periodWinners
+        let originals = built.originals
+        guard let card = FootballEventPageModel10868(built.input).periodWinners, card.detailsOriginalIDs != nil,
+              let shown = card.detailsTarget(canOpenDetails: true),
+              periodOriginal(shown, admitted: admitted, scope: originals) != nil
+        else { return DetailsControls() }
+        return DetailsControls(period: { id in
+            if let resolved = periodOriginal(id, admitted: admitted, scope: originals) { open(resolved) }
+        })
+    }
+
+    /// The period-winner card offering Details only for an original that
+    /// resolves, on THIS pass, to exactly one original of the current
+    /// catalogue (`periodOriginal`). Every original, dot, score and result
+    /// still shows and stays selectable; an owner's own availability is kept
+    /// as an upper bound, and nothing else on the input changes.
+    static func offeringDetails(_ card: FootballPeriodWinnersInput10868,
+                                admitted: [FootballPeriodWinnersAdapter10868.Admitted],
+                                originals: FootballEventPageOriginals10868) -> FootballPeriodWinnersInput10868 {
+        var card = card
+        let routed = Set(card.cells.map(\.id).filter {
+            periodOriginal($0, admitted: admitted, scope: originals) != nil
+        })
+        card.detailsOriginalIDs = card.detailsOriginalIDs.map { $0.intersection(routed) } ?? routed
+        return card
     }
 
     private func make() -> Built {
@@ -278,14 +409,18 @@ struct FootballEventPageHost10868: View {
         let periodHost = FootballPeriodWinnersAdapter10868.Host(now: now, calendar: calendar, locale: locale)
         let periodWinners = FootballPeriodWinnersAdapter10868.admitted(event, markets: scoped.markets,
                                                                        binding: periodBinding, host: periodHost)
-        let periodCard = FootballPeriodWinnersAdapter10868.input(event, markets: scoped.markets, binding: periodBinding,
-                                                                 selectedID: reading.periodSelection, host: periodHost)
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)
         let originals = FootballOriginalsAdapter10868.originals(
             event, markets: scoped.markets,
             host: FootballOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
             tint: tints.home, selection: reading.selection, periodWinners: periodWinners)
+        // Each period original offers Details only when it resolves in THIS
+        // pass's catalogue; every comparison original stays.
+        let periodCard = FootballPeriodWinnersAdapter10868.input(
+            event, markets: scoped.markets, binding: periodBinding, selectedID: reading.periodSelection,
+            host: periodHost
+        ).map { Self.offeringDetails($0, admitted: periodWinners, originals: originals) }
         let input = FootballPageInputAdapter10868.input(
             event, route: route, history: historyInput, deck: deck, teamSacks: sacks, teamFieldGoals: fieldGoals,
             combined: combined, periodWinners: periodCard, originalsCount: originals.catalogue?.originals.count,

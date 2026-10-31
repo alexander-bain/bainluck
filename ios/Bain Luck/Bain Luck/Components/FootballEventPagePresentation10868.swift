@@ -53,8 +53,11 @@ import SwiftUI
 // each supplied card id to the one card the owner names for it, and shows the
 // owner's unavailable words for an id that names no single card this route and
 // phase mount — never a neighbour. A paired card's own select, Details and
-// expand actions first call the stream's activation hook and then the host's
-// exact callback. The production milestone card's previous/next and Details
+// expand actions, and the period-winner card's select, Details and open, first
+// call the stream's activation hook and then the host's exact callback. That
+// activation is the only request this view makes: it asks for no hold of its
+// own, and the host holds once per action (`FootballEventPageHost10868.routes`).
+// The production milestone card's previous/next and Details
 // write the host's own `NFLCardDeckState9483` directly (that card offers no
 // callback), so they do not pass through the activation hook — a recorded
 // gap, not a pretend relay. Full-size content reuses the same leaves with the
@@ -758,7 +761,8 @@ struct FootballEventPagePresentation10868: View {
 
     /// The period-winner card with the host's callbacks, each after the
     /// stream's activation hook when it sits in the stream. Full size offers
-    /// no open control of its own.
+    /// no open control of its own. Its Details are the host's, offered only
+    /// for an original the host can open (the card's `detailsOriginalIDs`).
     func periodWinnersContent(activation: StoryStreamCardActivation10868?) -> FootballPeriodWinnersPresentation10868? {
         model.periodWinners.map { card in
             let expand: (() -> Void)? = activation == nil ? nil : onPeriodExpand.map { open in

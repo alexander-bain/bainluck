@@ -227,6 +227,9 @@ enum FootballPeriodWinnersAdapter10868 {
     // MARK: - The card
 
     /// The card's input at the final, or nil when nothing bound is served.
+    /// `selectedID` is the host's held original, passed through unchanged;
+    /// nil (nothing held yet) opens on `suggestedID`. Details availability
+    /// is the host's to narrow (`detailsOriginalIDs`), against its catalogue.
     static func input(_ event: EventDetail, markets: GameMarketsResponse?, binding: Binding?,
                       selectedID: String?, host: Host) -> FootballPeriodWinnersInput10868? {
         let entries = Self.admitted(event, markets: markets, binding: binding, host: host)
@@ -280,7 +283,6 @@ enum FootballPeriodWinnersAdapter10868 {
             pregameTitle: Copy.pregameTitle, resultTitle: Copy.resultTitle, unavailable: Copy.unavailable,
             sidesLabel: Copy.sidesLabel, details: Copy.details, expand: Copy.expand,
             selectionMissing: Copy.selectionMissing, notes: notes, selectPanel: Copy.selectPanel)
-        let held = selectedID.flatMap { id in Self.admitted(cellID: id, in: entries).map(\.cellID) }
         return FootballPeriodWinnersInput10868(
             panels: panels,
             series: [series(.home), series(.away), series(.tie)],
@@ -288,7 +290,11 @@ enum FootballPeriodWinnersAdapter10868 {
             homeScoreLabel: homeLabel, awayScoreLabel: awayLabel,
             actuals: periods.map { actual(event, period: $0, host: host) },
             captions: captions,
-            selectedID: held ?? suggestedID(entries),
+            // A held id passes through exactly: one this binding no longer
+            // carries shows the card's "no original selected" readout and comes
+            // back when that exact original does — never another in its place.
+            // Only nothing held opens on the suggested original.
+            selectedID: selectedID ?? suggestedID(entries),
             words: words)
     }
 
@@ -344,8 +350,9 @@ enum FootballPeriodWinnersAdapter10868 {
         }
     }
 
-    /// The original the card opens on: the upset when there is one, else the
-    /// first admitted original with a pregame chance, else the first served.
+    /// The original the card opens on while nothing is held: the upset when
+    /// there is one, else the first admitted original with a pregame chance,
+    /// else the first served. Never a stand-in for a held original.
     static func suggestedID(_ admitted: [Admitted]) -> String? {
         if let surprise = Self.upset(admitted) { return surprise.cellID }
         if let priced = admitted.first(where: { $0.pregame != nil }) { return priced.cellID }

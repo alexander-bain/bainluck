@@ -32,6 +32,10 @@ import SwiftUI
 // outcome controls reaches every original without tapping a small dot. The
 // selected outcome's side is held when the period changes. Selection, Details
 // and the full card stay with the host; with no callback nothing is tappable.
+// A held original the card no longer carries is not replaced by another: the
+// readout says so (`selectionMissing`) until that exact original returns. The
+// readout's Details appear only for an original the owner can route
+// (`detailsOriginalIDs`); every other original keeps its dot and its control.
 
 /// A panel: one period in the owner's order.
 nonisolated struct FootballPeriodWinnersPanel10868: Equatable {
@@ -98,9 +102,17 @@ nonisolated struct FootballPeriodWinnersInput10868: Equatable {
     /// One actual context per period, naming its period exactly.
     let actuals: [PeriodOutcomeActualContext10868]
     let captions: [FootballPeriodWinnersCaption10868]
-    /// The host's held original.
+    /// The host's held original, exactly as held — never replaced by another
+    /// when it is not on the card (the readout then says `selectionMissing`).
     let selectedID: String?
     let words: FootballPeriodWinnersWords10868
+    /// Nil by default: the held exact original offers its Details. When
+    /// supplied, only an original the owner names here offers Details; every
+    /// other original still shows and stays selectable, with no Details
+    /// control. An availability permission only (the shared period leaves'
+    /// `detailsOriginalIDs`): it never adds an original, and an id the card
+    /// does not show, or shows twice, still offers nothing.
+    var detailsOriginalIDs: Set<String>? = nil
 
     // MARK: Pure reading
 
@@ -149,6 +161,17 @@ nonisolated struct FootballPeriodWinnersInput10868: Equatable {
             if let found = cell(one, periodID: periodID).cell { return found.id }
         }
         return nil
+    }
+
+    /// The original whose Details the readout offers: the held original,
+    /// exactly once on the card, and one the owner's availability names (nil
+    /// availability: every exact original). No callback, nothing selected or
+    /// an original the owner cannot route: nil, so no control is drawn that
+    /// would open nothing.
+    func detailsTarget(canOpenDetails: Bool) -> String? {
+        guard canOpenDetails, let held = selected else { return nil }
+        if let detailsOriginalIDs, !detailsOriginalIDs.contains(held.cell.id) { return nil }
+        return held.cell.id
     }
 
     /// The selected period's originals, one per outcome offered there.
@@ -218,7 +241,8 @@ struct FootballPeriodWinnersPresentation10868: View {
     let input: FootballPeriodWinnersInput10868
     /// The exact original id to hold. Nil: nothing is selectable.
     var onSelect: ((String) -> Void)? = nil
-    /// The exact original's Details. Nil: no Details control.
+    /// The exact original's Details. Nil: no Details control. Offered for the
+    /// held original only where `input.detailsTarget` names it.
     var onDetails: ((String) -> Void)? = nil
     /// The full card. Nil: no open control (the full card itself passes none).
     var onExpand: (() -> Void)? = nil
@@ -520,8 +544,8 @@ struct FootballPeriodWinnersPresentation10868: View {
                     .font(.caption)
                     .foregroundStyle(DS.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let onDetails {
-                    Button { onDetails(held.cell.id) } label: {
+                if let onDetails, let target = input.detailsTarget(canOpenDetails: true) {
+                    Button { onDetails(target) } label: {
                         HStack {
                             Text(input.words.details).font(.subheadline.weight(.semibold))
                             Spacer(minLength: 0)

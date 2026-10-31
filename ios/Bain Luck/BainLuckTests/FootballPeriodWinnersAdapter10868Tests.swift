@@ -246,8 +246,72 @@ final class FootballPeriodWinnersAdapter10868Tests: XCTestCase {
         for entry in list {
             XCTAssertEqual(try card(selected: entry.cellID).selectedID, entry.cellID)
         }
-        // An id that names nothing falls back to the opening original.
-        XCTAssertEqual(try card(selected: "kalshi|1|1").selectedID, q2Away.cellID)
+        // Nothing held yet: the card opens on the suggested original (the Q2 upset).
+        XCTAssertEqual(try card(selected: nil).selectedID, q2Away.cellID)
+        // CONSTRUCTED: a held id this card does not carry is kept exactly — never
+        // swapped for the opening original — and the readout has nothing selected.
+        let stray = try card(selected: "kalshi|1|1")
+        XCTAssertEqual(stray.selectedID, "kalshi|1|1")
+        XCTAssertNil(stray.selected)
+        XCTAssertTrue(stray.selectedPeriodCells.isEmpty)
+        XCTAssertNil(stray.detailsTarget(canOpenDetails: true))
+        XCTAssertEqual(stray.words.selectionMissing, Copy.selectionMissing)
+    }
+
+    func testAHeldOriginalTheBindingOmitsStaysHeldAndReturnsByExactIdentity() throws {
+        let event = try self.event
+        let list = try admitted()
+        let q3Home = try one(3, .home, in: list)
+        // CONSTRUCTED: a binding update that omits the held Q3 home original.
+        let omitted = W.Binding(eventID: F.quarterBinding.eventID, verifiedStart: F.quarterBinding.verifiedStart,
+                                originals: F.quarterBinding.originals.filter { !($0.period == 3 && $0.side == .home) })
+        let without = try card(omitted, selected: q3Home.cellID)
+        XCTAssertEqual(without.selectedID, q3Home.cellID, "the held identity is passed through unchanged")
+        XCTAssertNil(without.selected, "no other original is selected in its place")
+        XCTAssertTrue(without.selectedPeriodCells.isEmpty)
+        XCTAssertNil(without.detailsTarget(canOpenDetails: true))
+        XCTAssertEqual(without.cells.count, 11)
+        XCTAssertFalse(without.cells.contains { $0.id == q3Home.cellID })
+        // The other eleven keep their own admitted trades and contract results.
+        for entry in list where entry.cellID != q3Home.cellID {
+            let cell = try XCTUnwrap(without.cells.first { $0.id == entry.cellID })
+            XCTAssertEqual(cell.pregame, entry.pregame)
+            XCTAssertEqual(cell.result, entry.result)
+        }
+        // A panel tap with nothing resolvable held offers that period's first outcome.
+        XCTAssertEqual(without.idForPanel(W.periodID(event, 3)), try one(3, .away, in: list).cellID)
+
+        // The exact original reappears: the same held id selects it again.
+        let back = try card(selected: q3Home.cellID)
+        XCTAssertEqual(back.selected?.cell.id, q3Home.cellID)
+        XCTAssertEqual(back.selected?.series.id, W.seriesID(event, .home))
+        XCTAssertEqual(back.detailsTarget(canOpenDetails: true), q3Home.cellID)
+        XCTAssertEqual(back.cells.count, 12)
+    }
+
+    func testTheReadoutOffersDetailsOnlyForAnOriginalTheOwnerCanRoute() throws {
+        let list = try admitted()
+        let q2Away = try one(2, .away, in: list)
+        let q2Home = try one(2, .home, in: list)
+        var input = try card(selected: q2Away.cellID)
+        // Nil availability: the held exact original offers Details; no callback, none.
+        XCTAssertNil(input.detailsOriginalIDs)
+        XCTAssertEqual(input.detailsTarget(canOpenDetails: true), q2Away.cellID)
+        XCTAssertNil(input.detailsTarget(canOpenDetails: false))
+        // CONSTRUCTED availability without the held original: no control for it,
+        // while every original still shows.
+        input.detailsOriginalIDs = [q2Home.cellID, "constructed:not-on-this-card"]
+        XCTAssertNil(input.detailsTarget(canOpenDetails: true))
+        XCTAssertEqual(input.cells.count, 12)
+        XCTAssertEqual(input.selected?.cell.id, q2Away.cellID)
+        // Its routed neighbour, once held, keeps its Details.
+        var neighbour = try card(selected: q2Home.cellID)
+        neighbour.detailsOriginalIDs = input.detailsOriginalIDs
+        XCTAssertEqual(neighbour.detailsTarget(canOpenDetails: true), q2Home.cellID)
+        // An empty availability offers none and hides nothing.
+        neighbour.detailsOriginalIDs = []
+        XCTAssertNil(neighbour.detailsTarget(canOpenDetails: true))
+        XCTAssertEqual(neighbour.cells.count, 12)
     }
 
     func testTwoAcrossOnAPhoneFourWideOneOrTwoAtAccessibilitySizes() {
