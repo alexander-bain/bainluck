@@ -79,7 +79,9 @@ import pytest
 from sqlalchemy import select, text, update
 
 from app.tasks.live_blend_refresh import atomic_stamp_expression
-from tests.test_live_blend_refresh import is_normal_recovery_owner
+from tests.test_live_blend_refresh import (
+    is_normal_publication_intent, is_normal_recovery_owner, is_stamp_statement,
+)
 from app.utils.aggregation import stamp_source_reading
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -535,7 +537,7 @@ class TestTheServerSideMergePreservesWhatThePythonHelperDid:
         assert via_sql == via_python
 
 
-async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
+async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control, executed=None):
     """Actual refresh/commit path; only inputs and fanout are seams.
 
     The first arm reaches the pre-UPDATE await first, but the sibling obtains
@@ -594,7 +596,9 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
             return getattr(self.session, name)
 
         async def execute(self, statement, *args, **kwargs):
-            is_update = getattr(statement, "is_update", False)
+            if executed is not None:
+                executed.append(statement)
+            is_update = is_stamp_statement(statement)
             if is_update:
                 self.update_count += 1
             if is_update and self.update_count == 1:
@@ -727,17 +731,58 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
 @pytest.mark.parametrize(
     "late_older_publication", [False, True], ids=["commit-order", "late-old-frame"]
 )
+@pytest.mark.parametrize("fused_intent", [False, True], ids=["separate-intent", "fused-intent"])
 async def test_newer_committed_blend_has_newer_frame_clock(
     pg_engine,
     monkeypatch,
     prelock_control,
     late_older_publication,
+    fused_intent,
 ):
+    # #10090: the row-lock wait, commit order and frame clocks hold whether the
+    # stamp writes its publication intent separately or in its own statement.
+    monkeypatch.setenv("LIVE_STAMP_FUSED_INTENT", "1" if fused_intent else "0")
+    # A frame's ACK settles (DELETEs) its intent off the publish path, on its
+    # own schedule. Read the intent rows just before any settlement deletes
+    # them, so the rows asserted below are the stamps' whatever that timing.
+    from app.tasks import live_blend_refresh as lbr
+    seen_intents = {}
+    settle = lbr.LiveBlendRefresher._settle_normal_recovery
+
+    async def _read_intents():
+        async with pg_engine.connect() as conn:
+            for row in (await conn.execute(text(
+                "SELECT id, source, event_id, reading FROM owed_chart_points "
+                "WHERE source LIKE '%\\_price\\_publish'"
+            ))).all():
+                seen_intents[row[0]] = (row[1], row[2], row[3])
+
+    async def read_then_settle(self, acknowledged):
+        await _read_intents()
+        return await settle(self, acknowledged)
+
+    monkeypatch.setattr(lbr.LiveBlendRefresher, "_settle_normal_recovery", read_then_settle)
+    executed = []
     frames = await _concurrent_refresh_frames(
-        pg_engine, monkeypatch, prelock_control=prelock_control
+        pg_engine, monkeypatch, prelock_control=prelock_control, executed=executed,
     )
+    # The switch decides the route: one stamping statement that carries the
+    # intent, or the UPDATE then its own INSERT — never both, never neither.
+    fused = [s for s in executed
+             if is_stamp_statement(s) and not getattr(s, "is_update", False)]
+    separate = [s for s in executed if is_normal_publication_intent(s)]
+    assert (len(fused), len(separate)) == ((2, 0) if fused_intent else (0, 2))
     stamps = [datetime.fromisoformat(frame["updated_at"]) for frame in frames]
     assert (stamps[1] > stamps[0]) is not prelock_control
+    # Each committed stamp owes exactly one publication intent naming its own
+    # write — the polymarket arm's the revision assigned AFTER its row wait.
+    await _read_intents()
+    intents = [seen_intents[k] for k in sorted(seen_intents)]
+    assert [(row[0], row[1], row[2]) for row in intents] == [
+        (frame["source"] + "_price_publish", frame["event_id"],
+         {"rev": frame["rev"][str(frame["event_id"])], "updated_at": frame["updated_at"]})
+        for frame in frames
+    ]
 
     # Commit-before-publish does not serialize Redis publication across arms.
     # The clock must identify the newest aggregate even when the older committed
