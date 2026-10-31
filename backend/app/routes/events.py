@@ -99,8 +99,8 @@ from app.utils.pregame_projection import (
     read_pregame_projections,
 )
 from app.utils.prematch_reading import (
-    PREMATCH_PRIOR_SQL,
     SETTLED_STATUSES,
+    fetch_prematch_prior_rows,
     opening_consensus_has_frozen,
     prematch_prior_binds,
     prematch_row_to_reading,
@@ -19826,7 +19826,7 @@ async def _settled_prematch_odds(
         try:
             nested = await db.begin_nested()
             try:
-                rows = (await db.execute(text(PREMATCH_PRIOR_SQL), binds)).all()
+                rows = await fetch_prematch_prior_rows(db, binds)
                 for row in sorted(rows, key=lambda r: rank.get(r.event_id, len(rank))):
                     by_source.setdefault(row.source, prematch_row_to_reading(row))
             except Exception:
