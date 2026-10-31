@@ -29,7 +29,10 @@ import XCTest
 /// retained Yes trade of Half Yours, Al Riffa, Presage Nocturne and Goodie Two
 /// Shoes; Sporting Life's reported places (Half Yours 1st by 2¾ lengths, Goodie
 /// Two Shoes 2nd, Middle Earth 3rd, River of Stars 4th, Al Riffa 7th; no other
-/// place captured); actual start and finish unknown.
+/// place captured); actual start and finish unknown; and, verbatim, every
+/// market's own predicate (`markets[].predicate`) and the one rules text all 25
+/// markets carry (`markets[].rules`, identical in `horseOutcomeCapture.json`
+/// sha256 a0352bd6… and `horseRacing.json` sha256 35c30bcc…).
 ///
 /// CONSTRUCTED (owner inputs, not retained facts): every label, figure text,
 /// PT clock line, caption, header, About, source and result wording, scope,
@@ -537,6 +540,51 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
 
     // MARK: Originals (shared Details)
 
+    /// ARCHIVED, verbatim: each market's own predicate, `markets[].predicate`
+    /// in `horseOutcomeCapture.json` (identical in `horseRacing.json`), keyed by
+    /// market id. Other's is the special "another horse" predicate.
+    private static let retainedPredicates: [String: String] = [
+        "662191": "Will Al Riffa win the 2025 Lexus Melbourne Cup?",
+        "662192": "Will Buckaroo win the 2025 Lexus Melbourne Cup?",
+        "662193": "Will Arapaho win the 2025 Lexus Melbourne Cup?",
+        "662194": "Will Vauban win the 2025 Lexus Melbourne Cup?",
+        "662195": "Will Chevalier Rose win the 2025 Lexus Melbourne Cup?",
+        "662196": "Will Presage Nocturne win the 2025 Lexus Melbourne Cup?",
+        "662197": "Will Middle Earth win the 2025 Lexus Melbourne Cup?",
+        "662198": "Will Meydaan win the 2025 Lexus Melbourne Cup?",
+        "662199": "Will Absurde win the 2025 Lexus Melbourne Cup?",
+        "662200": "Will Flatten The Curve win the 2025 Lexus Melbourne Cup?",
+        "662201": "Will Land Legend win the 2025 Lexus Melbourne Cup?",
+        "662202": "Will Smokin' Romans win the 2025 Lexus Melbourne Cup?",
+        "662203": "Will Changingoftheguard win the 2025 Lexus Melbourne Cup?",
+        "662204": "Will Half Yours win the 2025 Lexus Melbourne Cup?",
+        "662205": "Will More Felons win the 2025 Lexus Melbourne Cup?",
+        "662206": "Will Onesmoothoperator win the 2025 Lexus Melbourne Cup?",
+        "662207": "Will Furthur win the 2025 Lexus Melbourne Cup?",
+        "662208": "Will Parchment Party win the 2025 Lexus Melbourne Cup?",
+        "662209": "Will Athabascan win the 2025 Lexus Melbourne Cup?",
+        "662210": "Will Goodie Two Shoes win the 2025 Lexus Melbourne Cup?",
+        "662211": "Will River of Stars win the 2025 Lexus Melbourne Cup?",
+        "662212": "Will Royal Supremacy win the 2025 Lexus Melbourne Cup?",
+        "662213": "Will Torranzino win the 2025 Lexus Melbourne Cup?",
+        "662214": "Will Valiant King win the 2025 Lexus Melbourne Cup?",
+        "662215": "Will another horse win the 2025 Lexus Melbourne Cup?",
+    ]
+
+    /// ARCHIVED, verbatim: the one rules text every retained market carries —
+    /// `markets[].rules`, 742 ASCII bytes, identical for all 25 markets in both
+    /// files. Kept whole here as the receipt.
+    private static let retainedRules = "This market will resolve to \"Yes\" if the listed horse places first in the 2025 Lexus Melbourne Cup. Otherwise, this market will resolve to \"No\".\n\nThis market will close on November 4, 2025, 2:00 AM ET, allowing time to account for any disputes or disqualifications that might occur post-race. If the race is permanently cancelled or doesn't take place by November 5, 2025, 11:59 PM ET, this market will resolve to \"Other\". \n\nIn the event of a tie between two or more horses, the market will resolve in favor of the horse whose name appears first in alphabetical order. \n\nThe primary resolution source for this market will be official information from Melbourne Cup race organizers, however a consensus of credible reporting will also be used."
+
+    /// The same text as the owner's four verified paragraphs, split only at the
+    /// retained blank lines; two keep their retained trailing space.
+    private static let retainedRulesParagraphs = [
+        "This market will resolve to \"Yes\" if the listed horse places first in the 2025 Lexus Melbourne Cup. Otherwise, this market will resolve to \"No\".",
+        "This market will close on November 4, 2025, 2:00 AM ET, allowing time to account for any disputes or disqualifications that might occur post-race. If the race is permanently cancelled or doesn't take place by November 5, 2025, 11:59 PM ET, this market will resolve to \"Other\". ",
+        "In the event of a tie between two or more horses, the market will resolve in favor of the horse whose name appears first in alphabetical order. ",
+        "The primary resolution source for this market will be official information from Melbourne Cup race organizers, however a consensus of credible reporting will also be used.",
+    ]
+
     private static func identity(_ name: String, _ side: String) -> OriginalMarketDetails9483.Identity {
         OriginalMarketDetails9483.Identity(source: "polymarket", market: runner(name).market, side: side)
     }
@@ -545,12 +593,13 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
         OriginalMarketDetails9483.Selection(scope: originalsScope, identity: identity(name, side))
     }
 
-    /// Each side's own reading and, at the final, its own CONSTRUCTED grade
-    /// words — never read from a finish, never a complement of the other side.
+    /// Each side's retained predicate and verbatim rules, its own reading and,
+    /// at the final, its own CONSTRUCTED grade words — never read from a
+    /// finish, never a complement of the other side.
     private static func original(_ runner: Runner, _ side: String, _ phase: HorseRacingPhase10868,
                                  grade: Bool = true) -> OriginalMarketDetails9483.Original {
         let isOther = runner.name == "Other"
-        let title = isOther ? "Will another horse win the 2025 Lexus Melbourne Cup?" : "Will \(runner.name) win the 2025 Lexus Melbourne Cup?"
+        let title = retainedPredicates[runner.market] ?? ""
         let outcome: String
         if isOther {
             outcome = side == "Yes" ? "Yes · another horse wins · special rules apply" : "No · another horse does not win · special rules apply"
@@ -576,11 +625,7 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
             mode: phase == .final ? .result : .pregame, pregame: pregame, later: nil, grade: gradeWords,
             about: OriginalMarketDetails9483.About(
                 source: "Polymarket",
-                rules: .verified([
-                    "This market resolves to Yes if the listed horse places first in the 2025 Lexus Melbourne Cup; otherwise No.",
-                    "If the race is permanently cancelled or does not take place by November 5, 2025, 11:59 PM ET, this market resolves to Other.",
-                    "In a tie between two or more horses, the market resolves in favour of the horse whose name appears first in alphabetical order.",
-                ]),
+                rules: .verified(retainedRulesParagraphs),
                 provenance: [OriginalMarketDetails9483.Row(label: "Provider market", value: "Polymarket · market \(runner.market)"),
                              OriginalMarketDetails9483.Row(label: "Schedule", value: "Published 3:00 PM Melbourne · not the actual start")],
                 historicalQuote: nil))
@@ -601,17 +646,70 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
         }
     }
 
+    /// The anchor's original entry for one frame: the selected runner's exact
+    /// Yes original and the position of ITS selected, admitted observation in
+    /// that same frame — nil when no observation is selected, and no entry at
+    /// all when no runner is. Owner-side composition; the page adds no policy.
+    private static func open(_ phase: HorseRacingPhase10868, history frame: FieldHistoryInput10868? = nil) -> HorseRacingOriginalOpen10868? {
+        let input = frame ?? Self.history(phase)
+        guard case .series(let id, _) = input.selection,
+              let runner = runners.first(where: { $0.market == id }) else { return nil }
+        let series = input.series.first { $0.id == id }
+        let point = series.flatMap { FieldHistoryGeometry10868.inspectedPoint($0, in: input) }
+        return HorseRacingOriginalOpen10868(label: "Explore Yes / No outcomes", selection: selection(runner.name, "Yes"),
+                                            selectedPosition: point?.x)
+    }
+
+    /// Whether an entry is the selected runner's Yes original at exactly that
+    /// runner's selected observation in this frame — or nil with none selected.
+    private static func isAdmitted(_ open: HorseRacingOriginalOpen10868?, in input: FieldHistoryInput10868) -> Bool {
+        guard let open, case .series(let id, _) = input.selection,
+              open.selection.identity.market == id, open.selection.identity.side == "Yes",
+              let series = input.series.first(where: { $0.id == id }) else { return false }
+        return open.selectedPosition == FieldHistoryGeometry10868.inspectedPoint(series, in: input)?.x
+    }
+
+    /// An entry's whole payload as handed back: market, side and position.
+    private static func payload(_ open: HorseRacingOriginalOpen10868) -> String {
+        "open:\(open.selection.identity.market):\(open.selection.identity.side)@\(open.selectedPosition.map { String($0) } ?? "none")"
+    }
+
+    /// The ACTUAL entry one page draws and the payloads `onOriginalOpen`
+    /// receives when it is opened, after the hold hook.
+    private static func openPayloads(_ input: HorseRacingPageInput10868,
+                                     _ originals: HorseRacingOriginals10868) -> (entry: HorseRacingOriginalOpen10868?, log: [String]) {
+        var log: [String] = []
+        let view = HorseRacingEventPagePresentation10868(
+            input: input, originals: originals,
+            onOriginalOpen: { log.append(Self.payload($0)) }, onInteraction: { log.append("hold") })
+        let entry = view.originalEntry()
+        view.openOriginal()
+        return (entry, log)
+    }
+
     private static func originals(_ phase: HorseRacingPhase10868, held: OriginalMarketDetails9483.Selection? = nil,
                                   catalogue: OriginalMarketDetails9483.Catalogue? = nil,
-                                  position: Double? = 164.32) -> HorseRacingOriginals10868 {
-        let name = selectedName(phase)
-        return HorseRacingOriginals10868(
-            catalogue: catalogue ?? detailsCatalogue(phase), selection: held ?? selection(name, "Yes"),
+                                  history frame: FieldHistoryInput10868? = nil) -> HorseRacingOriginals10868 {
+        HorseRacingOriginals10868(
+            catalogue: catalogue ?? detailsCatalogue(phase), selection: held ?? selection(selectedName(phase), "Yes"),
             heading: "Original Yes / No outcomes", context: "50 retained originals",
             emptyWords: "No retained originals for this race", unavailableChoice: "Original unavailable", tint: .blue,
             sides: sides,
-            open: HorseRacingOriginalOpen10868(label: "Explore Yes / No outcomes", selection: selection(name, "Yes"),
-                                               selectedPosition: position))
+            open: open(phase, history: frame))
+    }
+
+    private static func withSelection(_ input: FieldHistoryInput10868, _ selection: FieldHistoryOriginalSelection10868) -> FieldHistoryInput10868 {
+        FieldHistoryInput10868(
+            title: input.title, caption: input.caption, series: input.series, selection: selection, domain: input.domain,
+            ceiling: input.ceiling, yTicks: input.yTicks, xTicks: input.xTicks, guides: input.guides, breaks: input.breaks,
+            readout: input.readout, markKey: input.markKey, comparisonExplanation: input.comparisonExplanation, notes: input.notes,
+            summary: input.summary, plotHeight: input.plotHeight, unboundReadingWords: input.unboundReadingWords,
+            plotUnavailableWords: input.plotUnavailableWords, windows: input.windows, scale: input.scale,
+            moreOriginals: input.moreOriginals, details: input.details, expand: input.expand, inspect: input.inspect,
+            previous: input.previous, next: input.next, inspection: input.inspection, layout: input.layout,
+            probabilityLowerBound: input.probabilityLowerBound, probabilityRangeExplanation: input.probabilityRangeExplanation,
+            selectedReadout: input.selectedReadout, inspectionRingShape: input.inspectionRingShape,
+            plotAbsence: input.plotAbsence, showsKey: input.showsKey)
     }
 
     // MARK: Reachable outputs
@@ -696,13 +794,14 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
         outputs += [header.eyebrow, header.place, header.date, header.status, header.aboutHint, input.reader.state,
                     input.notice, input.copy.sourceLabel, input.copy.allOriginalsLabel, input.catalogueDisclosure?.label].compactMap { $0 }
         let modes: [HorseRacingMode10868] = [.page, .fullHistory, .fullFinish, .catalogue, .original, .about, .source]
+        var opened: [String] = []
         for mode in modes {
             let view = HorseRacingEventPagePresentation10868(
                 input: input, mode: mode, originals: originals,
                 onAbout: {}, onSource: {}, onLink: { _ in }, onRunner: { _ in }, onRunnerHistory: { _ in }, onToggle: { _ in },
                 onHistoryAction: { _ in }, onHistoryInspectionChoice: { _ in }, onHistoryPlotPosition: { _ in },
-                onOriginalOpen: { _ in }, onFinishExpand: {}, onCatalogueGroup: { _ in }, onOriginalSelect: { _ in },
-                onOriginalHistory: { _ in }, onAllOriginals: {})
+                onOriginalOpen: { opened.append(Self.payload($0)) }, onFinishExpand: {}, onCatalogueGroup: { _ in },
+                onOriginalSelect: { _ in }, onOriginalHistory: { _ in }, onAllOriginals: {})
             if let picks = view.picksContent() {
                 let model = HorseRacingPicksModel10868(picks.input)
                 outputs += [picks.input.groupLabel] + model.rows.map(model.spoken)
@@ -710,7 +809,9 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
             }
             outputs += historyOutputs(view.historyContent(reader: false).input)
             outputs += historyOutputs(view.historyContent(reader: true).input)
-            outputs += [view.originalEntry()?.label].compactMap { $0 }
+            // The entry's words AND its payload, then the payload the callback actually receives.
+            outputs += [view.originalEntry()?.label, view.originalEntry().map(Self.payload)].compactMap { $0 }
+            view.openOriginal()
             for card in [view.finishContent(reader: false), view.finishContent(reader: true)].compactMap({ $0 }) {
                 outputs += finishOutputs(card.input)
             }
@@ -733,7 +834,7 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
             }
         }
         outputs += [originals.heading, originals.emptyWords] + [originals.context].compactMap { $0 }
-        return outputs
+        return outputs + opened
     }
 
     // MARK: Phases
@@ -836,8 +937,10 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
     // MARK: Truth
 
     func testBeforeAndLiveCarryNoFinishReportOrSettlementInAnyReachableOutput() {
+        // The final Half Yours trade position (164.32) is a later fact too: it
+        // may reach a before or live entry payload only by leaking.
         let later = ["1st", "2nd", "3rd", "4th", "7th", "won", "Sporting Life", "2¾", "lengths", "Happened",
-                     "Didn’t happen", "resolved", "FINAL", "Final", "99.7%", "Reported finish", "race report"]
+                     "Didn’t happen", "resolved", "FINAL", "Final", "99.7%", "Reported finish", "race report", "164.32"]
 
         // Positive control: the same collector over the final page reaches every one.
         let final = Self.reachableOutputs(Self.page(.final), Self.originals(.final))
@@ -865,6 +968,141 @@ final class HorseRacingEventPagePresentation10868Tests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testTheOriginalEntryCarriesOnlyTheSelectedRunnersAdmittedObservation() {
+        let label = "Explore Yes / No outcomes"
+        // Each phase's default: the selected runner's Yes and ITS selected observation in that frame.
+        let defaults: [(phase: HorseRacingPhase10868, name: String, position: Double, payload: String)] = [
+            (.before, "Al Riffa", -1.75, "open:662191:Yes@-1.75"),
+            (.during, "Presage Nocturne", 4.62, "open:662196:Yes@4.62"),
+            (.final, "Half Yours", 164.32, "open:662204:Yes@164.32"),
+        ]
+        for item in defaults {
+            let history = Self.history(item.phase)
+            let originals = Self.originals(item.phase, history: history)
+            let read = Self.openPayloads(Self.page(item.phase, history: history), originals)
+            XCTAssertEqual(read.entry, HorseRacingOriginalOpen10868(label: label, selection: Self.selection(item.name, "Yes"),
+                                                                    selectedPosition: item.position), "\(item.phase) entry")
+            XCTAssertEqual(read.entry?.selection, originals.selection, "\(item.phase) entry and Details hold one exact selection")
+            XCTAssertEqual(read.log, ["hold", item.payload], "\(item.phase) callback payload")
+            XCTAssertTrue(Self.isAdmitted(read.entry, in: history), "\(item.phase) position is the selected observation")
+
+            // Positive control: the old fixture — the final Half Yours position in
+            // every phase — reaches the same entry and callback, and is caught
+            // everywhere but the final, where it is the admitted observation.
+            var leaked = originals
+            leaked.open = HorseRacingOriginalOpen10868(label: label, selection: Self.selection(item.name, "Yes"), selectedPosition: 164.32)
+            let old = Self.openPayloads(Self.page(item.phase, history: history), leaked)
+            XCTAssertEqual(old.log, ["hold", "open:\(Self.runner(item.name).market):Yes@164.32"], "\(item.phase) control reaches the callback")
+            XCTAssertEqual(Self.isAdmitted(old.entry, in: history), item.phase == .final, "\(item.phase) control")
+            XCTAssertEqual(old.log == read.log, item.phase == .final, "\(item.phase) control payload")
+            let oldOutputs = Self.reachableOutputs(Self.page(item.phase, history: history), leaked)
+            XCTAssertTrue(oldOutputs.contains { Self.mentions($0, "164.32") }, "\(item.phase) control is visible to the phase guard")
+        }
+
+        // A held selected time moves the position with it — or to nil when the
+        // selection admits no observation in that frame.
+        let held: [(phase: HorseRacingPhase10868, name: String, frame: FieldHistoryInput10868, position: Double?)] = [
+            (.before, "Al Riffa", Self.history(.before, inspect: .trade(1)), -375.28),
+            (.during, "Presage Nocturne", Self.history(.during, inspect: .trade(2)), -44.75),
+            // A later trade the constructed live frame does not admit.
+            (.during, "Presage Nocturne", Self.history(.during, inspect: .trade(6)), nil),
+            (.final, "Half Yours", Self.history(.final, inspect: .trade(8)), 10.82),
+            (.final, "Half Yours", Self.history(.final, inspect: .trade(4)), -4.55),
+            (.final, "Half Yours", Self.history(.final, inspect: .constructedEqual), -30),
+            (.final, "Half Yours", Self.history(.final, inspect: .absent), nil),
+            (.final, "Half Yours", Self.history(.final, inspect: .none), nil),
+        ]
+        for item in held {
+            let read = Self.openPayloads(Self.page(item.phase, history: item.frame), Self.originals(item.phase, history: item.frame))
+            let market = Self.runner(item.name).market
+            XCTAssertEqual(read.entry, HorseRacingOriginalOpen10868(label: label, selection: Self.selection(item.name, "Yes"),
+                                                                    selectedPosition: item.position), "\(item.phase) held \(String(describing: item.position))")
+            XCTAssertEqual(read.log, ["hold", "open:\(market):Yes@\(item.position.map { String($0) } ?? "none")"])
+            XCTAssertTrue(Self.isAdmitted(read.entry, in: item.frame))
+            let old = HorseRacingOriginalOpen10868(label: label, selection: Self.selection(item.name, "Yes"), selectedPosition: 164.32)
+            XCTAssertFalse(Self.isAdmitted(old, in: item.frame), "\(item.phase) held control")
+        }
+
+        // Nothing selected: no entry, no payload, in every phase.
+        for phase in HorseRacingPhase10868.allCases {
+            let unselected = Self.withSelection(Self.history(phase), .none)
+            let read = Self.openPayloads(Self.page(phase, history: unselected), Self.originals(phase, history: unselected))
+            XCTAssertNil(read.entry, "\(phase)")
+            XCTAssertEqual(read.log, [], "\(phase)")
+        }
+
+        // An exact held Details selection stays exactly itself beside the anchor's own entry.
+        var log: [String] = []
+        var selected: [OriginalMarketDetails9483.Selection] = []
+        let heldNo = Self.selection("Half Yours", "No")
+        let heldOriginals = Self.originals(.final, held: heldNo)
+        let view = HorseRacingEventPagePresentation10868(
+            input: Self.page(.final), originals: heldOriginals,
+            onOriginalOpen: { log.append(Self.payload($0)) }, onOriginalSelect: { selected.append($0) })
+        XCTAssertEqual(heldOriginals.selection, heldNo)
+        XCTAssertEqual(view.originalDetailsContent()?.selection, heldNo)
+        XCTAssertEqual(view.originalCatalogueContent()?.selection, heldNo)
+        XCTAssertEqual(view.originalEntry()?.selection, Self.selection("Half Yours", "Yes"))
+        view.openOriginal()
+        view.originalCatalogueContent()?.onSelect?(Self.selection("Buckaroo", "Yes"))
+        if let side = view.originalSides().first(where: { $0.selection == heldNo }) { view.selectSide(side) }
+        XCTAssertEqual(log, ["open:662204:Yes@164.32"])
+        XCTAssertEqual(selected, [Self.selection("Buckaroo", "Yes"), heldNo])
+    }
+
+    func testEveryOriginalCarriesItsRetainedPredicateAndRulesVerbatim() {
+        // The receipt: the four verified paragraphs ARE the retained 742-byte
+        // text, split only at its blank lines, trailing spaces kept.
+        XCTAssertEqual(Self.retainedRules.utf8.count, 742)
+        XCTAssertEqual(Self.retainedRulesParagraphs.joined(separator: "\n\n"), Self.retainedRules)
+        XCTAssertEqual(Self.retainedRules.components(separatedBy: "\n\n"), Self.retainedRulesParagraphs)
+        XCTAssertTrue(Self.retainedRulesParagraphs[1].hasSuffix("resolve to \"Other\". "))
+        XCTAssertTrue(Self.retainedRulesParagraphs[2].hasSuffix("alphabetical order. "))
+        XCTAssertTrue(Self.retainedRules.contains("allowing time to account for any disputes or disqualifications that might occur post-race"))
+        XCTAssertTrue(Self.retainedRules.contains("The primary resolution source for this market will be official information from Melbourne Cup race organizers"))
+
+        // 25 retained predicates, one per market, each naming its own horse exactly.
+        XCTAssertEqual(Self.retainedPredicates.count, 25)
+        XCTAssertEqual(Set(Self.runners.map(\.market)), Set(Self.retainedPredicates.keys))
+        for runner in Self.runners where runner.name != "Other" {
+            XCTAssertEqual(Self.retainedPredicates[runner.market], "Will \(runner.name) win the 2025 Lexus Melbourne Cup?")
+        }
+        XCTAssertEqual(Self.retainedPredicates["662202"], "Will Smokin' Romans win the 2025 Lexus Melbourne Cup?")
+
+        // Every one of the 50 exact sides opens Details with its own market's
+        // predicate and the retained rules, unchanged, in every phase.
+        XCTAssertEqual(Self.sides.count, 50)
+        XCTAssertEqual(Set(Self.sides.map(\.selection.identity)).count, 50)
+        XCTAssertTrue(Self.sides.allSatisfy { $0.selection.scope == Self.originalsScope })
+        for phase in HorseRacingPhase10868.allCases {
+            let catalogue = Self.detailsCatalogue(phase)
+            XCTAssertEqual(catalogue.originals.count, 50)
+            XCTAssertEqual(Set(catalogue.originals.map(\.identity)).count, 50)
+            for side in Self.sides {
+                guard let content = OriginalMarketDetails9483.content(catalogue: catalogue, selection: side.selection) else {
+                    XCTFail("\(side.spokenLabel ?? side.label) resolves at \(phase)")
+                    continue
+                }
+                XCTAssertEqual(content.title, Self.retainedPredicates[side.selection.identity.market], "\(phase) \(side.selection.identity)")
+                XCTAssertEqual(content.rules, .verified(Self.retainedRulesParagraphs), "\(phase) \(side.selection.identity)")
+            }
+        }
+
+        // Other keeps its special predicate, its own Yes / No words and status;
+        // its special rules are the retained ones — cancellation resolves to
+        // "Other" and a tie goes to the first name alphabetically.
+        let other = Self.runner("Other")
+        XCTAssertEqual(Self.retainedPredicates[other.market], "Will another horse win the 2025 Lexus Melbourne Cup?")
+        let final = Self.detailsCatalogue(.final)
+        XCTAssertEqual(OriginalMarketDetails9483.content(catalogue: final, selection: Self.selection("Other", "Yes"))?.outcome,
+                       "Yes · another horse wins · special rules apply")
+        XCTAssertEqual(OriginalMarketDetails9483.content(catalogue: final, selection: Self.selection("Other", "No"))?.outcome,
+                       "No · another horse does not win · special rules apply")
+        XCTAssertEqual(Self.catalogue.first { $0.name == "Other" }?.browseStatus, Self.otherStatus)
+        XCTAssertTrue(Self.retainedRules.contains("If the race is permanently cancelled or doesn't take place by November 5, 2025, 11:59 PM ET, this market will resolve to \"Other\"."))
+        XCTAssertTrue(Self.retainedRules.contains("the market will resolve in favor of the horse whose name appears first in alphabetical order."))
     }
 
     func testTheScheduleIsAnOwnerGuideAndNeverAnActualRaceClock() {
