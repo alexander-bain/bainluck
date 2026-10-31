@@ -111,7 +111,10 @@ enum SoccerFirstTeamAdapter10868 {
                             host: R.Host) -> FirstScorerScorePath10868? {
         let names = SoccerMatchPageAdapter10868.names(event)
         let words = host.words
-        let observations: [FirstScorerScoreObservation10868] = (history?.scoreHistory ?? []).compactMap { point in
+        // Another event's score path is never this match's: only a response served
+        // under this event's own id is read.
+        let own = history?.eventId == event.id ? history : nil
+        let observations: [FirstScorerScoreObservation10868] = (own?.scoreHistory ?? []).compactMap { point in
             guard let at = point.timestamp.asDate else { return nil }
             guard point.homeScore >= 0 else { return nil }
             guard point.awayScore >= 0 else { return nil }

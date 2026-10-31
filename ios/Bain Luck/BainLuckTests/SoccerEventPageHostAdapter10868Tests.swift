@@ -56,6 +56,26 @@ final class SoccerEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertNil(page.input.first?.scorePath)
     }
 
+    /// CONSTRUCTED: the live history and markets with only `event_id` changed to
+    /// a different event's id. Neither the chart, the score path, the stories nor
+    /// All props read them; the match's own headline still composes.
+    func testAnotherEventsHistoryAndMarketsNeverReachThisMatch() throws {
+        let foreignHistory = try F.edited(F.liveHistory, setting: ["event_id": 15325055])
+        let foreignMarkets = try F.edited(F.liveMarkets, setting: ["event_id": 15325055])
+        let page = try built(history: foreignHistory, markets: foreignMarkets, admitted: F.liveAdmission)
+        let event = try F.detail(F.liveDetail)
+        XCTAssertEqual(page.input.history, SoccerHistoryAdapter10868.unavailable(event: event, phase: .live))
+        XCTAssertTrue(page.input.stream.cards.isEmpty)
+        XCTAssertNil(page.originals.catalogue)
+        XCTAssertNil(page.input.copy.allPropsLabel)
+        XCTAssertNil(page.input.first?.scorePath)
+        XCTAssertEqual(page.input.headline.home.primary, formatProbability(0.995))
+        // Own history beside foreign markets: the chart stays, the market parts go.
+        let mixed = try built(history: F.liveHistory, markets: foreignMarkets, admitted: F.liveAdmission)
+        XCTAssertFalse(mixed.input.history.series[0].runs.isEmpty)
+        XCTAssertNil(mixed.originals.catalogue)
+    }
+
     func testWithNoMarketsResponseThePageStillHasItsHeadlineAndHistory() throws {
         let page = try built(history: F.liveHistory, markets: nil, admitted: F.liveAdmission)
         XCTAssertTrue(page.input.stream.cards.isEmpty)

@@ -137,6 +137,18 @@ final class SoccerHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(input.notes.first, HockeyJourneyHistoryAdapter10868.sourceWords(.consensus))
     }
 
+    /// CONSTRUCTED: the live subset with only `event_id` changed to a different
+    /// event's id. None of it is drawn: the chart reads exactly as with no response.
+    func testAnotherEventsHistoryDrawsNothingAndReadsAsUnavailable() throws {
+        let event = try F.detail(F.liveDetail)
+        let foreign = try F.history(try F.edited(F.liveHistory, setting: ["event_id": 15325055]))
+        let input = S.history(foreign, event: event, phase: .live, host: F.historyHost(F.liveNow))
+        XCTAssertEqual(input, S.unavailable(event: event, phase: .live))
+        XCTAssertTrue(input.series.allSatisfy { $0.runs.isEmpty })
+        XCTAssertNil(input.expand)
+        XCTAssertNil(input.inspect)
+    }
+
     func testWithNoHistoryResponseOnlyTheChartSlotSaysSo() throws {
         let event = try F.detail(F.liveDetail)
         let input = S.unavailable(event: event, phase: .live)

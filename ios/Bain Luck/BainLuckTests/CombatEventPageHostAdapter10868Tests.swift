@@ -68,6 +68,30 @@ final class CombatEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(without.originals.catalogue, withHistory.originals.catalogue)
     }
 
+    /// CONSTRUCTED: the retained history and markets with only `event_id`
+    /// changed to a different event's id. Neither part reaches the page; the
+    /// bout's own headline and About still compose, and each own-id body still counts.
+    func testAnotherEventsHistoryAndMarketsNeverReachThisBout() throws {
+        let event = try Fixtures.detail(Fixtures.mmaDetail)
+        let own = build(event, history: try CombatHistoryAdapter10868Tests.response(),
+                        markets: try CombatOriginalsAdapter10868Tests.markets())
+        var markets = try CombatOriginalsAdapter10868Tests.object(CombatOriginalsAdapter10868Tests.mmaMarkets)
+        markets["event_id"] = 15318682
+        let foreignMarkets = try Fixtures.decoder().decode(GameMarketsResponse.self,
+                                                          from: JSONSerialization.data(withJSONObject: markets))
+        let foreign = build(event, history: try CombatHistoryAdapter10868Tests.response(eventId: 15318682),
+                            markets: foreignMarkets)
+        XCTAssertEqual(foreign.input.history, CombatHistoryAdapter10868.unavailable(event: event, phase: .during))
+        XCTAssertNil(foreign.originals.catalogue)
+        XCTAssertNil(foreign.input.copy.allPropsLabel)
+        XCTAssertEqual(foreign.input.headline, own.input.headline)
+        XCTAssertEqual(foreign.input.about, own.input.about)
+        // Only the foreign part is refused: own history with foreign markets keeps the chart.
+        let mixed = build(event, history: try CombatHistoryAdapter10868Tests.response(), markets: foreignMarkets)
+        XCTAssertEqual(mixed.input.history, own.input.history)
+        XCTAssertNil(mixed.originals.catalogue)
+    }
+
     func testTheRetainedBoxingBoutUsesTheSameScreenWithNothingInAllProps() throws {
         let event = try Fixtures.detail(Fixtures.boxingDetail)
         let markets = try CombatOriginalsAdapter10868Tests.markets(Fixtures.boxingMarkets)

@@ -161,6 +161,20 @@ final class CricketHistoryAdapter10868Tests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0.away == nil && !$0.awayIsComplement })
     }
 
+    /// CONSTRUCTED: the retained subset with only `event_id` changed to a
+    /// different event's id. Nothing is placed: the history reads exactly as with
+    /// no response.
+    func testAnotherEventsHistoryPlacesNothingAndReadsAsUnavailable() throws {
+        let event = try testMatch()
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.devilsKnightsHistory.utf8)) as? [String: Any])
+        object["event_id"] = 15338497
+        let foreign = try decoder().decode(EventHistoryResponse.self, from: JSONSerialization.data(withJSONObject: object))
+        let input = H.history(foreign, event: event, phase: .before, host: readerHost("2026-10-30T20:13:55Z"))
+        XCTAssertEqual(input, H.unavailable(event))
+        XCTAssertTrue(input.series.allSatisfy { $0.segments.isEmpty })
+        XCTAssertNil(input.expand)
+    }
+
     /// No history response: only the history says so; nothing is placed or offered.
     func testWithoutAHistoryResponseEverySeriesSaysHistoryUnavailable() throws {
         let event = try CricketEventPageAdapter10868Tests.detail(CricketEventPageAdapter10868Tests.pakistanSriLanka)

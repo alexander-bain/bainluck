@@ -168,6 +168,11 @@ struct CricketEventPageHost10868: View {
                       probabilityObservedAt: Date?, deliveryInterrupted: Bool = false, now: Date,
                       reading: Reading = Reading(),
                       calendar: Calendar = .current, locale: Locale = .current) -> Built {
+        // Another event's payload never reaches this page: history and markets
+        // count only when served under this event's own id. A foreign part reads
+        // exactly like a missing one; the event's own parts still compose.
+        let history = history.flatMap { $0.eventId == event.id ? $0 : nil }
+        let markets = markets.flatMap { $0.eventId == event.id ? $0 : nil }
         let host = CricketEventPageAdapter10868.Host(
             probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
             now: now, calendar: calendar, locale: locale)

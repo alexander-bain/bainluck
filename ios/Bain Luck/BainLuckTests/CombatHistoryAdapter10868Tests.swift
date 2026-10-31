@@ -202,6 +202,29 @@ final class CombatHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(chart.details?.isAvailable, false)
     }
 
+    // MARK: - Another event's history
+
+    /// CONSTRUCTED: the retained subset with only `event_id` changed to a
+    /// different event's id. None of it is drawn: the chart reads exactly as with
+    /// no response. The same body under its own id still draws.
+    func testAnotherEventsHistoryDrawsNothingAndReadsAsUnavailable() throws {
+        let event = try Fixtures.detail(Fixtures.mmaDetail)
+        let reader = host(Fixtures.readAt)
+        let foreign = H.history(try Self.response(eventId: 15318682), event: event, phase: .during, host: reader)
+        XCTAssertEqual(foreign, H.unavailable(event: event, phase: .during))
+        XCTAssertTrue(foreign.series.allSatisfy { $0.runs.isEmpty && $0.links.isEmpty })
+        XCTAssertNil(foreign.expand)
+        XCTAssertNil(foreign.inspect)
+        XCTAssertFalse(H.history(try Self.response(), event: event, phase: .during, host: reader).series[0].runs.isEmpty)
+    }
+
+    /// CONSTRUCTED: the retained subset with only `event_id` replaced.
+    static func response(eventId: Int) throws -> EventHistoryResponse {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.mmaHistory.utf8)) as? [String: Any])
+        object["event_id"] = eventId
+        return try Fixtures.decoder().decode(EventHistoryResponse.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
     // MARK: - Retained body (reduced verbatim subset)
 
     static let mmaHistory = ##"""

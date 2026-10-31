@@ -139,6 +139,10 @@ enum CombatHistoryAdapter10868 {
 
     static func history(_ response: EventHistoryResponse, event: EventDetail,
                         phase: CombatEventPagePhase10868, host: Host) -> FieldHistoryInput10868 {
+        // Another event's history never draws here: only a response served under
+        // this event's own id reaches the rows. A foreign one reads exactly like a
+        // missing one; the rest of the page composes from its own inputs.
+        guard response.eventId == event.id else { return unavailable(event: event, phase: phase) }
         let line = Rows.line(response)
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)
