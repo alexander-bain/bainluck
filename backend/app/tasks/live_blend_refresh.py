@@ -8658,10 +8658,16 @@ class LiveBlendRefresher:
         self.receipt_preview_stats["noted"] += 1
         if self._preview_graph_outcomes.get(oid) != event_id:
             self.receipt_preview_stats["kept_no_graph"] += 1
+            # Attribution: the event has a graph that lacks this leg (another
+            # market) vs no graph for the event at all.
+            self._note_receipt_class(
+                "leg_not_in_graph" if event_id in self._preview_graphs else "event_no_graph",
+                event_id)
             return  # kept for the overlay; no graph to compose it on yet
         speaking = self._receipt_speaking.get(event_id)
         if speaking is not None and oid not in speaking:
             self.receipt_preview_stats["not_speaking"] += 1
+            self._note_receipt_class("not_speaking", event_id)
             return  # kept for the overlay; not a leg of the market that speaks
         self._receipt_due[event_id] = None
         last = self._receipt_last.get(event_id)
