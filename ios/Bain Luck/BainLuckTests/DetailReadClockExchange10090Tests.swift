@@ -20,14 +20,17 @@ final class DetailReadClockExchange10090Tests: XCTestCase {
 
         private static let lock = NSLock()
         nonisolated(unsafe) private static var reply = Reply.fail(.notConnectedToInternet)
-        nonisolated(unsafe) private static var arrivals: [(path: String, at: Date)] = []
+        nonisolated(unsafe) private static var arrivals: [String] = []
+        /// The server's arrival goes on the LOG clock, as a row of its own, so
+        /// the bracket is ordered against it on one clock. A `Date()` here is a
+        /// different clock from an os_log row's and can read microseconds off.
+        private static let arrivalLog = Logger(subsystem: "com.bainluck", category: "liveTiming.testOrigin")
 
         static func reset(_ next: Reply) {
             lock.lock(); defer { lock.unlock() }
             reply = next; arrivals = []
         }
-        /// When each request reached the server, on the wall clock the log uses.
-        static var reached: [(path: String, at: Date)] {
+        static var reached: [String] {
             lock.lock(); defer { lock.unlock() }
             return arrivals
         }
@@ -35,8 +38,10 @@ final class DetailReadClockExchange10090Tests: XCTestCase {
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
+            let path = request.url?.path ?? ""
+            Self.arrivalLog.notice("origin.arrived \(path, privacy: .public)")
             Self.lock.lock()
-            Self.arrivals.append((request.url?.path ?? "", Date()))
+            Self.arrivals.append(path)
             let next = Self.reply
             Self.lock.unlock()
             switch next {
@@ -115,11 +120,17 @@ final class DetailReadClockExchange10090Tests: XCTestCase {
         XCTAssertEqual(lines.map(\.level), [.notice, .notice], "Default lines, which a long hold keeps")
 
         // The bracket encloses the server's handling: sent before the request
-        // arrived, received after. That is the whole claim a reader rests on.
+        // arrived, received after, all three rows on the log's one clock. That
+        // is the whole claim a reader rests on.
         guard lines.count == 2 else { return XCTFail("one sent and one received line, got \(lines.count)") }
-        let arrived = try XCTUnwrap(Origin.reached.first { $0.path == "/api/events/910090" }).at
-        XCTAssertLessThanOrEqual(lines[0].date, arrived)
-        XCTAssertGreaterThanOrEqual(lines[1].date, arrived)
+        let store = try OSLogStore(scope: .currentProcessIdentifier)
+        let arrived = try XCTUnwrap(try store.getEntries(at: store.position(date: since),
+                                                         matching: NSPredicate(format: "subsystem == %@ AND category == %@",
+                                                                               "com.bainluck", "liveTiming.testOrigin"))
+            .compactMap { $0 as? OSLogEntryLog }
+            .first { $0.composedMessage == "origin.arrived /api/events/910090" }).date
+        XCTAssertLessThanOrEqual(lines[0].date, arrived, "sent before the server saw the request")
+        XCTAssertGreaterThanOrEqual(lines[1].date, arrived, "received after the server saw it")
     }
 
     func testAnOrdinaryReadOfACachedBuildSaysItAskedNothingAndGotACachedWindow() async throws {
@@ -193,7 +204,7 @@ final class DetailReadClockExchange10090Tests: XCTestCase {
 
         _ = try? await api.fetchFreshEventHistory(id: 910_095, hours: 168)
 
-        XCTAssertEqual(Origin.reached.map(\.path), ["/api/events/910095/history"], "the read did leave")
+        XCTAssertEqual(Origin.reached, ["/api/events/910095/history"], "the read did leave")
         XCTAssertEqual(try exchange(910_095, since: since).count, 0)
     }
 }
