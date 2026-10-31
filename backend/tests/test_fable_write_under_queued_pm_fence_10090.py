@@ -19,12 +19,15 @@ queued event the refresher would lift is still fenced there).
 """
 
 import asyncio
+import contextlib
 import time
 
 import pytest
 
+from app.tasks import live_blend_refresh as refresh_module
 from app.tasks import polymarket_ws as consumer
 from app.tasks.polymarket_ws import _PMPriceWriteResult
+from tests.test_admitted_debt_slots_10090 import _settle
 from tests.test_pm_observation_beside_price_10090 import consumer_rig, until, warm
 from tests.test_fresh_observation_preview_10090 import preview_enabled  # noqa: F401
 
@@ -176,3 +179,162 @@ def test_the_owner_asks_the_refresher_for_the_fence_and_falls_back_to_holding():
     owner = consumer._PMStampOwner(Older())
     owner.events = {4, 5}
     assert owner.fenced_events() == {4} == owner.held_events()
+
+
+# ── Authority R1 / R2 (a1312769 review): the lease against the REAL call ─────
+#
+# The rigs above stub the refresher's fence and stand a bare gate in for the
+# running call. These run the real refresher's call — its own stamp (99) and
+# three admitted workers (7, 8, 9) held at their gates, the game's attempt
+# QUEUED behind them, as on the saturated lane — so the executed chunk loop
+# meets the real worker's lease skip.
+
+async def running_call_rig(monkeypatch, *, queued, chunk_rows):
+    monkeypatch.setattr(refresh_module, 'FRESH_STAMP_WORKERS', 3)
+    monkeypatch.setattr(refresh_module, 'WRITE_LEASE_WAIT_S', .01)
+    rig = consumer_rig(monkeypatch)
+    rig.ns['FLUSH_CHUNK_ROWS'] = chunk_rows
+    await warm(rig)
+    rig.r.held_quotes.overlay_event = lambda group: None
+    rig.r.preview_events = set()
+    owner = rig.boundary.stamp_owner(rig.r)
+    await owner.join()
+    rig.r.min_refresh_interval_s = 0
+    rig.r._last_refresh_at.clear()
+    trace = []
+    gates = {eid: asyncio.Event() for eid in (99, 7, 8, 9)}
+
+    async def stamp(event_ids, now, *, on_committed=None, **_kwargs):
+        for event_id in event_ids:
+            trace.append(('stamp', event_id))
+            rig.r._last_refresh_at[event_id] = now
+        for event_id in event_ids:
+            gate = gates.get(event_id)
+            if gate is not None:
+                await gate.wait()
+        if on_committed is not None:
+            on_committed(event_ids)
+
+    rig.r._refresh_batch = stamp
+    rig.r._live_event_ids = {7, 8, 9, *queued}
+    at = time.monotonic()
+    owner.task = asyncio.create_task(rig.r.refresh([99], flush_started=at))
+    await _settle()
+    assert rig.r.admitting()
+    for event_id in (7, 8, 9, *queued):
+        at += .01
+        assert rig.r.admit_fresh([event_id], flush_started=at) == {event_id}
+        await _settle()
+    window = rig.r._admission
+    assert list(window.live_queue) == list(queued) and not window.queue
+    assert trace == [('stamp', eid) for eid in (99, 7, 8, 9)]
+    owner.events = {99, 7, 8, 9, *queued}
+    rig.release.set()  # the rig's own 900 barrier; these tests gate their own
+    original = rig.ns['write_chunk']
+
+    async def write(chunk, **kwargs):
+        trace.append(('write', frozenset(chunk)))
+        await original(chunk, **kwargs)
+        return _PMPriceWriteResult(tuple(chunk))
+
+    rig.ns['write_chunk'] = write
+    return rig, owner, gates, trace
+
+
+async def drained(rig, owner, gates, task):
+    for gate in gates.values():
+        gate.set()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), 2)
+    finally:
+        if not task.done():
+            # Unstick the deadlocked flush so the test fails rather than hangs.
+            rig.r._writing.clear()
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+        await owner.join(cancel=not task.done())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('switch', ['all', '1'])
+@pytest.mark.parametrize('site', ['chunk_loop_join', 'joined_ready_path'])
+async def test_a_flush_that_joins_the_call_yields_its_lease_so_the_call_drains(
+    monkeypatch, switch, site,
+):
+    """R1: a flush that WAITS for the running call while it holds the lease of
+    an event whose attempt is queued in that call must hand the attempt back
+    (`lease_yield` -> `writing_yield`): the worker skips a leased event, so
+    the call could never drain and the lease never end. One case per PM join
+    site; each site's `lease_yield()` deleted makes its case time out."""
+    monkeypatch.setenv('STAMP_WRITE_UNDER_QUEUED', switch)
+    rig, owner, gates, trace = await running_call_rig(
+        monkeypatch, queued=(1,), chunk_rows=1,
+    )
+    if site == 'chunk_loop_join':
+        # Membership unknown (as after a joined fallback started the next
+        # call): the chunk loop's own join, before game 1's chunk is written.
+        owner.events = None
+        await rig.feed(GAME)
+    else:
+        # A call that no longer admits (its door closed by a lifecycle drain):
+        # game 90's chunk returns first and its offer is refused, so the flush
+        # joins the call while game 1's later chunk keeps its lease.
+        rig.r.stop_admitting()
+        rig.ns['price_buffer'][900] = .7
+        await rig.feed(GAME)
+    task = asyncio.create_task(rig.ns['flush_prices'](time.monotonic()))
+    await until(lambda: 1 in rig.r._writing or task.done())
+    await drained(rig, owner, gates, task)
+    writes = [entry[1] for entry in trace if entry[0] == 'write']
+    if site == 'joined_ready_path':
+        assert writes[0] == frozenset({900}), trace
+    # The lease stays for the chunks still to come: game 1 is written as
+    # planned, and no attempt of game 1 started under its own write.
+    assert {101, 102} <= frozenset().union(*writes), trace
+    last_game_write = max(
+        i for i, e in enumerate(trace) if e[0] == 'write' and e[1] & {101, 102}
+    )
+    assert ('stamp', 1) not in trace[:last_game_write], trace
+    assert not rig.r._writing
+
+
+@pytest.mark.asyncio
+async def test_an_n_horizon_fenced_event_leaves_the_lease_while_the_written_one_is_in_flight(
+    monkeypatch,
+):
+    """R2 (Authority P1's shape, on the executed chunk loop): with N=1 and
+    games 1 and 90 queued in that order, the flush plans both; 1 is lifted and
+    written, 90 is past the horizon and fenced. The fence is sticky, so 90
+    leaves the lease when it is fenced, and a freed worker starts 90 while
+    game 1's write is still in flight — and still never starts 1 under it."""
+    monkeypatch.setenv('STAMP_WRITE_UNDER_QUEUED', '1')
+    rig, owner, gates, trace = await running_call_rig(
+        monkeypatch, queued=(1, 90), chunk_rows=10,
+    )
+    fenced = rig.r.fenced_event_ids()
+    assert 1 not in fenced and 90 in fenced, fenced
+    in_flight, finish_write = asyncio.Event(), asyncio.Event()
+    recorded = rig.ns['write_chunk']
+
+    async def write(chunk, **kwargs):
+        if 101 in chunk:
+            in_flight.set()
+            await finish_write.wait()
+        return await recorded(chunk, **kwargs)
+
+    rig.ns['write_chunk'] = write
+    rig.ns['price_buffer'][900] = .7
+    await rig.feed(GAME)
+    task = asyncio.create_task(rig.ns['flush_prices'](time.monotonic()))
+    try:
+        await asyncio.wait_for(in_flight.wait(), .5)
+        assert rig.ns['stats']['stamp_fenced'] == 1  # 900: game 90, fenced
+        gates[7].set()  # a worker frees mid-write
+        await until(lambda: ('stamp', 90) in trace)
+        assert ('stamp', 1) not in trace, trace  # 1 is still under its write
+        assert rig.r._writing == {1}, rig.r._writing
+        assert 900 in rig.ns['price_buffer']
+    finally:
+        finish_write.set()
+        await drained(rig, owner, gates, task)

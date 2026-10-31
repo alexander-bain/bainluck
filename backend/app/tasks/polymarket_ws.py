@@ -5931,6 +5931,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             if newly_fenced:
                                 fenced_events.update(newly_fenced)
                                 stamp_owner.note_fenced(newly_fenced)
+                                # #10090 write-under-queued: the fence is
+                                # sticky, so nothing more of these is written
+                                # in this flush — they leave the lease now and
+                                # a freed worker may start their queued attempt
+                                # (an N horizon fences a planned queued event).
+                                fenced_leased = newly_fenced & leased
+                                if fenced_leased:
+                                    leased.difference_update(fenced_leased)
+                                    lease_end(
+                                        fenced_leased,
+                                        written=leased_written & fenced_leased,
+                                    )
                             if traced is not None:
                                 stage_trace.fence(traced, held, fenced_events)
                     if fenced_events:
