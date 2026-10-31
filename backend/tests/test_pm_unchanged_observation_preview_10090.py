@@ -95,7 +95,8 @@ async def test_successful_unchanged_ack_hands_frozen_observation_to_preview_only
     r.ns.update(asset_to_market={"asset": 1}, open_asset_to_market={}, open_asset_mirrors={},
                 books_by_asset={}, _note_raw=lambda asset: None, _tick_targets=lambda asset: [1],
                 books_with_complements=books_with_complements,
-                _poly_book_is_untradeable=_poly_book_is_untradeable)
+                _poly_book_is_untradeable=_poly_book_is_untradeable,
+                repeat_skip_s=0.0)  # #10090: today's path (`PM_WS_REPEAT_SKIP_MS=0`)
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["_mark_input", "handle_price"], r.ns)
     r.ns["price_buffer"].update(database)
     r.trace.clear()

@@ -2395,6 +2395,98 @@ async def test_the_poll_never_restores_a_price_the_socket_withdrew_after_its_rea
     assert stats["legs_newer_writer"] == 1 and "legs_held" not in stats
 
 
+# ── #10090 lane1 G1 on #11793: both poll lock sites take FOR NO KEY UPDATE, so a
+#    pending snapshot INSERT (its FK check holds FOR KEY SHARE on the leg) is
+#    neither skipped as `legs_held` nor waited on. FOR UPDATE would be both ─────
+
+
+async def _vp_pending_snapshot(engine, outcome_id):
+    """An open transaction with a snapshot INSERT pending on one leg; returns it
+    and its relation lock modes on futures_outcomes (the FK's KEY SHARE)."""
+    from sqlalchemy import func, insert, text
+
+    from app.models.models import FuturesOddsSnapshot
+
+    holder = await engine.connect()
+    await holder.begin()
+    await holder.execute(insert(FuturesOddsSnapshot).values(
+        outcome_id=outcome_id, bookmaker="kalshi", probability=0.4, captured_at=func.now(), reading_count=1,
+    ))
+    mode = (await holder.execute(text(
+        "SELECT string_agg(l.mode, ',') FROM pg_locks l WHERE l.pid = pg_backend_pid() "
+        "AND l.locktype = 'relation' AND l.relation = 'futures_outcomes'::regclass"
+    ))).scalar_one()
+    return holder, mode
+
+
+async def test_the_poll_writes_a_leg_with_a_pending_snapshot_insert_without_skipping_or_waiting(
+    poll_db, vp_deferred
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXK",
+                                legs=[("KXK-A", False, None), ("KXK-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    holder, mode = await _vp_pending_snapshot(engine, ids["KXK-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+            priced=[_vp_item("KXK-A", 0.55, 0.54, 0.56), _vp_item("KXK-B", 0.60, 0.59, 0.61)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    assert "RowShareLock" in (mode or "")  # the case is real: the FK check holds KEY SHARE
+    assert poll_s < 1.0
+    assert stats["rows_updated"] == 2
+    assert "legs_held" not in stats and "legs_newer_writer" not in stats
+    assert float((await _vp_row(db, ids["KXK-B"]))[0]) == pytest.approx(0.60)
+
+
+async def test_the_rerank_reaches_a_leg_with_a_pending_snapshot_insert_without_skipping_or_waiting(
+    poll_db, vp_deferred
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXQ",
+                                legs=[("KXQ-A", False, None), ("KXQ-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    # B has a snapshot INSERT pending and is not in this read: only the rerank reaches it.
+    holder, mode = await _vp_pending_snapshot(engine, ids["KXQ-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [ids["KXQ-A"]], fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+            priced=[_vp_item("KXQ-A", 0.55, 0.54, 0.56)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    rank = dict((await db.execute(
+        text("SELECT id, rank FROM futures_outcomes WHERE market_id = :m"), {"m": mid}
+    )).fetchall())
+    assert "RowShareLock" in (mode or "")
+    assert poll_s < 1.0
+    assert rank[ids["KXQ-A"]] == 1 and rank[ids["KXQ-B"]] == 2
+
+
 async def test_clob_items_write_every_leg_convention_then_skip_unchanged_markets(poll_db, vp_deferred):
     """The CLOB path's items through the first build's writer: a field's bare
     legs, a ``_yes``/``_no`` pair and a bare + ``_side1`` pair each take the
@@ -2438,3 +2530,242 @@ async def test_clob_items_write_every_leg_convention_then_skip_unchanged_markets
     assert again.get("rows_updated", 0) == 0 and again["markets_unchanged"] == 3
     for oid in expect:
         assert (await _vp_row(db, oid))[1] == (0 if oid == field["0xb"] else 1)
+
+
+# ══ #10090: the 3-minute Polymarket tail rotation (`venue_poll_pm_tail`) ══════
+#
+# Folded here for the same reason as the 30-second poll's cases above: this
+# file's step already runs under the all-skipped detector, and ci.yml has no
+# room for another step. What only a real database can say:
+#
+# * WHO is priced — the candidate read renders the game socket's window and the
+#   30-second poll's shown pool, and the metadata chunk applies the poll writer's
+#   liveness and the persisted-token predicate; the pairing is the socket's.
+# * WHAT a pass writes — through the 30-second poll's writer: a moved leg moves
+#   and gains a point, an unchanged one writes nothing, a refused book leaves the
+#   row, a held row is skipped without a wait, a row written after the book read
+#   is left alone, the history bound is 900 s / 0.03, and shadow writes nothing.
+
+
+class _TailService:
+    """The CLOB's ``POST /prices``, answering ``tops``."""
+
+    def __init__(self, tops):
+        self.tops = tops
+        self.reads: list[list[str]] = []
+
+    async def get_book_tops(self, tokens):
+        self.reads.append(list(tokens))
+        return {t: self.tops[t] for t in tokens if t in self.tops}
+
+
+@pytest.fixture
+def tail_wired(monkeypatch, vp_deferred):
+    """The tail module with its cursor/back-off in memory and no served signal."""
+    from app.tasks import venue_poll_pm_tail as tail
+
+    monkeypatch.setattr(tail, "_POPULATION", {})
+    monkeypatch.setattr(tail, "shown_market_ids", lambda: [])
+    monkeypatch.setattr(tail, "read_cursor", lambda _name: None)
+    monkeypatch.setattr(tail, "write_cursor", lambda _name, _key: None)
+    monkeypatch.setattr(tail, "clear_backoff", lambda _name: None)
+    return tail
+
+
+def _tok(cond):
+    return [f"{cond}-t0", f"{cond}-t1"]
+
+
+def text_(sql):
+    from sqlalchemy import text
+
+    return text(sql)
+
+
+async def _tail_population(db, tail, *, exclude_shown=False):
+    import time
+
+    tail._POPULATION.clear()
+    return await tail.load_tail_population(db, exclude_shown=exclude_shown, now_mono=time.monotonic())
+
+
+async def test_tail_population_is_the_tokened_markets_the_game_socket_window_does_not_hold(
+    poll_db, tail_wired
+):
+    import json
+
+    db, tail = poll_db, tail_wired
+    t4 = {"tier": 4}
+    await _vp_market(db, source="polymarket", ext="T-U1", legs=[("0xu1_yes", False, None), ("0xu1_no", False, None)],
+                     metadata={"clob_token_ids": _tok("0xu1")}, **t4)
+    await _vp_market(db, source="polymarket", ext="T-U2", legs=[("0xu2", False, None)], **t4)  # no token key
+    await _vp_market(db, source="polymarket", ext="T-U3", status="resolved",
+                     legs=[("0xu3", False, None)], metadata={"clob_token_ids": ["x"]}, **t4)
+    await _vp_market(db, source="polymarket", ext="T-FIELD",
+                     legs=[("0xf1", False, None), ("0xf2", False, None), ("0xf3", True, "api_settlement")],
+                     metadata={"clob_yes_token_by_outcome": {}}, **t4)
+    field_id = (await db.execute(text_("SELECT id FROM futures_markets WHERE external_id = 'T-FIELD'"))).scalar()
+    oids = dict((await db.execute(text_(
+        "SELECT external_id, id FROM futures_outcomes WHERE market_id = :m"), {"m": field_id})).fetchall())
+    await db.execute(text_(
+        "UPDATE futures_markets SET market_metadata = CAST(:md AS jsonb) WHERE id = :m"),
+        {"m": field_id, "md": json.dumps({"clob_yes_token_by_outcome": {
+            str(oids["0xf1"]): "f1-yes", str(oids["0xf2"]): "f2-yes", str(oids["0xf3"]): "f3-yes"}})})
+    await _vp_market(db, source="polymarket", ext="T-SHOWN", tier=1,
+                     legs=[("0xs", False, None)], metadata={"clob_yes_token_by_outcome": {}})
+    shown_id = (await db.execute(text_("SELECT id FROM futures_markets WHERE external_id = 'T-SHOWN'"))).scalar()
+    shown_leg = (await db.execute(text_("SELECT id FROM futures_outcomes WHERE market_id = :m"), {"m": shown_id})).scalar()
+    await db.execute(text_("UPDATE futures_markets SET market_metadata = CAST(:md AS jsonb) WHERE id = :m"),
+                     {"m": shown_id, "md": json.dumps({"clob_yes_token_by_outcome": {str(shown_leg): "s-yes"}})})
+    for tag, kw in (("WIN", {"starts_in": timedelta(hours=2)}),
+                    ("BAND", {"starts_in": timedelta(hours=5, minutes=55)}),
+                    ("FAR", {"starts_in": timedelta(hours=30)}),
+                    ("LIVE", {"status": "live", "starts_in": timedelta(hours=-1)})):
+        eid = await _vp_event(db, **kw)
+        cond = f"0xg{tag.lower()}"
+        await _vp_market(db, source="polymarket", ext=f"T-G-{tag}", event_id=eid, tier=5,
+                         legs=[(f"{cond}_yes", False, None), (f"{cond}_no", False, None)],
+                         metadata={"clob_token_ids": _tok(cond)})
+    await db.commit()
+
+    units, token_of, counts = await _tail_population(db, tail)
+    by_market = {u.key: sorted(ext for legs in u.legs.values() for _o, ext in legs) for u in units}
+    names = dict((await db.execute(text_("SELECT id::text, external_id FROM futures_markets"))).fetchall())
+    assert {names[k]: legs for k, legs in by_market.items()} == {
+        "T-U1": ["0xu1_no", "0xu1_yes"],
+        "T-FIELD": ["0xf1", "0xf2"],          # the graded leg is never priced
+        "T-SHOWN": ["0xs"],
+        "T-G-BAND": ["0xgband_no", "0xgband_yes"],  # the socket may not have it yet
+        "T-G-FAR": ["0xgfar_no", "0xgfar_yes"],
+    }
+    assert token_of["0xu1"] == "0xu1-t0" and token_of["0xf1"] == "f1-yes" and token_of["0xgfar"] == "0xgfar-t0"
+    assert counts["legs_graded"] == 1
+
+    # With the 30-second poll running Polymarket, its shown pool is its own:
+    # the high-value unlinked market and the linked games inside its horizon.
+    units, _t, _c = await _tail_population(db, tail, exclude_shown=True)
+    assert {names[u.key] for u in units} == {"T-U1", "T-FIELD"}
+
+
+async def _tail_market(db, ext, legs, *, conds=None):
+    """An unlinked tier-4 tokened market: ``legs`` external ids, tokens by condition."""
+    import json
+
+    mid, ids = await _vp_market(db, source="polymarket", ext=ext, tier=4,
+                                legs=[(e, False, None) for e in legs])
+    yes = {str(ids[e]): f"{e.split('_')[0]}-t0" for e in legs if not e.endswith(("_no", "_side1"))}
+    await db.execute(text_("UPDATE futures_markets SET market_metadata = CAST(:md AS jsonb) WHERE id = :m"),
+                     {"m": mid, "md": json.dumps({"clob_yes_token_by_outcome": yes} if conds is None
+                                                 else {"clob_token_ids": conds})})
+    return mid, ids
+
+
+async def _tail_pass(db, tail, tops, *, mode="write", offset=0.0):
+    import time
+
+    units, token_of, _counts = await _tail_population(db, tail)
+    stats = {"errors": [], "unknown_outcomes": 0}
+    service = _TailService(tops)
+    t0 = time.monotonic()
+    await tail.rotate_tail(db, service, units, token_of, mode=mode,
+                           deadline=time.monotonic() + 30, offset=offset, stats=stats)
+    stats["_elapsed"] = time.monotonic() - t0
+    return stats, service
+
+
+async def test_tail_pass_writes_moves_skips_unchanged_refused_and_held_rows_without_waiting(
+    poll_db, tail_wired
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    db, tail = poll_db, tail_wired
+    _m1, pair = await _tail_market(db, "T-PAIR", ["0xp_yes", "0xp_no"], conds=["0xp-t0", "0xp-t1"])
+    _m2, same = await _tail_market(db, "T-SAME", ["0xq"])
+    _m3, refused = await _tail_market(db, "T-REFUSED", ["0xr"])
+    _m4, held = await _tail_market(db, "T-HELD", ["0xh"])
+    _m5, mixed = await _tail_market(db, "T-MIXED", ["0xm1", "0xm2"])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    holder = await _vp_hold(engine, held["0xh"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    try:
+        stats, service = await _tail_pass(db, tail, {
+            "0xp-t0": (0.60, 0.62),   # moved: Yes 0.61, its No leg 0.39
+            "0xq-t0": (0.39, 0.41),   # equals the row
+            "0xr-t0": (None, 0.03),   # D1: no bid → counted, row left
+            "0xh-t0": (0.70, 0.72),   # moved, but another transaction holds the row
+            "0xm1-t0": (0.39, 0.41),  # a field: this leg equals its row...
+            "0xm2-t0": (0.20, 0.22),  # ...and its sibling moved
+        })
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+
+    assert len(service.reads) == 1 and sorted(service.reads[0]) == [
+        "0xh-t0", "0xm1-t0", "0xm2-t0", "0xp-t0", "0xq-t0", "0xr-t0"]
+    assert float((await _vp_row(db, pair["0xp_yes"]))[0]) == pytest.approx(0.61)
+    assert float((await _vp_row(db, pair["0xp_no"]))[0]) == pytest.approx(0.39)
+    assert [(await _vp_row(db, pair[e]))[1] for e in ("0xp_yes", "0xp_no")] == [1, 1]
+    for oid in (same["0xq"], refused["0xr"], held["0xh"], mixed["0xm1"]):
+        prob, points = await _vp_row(db, oid)
+        assert float(prob) == pytest.approx(0.40) and points == 0, oid
+    assert [float(x) for x in await _vp_row(db, mixed["0xm2"])] == [pytest.approx(0.21), 1]
+    assert stats["rows_updated"] == 3 and stats["history_points"] == 3
+    assert stats["markets_unchanged"] == 1 and stats["legs_unchanged"] == 1
+    assert stats["tail_book_refused"] == 1 and stats["tail_book_refused_no_book"] == 1
+    assert stats["legs_held"] == 1
+    assert stats["_elapsed"] < 1.5  # never waited on the held row's 2 s lock_timeout
+    assert stats["stopped"] == "done" and stats["errors"] == []
+
+
+async def test_tail_pass_leaves_a_row_written_after_its_book_read(poll_db, tail_wired):
+    db, tail = poll_db, tail_wired
+    _mid, ids = await _tail_market(db, "T-NEWER", ["0xn"])
+    await db.commit()
+    # The book read was sent an hour before the row's last write (a socket save).
+    stats, _service = await _tail_pass(db, tail, {"0xn-t0": (0.70, 0.72)}, offset=3600.0)
+    prob, points = await _vp_row(db, ids["0xn"])
+    assert float(prob) == pytest.approx(0.40) and points == 0
+    assert stats["legs_newer_writer"] == 1
+
+
+async def test_tail_history_bound_is_900_s_or_a_three_point_move(poll_db, tail_wired):
+    from app.models.models import FuturesOddsSnapshot
+
+    db, tail = poll_db, tail_wired
+    _mid, ids = await _tail_market(db, "T-HIST", ["0xk"])
+    oid = ids["0xk"]
+    db.add(FuturesOddsSnapshot(outcome_id=oid, bookmaker="polymarket", probability=0.40,
+                               captured_at=datetime.now(timezone.utc) - timedelta(minutes=5)))
+    await db.commit()
+
+    # 2 points, 5 minutes after the last point: the row moves, the point waits.
+    # (The 30-second poll's 120 s bound would write it now.)
+    stats, _s = await _tail_pass(db, tail, {"0xk-t0": (0.41, 0.43)}, offset=-5.0)
+    prob, points = await _vp_row(db, oid)
+    assert float(prob) == pytest.approx(0.42) and points == 1
+    assert stats["history_deferred"] == 1
+    _vp_save_points()
+
+    # 5 points from the last point: a big move writes at once.
+    stats, _s = await _tail_pass(db, tail, {"0xk-t0": (0.44, 0.46)}, offset=-5.0)
+    prob, points = await _vp_row(db, oid)
+    assert float(prob) == pytest.approx(0.45) and points == 2
+    assert stats["history_points"] == 1
+
+
+async def test_tail_shadow_pass_writes_nothing_and_grades_against_the_fresh_row(poll_db, tail_wired):
+    db, tail = poll_db, tail_wired
+    _mid, ids = await _tail_market(db, "T-SHADOW", ["0xw_yes", "0xw_no"], conds=["0xw-t0", "0xw-t1"])
+    await db.commit()
+    stats, service = await _tail_pass(db, tail, {"0xw-t0": (0.60, 0.62)}, mode="shadow")
+    for ext in ("0xw_yes", "0xw_no"):
+        prob, points = await _vp_row(db, ids[ext])
+        assert float(prob) == pytest.approx(0.40) and points == 0
+    assert service.reads == [["0xw-t0"]]
+    # Both rows were written just now (the seed): Yes 0.61 vs 0.40 disagrees,
+    # No 0.39 vs 0.40 agrees inside 0.01.
+    assert stats["tail_disagree"] == 1 and stats["tail_agree"] == 1
+    assert stats["tail_would_write"] == 2 and "rows_updated" not in stats

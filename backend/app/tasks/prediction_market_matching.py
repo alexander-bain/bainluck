@@ -7753,6 +7753,11 @@ async def _phase2_persist_group_reading(
         reading_regresses_stored_observation,
         stamp_source_reading,
     )
+    from app.utils.nonvenue_live_push import (
+        publish_committed_nonvenue_frames,
+        queue_committed_rest_frame,
+        rest_stamp_returning,
+    )
 
     refs = [ref for ref in (group or [])]
     if not refs:
@@ -7873,14 +7878,22 @@ async def _phase2_persist_group_reading(
         eligibility=reading.eligibility,
         observed_basis=basis,
     )
-    await session.execute(
+    # #10090 item 4: as the two-minute poll's stamp, published once committed.
+    written = await session.execute(
         update(Event)
         .where(Event.id == anchor.event_id)
         .values(win_probability_sources=_pm_wps)
+        .returning(*rest_stamp_returning())
+        .execution_options(synchronize_session="evaluate")
+    )
+    queue_committed_rest_frame(
+        session, written, writer="matcher", event_id=anchor.event_id,
+        source=anchor.source, value=round(home_prob, 4),
     )
 
     # Commit per group to avoid deadlocks with the live polling task.
     await session.commit()
+    await publish_committed_nonvenue_frames(session)
     return reading.market.id
 
 
@@ -8402,7 +8415,10 @@ async def _match_prediction_markets(limit: int = 500):
     now = datetime.now(timezone.utc)
     polymarket_backfill_queue = []
 
-    async with get_task_session() as session:
+    from app.utils.nonvenue_live_push import rest_publication_scope
+
+    # #10090 item 4: one Redis client for the phase-2 stamps' publications.
+    async with get_task_session() as session, rest_publication_scope(session):
         # The settled sweep (#2798) runs FIRST, before anything that attempts a
         # link. It is the record of the population Pass 1 has just stopped
         # visiting, and a record of an exclusion that only gets written when
@@ -11502,7 +11518,15 @@ async def _poll_live_prediction_market_prices():
         budget_stops[stage] = budget_stops.get(stage, 0) + max(remaining, 0)
         return True
 
-    async with get_task_session() as session:
+    from app.utils.nonvenue_live_push import (
+        publish_committed_nonvenue_frames,
+        queue_committed_rest_frame,
+        rest_publication_scope,
+        rest_stamp_returning,
+    )
+
+    # #10090 item 4: one Redis client for the pass's per-event publications.
+    async with get_task_session() as session, rest_publication_scope(session):
         pop = await _load_live_poll_population(session, now)
 
         if not pop.rows:
@@ -11732,6 +11756,8 @@ async def _poll_live_prediction_market_prices():
             stats["commits"] += 1
             committed_counts.update({k: stats[k] for k in _durable_counters})
             polymarket_cleared_since_commit.clear()
+            # #10090 item 4: a stamp's frame goes out now that it is durable.
+            await publish_committed_nonvenue_frames(session)
 
         async def _recover(label: str, exc: Exception) -> None:
             """Record one item's failure and hand the pass back a usable session.
@@ -12627,10 +12653,21 @@ async def _poll_live_prediction_market_prices():
                     ),
                     observed_basis=_basis_of_reading2,
                 )
-                await session.execute(
+                # #10090 item 4: this commit published nothing, so the move
+                # reached an open page only when another writer next published
+                # the whole bag (0-50 s; never on a Polymarket-only game). Its
+                # frame rides the nonvenue commit-confirmed queue, dated by the
+                # write's clock, and goes out at the boundary below.
+                _pm_written2 = await session.execute(
                     _sql_upd2(Event)
                     .where(Event.id == event.id)
                     .values(win_probability_sources=_pm_wps2)
+                    .returning(*rest_stamp_returning())
+                    .execution_options(synchronize_session="evaluate")
+                )
+                queue_committed_rest_frame(
+                    session, _pm_written2, writer="live_poll", event_id=event.id,
+                    source=market.source, value=round(home_prob, 4),
                 )
 
                 # #5682: the hero's number for THIS event is durable here. It

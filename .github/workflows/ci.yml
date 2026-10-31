@@ -5069,8 +5069,8 @@ jobs:
             echo "::error::#10090 PM release-wake gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]21 passed[,[:space:]]" /tmp/release-wake10090.txt || {
-            echo "::error::#10090 PM release-wake gate did not run all twenty-one cases"
+          grep -qE "[^0-9]30 passed[,[:space:]]" /tmp/release-wake10090.txt || {
+            echo "::error::#10090 PM release-wake gate did not run all thirty cases"
             exit 1
           }
 

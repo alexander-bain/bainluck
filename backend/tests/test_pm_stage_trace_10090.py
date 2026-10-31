@@ -112,7 +112,10 @@ def trace_rig(monkeypatch, *, slow_write=0.0, slow_stamp=0.0, block=False,
         tail_receipts=receipts,
         logger=blend.logger,
         _PMPriceWriteResult=_PMPriceWriteResult,
-        chunk_price_update_stmt=lambda chunk, **kw: ("prices", chunk),
+        chunk_price_update_execution=lambda chunk, **kw: (("prices", chunk), {}),
+        pm_rerank_market_fields_execution=lambda ids: (
+            p.ns["rerank_market_fields_stmt"](ids), {}
+        ),
         input_marks={},
     )
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["write_chunk"], p.ns)

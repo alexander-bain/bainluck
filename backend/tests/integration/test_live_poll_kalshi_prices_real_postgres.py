@@ -959,3 +959,260 @@ class TestThePolymarketWindowIsItsOwn:
         polled = await _polled(pg_session, now, monkeypatch, 3)
 
         assert polled == {ids[(2, "kalshi")], ids[(2, "polymarket")]}
+
+
+# ── #10090 item 4: the poll's committed stamp reaches open pages ─────────────
+#
+# THE SHIP: when the two-minute poll moves a live game's blended number, open
+# pages get it in about a second, instead of waiting up to ~50 s for some other
+# source to publish the whole bag (and forever on a Polymarket-only game).
+#
+# The poll's stamp COMMITTED and published nothing (discover's 2040Z return,
+# Górnik 15334769 rev 1854: never on the stream). Each arm runs the REAL poll
+# against this server and a recording Redis that reads, at PUBLISH time, the
+# revision the row has COMMITTED. Master publishes 0 frames, so the first arm is
+# red there; the others are the rollback, #8910-refusal and not-live controls,
+# which publish 0 on both.
+
+
+class _CommittedFrameRecorder:
+    """Redis double: records each frame and the row's committed revision then."""
+
+    def __init__(self, engine):
+        self.engine = engine
+        self.frames: list[tuple[str, dict]] = []
+        self.committed_revs: list = []
+
+    async def _record(self, channel, data):
+        frame = json.loads(data)
+        async with self.engine.connect() as conn:
+            self.committed_revs.append((await conn.execute(
+                text("SELECT win_probability_sources_rev FROM events WHERE id = :id"),
+                {"id": frame["event_id"]},
+            )).scalar())
+        self.frames.append((channel, frame))
+
+    async def publish(self, channel, data):
+        await self._record(channel, data)
+
+    async def execute_command(self, *command):
+        # A frame with a revision is retained and published by one EVAL
+        # (`live_push.RETAIN_AND_PUBLISH`); channel and payload are args 4, 5.
+        assert command[0] == "EVAL" and command[2] == 2, command[:3]
+        await self._record(command[4], command[5])
+
+    async def aclose(self):
+        pass
+
+
+@pytest.fixture
+def published(pg_session, monkeypatch):
+    recorder = _CommittedFrameRecorder(pg_session.bind)
+    monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", lambda: recorder)
+    return recorder
+
+
+async def _run_poll_10090(session, payload, *, fail_stamp_commit=False):
+    """The REAL poll, as `_run_poll`, optionally failing the stamp's COMMIT.
+
+    The failure is raised in place of the COMMIT that follows the stamp UPDATE,
+    so the poll's own `_recover` rolls the stamp back, as a deadlock at COMMIT
+    would. Errors are returned for the arm to judge, not asserted empty.
+    """
+    from app.services.kalshi_api import KalshiAPIService
+
+    service = KalshiAPIService(api_key="test-key")
+    service.get_markets = AsyncMock(return_value=(payload, None))
+    service.close = AsyncMock()
+
+    real_execute, real_commit = session.execute, session.commit
+    armed = {"stamped": False}
+
+    async def _execute(stmt, *a, **kw):
+        result = await real_execute(stmt, *a, **kw)
+        if (getattr(stmt, "is_update", False) and stmt.table.name == "events"
+                and "win_probability_sources=" in str(stmt)):
+            armed["stamped"] = True
+        return result
+
+    async def _commit():
+        if fail_stamp_commit and armed["stamped"]:
+            armed["stamped"] = False
+            raise RuntimeError("deadlock detected (simulated at the stamp's COMMIT)")
+        await real_commit()
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield session
+
+    session.execute, session.commit = _execute, _commit
+    try:
+        with ExitStack() as es:
+            es.enter_context(
+                patch("app.services.kalshi_api.KalshiAPIService", return_value=service)
+            )
+            es.enter_context(
+                patch("app.tasks.prediction_market_matching.get_task_session", _session_cm)
+            )
+            from app.tasks.prediction_market_matching import (
+                _poll_live_prediction_market_prices,
+            )
+
+            stats = await _poll_live_prediction_market_prices()
+    finally:
+        session.execute, session.commit = real_execute, real_commit
+    await session.commit()
+    return stats
+
+
+async def _stored_row(session, event_id):
+    return (await session.execute(
+        text("SELECT win_probability_sources, win_probability_sources_rev, status "
+             "  FROM events WHERE id = :id"),
+        {"id": event_id},
+    )).one()
+
+
+class TestThePollsCommittedStampPublishesItsFrame:
+    async def test_a_live_stamp_publishes_one_fresh_frame_after_its_commit(
+        self, pg_session, published,
+    ):
+        from app.routes.event_stream import _frame_is_fresh
+        from app.utils.aggregation import compute_aggregate_probability
+
+        event, _market = await _seed(pg_session)
+        stats = await _run_poll_10090(pg_session, list(CAPTURED.values()))
+
+        assert stats["errors"] == [], stats["errors"]
+        sources, rev, status = await _stored_row(pg_session, event.id)
+        assert sources["kalshi"]["value"] == EXPECTED[LAR], sources
+        assert len(published.frames) == 1, (
+            f"the poll's committed stamp published {len(published.frames)} frames: "
+            "an open page waits for some other writer to publish the whole bag"
+        )
+        channel, frame = published.frames[0]
+        assert channel == f"live:event:{event.id}"
+        # Ownership: the frame names the write it reports, and that write had
+        # COMMITTED when the frame went out.
+        assert frame["rev"] == {str(event.id): rev}
+        assert published.committed_revs == [rev]
+        # Contract: the refresher's shape (source, home-oriented quote, the
+        # row's blend, the committed row's source snapshot).
+        assert frame["source"] == "kalshi"
+        assert frame["source_value"] == EXPECTED[LAR]
+        assert frame["status"] == status == "live"
+        shim = type("Row", (), dict(
+            win_probability_sources=sources, status=status,
+            espn_win_prob_home=None, opening_home_probability=None,
+        ))
+        assert frame["p"] == float(compute_aggregate_probability(shim, status))
+        assert frame["source_snapshot"]["rev"] == frame["rev"]
+        assert frame["source_snapshot"]["win_probability_sources"]["kalshi"]["value"] == (
+            EXPECTED[LAR]
+        )
+        # Expiry: dated by the write's clock, which a reader's stream accepts.
+        assert _frame_is_fresh(frame, datetime.now(timezone.utc))
+        assert (datetime.fromisoformat(frame["updated_at"])
+                >= datetime.fromisoformat(sources["kalshi"]["updated_at"]))
+
+    async def test_an_old_observation_is_still_published_with_the_write_clock(
+        self, pg_session, published,
+    ):
+        """Trap 1: the entry is dated by its OBSERVATION, which can be minutes
+        old; a frame carrying that stamp is dropped by `_frame_is_fresh`. Here
+        the venue returns nothing, so the poll re-derives from rows priced 5
+        minutes ago and its entry says so; the frame must still be fresh."""
+        from app.routes.event_stream import _frame_is_fresh
+
+        event, market = await _seed(pg_session)
+        seen = datetime.now(timezone.utc) - timedelta(minutes=5)
+        for ticker, prob in EXPECTED.items():
+            await pg_session.execute(
+                text("UPDATE futures_outcomes SET current_probability = :p, "
+                     "       last_updated = :t WHERE external_id = :x"),
+                {"p": prob, "t": seen, "x": ticker},
+            )
+        await pg_session.commit()
+
+        stats = await _run_poll_10090(pg_session, [])
+
+        assert stats["errors"] == [], stats["errors"]
+        sources, rev, _status = await _stored_row(pg_session, event.id)
+        entry_at = datetime.fromisoformat(sources["kalshi"]["updated_at"])
+        assert entry_at <= seen + timedelta(seconds=1), (
+            f"control: the entry is not dated by the old observation: {sources}"
+        )
+        assert not _frame_is_fresh({"updated_at": sources["kalshi"]["updated_at"]},
+                                   datetime.now(timezone.utc)), (
+            "control: a frame dated by the entry would not have been dropped"
+        )
+        assert len(published.frames) == 1, published.frames
+        frame = published.frames[0][1]
+        assert frame["rev"] == {str(event.id): rev}
+        assert _frame_is_fresh(frame, datetime.now(timezone.utc)), frame["updated_at"]
+
+    async def test_a_rolled_back_stamp_publishes_nothing(self, pg_session, published):
+        from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+
+        event, _market = await _seed(pg_session)
+        event_id = event.id  # the poll's recovery expunges every instance
+        stats = await _run_poll_10090(
+            pg_session, list(CAPTURED.values()), fail_stamp_commit=True,
+        )
+
+        assert any("deadlock" in e for e in stats["errors"]), stats["errors"]
+        sources, _rev, _status = await _stored_row(pg_session, event_id)
+        assert "kalshi" not in (sources or {}), (
+            f"control: the stamp was not rolled back: {sources}"
+        )
+        # Nothing from the rolled-back stamp may ride a later COMMIT either.
+        await pg_session.commit()
+        await publish_committed_nonvenue_frames(pg_session)
+        assert published.frames == []
+
+    async def test_a_reading_refused_under_8910_publishes_nothing(
+        self, pg_session, published,
+    ):
+        from app.utils.aggregation import stamp_source_reading
+
+        event, _market = await _seed(pg_session)
+        ids = (await pg_session.execute(text(
+            "SELECT o.id FROM futures_outcomes o JOIN futures_markets m "
+            "  ON m.id = o.market_id WHERE m.event_id = :e"), {"e": event.id},
+        )).scalars().all()
+        later = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+        stored = stamp_source_reading(
+            None, "kalshi", 0.5, observed_basis={str(i): later for i in ids},
+        )
+        await pg_session.execute(
+            text("UPDATE events SET win_probability_sources = CAST(:s AS jsonb) "
+                 " WHERE id = :id"),
+            {"s": json.dumps(stored), "id": event.id},
+        )
+        await pg_session.commit()
+
+        stats = await _run_poll_10090(pg_session, list(CAPTURED.values()))
+
+        assert stats["stale_readings_refused"] == 1, stats
+        sources, _rev, _status = await _stored_row(pg_session, event.id)
+        assert sources["kalshi"]["value"] == 0.5, sources
+        assert published.frames == []
+
+    async def test_a_stamp_on_a_game_not_yet_live_publishes_nothing(
+        self, pg_session, published,
+    ):
+        event, _market = await _seed(pg_session, event_status="scheduled")
+        await pg_session.execute(
+            text("UPDATE events SET commence_time = :t WHERE id = :id"),
+            {"t": datetime.now(timezone.utc) + timedelta(hours=1), "id": event.id},
+        )
+        await pg_session.commit()
+
+        stats = await _run_poll_10090(pg_session, list(CAPTURED.values()))
+
+        assert stats["errors"] == [], stats["errors"]
+        sources, _rev, _status = await _stored_row(pg_session, event.id)
+        assert sources["kalshi"]["value"] == EXPECTED[LAR], (
+            f"control: the pre-game stamp did not land: {sources}"
+        )
+        assert published.frames == []

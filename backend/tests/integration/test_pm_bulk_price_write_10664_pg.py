@@ -169,13 +169,15 @@ async def rig():
             self.info = real.info
 
         async def execute(self, stmt, params=None):
-            if params is not None:
+            # #10090: the price and rank statements arrive as a reused shape
+            # plus their own binds; every other parameterised statement passes.
+            if params is not None and not {"chunk_ids", "market_ids"} & set(params):
                 return await self.real.execute(stmt, params)
             if "chunk_ids" in stmt.compile().params:
                 r.price_pid = await self.real.scalar(text("SELECT pg_backend_pid()"))
                 r.price_started.set()
                 try:
-                    return await self.real.execute(stmt)
+                    return await self.real.execute(stmt, params)
                 except Exception as exc:
                     r.price_errors.append(exc)
                     # Late receipt of the database's actual answer.
@@ -186,7 +188,7 @@ async def rig():
                 r.buffer[2] = 0.8
                 # An actual SQL error after the price statement has returned.
                 return await self.real.execute(text("SELECT 1 / 0"))
-            return await self.real.execute(stmt)
+            return await self.real.execute(stmt, params)
 
     @asynccontextmanager
     async def factory():
@@ -204,7 +206,8 @@ async def rig():
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "write_chunk"
     )
     ns = dict(
-        chunk_price_update_stmt=module.chunk_price_update_stmt,
+        chunk_price_update_execution=module.chunk_price_update_execution,
+        pm_rerank_market_fields_execution=module.pm_rerank_market_fields_execution,
         queue_market_change=market_quote_push.queue_market_change,
         rerank_market_fields_stmt=rerank_market_fields_stmt,
         get_task_session=factory,

@@ -598,7 +598,10 @@ def _pm_writer(*, fail_commit=False):
     r.ns.update(
         get_task_session=session, blend_refresher=Refresher(),
         _PMPriceWriteResult=_PMPriceWriteResult,
-        chunk_price_update_stmt=lambda chunk, **kw: ("prices", chunk),
+        chunk_price_update_execution=lambda chunk, **kw: (("prices", chunk), {}),
+        pm_rerank_market_fields_execution=lambda ids: (
+            r.ns["rerank_market_fields_stmt"](ids), {}
+        ),
     )
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["write_chunk"], r.ns)
     return r
@@ -804,6 +807,7 @@ def _lift_pm(*names, **ns):
     nodes = [n for n in ast.walk(tree)
              if isinstance(n, ast.AsyncFunctionDef) and n.name in names]
     assert sorted(n.name for n in nodes) == sorted(names)
+    ns["repeat_skip_s"] = 0.0  # #10090: KALSHI_WS_REPEAT_SKIP_MS=0, today's path
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), ns)
     return ns
 

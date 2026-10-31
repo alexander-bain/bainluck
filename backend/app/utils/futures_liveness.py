@@ -129,11 +129,25 @@ from app.utils.hook_staleness import (  # noqa: E402
 #: ``prices_withheld: 0`` while all 25 legs carried a fresh zero volume.
 MARKET_SHAPE_METADATA_KEY = "shape"
 
+#: #10090. Where a Polymarket parent/field market records the YES token for each
+#: of its outcomes, ``{"<outcome_id>": "<yes_token>"}``. Defined here, not in
+#: ``polymarket_token_topup`` (which imports it), so this module keeps its
+#: zero-model-imports property. ``topup_outcome_clob_tokens`` writes it with a
+#: nested ``||`` merge; the hourly Polymarket poll does not know it, so its
+#: REPLACE erased it on every parent it touched. Production 2026-10-30: six
+#: live games carrying the key at 21:20Z had none after the 21:54Z poll, and
+#: their headline legs fell off the live connection until a top-up came round.
+#: The poll never writes this key, so carrying it back cannot override a fresh
+#: value; Gamma's market-level ``clob_token_ids`` is a different key and still
+#: arrives fresh from the poll.
+OUTCOME_TOKEN_METADATA_KEY = "clob_yes_token_by_outcome"
+
 CARRIED_METADATA_KEYS = (
     VENUE_SETTLED_KEY,
     HOOK_POLICY_METADATA_KEY,  # #5531
     HOOK_PROB_METADATA_KEY,  # #5531
     MARKET_SHAPE_METADATA_KEY,  # #8265
+    OUTCOME_TOKEN_METADATA_KEY,  # #10090
 )
 
 
