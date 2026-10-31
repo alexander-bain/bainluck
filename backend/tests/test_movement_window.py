@@ -2186,3 +2186,26 @@ def test_every_retirement_bounds_its_own_idle_time(run_task):
         params == {"ms": f"{MOVEMENT_CHUNK_IDLE_TIMEOUT_MS}ms"}
         for _, params in session.idle_budgets
     ), session.idle_budgets
+
+
+def test_the_prepare_reads_bound_is_transaction_local_so_no_later_transaction_inherits_it(
+    run_task, monkeypatch,
+):
+    """Both `set_config` calls must pass `is_local = true`. A session-level bound
+    outlives the prepare read's transaction: the local restore ends with that
+    transaction and puts the cut value back, so every later chunk UPDATE, the
+    tail and the pooled connection would run under it."""
+    seen = []
+    real_execute = _RecordingSession.execute
+
+    async def _execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        if "set_config('statement_timeout'" in sql:
+            seen.append(sql)
+        return await real_execute(self, stmt, params)
+
+    monkeypatch.setattr(_RecordingSession, "execute", _execute)
+    run_task()
+
+    assert len(seen) == 12, seen  # bound + restore, six prepare reads
+    assert all(sql.endswith(", true)") for sql in seen), seen
