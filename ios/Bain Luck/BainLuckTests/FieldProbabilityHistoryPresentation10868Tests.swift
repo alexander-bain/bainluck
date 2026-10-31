@@ -911,6 +911,210 @@ final class FieldProbabilityHistoryPresentation10868Tests: XCTestCase {
         XCTAssertEqual(FieldHistoryGeometry10868.keyColumns(width: 700, minimum: 0, spacing: 10, count: 4, singleColumn: false), 1)
     }
 
+    // MARK: Calendar label density (CONSTRUCTED measured sizes)
+
+    /// CONSTRUCTED: six owner calendar ticks a fifth of the domain apart.
+    private static let sixTicks: [Double] = [0, 0.2, 0.4, 0.6, 0.8, 1]
+    /// CONSTRUCTED measured tick sizes: standard type ("Wed 6 PM"), a larger
+    /// text size, and an accessibility text size.
+    private static let standardTick = CGSize(width: 52, height: 16)
+    private static let largerTick = CGSize(width: 80, height: 24)
+    private static let accessibilityTick = CGSize(width: 118, height: 40)
+
+    /// Only the calendar row: no percentage gutter, guides or direct labels,
+    /// so the plot takes the whole width. Break marks follow the ticks.
+    private static func calendarRow(width: CGFloat, tick: CGSize, fractions: [Double] = sixTicks,
+                                    marks: [Double] = [], thinned: Bool = true) -> FieldHistoryPlotArrangement10868 {
+        FieldHistoryGeometry10868.plotArrangement(
+            width: width, plotHeight: 240, inset: 8.5, markClearance: 5.6,
+            yFractions: [], ySizes: [],
+            xFractions: fractions + marks,
+            xSizes: Array(repeating: tick, count: fractions.count)
+                + Array(repeating: CGSize(width: 14, height: 16), count: marks.count),
+            calendarLabelCount: thinned ? fractions.count : 0,
+            guideFractions: [], guideSizes: [],
+            labelTargets: [], labelNaturalSizes: [], labelHeights: { _ in [] }
+        )
+    }
+
+    /// The x labels given a size, by index; every other one draws nothing.
+    private func shownXLabels(_ a: FieldHistoryPlotArrangement10868) -> [Int] {
+        a.xLabels.indices.filter { a.xLabels[$0].width > 0 && a.xLabels[$0].height > 0 }
+    }
+
+    /// No two shown x labels overlap, and two on one row keep the 6 pt gap.
+    private func assertClearRows(_ a: FieldHistoryPlotArrangement10868,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        let frames = shownXLabels(a).map { a.xLabels[$0] }
+        assertNoOverlap(frames, file: file, line: line)
+        for (i, f) in frames.enumerated() {
+            for g in frames[(i + 1)...] where f.minY == g.minY {
+                XCTAssertGreaterThan(max(f.minX, g.minX) - min(f.maxX, g.maxX), 6, "\(f) crowds \(g)",
+                                     file: file, line: line)
+            }
+        }
+    }
+
+    func testAtStandardTypeOnAPhoneOnlyTicksThatFitClearlyShowOnOneRow() {
+        XCTAssertEqual(Self.calendarRow(width: 343, tick: Self.standardTick, thinned: false).xRows, 2) // the staircase
+        let a = Self.calendarRow(width: 343, tick: Self.standardTick)
+        XCTAssertEqual(shownXLabels(a), [0, 2, 3, 5])        // 0.2 crowds the first tick, 0.8 the last
+        XCTAssertEqual(a.xRows, 1)
+        XCTAssertEqual(a.height, 240 + 6 + 16)
+        assertClearRows(a)
+    }
+
+    func testAtAnAccessibilitySizeTwoClearEndpointsReplaceTheStaircase() {
+        XCTAssertEqual(Self.calendarRow(width: 343, tick: Self.accessibilityTick, thinned: false).xRows, 3)
+        let a = Self.calendarRow(width: 343, tick: Self.accessibilityTick)
+        XCTAssertEqual(shownXLabels(a), [0, 5])
+        XCTAssertEqual(a.xRows, 1)
+        XCTAssertEqual(a.xLabels[0], CGRect(x: 0, y: 246, width: 118, height: 40))
+        XCTAssertEqual(a.xLabels[5], CGRect(x: 225, y: 246, width: 118, height: 40))
+        XCTAssertEqual(a.height, 240 + 6 + 40)
+        assertClearRows(a)
+    }
+
+    func testEndpointsThatCannotShareARowTakeTwoRowsAtFullSize() {
+        XCTAssertEqual(Self.calendarRow(width: 200, tick: Self.accessibilityTick, thinned: false).xRows, 6)
+        let a = Self.calendarRow(width: 200, tick: Self.accessibilityTick)
+        XCTAssertEqual(shownXLabels(a), [0, 5])
+        XCTAssertEqual(a.xRows, 2)
+        XCTAssertEqual(a.xLabels[0], CGRect(x: 0, y: 246, width: 118, height: 40))
+        XCTAssertEqual(a.xLabels[5], CGRect(x: 82, y: 246 + 40 + 4, width: 118, height: 40)) // never shrunk
+        XCTAssertEqual(a.height, 240 + 6 + 40 + 4 + 40)
+        assertClearRows(a)
+    }
+
+    func testChangingWidthOrTextSizeChangesTheShownTicksDeterministically() {
+        // Text size at one phone width.
+        XCTAssertEqual(shownXLabels(Self.calendarRow(width: 343, tick: Self.standardTick)), [0, 2, 3, 5])
+        XCTAssertEqual(shownXLabels(Self.calendarRow(width: 343, tick: Self.largerTick)), [0, 2, 5])
+        XCTAssertEqual(shownXLabels(Self.calendarRow(width: 343, tick: Self.accessibilityTick)), [0, 5])
+        // Width at standard type.
+        XCTAssertEqual(shownXLabels(Self.calendarRow(width: 200, tick: Self.standardTick)), [0, 5])
+        XCTAssertEqual(shownXLabels(Self.calendarRow(width: 700, tick: Self.standardTick)), [0, 1, 2, 3, 4, 5])
+        // The same measurements always give the same row.
+        XCTAssertEqual(Self.calendarRow(width: 343, tick: Self.largerTick),
+                       Self.calendarRow(width: 343, tick: Self.largerTick))
+    }
+
+    func testEndpointsAlwaysShowAndNoShownTicksCollideAtAnyWidthOrSize() {
+        for width in stride(from: CGFloat(120), through: 800, by: 13) {
+            for tickWidth in stride(from: CGFloat(20), through: 240, by: 17) {
+                for count in 1...8 {
+                    let fractions = (0..<count).map { count == 1 ? 0.5 : Double($0) / Double(count - 1) }
+                    let a = Self.calendarRow(width: width, tick: CGSize(width: tickWidth, height: 16),
+                                             fractions: fractions)
+                    let shown = shownXLabels(a)
+                    XCTAssertEqual(a.xLabels.count, count)               // every owner tick keeps its slot
+                    XCTAssertEqual(shown.first, 0)
+                    XCTAssertEqual(shown.last, count - 1)
+                    XCTAssertLessThanOrEqual(a.xRows, 2)
+                    if a.xRows == 2 { XCTAssertEqual(shown, [0, count - 1]) } // only the ends ever need two rows
+                    for index in shown { XCTAssertEqual(a.xLabels[index].width, min(tickWidth, width)) }
+                    assertClearRows(a)
+                }
+            }
+        }
+    }
+
+    func testBreakMarksAlwaysShowAndATickThatWouldTouchOneIsLeftOut() {
+        let a = Self.calendarRow(width: 343, tick: Self.standardTick, marks: [0.3])
+        XCTAssertEqual(shownXLabels(a), [0, 3, 5, 6])        // 0.4 would touch the mark (index 6)
+        XCTAssertEqual(a.xRows, 1)
+        assertClearRows(a)
+        XCTAssertEqual(Self.calendarRow(width: 343, tick: Self.standardTick, marks: [0.3], thinned: false).xRows, 3)
+        let crowded = Self.calendarRow(width: 343, tick: Self.accessibilityTick, marks: [0])
+        XCTAssertEqual(shownXLabels(crowded), [0, 5, 6])     // a mark on the first tick takes a lane, never dropped
+        XCTAssertEqual(crowded.xRows, 2)
+        assertClearRows(crowded)
+    }
+
+    func testShownLabelsKeepTheEndsAndOnlyClearLabelsBetween() {
+        // Explicit spans on a 100 pt row: [0,20] [25,45] [50,70] [80,100].
+        let centers: [CGFloat] = [10, 35, 60, 90], lengths: [CGFloat] = [20, 20, 20, 20]
+        XCTAssertEqual(FieldHistoryGeometry10868.shownLabels(centers: centers, lengths: lengths, extent: 100, gap: 4),
+                       [true, true, true, true])
+        XCTAssertEqual(FieldHistoryGeometry10868.shownLabels(centers: centers, lengths: lengths, extent: 100, gap: 6),
+                       [true, false, true, true])
+        XCTAssertEqual(FieldHistoryGeometry10868.shownLabels(centers: centers, lengths: lengths, extent: 100, gap: 4,
+                                                             beside: [46...54]),
+                       [true, false, false, true])
+        // The ends are kept even when they overlap; one or none is itself.
+        XCTAssertEqual(FieldHistoryGeometry10868.shownLabels(centers: [10, 50, 90], lengths: [80, 10, 80],
+                                                             extent: 100, gap: 6), [true, false, true])
+        XCTAssertEqual(FieldHistoryGeometry10868.shownLabels(centers: [50], lengths: [20], extent: 100, gap: 6), [true])
+        XCTAssertEqual(FieldHistoryGeometry10868.shownLabels(centers: [], lengths: [], extent: 100, gap: 6), [])
+        XCTAssertEqual(FieldHistoryGeometry10868.shownLabels(centers: [.nan, 50, .infinity], lengths: [10, 10, .nan],
+                                                             extent: 100, gap: 6), [true, true, true])
+        // Each span is the one labelSlots places, so shown labels share its row.
+        let cases: [(CGFloat, CGFloat)] = [(50, 20), (-5, 20), (99, 20), (50, 140), (.nan, 10), (40, -3)]
+        for (center, length) in cases {
+            let span = FieldHistoryGeometry10868.labelSpan(center: center, length: length, extent: 100)
+            let slot = FieldHistoryGeometry10868.labelSlots(centers: [center], lengths: [length], extent: 100, gap: 6)
+            XCTAssertEqual(span.lowerBound, slot[0].start)
+        }
+    }
+
+    func testThinningKeepsEveryTicksOwnPlaceAndSizeAndChangesNothingAboveTheRow() {
+        func arranged(thinned: Bool) -> FieldHistoryPlotArrangement10868 {
+            FieldHistoryGeometry10868.plotArrangement(
+                width: 343, plotHeight: 240, inset: 8.5, markClearance: 5.6,
+                yFractions: [0, 0.5, 1], ySizes: Self.phoneY,
+                xFractions: Self.sixTicks, xSizes: Array(repeating: Self.accessibilityTick, count: 6),
+                calendarLabelCount: thinned ? 6 : 0,
+                guideFractions: [0.0004, 0.305, 0.61, 0.9156], guideSizes: Self.guideSizes,
+                labelTargets: Self.beforeTargets, labelNaturalSizes: Self.standardNames,
+                labelHeights: { column in Self.standardNames.map { ($0.width / column).rounded(.up) * 16 } }
+            )
+        }
+        let thinned = arranged(thinned: true), unthinned = arranged(thinned: false)
+        XCTAssertEqual(thinned.plot, unthinned.plot)
+        XCTAssertEqual(thinned.yLabels, unthinned.yLabels)
+        XCTAssertEqual(thinned.guideLabels, unthinned.guideLabels)
+        XCTAssertEqual(thinned.guideRows, unthinned.guideRows)
+        XCTAssertEqual(thinned.directLabels, unthinned.directLabels)
+        XCTAssertEqual(thinned.leaders, unthinned.leaders)
+        XCTAssertEqual(thinned.xLabels.count, 6)
+        XCTAssertEqual(shownXLabels(thinned), [0, 5])
+        XCTAssertEqual(thinned.xRows, 1)
+        XCTAssertEqual(unthinned.xRows, 5)
+        for index in shownXLabels(thinned) {
+            XCTAssertEqual(thinned.xLabels[index].minX, unthinned.xLabels[index].minX) // its own place
+            XCTAssertEqual(thinned.xLabels[index].size, unthinned.xLabels[index].size) // its measured size
+        }
+    }
+
+    func testThePlacedTicksPointsAndSelectionAreTheOwnersWhateverTheRowShows() {
+        // CONSTRUCTED owner calendar ticks across the week domain.
+        let span = Self.terminal - Self.rawStart
+        let ticks = Self.sixTicks.enumerated().map { index, fraction in
+            FieldHistoryTick10868(value: fraction == 1 ? Self.terminal : Self.rawStart + fraction * span,
+                                  lines: ["T\(index)"])
+        }
+        let brennan = Self.weekSeries(Self.brennan)
+        let inspection = FieldHistoryInspection10868(
+            x: Self.record(Self.brennan, 128).x, caption: "Recorded Oct 8, 11:46 PM EDT",
+            selections: [Self.brennan: .point(id: Self.pid(Self.brennan, 128), spoken: "2.4%")],
+            choices: [], choicePresentation: .slider(label: "Recorded history moment"), note: nil)
+        let selection = FieldHistoryOriginalSelection10868.series(id: Self.brennan, missingWords: "Not shown")
+        let ticked = Self.input(series: [brennan], selection: selection, xTicks: ticks, inspection: inspection)
+        let plain = Self.input(series: [brennan], selection: selection, inspection: inspection)
+        // Thinning is chosen only from measured sizes in the layout: the
+        // placed list keeps every owner tick verbatim, whatever the row shows.
+        XCTAssertNotEqual(shownXLabels(Self.calendarRow(width: 200, tick: Self.accessibilityTick)),
+                          shownXLabels(Self.calendarRow(width: 700, tick: Self.standardTick)))
+        XCTAssertEqual(FieldHistoryGeometry10868.placedXTicks(ticked), ticks)
+        XCTAssertEqual(FieldHistoryGeometry10868.placedGuides(ticked), FieldHistoryGeometry10868.placedGuides(plain))
+        XCTAssertEqual(FieldHistoryGeometry10868.marks(brennan, in: ticked), FieldHistoryGeometry10868.marks(brennan, in: plain))
+        XCTAssertEqual(ids(FieldHistoryGeometry10868.lines(brennan, in: ticked)),
+                       ids(FieldHistoryGeometry10868.lines(brennan, in: plain)))
+        XCTAssertEqual(FieldHistoryGeometry10868.inspectedPoint(brennan, in: ticked)?.id, Self.pid(Self.brennan, 128))
+        XCTAssertEqual(FieldHistoryGeometry10868.selectedSummary(ticked), FieldHistoryGeometry10868.selectedSummary(plain))
+        XCTAssertEqual(FieldHistoryGeometry10868.spokenValue(ticked), FieldHistoryGeometry10868.spokenValue(plain))
+    }
+
     // MARK: Controls
 
     private static func controlled(more: String = "more", choose: String = "choose:brennan") -> FieldHistoryInput10868 {

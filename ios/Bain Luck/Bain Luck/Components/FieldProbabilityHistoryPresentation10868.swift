@@ -1111,6 +1111,42 @@ nonisolated enum FieldHistoryGeometry10868 {
         return slots
     }
 
+    /// One label's span along its axis, exactly as ``labelSlots`` places it:
+    /// centred on `center` and slid inward to stay inside `extent`.
+    static func labelSpan(center: CGFloat, length rawLength: CGFloat, extent rawExtent: CGFloat) -> ClosedRange<CGFloat> {
+        let extent = max(0, rawExtent.isFinite ? rawExtent : 0)
+        let length = min(max(0, rawLength.isFinite ? rawLength : 0), extent)
+        let middle = center.isFinite ? center : 0
+        let start = min(max(0, middle - length / 2), extent - length)
+        return start...(start + length)
+    }
+
+    /// Which of one row's owner labels to show, from their measured lengths
+    /// alone: the first and the last always; between them, in order, a label
+    /// shows only where its span keeps `gap` clear of every label already
+    /// showing and of every `fixed` span. Every label shown between the ends
+    /// is therefore clear of every other and takes the first lane; only the
+    /// ends themselves (or a fixed label) can need another. Nothing is
+    /// shrunk, moved or re-worded.
+    static func shownLabels(centers: [CGFloat], lengths: [CGFloat], extent: CGFloat, gap: CGFloat,
+                            beside fixed: [ClosedRange<CGFloat>] = []) -> [Bool] {
+        let count = min(centers.count, lengths.count)
+        guard count > 2 else { return Array(repeating: true, count: count) }
+        let gap = max(0, gap)
+        let spans = (0..<count).map { labelSpan(center: centers[$0], length: lengths[$0], extent: extent) }
+        var shown = Array(repeating: false, count: count)
+        shown[0] = true
+        shown[count - 1] = true
+        var taken = fixed + [spans[0], spans[count - 1]]
+        for index in 1..<(count - 1) {
+            let clearance = (spans[index].lowerBound - gap)...(spans[index].upperBound + gap)
+            guard !taken.contains(where: { $0.overlaps(clearance) }) else { continue }
+            shown[index] = true
+            taken.append(spans[index])
+        }
+        return shown
+    }
+
     /// Direct endpoint labels stacked in the order of their points: each as
     /// close to centred on its point as the others allow, none overlapping,
     /// all inside `extent`. Nil when they cannot all fit at full size — the
@@ -1145,15 +1181,19 @@ nonisolated enum FieldHistoryGeometry10868 {
     /// The whole measured plot at one width. Percentage labels take a gutter
     /// as wide as they measure; guide labels sit in a band above the plot and
     /// calendar/break labels in rows below (an extra lane only if two would
-    /// touch). Direct labels take a column right of the plot only when every
-    /// labelled name fits there at full size beside its point, the column
-    /// stays within its share of the width and the plot keeps its minimum
-    /// width; otherwise the plot takes the whole width and the key carries
-    /// the names. The plot always keeps the owner's height.
+    /// touch). The leading `calendarLabelCount` x labels are owner calendar
+    /// ticks: only the first, the last and those that fit clearly between
+    /// them show (``shownLabels``), so they never stack into a staircase; a
+    /// tick left out keeps its slot with an empty frame. Break marks always
+    /// show; zero thins nothing. Direct labels take a column right of the
+    /// plot only when every labelled name fits there at full size beside its
+    /// point, the column stays within its share of the width and the plot
+    /// keeps its minimum width; otherwise the plot takes the whole width and
+    /// the key carries the names. The plot always keeps the owner's height.
     static func plotArrangement(width rawWidth: CGFloat, plotHeight owner: CGFloat,
                                 inset: CGFloat, markClearance: CGFloat,
                                 yFractions: [Double], ySizes: [CGSize],
-                                xFractions: [Double], xSizes: [CGSize],
+                                xFractions: [Double], xSizes: [CGSize], calendarLabelCount: Int = 0,
                                 guideFractions: [Double], guideSizes: [CGSize],
                                 labelTargets: [FieldHistoryLabelTarget10868], labelNaturalSizes: [CGSize],
                                 labelHeights: (CGFloat) -> [CGFloat],
@@ -1236,15 +1276,26 @@ nonisolated enum FieldHistoryGeometry10868 {
                    width: min(size.width, plotWidth), height: size.height)
         }
 
-        // Calendar and break-mark rows below the plot.
+        // Calendar and break-mark rows below the plot: the calendar ticks
+        // that fit clearly, then every break mark.
         let xCount = min(xFractions.count, xSizes.count)
         let xSizes = Array(xSizes.prefix(xCount))
         let xCenters = xFractions.prefix(xCount).map { plot.minX + inset + CGFloat($0) * xSpan }
-        let xSlots = labelSlots(centers: Array(xCenters), lengths: xSizes.map(\.width), extent: width, gap: m.labelGap)
+        let calendarCount = min(max(0, calendarLabelCount), xCount)
+        let markSpans = (calendarCount..<xCount).map {
+            labelSpan(center: xCenters[$0], length: xSizes[$0].width, extent: width)
+        }
+        let calendarShown = shownLabels(centers: Array(xCenters.prefix(calendarCount)),
+                                        lengths: xSizes.prefix(calendarCount).map(\.width),
+                                        extent: width, gap: m.labelGap, beside: markSpans)
+        let shown = calendarShown + Array(repeating: true, count: xCount - calendarCount)
+        let visible = (0..<xCount).filter { shown[$0] }
+        let xSlots = labelSlots(centers: visible.map { xCenters[$0] }, lengths: visible.map { xSizes[$0].width },
+                                extent: width, gap: m.labelGap)
         let xRows = (xSlots.map(\.lane).max() ?? -1) + 1
         var xRowHeights = Array(repeating: CGFloat(0), count: xRows)
-        for (slot, size) in zip(xSlots, xSizes) {
-            xRowHeights[slot.lane] = max(xRowHeights[slot.lane], size.height)
+        for (slot, index) in zip(xSlots, visible) {
+            xRowHeights[slot.lane] = max(xRowHeights[slot.lane], xSizes[index].height)
         }
         var xRowTops: [CGFloat] = []
         var top = plot.maxY + m.axisGap
@@ -1252,8 +1303,10 @@ nonisolated enum FieldHistoryGeometry10868 {
             xRowTops.append(top)
             top += xRowHeights[row] + m.laneSpacing
         }
-        let xFrames = zip(xSlots, xSizes).map { slot, size in
-            CGRect(x: slot.start, y: xRowTops[slot.lane], width: min(size.width, width), height: size.height)
+        var xFrames = xCenters.map { CGRect(x: $0, y: plot.maxY + m.axisGap, width: 0, height: 0) }
+        for (slot, index) in zip(xSlots, visible) {
+            let size = xSizes[index]
+            xFrames[index] = CGRect(x: slot.start, y: xRowTops[slot.lane], width: min(size.width, width), height: size.height)
         }
 
         // Direct label frames and their leaders.
@@ -1307,8 +1360,8 @@ nonisolated enum FieldHistoryGeometry10868 {
 /// one per calendar tick and break mark; one per guide; one direct label per
 /// labelled original; then two leaders per labelled original (falling, then
 /// rising). Frames come from ``FieldHistoryGeometry10868/plotArrangement``.
-/// A direct label or leader that is not used is given no size, so nothing of
-/// it draws.
+/// A direct label or leader that is not used, or a calendar label left out to
+/// keep its row clear, is given no size, so nothing of it draws.
 struct FieldHistoryPlotLayout10868: Layout {
     let yFractions: [Double]
     let xFractions: [Double]
@@ -1317,6 +1370,9 @@ struct FieldHistoryPlotLayout10868: Layout {
     let plotHeight: CGFloat
     let inset: CGFloat
     let markClearance: CGFloat
+    /// How many of the leading x labels are calendar ticks, thinned to fit;
+    /// the rest are break marks.
+    var calendarLabelCount: Int = 0
 
     private struct Counts {
         let y: Int, x: Int, guides: Int, labels: Int
@@ -1352,6 +1408,7 @@ struct FieldHistoryPlotLayout10868: Layout {
             ySizes: (0..<c.y).map { size(c.yBase + $0) },
             xFractions: Array(xFractions.prefix(c.x)),
             xSizes: (0..<c.x).map { size(c.xBase + $0) },
+            calendarLabelCount: calendarLabelCount,
             guideFractions: Array(guideFractions.prefix(c.guides)),
             guideSizes: (0..<c.guides).map { size(c.guideBase + $0) },
             labelTargets: Array(labelTargets.prefix(c.labels)),
@@ -1588,14 +1645,20 @@ struct FieldProbabilityHistoryPresentation10868: View {
             labelTargets: labelled.map { FieldHistoryGeometry10868.labelTarget($0.1, in: input) },
             plotHeight: FieldHistoryGeometry10868.plotHeight(input.plotHeight),
             inset: inset,
-            markClearance: markRadius * 1.6
+            markClearance: markRadius * 1.6,
+            calendarLabelCount: FieldHistoryGeometry10868.placedXTicks(input).count
         ) {
             canvas
             ForEach(Array(yTicks.enumerated()), id: \.offset) { _, tick in
                 FieldHistoryTickLabel10868(lines: tick.lines, alignment: .trailing)
             }
             ForEach(Array(xLabels.enumerated()), id: \.offset) { _, tick in
+                // Never larger than offered: a tick left out is offered no
+                // size, so nothing of it draws. Shown ticks are offered
+                // exactly their measured size and are unchanged.
                 FieldHistoryTickLabel10868(lines: tick.lines, alignment: .center)
+                    .frame(minWidth: 0, minHeight: 0)
+                    .clipped()
             }
             ForEach(Array(guides.enumerated()), id: \.offset) { _, guide in
                 FieldHistoryTickLabel10868(lines: [guide.label], alignment: .leading)
