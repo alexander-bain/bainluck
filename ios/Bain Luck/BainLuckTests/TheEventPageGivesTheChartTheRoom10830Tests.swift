@@ -77,7 +77,8 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
             "letcaptionRidesPadding=stacked&&!dynamicTypeSize.isAccessibilitySize"),
             "accessibility sizes outgrow the padding; a row never had the band")
         XCTAssertTrue(page.contains(
-            "probabilityDetails(confidenceTier:confidenceTier).overlay(alignment:.bottom){"
+            "probabilityDetails(confidenceTier:confidenceTier,"
+            + "ekgDrawn:heroEkgDrawn(event,isOpeningLine:shown.isOpeningLine)).overlay(alignment:.bottom){"
             + "ifpriceStreamingEligible&&captionRidesPadding{"
             + "movementCaptionSlot(event,colors:colors).alignmentGuide(.bottom){$0[.top]}"),
             "the stacked caption reserves a band under Live updates again")

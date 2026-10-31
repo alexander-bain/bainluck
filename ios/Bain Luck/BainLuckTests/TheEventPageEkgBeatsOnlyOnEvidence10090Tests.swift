@@ -276,6 +276,12 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         var ekg: NSObject?
         await settle(host, timeout: 5) { ekg = self.element("Markets reporting", in: host.view); return ekg != nil }
         let control = try XCTUnwrap(ekg, "a live game shows the heartbeat with no setting turned on")
+        // Alex 69 — beside the EKG the (i) is gone: no VoiceOver stop of its
+        // own, and the heartbeat says what its tap opens. The tap below then
+        // opens the popover from the collapsed control's anchor.
+        XCTAssertNil(element("Probability confidence and update details", in: host.view),
+                     "the (i) beside the EKG is still a VoiceOver stop")
+        XCTAssertEqual(control.accessibilityHint, EventDetailView.probabilityDetailsHint(forecastShown: false))
         XCTAssertEqual(host.presentedViewController, nil)
         XCTAssertTrue(control.accessibilityActivate(), "the heartbeat takes a tap")
         let opened = await settle(host, timeout: 3) { host.presentedViewController != nil }
