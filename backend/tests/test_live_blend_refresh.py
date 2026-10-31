@@ -22,6 +22,17 @@ from app.tasks.live_blend_refresh import (
 )
 
 
+@pytest.fixture(autouse=True, params=[False, True], ids=["separate-intent", "fused-intent"])
+def stamp_intent_route(request, monkeypatch):
+    """#10090: every case runs with the stamp writing its publication intent
+    as its own INSERT and fused into the stamping statement
+    (`LIVE_STAMP_FUSED_INTENT`). Pinned here, so the shell's environment never
+    picks the arm and the fused one cannot go untested.
+    """
+    monkeypatch.setenv("LIVE_STAMP_FUSED_INTENT", "1" if request.param else "0")
+    return request.param
+
+
 class TestEventIdsForOutcomes:
     def test_maps_outcomes_to_distinct_events(self):
         mapping = {1: 100, 2: 100, 3: 200}
@@ -614,9 +625,8 @@ class _RecordingSession:
         self.rollbacks = 0
 
     async def execute(self, statement, *args, **kwargs):
-        from sqlalchemy.sql.dml import Update
 
-        if isinstance(statement, Update):
+        if is_stamp_statement(statement):
             self.updates.append(statement)
             return _Result(scalar=self._returned, rev=self.returned_rev)
         columns = list(getattr(statement, "selected_columns", ()))
@@ -1211,7 +1221,7 @@ class TestSingleEventStampTransaction:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("count,snapshot_due", [(1, False), (2, False), (1, True), (2, True)])
     async def test_snapshot_clock_skips_only_chart_transaction_work(
-        self, monkeypatch, count, snapshot_due,
+        self, monkeypatch, count, snapshot_due, stamp_intent_route,
     ):
         from contextlib import asynccontextmanager
         from copy import copy
@@ -1264,6 +1274,11 @@ class TestSingleEventStampTransaction:
         await r.refresh(list(range(1, count + 1)))
         await r.drain_history()
         assert len(session.updates) == count
+        # The arm decides the route: the bare UPDATE, or the one statement
+        # whose CTE also writes the publication intent.
+        assert [getattr(s, "is_update", False) for s in session.updates] == (
+            [not stamp_intent_route] * count
+        )
         assert r.stats["stamped"] == count
         assert snapshots == (list(range(1, count + 1)) if snapshot_due else [])
         assert len(flushes) == (count if snapshot_due else 0)
@@ -1369,10 +1384,9 @@ class _LockedRowSession(_RecordingSession):
         self.statements = []
 
     async def execute(self, statement, *args, **kwargs):
-        from sqlalchemy.sql.dml import Update
 
         self.statements.append((statement, args))
-        if isinstance(statement, Update) and self.locked:
+        if is_stamp_statement(statement) and self.locked:
             self.updates.append(statement)
             raise _LockTimeout("canceling statement due to lock timeout")
         return await super().execute(statement, *args, **kwargs)
@@ -1506,8 +1520,6 @@ class TestAStampNeverQueuesOnAForeignRowLock:
 
     @pytest.mark.asyncio
     async def test_the_timeout_is_set_before_the_first_stamp(self, monkeypatch):
-        from sqlalchemy.sql.dml import Update
-
         from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 
         event, market = _event_and_market()
@@ -1517,7 +1529,7 @@ class TestAStampNeverQueuesOnAForeignRowLock:
 
         kinds = [
             "set" if stmt is SET_LOCK_TIMEOUT_SQL
-            else "update" if isinstance(stmt, Update) else "other"
+            else "update" if is_stamp_statement(stmt) else "other"
             for stmt, _ in session.statements
         ]
         assert "set" in kinds and kinds.index("set") < kinds.index("update"), kinds
@@ -1540,10 +1552,8 @@ class TestAStampNeverQueuesOnAForeignRowLock:
         session = _LockedRowSession([(market, event)], [], {"polymarket": {"updated_at": "2026-09-25T18:00:00+00:00"}})
 
         async def _raise_boom(statement, *a, **k):
-            from sqlalchemy.sql.dml import Update
-
             session.statements.append((statement, a))
-            if isinstance(statement, Update):
+            if is_stamp_statement(statement):
                 raise _Boom("deadlock detected")
             return await _RecordingSession.execute(session, statement, *a, **k)
 
