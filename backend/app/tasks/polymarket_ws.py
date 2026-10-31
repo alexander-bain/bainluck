@@ -2551,6 +2551,105 @@ def _pm_lock_isolated_chunks(
     return result
 
 
+_UNFILED = object()
+
+
+class EventIndexedPrices(dict):
+    """#10090: `price_buffer`, which also files each buffered leg under its event.
+
+    `flush_observations.owners()` asks about a few free events, and found their
+    legs by reading every buffered leg (`<setcomp>:6089`, 7.2 % of the PM
+    process at 00:43Z on ac9f9c37). Every dict mutator files or unfiles its key,
+    so no write site can skip the index. A leg is filed under the event the map
+    named when it was written; the map changes only in the catalog refresh,
+    under the buffer lock, which calls `refile()` after it. A plain dict (the
+    test rigs) has no `legs` and the caller scans as before.
+    """
+
+    __slots__ = ("_event_of", "_legs", "_filed")
+
+    def __init__(self, event_of=None):
+        super().__init__()
+        self._event_of = event_of if event_of is not None else {}
+        self._legs: dict = {}
+        self._filed: dict = {}
+
+    def follow(self, event_of) -> None:
+        self._event_of = event_of
+        self.refile()
+
+    def refile(self) -> None:
+        """File every buffered leg again after the event map changed."""
+        self._legs.clear()
+        self._filed.clear()
+        for oid in self:
+            self._file(oid)
+
+    def legs(self, event_id):
+        """The buffered legs filed under `event_id` (read only; do not mutate)."""
+        return self._legs.get(event_id, ())
+
+    def _file(self, oid) -> None:
+        eid = self._event_of.get(oid)
+        old = self._filed.get(oid, _UNFILED)
+        if old is not _UNFILED:
+            if old == eid:
+                return
+            self._unfile(oid)
+        self._filed[oid] = eid
+        legs = self._legs.get(eid)
+        if legs is None:
+            self._legs[eid] = {oid}
+        else:
+            legs.add(oid)
+
+    def _unfile(self, oid) -> None:
+        eid = self._filed.pop(oid, _UNFILED)
+        if eid is _UNFILED:
+            return
+        legs = self._legs.get(eid)
+        if legs is not None:
+            legs.discard(oid)
+            if not legs:
+                del self._legs[eid]
+
+    def __setitem__(self, oid, value):
+        dict.__setitem__(self, oid, value)
+        self._file(oid)
+
+    def __delitem__(self, oid):
+        dict.__delitem__(self, oid)
+        self._unfile(oid)
+
+    def pop(self, oid, *default):
+        value = dict.pop(self, oid, *default)
+        self._unfile(oid)
+        return value
+
+    def popitem(self):
+        oid, value = dict.popitem(self)
+        self._unfile(oid)
+        return oid, value
+
+    def setdefault(self, oid, default=None):
+        if oid not in self:
+            self[oid] = default
+        return dict.__getitem__(self, oid)
+
+    def update(self, *args, **kwargs):
+        for oid, value in dict(*args, **kwargs).items():
+            self[oid] = value
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+    def clear(self):
+        dict.clear(self)
+        self._legs.clear()
+        self._filed.clear()
+
+
 def standalone_open_outcome_ids(
     outcome_ids,
     open_outcome_ids,
@@ -2567,13 +2666,19 @@ def standalone_open_outcome_ids(
     time: admission bridges a leg before it marks it open, with no await
     between, so a leg is never standalone ahead of its bridge.
     """
-    def eventless_open(oid) -> bool:
-        return oid in open_outcome_ids and event_id_by_outcome.get(oid) is None
-
+    # #10090: called over the whole buffer by every flush loop; this was 4.5 %
+    # of the PM process (00:43Z, ac9f9c37) as a per-leg nested call. Only open
+    # legs can qualify, so the open filter runs in C first; same answer.
+    if not isinstance(open_outcome_ids, (set, frozenset)):
+        open_outcome_ids = set(open_outcome_ids)
+    event_of = event_id_by_outcome.get
+    partner_of = complement_of.get
     standalone: set[int] = set()
-    for oid in outcome_ids:
-        other = complement_of.get(oid)
-        if eventless_open(oid) and (other is None or eventless_open(other)):
+    for oid in open_outcome_ids.intersection(outcome_ids):
+        if event_of(oid) is not None:
+            continue
+        other = partner_of(oid)
+        if other is None or (other in open_outcome_ids and event_of(other) is None):
             standalone.add(oid)
     return standalone
 
@@ -4007,7 +4112,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     }
 
     # Buffered price updates
-    price_buffer: dict[int, float] = {}
+    # #10090: indexed by event for `owners()`; follows `event_id_by_outcome` below.
+    price_buffer: dict[int, float] = EventIndexedPrices()
     buffer_lock = asyncio.Lock()
     catalog_boundary = _PMCatalogFlushBoundary(game_period=game_period)
     lock_retry_until: dict[int, float] = {}
@@ -4028,6 +4134,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         for outcome_id, market_id in market_by_outcome.items()
         if market_id in event_id_by_market
     }
+    price_buffer.follow(event_id_by_outcome)
     non_blend_outcome_ids = {
         oid for oid, mid in market_by_outcome.items()
         if mid in non_blend_market_ids
@@ -6086,13 +6193,23 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # PM buffers unchanged BBOs too. Only acknowledged uninterrupted
             # values may pass; another leg's queued change owns the whole event
             # even before its price chunk starts (including A-B-A).
+            def changing(oid, value):
+                return (oid not in non_blend_outcome_ids
+                        and (observation_continuity.get(oid) is None
+                             or boundary.observation_ack.get(oid) != observation_continuity[oid]
+                             or observation_continuity[oid][1] != round(float(value), 6)))
+
+            legs = getattr(price_buffer, "legs", None)
+            if legs is None:
+                return busy | {
+                    eid for oid, value in price_buffer.items()
+                    if (eid := event_id_by_outcome.get(oid)) in free and changing(oid, value)
+                }
+            # #10090: only the free events' own buffered legs (`EventIndexedPrices`).
             return busy | {
-                eid for oid, value in price_buffer.items()
-                if (eid := event_id_by_outcome.get(oid)) in free
-                and oid not in non_blend_outcome_ids
-                and (observation_continuity.get(oid) is None
-                     or boundary.observation_ack.get(oid) != observation_continuity[oid]
-                     or observation_continuity[oid][1] != round(float(value), 6))
+                eid for eid in free
+                if any(event_id_by_outcome.get(oid) == eid and changing(oid, price_buffer[oid])
+                       for oid in legs(eid))
             }
 
         async with buffer_lock:
@@ -6979,6 +7096,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 }
                 event_id_by_outcome.update(bridge)
                 event_id_by_outcome.update(fresh_events)
+                price_buffer.refile()  # #10090: legs whose event changed
                 non_blend_outcome_ids.intersection_update(old_debt)
                 non_blend_outcome_ids.update(
                     oid
