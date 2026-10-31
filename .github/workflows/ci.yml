@@ -5264,6 +5264,7 @@ jobs:
             tests/integration/test_dnpl_post_cancel_idle_status_10090_pg.py \
             tests/integration/test_dnpl_capacity_pass_production_size_10090_pg.py \
             tests/integration/test_dnpl_authority_10090_pg.py \
+            tests/integration/test_signed_in_sports_metadata_reuse_10090.py \
             tests/integration/test_dnpl_activation_10090_pg.py \
             tests/integration/test_dnpl_reservation_relimit_10090_pg.py \
             tests/test_dnpl_idle_retirement_cancellation_10090.py \
@@ -5279,8 +5280,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]263 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 263 cases"
+          grep -qE "[^0-9]274 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 274 cases"
             exit 1
           }
 
