@@ -712,7 +712,7 @@ describe("F2 — production's own state words for a suspended or over-due row (T
     expect(hockeyJourneyState(event, "live").state).toBe("13:14 - 4th Quarter");
     const v = build(event, null, bearsNow);
     expect(v.phase).toBe("live");
-    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 27-21`);
+    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 21-27`);
     expect(v.headline.stateContext).toBeNull();
     expect(v.info.lines).toContain(SUSPENDED_DESCRIPTION);
     expect(v.info.lines).not.toContain(MATRIX_WORDS.stateSource);
@@ -731,7 +731,7 @@ describe("F2 — production's own state words for a suspended or over-due row (T
     const event = mutate(bearsT0, { status: "suspended", espn: { period: null, game_clock: null } });
     expect(hockeyJourneyState(event, "live").state).toBe("Play suspended");
     const v = build(event, null, bearsNow);
-    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 27-21`);
+    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 21-27`);
     expect(v.forecastAction).toBeNull();
     expect(v.earlierForecast).toBeNull();
     const noScore = build(mutate(event, { home_score: null, away_score: null }), null, bearsNow);
@@ -847,7 +847,7 @@ describe("the page's withdrawn live claim, `liveClaimUnbacked` (TEST MUTATION of
     expect(Date.parse(now) - observed).toBeLessThan(30 * 60 * 1000);
     expect(footballJourneyState(bearsT0, "live", Date.parse(now), false).noReportedResult).toBe(false);
     expect(footballJourneyState(bearsT0, "live", Date.parse(now), true)).toEqual({
-      state: `${SUSPENDED_LABEL} · last score 27-21`,
+      state: `${SUSPENDED_LABEL} · last score 21-27`,
       context: null,
       about: SUSPENDED_DESCRIPTION,
       noReportedResult: true,
@@ -874,7 +874,7 @@ describe("the page's withdrawn live claim, `liveClaimUnbacked` (TEST MUTATION of
   it("true: no live cue and no Current chance; the page's own figures kept as Last recorded; forecasts and control withdrawn; score kept", () => {
     const host = pageHost(bearsT0, null, now, true);
     const v = journey(buildFootballJourney({ event: bearsT0, history: null, host }));
-    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 27-21`);
+    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 21-27`);
     expect(v.headline.stateContext).toBeNull();
     expect(v.info.lines).toContain(SUSPENDED_DESCRIPTION);
     expect(v.info.lines).not.toContain(MATRIX_WORDS.stateSource);
@@ -910,7 +910,7 @@ describe("the page's withdrawn live claim, `liveClaimUnbacked` (TEST MUTATION of
 
   it("true keeps the game's own history and its control (Jaguars live 14639175)", () => {
     const v = build(jagLive, jagLiveHistory, JAG_LIVE_NOW, { liveClaimUnbacked: true });
-    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 7-14`);
+    expect(v.headline.state).toBe(`${SUSPENDED_LABEL} · last score 14-7`);
     expect(v.history.absence).toBeNull();
     expect(v.history.series[0].runs[0]).toHaveLength(128);
     expect(v.historyAction).toEqual({ label: FOOTBALL_WORDS.openHistory });

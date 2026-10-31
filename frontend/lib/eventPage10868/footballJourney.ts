@@ -333,9 +333,11 @@ export interface FootballJourneyState {
  *
  *   - `hasNoReportedResult(status, commence_time, now, started_without_result)`
  *     on a row that is not finished → the venue's grade (`venueSettledSummary`)
- *     or `suspendedSummary(away, home, "home-away", authorityStoppageLabel(...))`
- *     — "No result reported", with the last score when both sides have one, the
- *     hero's own home-away order. Never a raw period from a source that went
+ *     or `suspendedSummary(away, home, "away-home", authorityStoppageLabel(...))`
+ *     — "No result reported", with the last score when both sides have one, in
+ *     the SECTION's surface order (#2786: the caller passes its own order), which
+ *     presents away first (`FOOTBALL_DISPLAY_ORDER` in FootballJourneySection.tsx).
+ *     The venue's named result is printed verbatim. Never a raw period from a source that went
  *     quiet, never "Play suspended" (status `suspended` can be a silent source,
  *     not a pause). Info carries `SUSPENDED_DESCRIPTION`.
  *   - a `scheduled` row past its clock, not held by the server
@@ -368,7 +370,8 @@ export function footballJourneyState(
     const settled = venueSettledSummary(event.venue_settled, event.venue_settled_result, event.venue_closed_no_winner);
     const stoppage = settled ? null : authorityStoppageLabel(event.espn?.period);
     return {
-      state: settled ?? suspendedSummary(event.away_score, event.home_score, "home-away", stoppage),
+      // "away-home": the section's display order (away first), so the bare score reads as its rows do.
+      state: settled ?? suspendedSummary(event.away_score, event.home_score, "away-home", stoppage),
       context: null,
       about: settled ? VENUE_SETTLED_DESCRIPTION : authorityStoppageDescription(stoppage) ?? SUSPENDED_DESCRIPTION,
       noReportedResult: true,

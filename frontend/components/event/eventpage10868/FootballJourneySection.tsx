@@ -130,7 +130,14 @@ export interface FootballJourneySectionProps {
   onOpenHistory?: (() => void) | null;
 }
 
-/** The order the section PRESENTS the two teams in. A flip is this line plus test expectations. */
+/** The accessible name of the refused section (the authority's state and the absence words stay its content). */
+export const REFUSED_SECTION_LABEL = "Football game status";
+
+/**
+ * The order the section PRESENTS the two teams in. A flip is this line, the
+ * `"away-home"` order flag footballJourney.ts passes to `suspendedSummary`, and
+ * test expectations.
+ */
 export const FOOTBALL_DISPLAY_ORDER: readonly [HockeyJourneySide, HockeyJourneySide] = ["away", "home"];
 
 /**
@@ -168,6 +175,7 @@ export default function FootballJourneySection({ model, onOpenForecast, onOpenHi
     if (model.words === null) return null;
     return (
       <section
+        aria-label={REFUSED_SECTION_LABEL}
         data-football-journey="refused"
         className="space-y-1 rounded-xl border border-surface-border bg-surface-card p-4 text-sm text-text-primary"
       >

@@ -31,8 +31,10 @@ import type { EventDetailResponse, EventHistoryResponse } from "@/lib/types";
 import { resolveProbability } from "@/lib/eventKeyStats";
 import { blendCaptionIsStale, hasNoReportedResult, isFinishedStatus, SUSPENDED_LABEL } from "@/lib/eventState";
 import { buildFootballJourney, type FootballJourneyHost } from "@/lib/eventPage10868/footballJourney";
+import { PAGE_WORDS } from "@/lib/eventPage10868/hockeyJourney";
 import FootballJourneySection, {
   FOOTBALL_DISPLAY_ORDER,
+  REFUSED_SECTION_LABEL,
   inDisplayOrder,
   type FootballJourneySectionModel,
   type FootballJourneySectionView,
@@ -340,7 +342,7 @@ describe("LIVE — Bears–Patriots t0 → t1 → t2 (retained)", () => {
   it("withdrawn live claim (TEST MUTATION: liveClaimUnbacked true on the fresh t0 quote): no live cue, no Current chance, no forecast, no control", () => {
     const onOpenForecast = jest.fn();
     render(<FootballJourneySection model={model(bears[0], null, BEARS_NOW[0], true)} onOpenForecast={onOpenForecast} />);
-    expect(host.querySelector("[data-football-header-row] p")?.textContent).toBe(`${SUSPENDED_LABEL} · last score 27-21`);
+    expect(host.querySelector("[data-football-header-row] p")?.textContent).toBe(`${SUSPENDED_LABEL} · last score 21-27`);
     expect(headerTitles()).toEqual(["Team", "Opened chance", "Last recorded chance", "Score"]);
     expect(gridRows().map((r) => [r.name, r.cells])).toEqual([
       ["New England Patriots", ["41%", "21%", "21"]],
@@ -351,6 +353,18 @@ describe("LIVE — Bears–Patriots t0 → t1 → t2 (retained)", () => {
     expect(host.querySelector("[data-football-earlier-forecast]")).toBeNull();
     expect(control("forecast")).toBeNull();
     expect(onOpenForecast).not.toHaveBeenCalled();
+  });
+
+  it("suspended (TEST MUTATION: status 'suspended' on t0, unequal 27-21): the bare last score reads in the rows' order, away then home", () => {
+    render(<FootballJourneySection model={model(mutate(bears[0], { status: "suspended" }), null, BEARS_NOW[0])} />);
+    const rows = gridRows();
+    const scoreColumn = headerTitles().indexOf("Score") - 1; // the first header is the team column
+    const [first, second] = rows.map((r) => [r.name, r.cells[scoreColumn]]);
+    expect(first).toEqual(["New England Patriots", "21"]);
+    expect(second).toEqual(["Chicago Bears", "27"]);
+    const state = host.querySelector("[data-football-header-row] p")?.textContent;
+    expect(state).toBe(`${SUSPENDED_LABEL} · last score ${first[1]}-${second[1]}`);
+    expect(state).toBe(`${SUSPENDED_LABEL} · last score 21-27`);
   });
 });
 
@@ -418,7 +432,11 @@ describe("refusals (TEST MUTATIONS)", () => {
     expect(host.innerHTML).toBe("");
     render(<FootballJourneySection model={model(mutate(rams, { espn: { period: "Postponed", game_clock: null } }), null, RAMS_NOW)} onOpenForecast={() => {}} />);
     const refused = host.querySelector('[data-football-journey="refused"]') as HTMLElement;
+    expect(refused.tagName).toBe("SECTION");
+    expect(refused.getAttribute("aria-label")).toBe(REFUSED_SECTION_LABEL);
+    expect(REFUSED_SECTION_LABEL).toBe("Football game status");
     expect(refused.textContent).toContain("Postponed");
+    expect(refused.textContent).toContain(PAGE_WORDS.matrixUnavailable);
     expect(host.querySelector("button")).toBeNull();
   });
 });
