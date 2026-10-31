@@ -515,6 +515,7 @@ async def _settle_through_reader(connect, closing, *, prepare_mode):
         "_UNCAPTURED": object(),
     }
     nodes = _lift("prepare_lifecycle", "handle_lifecycle")
+    namespace["repeat_skip_s"] = 0.0  # #10090: KALSHI_WS_REPEAT_SKIP_MS=0, today's path
     exec(
         compile(ast.Module(body=nodes, type_ignores=[]), "kalshi_task", "exec"),
         namespace,
