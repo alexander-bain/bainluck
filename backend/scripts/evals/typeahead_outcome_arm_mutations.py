@@ -327,11 +327,23 @@ MUTANTS: list[tuple[str, str, str, str]] = [
         # escaped needle is absent from this file by construction — so the first
         # draft of this mutant reported itself as residue on a clean tree. The
         # sibling loose-scan harness writes the same rule in its docstring.
+        #
+        # 🔴 The REPLACEMENT carries the ordering walk's own `select(...)` and
+        # `.where(candidate, ...)` lines, not just the `result = await
+        # db.execute(` opener. Pass B matches a replacement as a bare substring,
+        # and that opener is ordinary SQL in many modules: on #10090's G4F23 the
+        # new `sports_market_metadata_reuse.py` held it at deeper indents and
+        # Pass B called that file residue (CI 41249780738). The mutant is
+        # unchanged — it still deletes the arm and nothing else.
         """        if not await _arm_statement_timeout():
             return None
 
-        result = await db.execute(""",
-        """        result = await db.execute(""",
+        result = await db.execute(
+            select(FuturesMarket.id)
+            .where(candidate, *open_now)""",
+        """        result = await db.execute(
+            select(FuturesMarket.id)
+            .where(candidate, *open_now)""",
     ),
     (
         "M22-REARM-USES-THE-WHOLE-BUDGET-AGAIN",
