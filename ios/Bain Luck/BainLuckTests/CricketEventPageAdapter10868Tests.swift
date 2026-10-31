@@ -101,7 +101,7 @@ final class CricketEventPageAdapter10868Tests: XCTestCase {
         XCTAssertFalse(CricketEventPageHost10868.applies(event), "a limited-overs match is the cricket-t20 route's screen")
         XCTAssertFalse(DrawPricedWinner.sportPricesADraw(event.sport), "the app declares no cricket key draw-priced")
         XCTAssertFalse(DrawPricedWinner.sportPricesADraw("cricket_test_match"),
-                       "not even a Test match — the declared gap `independentAway` guards on this screen")
+                       "not even a Test match — so the Test screen's away slot needs producer evidence, not a sport key")
     }
 
     // MARK: - During play, a stoppage after the start (the retained bodies)
@@ -168,25 +168,58 @@ final class CricketEventPageAdapter10868Tests: XCTestCase {
         let about = A.about(test, host: host)
         XCTAssertEqual(about.title, "How this match is shown")
         XCTAssertEqual(about.paragraphs.count, 3)
-        XCTAssertTrue(about.paragraphs[1].contains("Sri Lanka's chance is shown only when it is that side's own chance"))
+        XCTAssertTrue(about.paragraphs[1].contains("and so is Sri Lanka's: no source shows it is that side's own chance"))
     }
 
     // MARK: - The away side's own reading
 
-    func testTheAwaySideIsNeverTheRemainderAfterTheHomeSide() {
-        // The retained bodies' pair is a complement pair, so no away figure.
-        XCTAssertNil(A.independentAway(0.3332, home: 0.6668, sport: "cricket_international_t20"))
-        XCTAssertNil(A.independentAway(0.2545, home: 0.7455, sport: "cricket_test_match"))
-        // The approved reference's independent Yes prices (CRICKET-HISTORY-NATIVE-
-        // BINDING-MAP.md "retained case": 48 / 47 / 9, summing 104%): the away
-        // side's own price stands, untouched.
-        XCTAssertEqual(A.independentAway(0.47, home: 0.48, sport: "cricket_test_match"), 0.47)
-        // A sport the app declares draw-priced: `printablePair` withholds first.
-        XCTAssertNil(A.independentAway(0.47, home: 0.48, sport: "soccer_epl"))
-        // Nothing to compare, or nothing printable: never a figure.
-        XCTAssertNil(A.independentAway(nil, home: 0.6, sport: "cricket_test_match"))
-        XCTAssertNil(A.independentAway(0.4, home: nil, sport: "cricket_test_match"))
-        XCTAssertNil(A.independentAway(1.2, home: 0.48, sport: "cricket_test_match"))
+    /// CONSTRUCTED: the retained Pakistan v Sri Lanka body with `sport` set to
+    /// `cricket_test_match` and the named channel objects' values replaced; the
+    /// edited channel's rendered percents are cleared so no served integer disagrees.
+    private func testMatch(current: (home: Double, away: Double)? = nil, opening: (home: Double, away: Double)? = nil,
+                           prematch: (home: Double, away: Double)? = nil) throws -> EventDetail {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Self.pakistanSriLanka.utf8)) as? [String: Any])
+        object["sport"] = "cricket_test_match"
+        if let current, var odds = object["current_odds"] as? [String: Any] {
+            odds["home_probability"] = current.home
+            odds["away_probability"] = current.away
+            odds["home_rendered_percent"] = NSNull()
+            odds["away_rendered_percent"] = NSNull()
+            object["current_odds"] = odds
+        }
+        if let opening, var odds = object["opening_odds"] as? [String: Any] {
+            odds["home_probability"] = opening.home
+            odds["away_probability"] = opening.away
+            object["opening_odds"] = odds
+        }
+        if let prematch {
+            // A served pre-match channel naming no source.
+            object["prematch_odds"] = ["home_probability": prematch.home, "away_probability": prematch.away,
+                                       "source": NSNull()] as [String: Any]
+        }
+        return try Self.decoder().decode(EventDetail.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    func testTheAwaySlotIsUnavailableOnEveryChannelWithoutProducerEvidence() throws {
+        let host = Self.host("2026-10-12T13:28:47Z", observedAt: "2026-10-11T15:52:33.190244+00:00")
+        let unavailable = CricketOutlookReading10868.unavailable("Win chance unavailable")
+        // A non-complement pair (the reference's own 48 / 47) and an invalid one (0.7 + 0.6): a sum test
+        // passes both, and neither is producer evidence that the away figure is the away side's own price.
+        for pair in [(home: 0.48, away: 0.47), (home: 0.7, away: 0.6)] {
+            let current = try testMatch(current: pair)
+            XCTAssertEqual(A.currentPair(current, host: host)?.away, unavailable, "current \(pair)")
+            let opening = try testMatch(opening: pair)
+            XCTAssertEqual(A.pregameReadings(opening).away, unavailable, "opening \(pair)")
+            let prematch = try testMatch(prematch: pair)
+            XCTAssertEqual(A.pregameReadings(prematch).away, unavailable, "unnamed pre-match channel \(pair)")
+        }
+        // The retained complement pair: unavailable too.
+        let retained = try Self.detail(Self.pakistanSriLanka, setting: "sport", to: "cricket_test_match")
+        XCTAssertEqual(A.currentPair(retained, host: host)?.away, unavailable)
+        // The home side keeps its own reading.
+        if case .observed = A.currentPair(retained, host: host)?.home {} else {
+            XCTFail("the home reading stays")
+        }
     }
 
     // MARK: - During live play (constructed status)

@@ -25,9 +25,18 @@ import SwiftUI
 ///                     on the clock the host displays. During play an opening
 ///                     line, or a pair observed before the listed start, is not
 ///                     an in-play reading and is never shown as one.
-///   - the away side   `DrawPricedWinner.printablePair` (the app's one two-slot
-///                     rule) AND `isComplementPair` (RenderedPercent.swift, the
-///                     app's measured complement-pair band). See `independentAway`.
+///   - the away side   always that slot's own words on this Test-match screen.
+///                     A draw is a real outcome here, and no channel the app
+///                     decodes carries the producer's positive evidence that its
+///                     away figure is the away side's own price rather than
+///                     `1 − home`: `current_odds.away_probability` IS the derived
+///                     complement (backend `draw_priced_winner.away_is_the_complement`
+///                     docstring), and pair arithmetic is not that evidence (Design
+///                     2026-10-31: a malformed 0.7 + 0.6 passes a sum test). The
+///                     backend states `opening_odds` is de-vigged across the whole
+///                     quoted board (#1011), but whether a draw was on that board is
+///                     not decoded — returned to Design as the open contract, not
+///                     admitted here. Owner dependency: #5271 / #6277 / #158.
 ///   - the draw / tie  no production model the event page holds decodes a draw
 ///                     price (`EventDetail`, `CurrentOdds`, `PrematchOdds` and
 ///                     `HistoryPoint` have no draw field), so it is always that
@@ -300,12 +309,8 @@ enum CricketEventPageAdapter10868 {
         let source = HockeyJourneyPageAdapter10868.sourceName(event.heroProbabilitySource, in: event)
         let detail = joined([clock, source]) ?? title
         let homeReading = observed(home, rendered: percents?.home, detail: detail)
-        let awayReading: CricketOutlookReading10868
-        if let away = independentAway(shown.awayProbability, home: home, sport: event.sport) {
-            awayReading = observed(away, rendered: percents?.away, detail: detail)
-        } else {
-            awayReading = .unavailable(Words.winChanceUnavailable)
-        }
+        // Never the away side's chance here: no producer evidence says this away figure is its own price.
+        let awayReading: CricketOutlookReading10868 = .unavailable(Words.winChanceUnavailable)
         return CurrentPair(title: title, isOpeningLine: shown.isOpeningLine, currentness: reading,
                            home: homeReading, away: awayReading)
     }
@@ -336,47 +341,9 @@ enum CricketEventPageAdapter10868 {
         let detail = joined([reading.captionWord, source]) ?? reading.captionWord
         let percents = reading.percents
         let home = observed(reading.homeProbability, rendered: percents.count == 2 ? percents[1] : nil, detail: detail)
-        var away: CricketOutlookReading10868 = .unavailable(Words.winChanceUnavailable)
-        if !reading.awayIsComplement,
-           let value = independentAway(reading.awayProbability, home: reading.homeProbability, sport: event.sport) {
-            away = observed(value, rendered: percents.count == 2 ? percents[0] : nil, detail: detail)
-        }
+        // The away slot keeps its own words on every channel (see the header's "the away side").
+        let away: CricketOutlookReading10868 = .unavailable(Words.winChanceUnavailable)
         return (home, away)
-    }
-
-    /// THE AWAY SIDE'S OWN READING ON A SCREEN THAT LISTS A DRAW / TIE, or nil.
-    ///
-    /// Two existing rules, both of which must agree:
-    ///   1. `DrawPricedWinner.printablePair` — the app's one two-slot rule. It
-    ///      withholds the away figure on a sport DECLARED draw-priced
-    ///      (`SportVocab.winnerMarketPricesADraw`). Today only soccer is
-    ///      declared, in all three runtimes; cricket is deliberately not
-    ///      ("nobody has measured those markets", SportVocab.swift:81-84), so for
-    ///      cricket this rule alone passes the figure through.
-    ///   2. `isComplementPair` — the app's measured band (0.99–1.01) for a
-    ///      pair whose two figures are complements. This is the Test-match
-    ///      screen: its design lists a Draw / tie original beside the two
-    ///      sides, so a draw is a real outcome here, and an away figure that is
-    ///      only `1 − home` is "the home side does not win" — away OR draw
-    ///      (#5271's defect). The app itself records that
-    ///      `current_odds.away_probability` IS the backend's rounded `1 − home`
-    ///      (EventDetailView.swift, the note on `heroPairPercents`), while
-    ///      `opening_odds` is de-vigged across every outcome a
-    ///      book quotes and so is the away side's own price when a draw is
-    ///      quoted (backend `draw_priced_winner.away_is_the_complement`). This is
-    ///      that function's evidence test, applied because this screen lists a
-    ///      draw — not inferred from a sport key.
-    ///
-    /// It only ever removes a figure; it never derives, rescales or replaces one.
-    /// The proper owner fix is declaring Test cricket draw-priced (#5271's
-    /// rule, one row in each runtime once measured); then rule 1 alone answers.
-    static func independentAway(_ away: Double?, home: Double?, sport: String?) -> Double? {
-        guard let home, home.isFinite,
-              let pair = DrawPricedWinner.printablePair(away: away, home: home, sport: sport),
-              let printable = pair.away, printable.isFinite, printable >= 0, printable <= 1,
-              !isComplementPair([printable, home])
-        else { return nil }
-        return printable
     }
 
     static func observed(_ value: Double, rendered: Int?, detail: String) -> CricketOutlookReading10868 {
@@ -453,7 +420,7 @@ enum CricketEventPageAdapter10868 {
     static func about(_ event: EventDetail, host: Host) -> CricketEventPageAbout10868 {
         var paragraphs = [
             "Each outcome's chance is shown with the time it was recorded. The chances are separate readings: they are not adjusted to add up to 100%.",
-            "A Test match can end in a draw. The draw chance is unavailable here, so \(event.awayTeam)'s chance is shown only when it is that side's own chance, never what is left after \(event.homeTeam)'s chance.",
+            "A Test match can end in a draw. The draw chance is unavailable here, and so is \(event.awayTeam)'s: no source shows it is that side's own chance rather than what is left after \(event.homeTeam)'s chance.",
             "Scores, overs, wickets and targets are unavailable here, so no innings, chase or wickets-remaining story is shown.",
         ]
         if phase(event, now: host.now) == .completed {

@@ -19,10 +19,10 @@ import SwiftUI
 ///                    blend (`aggregate_line`) when served, else the sportsbook
 ///                    consensus (`history`). Never a client mean.
 ///   - the rows       `Rules.servedRows`, values as served, then this screen's
-///                    one change: the away value is kept only where part one's
-///                    `independentAway` admits it — so the blend's away (served
-///                    home-only, its away the complement) and any consensus row
-///                    summing to one are a gap for the away side, never a vertex.
+///                    one change: no away value is drawn. No channel carries the
+///                    producer's positive evidence that a row's away figure is the
+///                    away side's own price (part one, "the away side"), so the
+///                    away line is that series' own words, never a vertex.
 ///   - not readings   `Rules.removedIndexes` — the finished game's settlement row,
 ///                    the blend's pinned edge and carried-forward minutes are
 ///                    removed outright: no point, no gap.
@@ -132,16 +132,13 @@ enum CricketHistoryAdapter10868 {
 
     // MARK: - Rows
 
-    /// The served rows of the line, with the away value kept only where it is
-    /// the away side's own reading (part one's `independentAway`). A row the
-    /// rule refuses is a gap for the away side; the home value is untouched.
+    /// The served rows of the line with no away value: no channel proves a row's
+    /// away figure is the away side's own price (part one, "the away side"). The
+    /// home value is untouched.
     static func rows(_ response: EventHistoryResponse, line: Rules.Line, event: EventDetail) -> [Rules.ServedRow] {
         Rules.servedRows(response, line: line, sport: event.sport).map { row in
-            let away: Double? = row.awayIsComplement
-                ? nil
-                : Page.independentAway(row.away, home: row.home, sport: event.sport)
-            return Rules.ServedRow(index: row.index, timestamp: row.timestamp, date: row.date, home: row.home,
-                                   away: away, awayIsComplement: false, priced: row.priced)
+            Rules.ServedRow(index: row.index, timestamp: row.timestamp, date: row.date, home: row.home,
+                            away: nil, awayIsComplement: false, priced: row.priced)
         }
     }
 
