@@ -5191,6 +5191,16 @@ class LiveBlendRefresher:
                 CancelledError(), hold=False,
             )
         window.release(shed)
+        if _handover_fresh():
+            # #10090 `handover_fresh`: the shed attempts are the next call's
+            # FRESH population (live first, held first, on the fixed workers,
+            # outside FRESH_FLUSH_PENDING_ATTEMPTS), as a carried bridged
+            # cohort is — not debt that drains a rider or two per queue turn.
+            # Production 16:01-16:41Z 2026-10-31 (v6005, ~180 live PM games):
+            # six handovers shed 115-244 queued attempts each; 57% of the
+            # hour's moved live chains and 33 of its 40 worst carried a shed
+            # instant as `held_wall`, a quiet game's re-stamp then 30-160 s.
+            self._carried_fresh.update(shed)
         return frozenset(shed)
 
     def admitting(self) -> bool:
