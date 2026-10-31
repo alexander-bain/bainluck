@@ -6006,7 +6006,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         """Admit frozen unchanged inputs beside an unrelated price transaction."""
         boundary = catalog_boundary
 
-        def owners():
+        def owners(events):
+            """Which of `events` other work owns; None while a stamp's is unknown.
+
+            #10090: callers only ask about `events`, so the price-buffer scan
+            reads only the legs of the ones nothing cheaper already owns (it
+            walked every buffered leg on each call: the top self frame, 7 %).
+            """
             owner = boundary.stamp_owner(blend_refresher)
             held = (owner.held_events()
                     if owner.task is not None and not owner.task.done() else set())
@@ -6014,22 +6020,27 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             pending_reader = getattr(blend_refresher, "pending_event_ids", None)
             pending = set(pending_reader()) if callable(pending_reader) else set()
+            busy = set(events) & (
+                held | pending | boundary.observation_writing
+                | boundary.bridges.reserved | boundary.bridges.unstamped
+                | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer))
+            free = set(events) - busy
+            if not free:
+                return busy
             # PM buffers unchanged BBOs too. Only acknowledged uninterrupted
             # values may pass; another leg's queued change owns the whole event
             # even before its price chunk starts (including A-B-A).
-            price_owned = {
-                event_id_by_outcome.get(oid) for oid, value in price_buffer.items()
-                if oid not in non_blend_outcome_ids
+            return busy | {
+                eid for oid, value in price_buffer.items()
+                if (eid := event_id_by_outcome.get(oid)) in free
+                and oid not in non_blend_outcome_ids
                 and (observation_continuity.get(oid) is None
                      or boundary.observation_ack.get(oid) != observation_continuity[oid]
                      or observation_continuity[oid][1] != round(float(value), 6))
             }
-            return (held | pending | price_owned | boundary.observation_writing
-                    | boundary.bridges.reserved | boundary.bridges.unstamped
-                    | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer))
 
         async with buffer_lock:
-            busy = owners()
+            busy = owners({entry[0] for entry in boundary.observation_pending.values()})
             if busy is None:
                 return
             snapshot = {oid: entry for oid, entry in boundary.observation_pending.items()
@@ -6050,7 +6061,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
         async def validate(event_ids):
             async with buffer_lock:
-                busy = owners()
+                busy = owners(event_ids)
                 if busy is None or getattr(blend_refresher, "_admission", None) is not window:
                     return set()
                 return {
