@@ -532,4 +532,205 @@ final class FootballEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(kept.count, rows.count - 1)
         return kept
     }
+
+    // MARK: - Team-card Details, side by side (Design 2026-10-31, FOOTBALL-AD318 next step)
+    //
+    // The retained live Eagles–Jaguars body serves one Team Field Goals market
+    // (Kalshi 65113446): Philadelphia 1+ 2+ 3+ (contributors 244842253, 244842247,
+    // 244842250) then Jacksonville 1+ 2+ 3+ (244842252, 244842246, 244842248).
+    // At 2+ the card's first side is Philadelphia's original, its second
+    // Jacksonville's. Per-side logs: each side's Details exactly as the leaf
+    // draws it (`detailsAction` with the card's own callback, performed the way
+    // its control performs it), with "none:<side>" for a side that draws none.
+
+    private static let fieldGoalsMarket = "Philadelphia vs Jacksonville: Team Field Goals"
+    private static func teamID(_ outcome: String) -> String { "kalshi|\(fieldGoalsMarket)-\(outcome)" }
+    private static let phi2 = teamID("Philadelphia: 2+")
+    private static let phi3 = teamID("Philadelphia: 3+")
+    private static let jax2 = teamID("Jacksonville: 2+")
+    private static let jax3 = teamID("Jacksonville: 3+")
+    private static let liveShown = Set(["Philadelphia: 1+", "Philadelphia: 2+", "Philadelphia: 3+",
+                                        "Jacksonville: 1+", "Jacksonville: 2+", "Jacksonville: 3+"].map(teamID))
+
+    /// CONSTRUCTED: the retained live body with its player props changed by `change`; every other key as served.
+    private func liveMarkets(_ change: (inout [[String: Any]]) throws -> Void) throws -> GameMarketsResponse {
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(F.liveMarkets.utf8)) as? [String: Any])
+        var rows = try XCTUnwrap(object["player_props"] as? [[String: Any]])
+        try change(&rows)
+        return try F.markets(try F.edited(F.liveMarkets, setting: ["player_props": rows]))
+    }
+
+    /// The one served field-goal row with exactly this outcome.
+    private func fieldGoalRow(_ rows: [[String: Any]], _ outcome: String) throws -> Int {
+        let found = rows.indices.filter {
+            rows[$0]["market_name"] as? String == Self.fieldGoalsMarket && rows[$0]["outcome_name"] as? String == outcome
+        }
+        XCTAssertEqual(found.count, 1)
+        return try XCTUnwrap(found.first)
+    }
+
+    /// The live page holding the field-goal card at one milestone.
+    private func fieldGoalPage(_ markets: GameMarketsResponse, group: String = "teamFieldGoals:2+") throws -> Host.Built {
+        build(try F.detail(F.liveDetail), history: try F.history(F.liveHistory), markets: markets,
+              reading: Host.Reading(story: .teamFieldGoals, fieldGoalGroup: group))
+    }
+
+    /// The card's per-side Details on the page, through the stream's own hook and the host's routes.
+    private func sideLog(_ built: Host.Built) throws -> [String] {
+        let event = try F.detail(F.liveDetail)
+        var log: [String] = []
+        let routes = self.routes(built, .page, event: event, now: F.liveNow) { log.append($0) }
+        let paired = try XCTUnwrap(view(built, .page, routes: routes) { log.append($0) }
+            .pairedContent(.teamFieldGoals, activation: activation(built, .teamFieldGoals, routes: routes)))
+        XCTAssertEqual(log, [], "building and reading ask for nothing")
+        for side in PairedMilestoneSide10868.allCases {
+            guard let action = paired.input.detailsAction(side, canOpenDetails: paired.onDetails != nil) else {
+                log.append("none:\(side)")
+                continue
+            }
+            action.perform(onSelect: paired.onSelect, onDetails: paired.onDetails, onExpand: paired.onExpand)
+        }
+        return log
+    }
+
+    func testInOneConsistentPassEveryRetainedTeamOriginalOpens() throws {
+        // The live body: every shown original on both sides routes, so both sides keep Details.
+        let live = try fieldGoalPage(try F.markets(F.liveMarkets))
+        XCTAssertEqual(live.input.teamFieldGoals?.detailsOriginalIDs, Self.liveShown)
+        XCTAssertEqual(try sideLog(live), ["hold", "select:kalshi|65113446|244842247", "present:original",
+                                           "hold", "select:kalshi|65113446|244842246", "present:original"])
+        // `teamOriginal` is the same rule as the pass's routes, id by id.
+        let event = try F.detail(F.liveDetail)
+        let markets = try F.markets(F.liveMarkets)
+        let routes = Host.teamRoutes(event: event, markets: markets, now: F.liveNow, scope: live.originals)
+        for id in Self.liveShown {
+            XCTAssertEqual(Host.teamOriginal(id, event: event, markets: markets, now: F.liveNow, scope: live.originals),
+                           routes[id])
+            XCTAssertNotNil(routes[id])
+        }
+        // The final body: all eight originals route.
+        let final = build(try F.detail(F.finalDetail), history: nil, markets: try F.markets(F.finalMarkets),
+                          reading: Host.Reading(fieldGoalGroup: "teamFieldGoals:2+"), now: F.finalNow)
+        let card = try XCTUnwrap(final.input.teamFieldGoals)
+        let shown = card.groups.flatMap { [$0.first.original?.id, $0.second.original?.id] }.compactMap { $0 }
+        XCTAssertEqual(shown.count, 8)
+        XCTAssertEqual(card.detailsOriginalIDs, Set(shown))
+    }
+
+    func testAServedRowRepeatedVerbatimWasAnEnabledDeadDetailsAndNowOnlyItsSideIsGated() throws {
+        let event = try F.detail(F.liveDetail)
+        // CONSTRUCTED: Jacksonville's 2+ row served twice, byte for byte.
+        let markets = try liveMarkets { rows in rows.append(rows[try fieldGoalRow(rows, "Jacksonville: 2+")]) }
+
+        // THE PATH. The card's adapter keeps one row per threshold, so the leaf
+        // sees Jacksonville's 2+ original once and, with no availability (every
+        // caller before this change), draws an enabled Details for it ...
+        let raw = try XCTUnwrap(FootballTeamMilestonesAdapter10868.input(
+            .fieldGoals, event: event, markets: markets, host: F.teamHost(F.liveNow),
+            selectedGroupID: "teamFieldGoals:2+"))
+        XCTAssertNil(raw.detailsOriginalIDs)
+        XCTAssertEqual(raw.detailsAction(.first, canOpenDetails: true), .details(Self.phi2))
+        XCTAssertEqual(raw.detailsAction(.second, canOpenDetails: true), .details(Self.jax2))
+        // ... while the catalogue lists both served copies, so the host's exact
+        // route rejects that id and its Details land nothing.
+        let built = try fieldGoalPage(markets)
+        let jaxIdentity = OriginalMarketDetails9483.Identity(source: "kalshi", market: "65113446", side: "244842246")
+        XCTAssertEqual(built.originals.catalogue?.originals.filter { $0.identity == jaxIdentity }.count, 2)
+        XCTAssertNil(Host.teamOriginal(Self.jax2, event: event, markets: markets, now: F.liveNow, scope: built.originals))
+        var landed: [String] = []
+        self.routes(built, .page, event: event, now: F.liveNow) { landed.append($0) }
+            .teamDetails(.teamFieldGoals, Self.jax2)
+        XCTAssertEqual(landed, [], "the route opens nothing for it")
+        // The opposite side is a working original.
+        XCTAssertNotNil(Host.teamOriginal(Self.phi2, event: event, markets: markets, now: F.liveNow, scope: built.originals))
+
+        // THE FIX. The built card names only the originals this pass opens; only
+        // Jacksonville's 2+ loses its Details, Philadelphia keeps its own.
+        let card = try XCTUnwrap(built.input.teamFieldGoals)
+        XCTAssertEqual(card.detailsOriginalIDs, Self.liveShown.subtracting([Self.jax2]))
+        XCTAssertNil(card.detailsAction(.second, canOpenDetails: true))
+        XCTAssertEqual(card.detailsAction(.first, canOpenDetails: true), .details(Self.phi2))
+        XCTAssertEqual(try sideLog(built), ["hold", "select:kalshi|65113446|244842247", "present:original",
+                                            "none:second"])
+        // Values, selection, marks and words are the adapter's, unchanged.
+        var expected = raw
+        expected.detailsOriginalIDs = card.detailsOriginalIDs
+        XCTAssertEqual(card, expected)
+        // At 3+ both sides open again.
+        XCTAssertEqual(try sideLog(try fieldGoalPage(markets, group: "teamFieldGoals:3+")),
+                       ["hold", "select:kalshi|65113446|244842250", "present:original",
+                        "hold", "select:kalshi|65113446|244842248", "present:original"])
+    }
+
+    func testTwoRowsSharingOneIdentityGateOnlyTheirOwnSidesAndTheOtherTeamKeepsItsDetails() throws {
+        let event = try F.detail(F.liveDetail)
+        // CONSTRUCTED: Philadelphia's 3+ row served with its 2+ row's contributor id.
+        let markets = try liveMarkets { rows in
+            rows[try fieldGoalRow(rows, "Philadelphia: 3+")]["contributor_outcome_ids"] = [244842247]
+        }
+        let built = try fieldGoalPage(markets)
+        let shared = OriginalMarketDetails9483.Identity(source: "kalshi", market: "65113446", side: "244842247")
+        XCTAssertEqual(built.originals.catalogue?.originals.filter { $0.identity == shared }.count, 2)
+        XCTAssertNil(Host.teamOriginal(Self.phi2, event: event, markets: markets, now: F.liveNow, scope: built.originals))
+        XCTAssertNil(Host.teamOriginal(Self.phi3, event: event, markets: markets, now: F.liveNow, scope: built.originals))
+        let card = try XCTUnwrap(built.input.teamFieldGoals)
+        XCTAssertEqual(card.detailsOriginalIDs, Self.liveShown.subtracting([Self.phi2, Self.phi3]))
+        XCTAssertEqual(try sideLog(built), ["none:first",
+                                            "hold", "select:kalshi|65113446|244842246", "present:original"])
+        XCTAssertEqual(try sideLog(try fieldGoalPage(markets, group: "teamFieldGoals:3+")),
+                       ["none:first", "hold", "select:kalshi|65113446|244842248", "present:original"])
+        // Every group, side and value is still drawn.
+        let raw = try XCTUnwrap(FootballTeamMilestonesAdapter10868.input(
+            .fieldGoals, event: event, markets: markets, host: F.teamHost(F.liveNow),
+            selectedGroupID: "teamFieldGoals:2+"))
+        XCTAssertEqual(card.groups, raw.groups)
+        XCTAssertEqual(card.selection, raw.selection)
+    }
+
+    func testAnOriginalTheCatalogueDoesNotListGatesOnlyItsSideAndNoCatalogueGatesBoth() throws {
+        let event = try F.detail(F.liveDetail)
+        let markets = try F.markets(F.liveMarkets)
+        let built = try fieldGoalPage(markets)
+        let catalogue = try XCTUnwrap(built.originals.catalogue)
+        let raw = try XCTUnwrap(FootballTeamMilestonesAdapter10868.input(
+            .fieldGoals, event: event, markets: markets, host: F.teamHost(F.liveNow),
+            selectedGroupID: "teamFieldGoals:2+"))
+        func originals(_ catalogue: OriginalMarketDetails9483.Catalogue?) -> FootballEventPageOriginals10868 {
+            FootballEventPageOriginals10868(
+                catalogue: catalogue, selection: nil, heading: built.originals.heading,
+                emptyWords: built.originals.emptyWords, unavailableChoice: built.originals.unavailableChoice,
+                tint: built.originals.tint)
+        }
+        // CONSTRUCTED: a catalogue that does not list Jacksonville's 2+ original.
+        // (One build cannot make this: `QuestionCatalog9483.build` lists every
+        // row but an Under beside its Over twin, and the card reads Over rows
+        // only — so this is a direct-caller control.)
+        let jaxIdentity = OriginalMarketDetails9483.Identity(source: "kalshi", market: "65113446", side: "244842246")
+        let lacking = originals(OriginalMarketDetails9483.Catalogue(
+            scope: catalogue.scope, originals: catalogue.originals.filter { $0.identity != jaxIdentity }))
+        let routes = Host.teamRoutes(event: event, markets: markets, now: F.liveNow, scope: lacking)
+        XCTAssertNil(routes[Self.jax2])
+        XCTAssertNotNil(routes[Self.phi2])
+        let narrowed = Host.offeringTeamDetails(raw, routes: routes)
+        XCTAssertEqual(narrowed.detailsOriginalIDs, Self.liveShown.subtracting([Self.jax2]))
+        XCTAssertEqual(narrowed.detailsAction(.first, canOpenDetails: true), .details(Self.phi2))
+        XCTAssertNil(narrowed.detailsAction(.second, canOpenDetails: true))
+        XCTAssertEqual(narrowed.groups, raw.groups)
+
+        // No catalogue, or another game's markets: no side offers Details, every value stays.
+        let bare = Host.offeringTeamDetails(raw, routes: Host.teamRoutes(event: event, markets: markets,
+                                                                         now: F.liveNow, scope: originals(nil)))
+        XCTAssertEqual(bare.detailsOriginalIDs, [])
+        XCTAssertNil(bare.detailsAction(.first, canOpenDetails: true))
+        XCTAssertNil(bare.detailsAction(.second, canOpenDetails: true))
+        XCTAssertEqual(bare.groups, raw.groups)
+        let foreign = try F.markets(try F.edited(F.liveMarkets, setting: ["event_id": 14639176]))
+        XCTAssertEqual(Host.teamRoutes(event: event, markets: foreign, now: F.liveNow, scope: built.originals), [:])
+
+        // An owner's own availability stays an upper bound.
+        var owned = raw
+        owned.detailsOriginalIDs = [Self.jax3]
+        XCTAssertEqual(Host.offeringTeamDetails(owned, routes: Host.teamRoutes(
+            event: event, markets: markets, now: F.liveNow, scope: built.originals)).detailsOriginalIDs, [Self.jax3])
+    }
 }

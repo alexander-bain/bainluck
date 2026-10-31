@@ -517,6 +517,72 @@ final class PairedMilestonePresentation10868Tests: XCTestCase {
         XCTAssertNil(Self.real(.sacks, .final, selected: 3).pairNotice)
     }
 
+    /// The owner's Details availability (`detailsOriginalIDs`) decides EACH
+    /// side on its own and changes nothing else. CONSTRUCTED availability sets
+    /// over the REAL sacks card (final, 3+ selected: Chicago 849, Philadelphia 854).
+    func testOwnerAvailabilityGatesEachSideOnItsOwnAndChangesNothingElse() {
+        let open = Self.real(.sacks, .final, selected: 3)
+        // Nil keeps every old caller's behaviour: both exact originals offer Details.
+        XCTAssertNil(open.detailsOriginalIDs)
+        XCTAssertEqual(open.detailsAction(.first, canOpenDetails: true), .details("player_props:849"))
+        XCTAssertEqual(open.detailsAction(.second, canOpenDetails: true), .details("player_props:854"))
+
+        func sideLog(_ input: PairedMilestoneInput10868, canOpen: Bool = true) -> [String] {
+            var log: [String] = []
+            for side in Self.sides {
+                guard let action = input.detailsAction(side, canOpenDetails: canOpen) else {
+                    log.append("none:\(side)")
+                    continue
+                }
+                action.perform(onSelect: { log.append("select:\($0)") },
+                               onDetails: { log.append("details:\(side):\($0)") },
+                               onExpand: { log.append("expand:\($0)") })
+            }
+            return log
+        }
+        XCTAssertEqual(sideLog(open), ["details:first:player_props:849", "details:second:player_props:854"])
+
+        // Only Philadelphia's original named (plus an id this card does not show):
+        // Chicago's side draws no Details; Philadelphia keeps its own.
+        var second = open
+        second.detailsOriginalIDs = ["player_props:854", "constructed:not-on-this-card"]
+        XCTAssertEqual(sideLog(second), ["none:first", "details:second:player_props:854"])
+        // The other way round.
+        var first = open
+        first.detailsOriginalIDs = ["player_props:849"]
+        XCTAssertEqual(sideLog(first), ["details:first:player_props:849", "none:second"])
+        // None named: no Details on either side.
+        var none = open
+        none.detailsOriginalIDs = []
+        XCTAssertEqual(sideLog(none), ["none:first", "none:second"])
+        // No callback: nothing, named or not.
+        XCTAssertEqual(sideLog(second, canOpen: false), ["none:first", "none:second"])
+
+        // Every value, mark, selection, result and word is unchanged.
+        for gated in [second, first, none] {
+            XCTAssertEqual(gated.groups, open.groups)
+            XCTAssertEqual(gated.selection, open.selection)
+            XCTAssertEqual(gated.chartTitle, open.chartTitle)
+            let group = gated.selection.group!
+            for side in Self.sides {
+                XCTAssertEqual(gated.reading(group, side: side), open.reading(group, side: side))
+            }
+            XCTAssertEqual(gated.stepAction(1, canSelect: true), open.stepAction(1, canSelect: true))
+            XCTAssertEqual(gated.expandAction(canExpand: true), open.expandAction(canExpand: true))
+        }
+
+        // Naming an id never adds an original or clears an ambiguity.
+        let shared = Self.made("same", before: Self.obs(0.5, "50%", "constructed"))
+        var reused = Self.constructed(.before, [Self.madeGroup("1", .original(shared), .original(shared))], selected: "1")
+        reused.detailsOriginalIDs = ["same"]
+        XCTAssertEqual(sideLog(reused), ["none:first", "none:second"], "one id on two slots stays ambiguous")
+        var missing = Self.constructed(.before, [Self.madeGroup("1",
+            .original(Self.made("only", before: Self.obs(0.5, "50%", "constructed"))), .missing("No original"))],
+            selected: "1")
+        missing.detailsOriginalIDs = ["only", "constructed:sibling"]
+        XCTAssertEqual(sideLog(missing), ["details:first:only", "none:second"], "a missing slot gains nothing")
+    }
+
     func testExpandNeedsACallbackAndANonEmptyCardID() {
         let input = Self.real(.sacks, .before)
         XCTAssertNil(input.expandAction(canExpand: false))

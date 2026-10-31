@@ -84,11 +84,16 @@ import SwiftUI
 /// have no stream hook, so each holds once here, then lands. Appearance and
 /// binding reads ask for nothing.
 ///
-/// WORKING DETAILS (`detailsControls`, `offeringDetails`, tennis's
-/// convention). Before any control is drawn, each period-winner original is
-/// resolved against THIS pass's catalogue (`periodOriginal`); the card's input
-/// names only those (`detailsOriginalIDs`), and the card's Details callback is
-/// offered only while its shown original is one of them. A withdrawn or
+/// WORKING DETAILS (`detailsControls`, `offeringDetails`,
+/// `offeringTeamDetails`, tennis's convention). Each team card's original is
+/// resolved the same way, once per pass (`teamRoutes`), and the paired leaf
+/// gates each side on its own (`detailsOriginalIDs`): a side whose original is
+/// served twice or shares its identity with another row offers no Details,
+/// and the other side keeps its own. Before any control is drawn, each
+/// period-winner original is resolved against THIS pass's catalogue
+/// (`periodOriginal`); the card's input names only those
+/// (`detailsOriginalIDs`), and the card's Details callback is offered only
+/// while its shown original is one of them. A withdrawn or
 /// unrouted original keeps its dot, its result and its selection with no
 /// Details control; a routed neighbour keeps its Details. Never another
 /// original in its place, never a stand-in catalogue entry, never the whole
@@ -415,6 +420,11 @@ struct FootballEventPageHost10868: View {
             event, markets: scoped.markets,
             host: FootballOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
             tint: tints.home, selection: reading.selection, periodWinners: periodWinners)
+        // Each team card's side offers Details only when its own original
+        // opens in THIS pass's catalogue; the other side keeps its own.
+        let teamRoutes = Self.teamRoutes(event: event, markets: scoped.markets, now: now, scope: originals)
+        let teamSacks = sacks.map { Self.offeringTeamDetails($0, routes: teamRoutes) }
+        let teamFieldGoals = fieldGoals.map { Self.offeringTeamDetails($0, routes: teamRoutes) }
         // Each period original offers Details only when it resolves in THIS
         // pass's catalogue; every comparison original stays.
         let periodCard = FootballPeriodWinnersAdapter10868.input(
@@ -422,7 +432,7 @@ struct FootballEventPageHost10868: View {
             host: periodHost
         ).map { Self.offeringDetails($0, admitted: periodWinners, originals: originals) }
         let input = FootballPageInputAdapter10868.input(
-            event, route: route, history: historyInput, deck: deck, teamSacks: sacks, teamFieldGoals: fieldGoals,
+            event, route: route, history: historyInput, deck: deck, teamSacks: teamSacks, teamFieldGoals: teamFieldGoals,
             combined: combined, periodWinners: periodCard, originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)
@@ -462,19 +472,50 @@ struct FootballEventPageHost10868: View {
     /// The catalogue selection for a team card's exact original (its
     /// `HockeyJourneyContributionAdapter10868.milestoneID`): the one catalogue
     /// entry built from that same served row, in the originals' own scope.
-    /// Nil when it is not exactly one listed original.
+    /// Nil when it is not exactly one listed original. The same rule as
+    /// `teamRoutes`, for one id.
     static func teamOriginal(_ originalID: String, event: EventDetail, markets: GameMarketsResponse?, now: Date,
                              scope originals: FootballEventPageOriginals10868) -> OriginalMarketDetails9483.Selection? {
+        teamRoutes(event: event, markets: markets, now: now, scope: originals)[originalID]
+    }
+
+    /// Every team-card original this pass can open, by its exact original id,
+    /// computed once: an id that names exactly one listed outcome's served row,
+    /// whose identity the catalogue lists exactly once. A served row repeated
+    /// verbatim (two listed outcomes carry one id), two rows sharing one
+    /// identity, an original the catalogue does not list, another game's
+    /// markets and no catalogue each give no route — never a neighbour's.
+    static func teamRoutes(event: EventDetail, markets: GameMarketsResponse?, now: Date,
+                           scope originals: FootballEventPageOriginals10868)
+        -> [String: OriginalMarketDetails9483.Selection] {
         guard let markets = FootballInputIdentityAdapter10868.markets(markets, for: event),
-              let catalogue = originals.catalogue else { return nil }
-        let matches = HockeyJourneyOriginalsAdapter10868.matched(markets, status: event.status, now: now)
-            .filter { match in
-                guard let prop = match.source.prop else { return false }
-                return HockeyJourneyContributionAdapter10868.milestoneID(prop) == originalID
-            }
-        guard matches.count == 1, let match = matches.first else { return nil }
-        let identity = HockeyJourneyOriginalsAdapter10868.identity(of: match.source)
-        guard catalogue.originals.filter({ $0.identity == identity }).count == 1 else { return nil }
-        return OriginalMarketDetails9483.Selection(scope: catalogue.scope, identity: identity)
+              let catalogue = originals.catalogue else { return [:] }
+        var byID: [String: [HockeyJourneyOriginalsAdapter10868.Match]] = [:]
+        for match in HockeyJourneyOriginalsAdapter10868.matched(markets, status: event.status, now: now) {
+            guard let prop = match.source.prop else { continue }
+            byID[HockeyJourneyContributionAdapter10868.milestoneID(prop), default: []].append(match)
+        }
+        var routes: [String: OriginalMarketDetails9483.Selection] = [:]
+        for (id, matches) in byID {
+            guard matches.count == 1, let match = matches.first else { continue }
+            let identity = HockeyJourneyOriginalsAdapter10868.identity(of: match.source)
+            guard catalogue.originals.filter({ $0.identity == identity }).count == 1 else { continue }
+            routes[id] = OriginalMarketDetails9483.Selection(scope: catalogue.scope, identity: identity)
+        }
+        return routes
+    }
+
+    /// A team card offering Details, side by side, only for an original this
+    /// pass can open (`teamRoutes`). Every group, side, value, mark, selection
+    /// and result is unchanged; an owner's own availability is kept as an
+    /// upper bound. The card's Details callback stays offered: a routed side
+    /// never loses its Details because its sibling has none.
+    static func offeringTeamDetails(_ paired: PairedMilestoneInput10868,
+                                    routes: [String: OriginalMarketDetails9483.Selection]) -> PairedMilestoneInput10868 {
+        var paired = paired
+        let shown = paired.groups.flatMap { [$0.first.original?.id, $0.second.original?.id] }.compactMap { $0 }
+        let routed = Set(shown.filter { routes[$0] != nil })
+        paired.detailsOriginalIDs = paired.detailsOriginalIDs.map { $0.intersection(routed) } ?? routed
+        return paired
     }
 }

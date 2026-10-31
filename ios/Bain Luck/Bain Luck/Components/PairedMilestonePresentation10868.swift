@@ -42,7 +42,10 @@ import SwiftUI
 // Milestone selection, previous/next, Details and expansion stay with the
 // host: the view keeps no selected state, no sheet, no focus, no scroll and no
 // subscription, and hands back exact owner ids only. With no callback, content
-// is shown without a button and no tap is asked for.
+// is shown without a button and no tap is asked for. The owner may also name
+// which originals it can open (`detailsOriginalIDs`, nil = every exact one):
+// each side then offers Details only for its own named original, so one side
+// the owner cannot route never takes its working sibling's Details with it.
 //
 // Host binding still owed — not available at this base. An owner must supply,
 // for one card: the two subject identities, names and details; the milestone
@@ -229,6 +232,15 @@ nonisolated struct PairedMilestoneInput10868: Equatable {
     let chartTitle: String?
     /// The owner's labelled ticks on the fixed 0...1 probability scale.
     let ticks: [PlayerContributionTick10868]
+    /// Nil by default: every exact, unique original offers its Details, as
+    /// before. When supplied, only an original id the owner names here offers
+    /// Details, and each subject's side is decided on its own: a side whose
+    /// original the owner cannot open draws no Details control while the other
+    /// side keeps its own. Every value, mark, selection, result and word still
+    /// shows. An availability permission only (the shared period leaves'
+    /// `detailsOriginalIDs`): it never adds an original, and an id the card
+    /// does not show, or shows twice, still offers nothing.
+    var detailsOriginalIDs: Set<String>? = nil
 
     static let pairUnavailable = "Paired subjects unresolved."
     static let previousTitle = "Previous milestone"
@@ -473,10 +485,13 @@ nonisolated struct PairedMilestoneInput10868: Equatable {
         return .select(groups[target].id)
     }
 
-    /// Details for one subject's original in the selected group only.
+    /// Details for one subject's original in the selected group only, and
+    /// only where the owner's availability names it (nil: every exact,
+    /// unique original). Each side is decided on its own.
     func detailsAction(_ side: PairedMilestoneSide10868, canOpenDetails: Bool) -> PairedMilestoneAction10868? {
         guard canOpenDetails, isPairResolved, let group = selection.group,
               let original = group.entry(side).original, isUniqueOriginal(original.id) else { return nil }
+        if let detailsOriginalIDs, !detailsOriginalIDs.contains(original.id) { return nil }
         return .details(original.id)
     }
 
