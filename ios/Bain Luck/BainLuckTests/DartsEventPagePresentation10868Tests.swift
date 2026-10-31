@@ -44,6 +44,20 @@ import XCTest
 /// DURING snapshot (8:48 AM, "In play") are constructed controls, as are every
 /// selected minute, every invalid, foreign-scope, duplicate and colliding case,
 /// and the arbitrary-identity page.
+///
+/// PHASE-APPROPRIATE OWNER INFO. The page shows the owner's About verbatim
+/// and decides nothing about when a fact became known, so each constructed
+/// owner here supplies only what it could know: before and during, the About
+/// carries timing and source context only — never the 4–0 report — and the
+/// headline carries no finish. At the final the owner admits three
+/// independent channels — the headline finish, the About report and the legs
+/// card — plus each original contract's own grade (a fourth, separate
+/// channel). `Finish` names the constructed cases: `.reported` (all three),
+/// a missing legs CARD only (`legs: nil`, the headline finish and the report
+/// stay valid and the card's absence is worded as the card's), and
+/// `.withheld` (the owner withholds the whole finish, coherently across the
+/// headline, About and legs). The legs input supplied before and during is a
+/// REJECTED control: the phase gate hides it, and nothing else carries it.
 @MainActor
 final class DartsEventPagePresentation10868Tests: XCTestCase {
     private typealias Originals = OriginalMarketDetails9483
@@ -154,7 +168,25 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
         FieldChooserReading10868(label: "Final legs", value: .recorded(text: "\(player.legsWon)", detail: "Darts World report · Oct 12"))
     }
 
-    private static func state(_ phase: DartsEventPagePhase10868) -> FieldHeadlineState10868 {
+    /// What the owner admits about the final result. CONSTRUCTED cases.
+    private enum Finish {
+        /// Before or during the match: no finish exists yet.
+        case notYet
+        /// The headline finish, the About report and (unless `legs: nil`) the legs card.
+        case reported
+        /// The owner withholds the whole finish: no headline finish, no report, no legs card.
+        case withheld
+    }
+
+    private static func defaultFinish(_ phase: DartsEventPagePhase10868) -> Finish {
+        phase == .final ? .reported : .notYet
+    }
+
+    private static func state(_ phase: DartsEventPagePhase10868, finish: Finish) -> FieldHeadlineState10868 {
+        if phase == .final, finish == .withheld {
+            return FieldHeadlineState10868(figure: "Final", unit: nil, caption: "Result not reported", detail: nil,
+                                           spoken: "Final. Result not reported.", progress: nil)
+        }
         switch phase {
         case .before:
             return FieldHeadlineState10868(figure: "Not started", unit: nil, caption: "Contract rules: 8:50 AM EDT",
@@ -189,8 +221,11 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
     }
 
     private static func headline(_ phase: DartsEventPagePhase10868,
-                                 headlinePhase: FieldOutlookPhase10868? = nil) -> FieldHeadlineInput10868 {
-        FieldHeadlineInput10868(
+                                 headlinePhase: FieldOutlookPhase10868? = nil,
+                                 finish: Finish? = nil) -> FieldHeadlineInput10868 {
+        let admission = finish ?? defaultFinish(phase)
+        let admitsFinish = admission == .reported
+        return FieldHeadlineInput10868(
             scope: scope,
             catalogue: catalogue(phase),
             displayed: players.map {
@@ -203,8 +238,9 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
                     later: later.map { FieldMovementObservation10868(probability: $0.probability, reading: recordedReading($0)) },
                     movement: nil, observation: later.map { pointID(player, $0.minute) })
             },
-            finishes: players.map { FieldFinishPlace10868(ref: ref($0), reading: legsReading($0)) },
-            state: state(phase),
+            // Only an owner that has admitted the final result carries it.
+            finishes: admitsFinish ? players.map { FieldFinishPlace10868(ref: ref($0), reading: legsReading($0)) } : [],
+            state: state(phase, finish: admission),
             phase: headlinePhase ?? DartsEventPageModel10868.headlinePhase(phase),
             copy: FieldHeadlineCopy10868(
                 eyebrow: "MODUS Super Series · Week 11 · Group A", title: "Jim McEwan · Sander van Ockenburg",
@@ -212,7 +248,7 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
                 beforeUnavailable: noPreMatch, recordedUnavailable: "No recorded trade",
                 finishLabel: "Final legs", finishUnavailable: "Final legs not reported",
                 empty: "No players in this update", aboutLabel: "About this match",
-                aboutHint: "Opens timing, the reported legs and sources",
+                aboutHint: admitsFinish ? "Opens timing, the reported legs and sources" : "Opens timing and sources",
                 openHint: "Opens this player’s history"),
             unavailableWords: "Player unavailable in this update",
             keyTreatment: .neutralRecorded)
@@ -372,23 +408,38 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
         id: "darts-world", label: "Darts World report",
         url: URL(string: "https://dartsworld.com/2026/10/morris-grabs-early-super-series-lead/")!)
 
-    private static let about = DartsEventPageAbout10868(
-        title: "About this match",
-        sections: [
+    /// ARCHIVED URL: the first settlement source the contracts name (`dartsMatch.json`).
+    private static let flashscore = DartsEventPageSource10868(
+        id: "flashscore", label: "Flashscore darts", url: URL(string: "https://www.flashscoreusa.com/darts/")!)
+
+    private static let finalReport = "Sander Van Ockenburg-Zwaan 4-0 Jim McEwan, as reported by Darts World."
+
+    /// The owner's About for what it knows: timing and sources always; the
+    /// final report only once it has admitted the final result.
+    private static func about(_ finish: Finish) -> DartsEventPageAbout10868 {
+        var sections = [
             DartsEventPageAboutSection10868(
                 title: "Timing",
                 paragraphs: ["Both original Kalshi contract rules: Oct 12, 2026 at 8:50 AM EDT. Actual start not independently captured."]),
             DartsEventPageAboutSection10868(
-                title: "Final legs",
-                paragraphs: ["Sander Van Ockenburg-Zwaan 4-0 Jim McEwan, as reported by Darts World."],
-                source: dartsWorld),
-        ])
+                title: "Sources",
+                paragraphs: ["Win chances are recorded Kalshi trades, one minute at a time. The contracts name Flashscore, Sofascore and Sky Sports as their sources."],
+                source: flashscore),
+        ]
+        if finish == .reported {
+            sections.append(DartsEventPageAboutSection10868(title: "Final legs", paragraphs: [finalReport], source: dartsWorld))
+        }
+        return DartsEventPageAbout10868(title: "About this match", sections: sections)
+    }
 
-    private static func copy(_ phase: DartsEventPagePhase10868) -> DartsEventPageCopy10868 {
+    /// A withheld finish is worded as the result's absence; a missing card
+    /// beside an admitted finish is worded as the card's own absence.
+    private static func copy(_ phase: DartsEventPagePhase10868, finish: Finish? = nil) -> DartsEventPageCopy10868 {
         DartsEventPageCopy10868(
             storiesLabel: "Darts match stories",
             headlineUnavailable: "Match chances unavailable in this update",
-            legsUnavailable: "Final legs not reported",
+            legsUnavailable: (finish ?? defaultFinish(phase)) == .withheld
+                ? "Final legs not reported" : "Legs tally unavailable in this update",
             unavailableWords: "Player unavailable in this update",
             // Before the match each player's own slot already says it.
             context: DartsContextCopy10868(label: "Darts probability context", chartLabel: "Chart",
@@ -396,7 +447,11 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
                                            baseline: phase == .before ? nil : noPreMatch))
     }
 
-    private static func reader(_ phase: DartsEventPagePhase10868) -> DartsEventPageReaderHeader10868 {
+    private static func reader(_ phase: DartsEventPagePhase10868, finish: Finish) -> DartsEventPageReaderHeader10868 {
+        if phase == .final, finish == .withheld {
+            return DartsEventPageReaderHeader10868(title: "McEwan vs van Ockenburg",
+                                                   state: "Final · Result not reported · Pre-match unavailable")
+        }
         switch phase {
         case .before: DartsEventPageReaderHeader10868(title: "McEwan vs van Ockenburg", state: "Not started · Pre-match unavailable")
         case .during: DartsEventPageReaderHeader10868(title: "McEwan vs van Ockenburg", state: "In play · Legs not reported")
@@ -406,16 +461,22 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
     }
 
     /// Every phase carries a movement and legs input, so each phase gate is
-    /// what hides them — never their absence.
+    /// what hides them — never their absence. Before and during that legs
+    /// input is a rejected control: the About and headline carry no finish.
+    /// `legs: nil` at the final is a missing CARD only; `.withheld` withholds
+    /// the whole finish across the headline, About and legs.
     private static func page(_ phase: DartsEventPagePhase10868, selected: Minute? = nil,
                              headlinePhase: FieldOutlookPhase10868? = nil,
+                             finish: Finish? = nil,
                              movement: DartsEndpointsInput10868? = Tests.movement(),
                              legs: DartsLegsInput10868? = Tests.legs()) -> DartsEventPageInput10868 {
-        DartsEventPageInput10868(
-            phase: phase, reader: reader(phase),
-            headline: headline(phase, headlinePhase: headlinePhase),
+        let admission = finish ?? defaultFinish(phase)
+        return DartsEventPageInput10868(
+            phase: phase, reader: reader(phase, finish: admission),
+            headline: headline(phase, headlinePhase: headlinePhase, finish: admission),
             history: history(phase, selected: selected),
-            movement: movement, legs: legs, about: about, copy: copy(phase))
+            movement: movement, legs: admission == .withheld ? nil : legs, about: about(admission),
+            copy: copy(phase, finish: admission))
     }
 
     // MARK: Originals
@@ -426,9 +487,12 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
         Originals.Identity(source: "kalshi", market: player.market, side: "yes")
     }
 
+    /// `omitting`: an owner update in which that original is absent.
     private static func originals(_ phase: DartsEventPagePhase10868, scope: String = Tests.originalsScope,
-                                  duplicate: Bool = false) -> DartsEventPageOriginals10868 {
-        var records = players.map { player -> Originals.Original in
+                                  duplicate: Bool = false, recorded: Originals.RecordedHistory? = nil,
+                                  omitting: Player? = nil) -> DartsEventPageOriginals10868 {
+        let admitted = players.filter { $0.token != omitting?.token }
+        var records = admitted.map { player -> Originals.Original in
             let last = lastTrade(player, through: cutoff(.during))
             let mode: Originals.Mode
             switch phase {
@@ -452,10 +516,159 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
         return DartsEventPageOriginals10868(
             catalogue: Originals.Catalogue(scope: originalsScope, originals: records),
             selection: Originals.Selection(scope: scope, identity: identity(mcewan)),
+            recorded: recorded,
             labels: [identity(mcewan): "Jim McEwan · Winner", identity(ockenburg): "Sander van Ockenburg · Winner"],
             heading: "Original contracts", context: "Both captured winner contracts",
             emptyWords: "No original contracts for this match", unavailableChoice: "Unnamed original",
             tint: mcewan.tint)
+    }
+
+    /// CONSTRUCTED contract input for the held McEwan winner original at the
+    /// final: no points and an explicit plot absence, offering only Explore.
+    private static func recordedContext() -> Originals.RecordedHistory {
+        let seriesID = "constructed.darts.history.mcewan"
+        var history = FieldHistoryInput10868(
+            title: "Recorded chance", caption: nil,
+            series: [FieldHistorySeries10868(
+                id: seriesID, name: "Jim McEwan", shape: .circle, tint: mcewan.tint, runs: [], links: [], labelPointID: nil,
+                before: .absent(words: noPreMatch), recorded: .absent(words: "Unavailable"), absentWords: nil, choose: nil)],
+            selection: .series(id: seriesID, missingWords: "This original isn’t in this history"),
+            domain: FieldHistoryDomain10868(lower: 0, upper: 11), ceiling: 1,
+            yTicks: [FieldHistoryTick10868(value: 0, lines: ["0%"]), FieldHistoryTick10868(value: 1, lines: ["100%"])],
+            xTicks: [FieldHistoryTick10868(value: 0, lines: ["8:39 AM"]), FieldHistoryTick10868(value: 11, lines: ["8:50 AM"])],
+            guides: [], breaks: [], readout: .singleBefore(label: "Pre-match"),
+            markKey: FieldHistoryMarkKey10868(hollow: nil, filled: nil),
+            comparisonExplanation: nil, notes: [], summary: "Jim McEwan: no recorded trades in this context.",
+            plotHeight: 132, unboundReadingWords: "Unavailable", plotUnavailableWords: "Original history unavailable",
+            windows: nil, scale: nil, moreOriginals: nil, details: nil, expand: nil, inspect: nil,
+            previous: nil, next: nil, inspection: nil, layout: .expanded)
+        history.showsKey = false
+        history.plotAbsence = FieldHistoryPlotAbsence10868(title: "Recorded history not drawn", words: nil)
+        return Originals.RecordedHistory(
+            selection: Originals.Selection(scope: originalsScope, identity: identity(mcewan)), mode: .result,
+            seriesID: seriesID, availability: "Pre-match chance unavailable · contract result below",
+            readings: [Originals.RecordedReading(label: "Pre-match chance", marker: .hollow, reading: .missing(noPreMatch))],
+            movement: nil, history: history, finishLabel: "Final legs", finish: nil,
+            preview: nil, expand: nil,
+            explore: FieldHistoryAction10868(id: "constructed.darts.explore", label: "Explore history",
+                                             spokenLabel: nil, isAvailable: true),
+            unmatchedWords: "Recorded history unavailable for this original")
+    }
+
+    // MARK: Reachable text
+
+    /// Every string a reader can reach on this page in its phase, through the
+    /// shared models the views draw from: visible text, controls, sources,
+    /// Info (About) bodies and spoken output — page, compact context and full
+    /// size. `originals`: the catalogue and every original's Details too.
+    private static func reachableText(_ input: DartsEventPageInput10868,
+                                      originals: DartsEventPageOriginals10868?) -> [String] {
+        let model = DartsEventPageModel10868(input)
+        var texts: [String] = [input.reader.title]
+        texts += [input.reader.state, input.notice].compactMap { $0 }
+        // Headline, as its own leaf draws and speaks it.
+        if let headline = model.headline {
+            let leaf = FieldHeadlineModel10868(headline)
+            texts += [leaf.eyebrow, leaf.title, leaf.stateSummary, leaf.aboutLabel(canAbout: true), headline.copy.openHint]
+                .compactMap { $0 }
+            texts.append(leaf.aboutHint(canAbout: true))
+            if let state = headline.state {
+                texts += [state.figure, state.unit, state.caption, state.detail, state.spoken].compactMap { $0 }
+            }
+            for competitor in leaf.competitors {
+                texts.append(competitor.slot.name)
+                texts.append(leaf.competitorSummary(competitor))
+                texts += competitor.metrics.compactMap(FieldChaseModel10868.figure)
+                texts += competitor.metrics.compactMap(FieldChaseModel10868.words)
+            }
+            for original in headline.catalogue {
+                texts += [original.name, original.browseStatus, original.preview.absence].compactMap { $0 }
+            }
+        } else {
+            texts.append(input.copy.headlineUnavailable)
+        }
+        // History: the page anchor and full size read the same input.
+        for history in [input.history, model.readerHistory] {
+            texts += [history.title, history.summary, history.unboundReadingWords] + history.notes
+            texts += [history.caption, history.plotUnavailableWords, history.markKey.hollow, history.markKey.filled,
+                      history.inspection?.caption].compactMap { $0 }
+            texts.append(FieldHistoryGeometry10868.spokenValue(history))
+            for series in history.series {
+                texts.append(series.name)
+                texts += [series.absentWords].compactMap { $0 }
+                texts += FieldHistoryGeometry10868.readoutSlots(series, in: history).map(FieldHistoryGeometry10868.spokenSlot)
+            }
+            texts += FieldHistoryGeometry10868.actions(history).flatMap { [$0.label, $0.spokenLabel].compactMap { $0 } }
+        }
+        // Compact context.
+        texts.append(model.contextSummary)
+        texts += model.contextFooter
+        texts += [input.copy.context.label, input.copy.context.chartLabel, input.copy.context.chartSpokenLabel].compactMap { $0 }
+        // The movement card, when this phase shows it.
+        if let movement = model.movement {
+            let card = DartsEndpointsModel10868(movement)
+            let copy = movement.copy
+            texts += [copy.title, copy.scaleLower, copy.scaleLabel, copy.scaleUpper, copy.graphicLabel,
+                      copy.endpointUnavailable, copy.unavailableWords, copy.noComparison, copy.expandLabel]
+            texts += [copy.eyebrow, copy.baseline, copy.markKey, copy.selectedWords, copy.sourcesLabel].compactMap { $0 }
+            texts += card.rows.map { card.rowSummary($0) }
+            texts += [movement.openEarlier, movement.openLater].compactMap { $0 }
+                .flatMap { [$0.label, $0.spokenLabel].compactMap { $0 } }
+        }
+        // The legs card, when this phase shows it, or its absence words.
+        if let legs = model.legs {
+            texts += [legs.label, legs.summary, legs.provenance] + [legs.markKey].compactMap { $0 }
+            texts += model.legRows.map(\.score.spoken) + model.legRows.map(\.score.figure)
+        }
+        texts += [model.legsUnavailable].compactMap { $0 }
+        texts.append(input.copy.storiesLabel)
+        // Info: the About the page offers, with its sources.
+        if let about = DartsEventPagePresentation10868(input: input, mode: .about).aboutContent()?.about {
+            texts.append(about.title)
+            for section in about.sections {
+                texts.append(section.title)
+                texts += section.paragraphs
+                if let source = section.source { texts += [source.id, source.label, source.url.absoluteString] }
+            }
+        }
+        // Originals: the catalogue cards and every original's Details.
+        if let originals, let catalogue = originals.catalogue {
+            texts += [originals.heading, originals.emptyWords, originals.unavailableChoice] + [originals.context].compactMap { $0 }
+            let cards = OriginalMarketCatalogue9483.cards(catalogue: catalogue, selection: originals.selection,
+                                                          labels: originals.labels, unavailableChoice: originals.unavailableChoice)
+            texts += cards.map { OriginalMarketCatalogue9483.spoken($0) }
+            for original in catalogue.originals {
+                let content = Originals.content(catalogue: catalogue,
+                                                selection: Originals.Selection(scope: catalogue.scope, identity: original.identity))
+                texts.append(Originals.spoken(content))
+                if let content {
+                    texts += [content.title, content.outcome] + content.readings.map(\.label) + content.readings.map(\.text)
+                    texts += content.readings.compactMap(\.provenance)
+                    texts += content.about.map(\.label) + content.about.map(\.value)
+                    if let result = content.result { texts += [result.words] + [result.provenance].compactMap { $0 } }
+                }
+            }
+        }
+        return texts
+    }
+
+    /// The final result's words in any form this fixture could carry them:
+    /// the legs score, the report, its publisher and URL, a leg count, a
+    /// contract grade or its settlement provenance.
+    private static let resultFacts = ["0–4", "4–0", "0-4", "4-0", "Ockenburg-Zwaan", "Darts World", "dartsworld",
+                                      "legs won", "Legs won", "Resolved", "settlement"]
+    /// Labels that only a final page uses. Before and during none may appear;
+    /// a final that withholds its result may still name the final itself.
+    private static let finalLabels = ["Final legs", "Final ·"]
+
+    /// Every text carrying a result fact — and, unless `allowingFinalLabels`,
+    /// a final-only label.
+    private static func leaks(_ texts: [String], allowingFinalLabels: Bool = false) -> [String] {
+        let forbidden = allowingFinalLabels ? resultFacts : resultFacts + finalLabels
+        return texts.filter { text in
+            forbidden.contains { text.contains($0) }
+                || text.range(of: #"\b(won|lost|winner of)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+        }
     }
 
     // MARK: - Phases
@@ -579,12 +792,15 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
         XCTAssertEqual(results.map { $0?.provenance }, ["Kalshi settlement", "Kalshi settlement"])
         XCTAssertFalse(model.legRows.contains { $0.score.figure.contains("Resolved") })
 
-        // No legs reported at the final: the owner's words, never a zero.
-        let unreported = DartsEventPageModel10868(Self.page(.final, legs: nil))
-        XCTAssertNil(unreported.legs)
-        XCTAssertEqual(unreported.legsUnavailable, "Final legs not reported")
-        XCTAssertEqual(unreported.legRows, [])
-        XCTAssertEqual(unreported.contextFooter, [Self.noPreMatch])
+        // Only the legs CARD missing at the final: the card's own words, never
+        // a zero, while the independently admitted headline finish stays.
+        let cardMissingInput = Self.page(.final, legs: nil)
+        let cardMissing = DartsEventPageModel10868(cardMissingInput)
+        XCTAssertNil(cardMissing.legs)
+        XCTAssertEqual(cardMissing.legsUnavailable, "Legs tally unavailable in this update")
+        XCTAssertEqual(cardMissing.legRows, [])
+        XCTAssertEqual(cardMissing.contextFooter, [Self.noPreMatch])
+        XCTAssertEqual(Self.figures(cardMissingInput.headline), [["0"], ["4"]])
     }
 
     func testAHeadlineFromAnotherPhaseIsNotMountedAndTheOwnersWordsStand() {
@@ -1121,7 +1337,7 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
         XCTAssertNil(bare.catalogueContent()?.onSelect)
         XCTAssertNil(bare.originalDetailsContent()?.onHistory)
         XCTAssertNil(bare.aboutOpener())
-        XCTAssertNil(DartsEventPageAboutContent10868(about: Self.about).sourceAction(Self.dartsWorld))
+        XCTAssertNil(DartsEventPageAboutContent10868(about: Self.about(.reported)).sourceAction(Self.dartsWorld))
         bare.openReaderAbout()
         XCTAssertEqual(log, [])
 
@@ -1188,5 +1404,210 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
         let unplayed = DartsEventPageModel10868(Self.page(.final, legs: Self.legs(played: nil)))
         XCTAssertEqual(unplayed.legRows.map(\.marks), [nil, nil])
         XCTAssertEqual(unplayed.legRows.map(\.score.figure), ["0", "4"])
+    }
+
+    // MARK: - Phase-appropriate Info
+
+    func testBeforeAndDuringEveryReachableTextSourceInfoAndSpokenOutputCarriesNoFinalResult() {
+        // The scan is not vacuous: an admitted final reaches the result.
+        let final = Self.reachableText(Self.page(.final), originals: Self.originals(.final))
+        XCTAssertFalse(Self.leaks(final).isEmpty)
+        XCTAssertTrue(final.contains(Self.finalReport))
+
+        for phase in [DartsEventPagePhase10868.before, .during] {
+            // The owner supplied a legs card (a rejected control) and, for
+            // the movement card, its admitted endpoints.
+            let input = Self.page(phase)
+            XCTAssertNotNil(input.legs, phase.rawValue)
+            let texts = Self.reachableText(input, originals: Self.originals(phase))
+            XCTAssertEqual(Self.leaks(texts), [], phase.rawValue)
+
+            // Info: timing and source context only, the exact sections the owner supplied.
+            let about = DartsEventPagePresentation10868(input: input, mode: .about).aboutContent()?.about
+            XCTAssertEqual(about, Self.about(.notYet), phase.rawValue)
+            XCTAssertEqual(about?.sections.map(\.title), ["Timing", "Sources"], phase.rawValue)
+            XCTAssertEqual(about?.sections.compactMap(\.source?.id), ["flashscore"], phase.rawValue)
+            XCTAssertFalse(texts.contains(Self.dartsWorld.url.absoluteString), phase.rawValue)
+            XCTAssertFalse(texts.contains(Self.finalReport), phase.rawValue)
+
+            // The headline carries no finish, and its About hint promises none.
+            XCTAssertEqual(input.headline.finishes, [], phase.rawValue)
+            XCTAssertEqual(input.headline.copy.aboutHint, "Opens timing and sources", phase.rawValue)
+
+            // The main-view gates still hold, and the valid neighbours stay.
+            let model = DartsEventPageModel10868(input)
+            XCTAssertNil(model.legs, phase.rawValue)
+            XCTAssertNil(model.legsUnavailable, phase.rawValue)
+            XCTAssertEqual(model.contextReadings.map(\.name), ["Jim McEwan", "Sander van Ockenburg"], phase.rawValue)
+            if phase == .before {
+                XCTAssertNil(model.movement)
+            } else {
+                XCTAssertEqual(model.movement, input.movement)
+                XCTAssertEqual(DartsEndpointsModel10868(input.movement!).rows.map(\.isComparison), [true, true])
+            }
+        }
+
+        // Even an owner that wrongly puts the finish on a before or during
+        // headline cannot reach it: the shared headline reads finishes only
+        // at the final.
+        for phase in [DartsEventPagePhase10868.before, .during] {
+            let clean = Self.headline(phase)
+            let mistaken = FieldHeadlineInput10868(
+                scope: clean.scope, catalogue: clean.catalogue, displayed: clean.displayed, pairs: clean.pairs,
+                finishes: Self.players.map { FieldFinishPlace10868(ref: Self.ref($0), reading: Self.legsReading($0)) },
+                state: clean.state, phase: clean.phase, copy: clean.copy, unavailableWords: clean.unavailableWords,
+                keyTreatment: clean.keyTreatment)
+            let leaf = FieldHeadlineModel10868(mistaken)
+            XCTAssertEqual(Self.leaks(leaf.competitors.map { leaf.competitorSummary($0) }), [], phase.rawValue)
+            XCTAssertEqual(Self.figures(mistaken), Self.figures(clean), phase.rawValue)
+        }
+    }
+
+    func testAnAdmittedFinalKeepsItsFullReportInInfoAndAWithheldFinishCarriesItNowhere() {
+        var log: [String] = []
+        // Admitted: Info keeps the full report and its exact source.
+        let input = Self.page(.final)
+        let view = DartsEventPagePresentation10868(input: input, mode: .about,
+                                                   onAboutSource: { log.append("source:\($0.id)|\($0.url.absoluteString)") })
+        let about = view.aboutContent()!
+        XCTAssertEqual(about.about, Self.about(.reported))
+        XCTAssertEqual(about.about.sections.map(\.title), ["Timing", "Sources", "Final legs"])
+        XCTAssertEqual(about.about.sections[2].paragraphs, ["Sander Van Ockenburg-Zwaan 4-0 Jim McEwan, as reported by Darts World."])
+        XCTAssertEqual(about.about.sections[2].source, Self.dartsWorld)
+        about.sourceAction(about.about.sections[2].source)?()
+        about.sourceAction(about.about.sections[1].source)?()
+        XCTAssertEqual(log, ["source:darts-world|https://dartsworld.com/2026/10/morris-grabs-early-super-series-lead/",
+                             "source:flashscore|https://www.flashscoreusa.com/darts/"])
+        XCTAssertEqual(input.headline.copy.aboutHint, "Opens timing, the reported legs and sources")
+
+        // A missing legs CARD only: the independently admitted headline finish
+        // and Info report stay, and the card's absence is worded as the card's.
+        let cardMissing = Self.page(.final, legs: nil)
+        let cardModel = DartsEventPageModel10868(cardMissing)
+        XCTAssertEqual(cardMissing.about, Self.about(.reported))
+        XCTAssertEqual(Self.figures(cardMissing.headline), [["0"], ["4"]])
+        XCTAssertEqual(cardMissing.reader.state, "Final · McEwan 0–4 van Ockenburg · Pre-match unavailable")
+        XCTAssertNil(cardModel.legs)
+        XCTAssertEqual(cardModel.legsUnavailable, "Legs tally unavailable in this update")
+
+        // The owner withholds the whole finish: coherent across the headline,
+        // Info and legs — the result is reachable nowhere on the page.
+        let withheld = Self.page(.final, finish: .withheld)
+        let withheldModel = DartsEventPageModel10868(withheld)
+        XCTAssertNil(withheld.legs)
+        XCTAssertNil(withheldModel.legs)
+        XCTAssertEqual(withheldModel.legsUnavailable, "Final legs not reported")
+        XCTAssertEqual(withheld.about, Self.about(.notYet))
+        XCTAssertEqual(withheld.headline.finishes, [])
+        XCTAssertEqual(Self.figures(withheld.headline), [[], []])
+        XCTAssertEqual(Self.words(withheld.headline), [[Self.noPreMatch, "Final legs not reported"],
+                                                       [Self.noPreMatch, "Final legs not reported"]])
+        XCTAssertEqual(withheld.reader.state, "Final · Result not reported · Pre-match unavailable")
+        XCTAssertEqual(withheldModel.contextFooter, [Self.noPreMatch])
+        let pageTexts = Self.reachableText(withheld, originals: nil)
+        XCTAssertEqual(Self.leaks(pageTexts, allowingFinalLabels: true), [])
+        XCTAssertTrue(pageTexts.contains("Final · Result not reported · Pre-match unavailable"))
+        // The admitted final reaches its result through the same scan.
+        XCTAssertFalse(Self.leaks(Self.reachableText(input, originals: nil), allowingFinalLabels: true).isEmpty)
+        // Each original contract's own grade is a separate channel and stays its own.
+        let originals = Self.originals(.final)
+        XCTAssertEqual(Self.players.map { player in
+            Originals.content(catalogue: originals.catalogue,
+                              selection: Originals.Selection(scope: Self.originalsScope, identity: Self.identity(player)))?.result?.words
+        }, ["Resolved No", "Resolved Yes"])
+    }
+
+    // MARK: - Held original withdrawal
+
+    func testAHeldOriginalThatLeavesIsUnavailableWithoutSubstitutionAndResolvesAgainWhenItsExactIdentityReturns() {
+        var log: [String] = []
+        let held = Originals.Selection(scope: Self.originalsScope, identity: Self.identity(Self.mcewan))
+        let neighbour = Originals.Selection(scope: Self.originalsScope, identity: Self.identity(Self.ockenburg))
+        let context = Self.recordedContext()
+        // The same held history and inspection throughout.
+        let input = Self.page(.final, selected: Self.m847)
+        let present = Self.originals(.final, recorded: context)
+        let withdrawn = Self.originals(.final, recorded: context, omitting: Self.mcewan)
+        func view(_ mode: DartsEventPageMode10868, _ originals: DartsEventPageOriginals10868) -> DartsEventPagePresentation10868 {
+            DartsEventPagePresentation10868(
+                input: input, mode: mode, originals: originals,
+                onOriginalSelect: { log.append("select:\($0.identity.market)") },
+                onOriginalHistory: { log.append("history:\($0.actionID)") },
+                onHistoryAction: { log.append("chart:\($0)") },
+                onInteraction: { log.append("hold") })
+        }
+        func cards(_ catalogue: OriginalMarketCatalogueView9483) -> [OriginalMarketCatalogue9483.Card] {
+            OriginalMarketCatalogue9483.cards(catalogue: catalogue.catalogue, selection: catalogue.selection,
+                                              labels: catalogue.labels, unavailableChoice: catalogue.unavailableChoice)
+        }
+
+        // Present: the held original resolves, with its recorded Explore.
+        XCTAssertEqual(Originals.original(in: present.catalogue, selection: held)?.outcome, "Jim McEwan")
+        guard case .recorded(let shown)? = Originals.recorded(catalogue: present.catalogue, selection: held,
+                                                              context: context, hasCallback: true) else {
+            return XCTFail("the held original's recorded Details resolve while it is present")
+        }
+        XCTAssertEqual(Originals.intent(.explore, in: shown)?.selection, held)
+
+        // Withdrawn: the owner's held selection is unchanged and resolves to
+        // nothing — no Details, no recorded history, no history action.
+        let gone = view(.original, withdrawn).originalDetailsContent()!
+        XCTAssertEqual(gone.selection, held)
+        XCTAssertEqual(gone.catalogue?.originals.map(\.outcome), ["Sander van Ockenburg"])
+        XCTAssertNil(Originals.original(in: gone.catalogue, selection: gone.selection))
+        XCTAssertNil(Originals.content(catalogue: gone.catalogue, selection: gone.selection))
+        XCTAssertNil(Originals.recorded(catalogue: gone.catalogue, selection: gone.selection,
+                                        context: gone.recorded, hasCallback: gone.onHistory != nil))
+        // No automatic neighbour: nothing is held in its place, and the held
+        // original's recorded context never attaches to the neighbour.
+        let goneCards = cards(view(.page, withdrawn).catalogueContent()!)
+        XCTAssertEqual(goneCards.map(\.choice.label), ["Sander van Ockenburg · Winner"])
+        XCTAssertEqual(goneCards.map(\.choice.isSelected), [false])
+        XCTAssertEqual(goneCards.map(\.choice.selection), [neighbour])
+        guard case .unmatched(_, let words)? = Originals.recorded(catalogue: withdrawn.catalogue, selection: neighbour,
+                                                                 context: context, hasCallback: true) else {
+            return XCTFail("the held context does not attach to the neighbour")
+        }
+        XCTAssertEqual(words, "Recorded history unavailable for this original")
+        // The valid neighbour stays choosable on its own exact selection.
+        XCTAssertEqual(log, [])
+        OriginalMarketCatalogue9483.action(goneCards[0], onSelect: view(.page, withdrawn).catalogueContent()!.onSelect)?()
+        XCTAssertEqual(log, ["hold", "select:winner.van-ockenburg"])
+
+        // The independent history is untouched in page and full size, and the
+        // endpoint card's own resolver treats an omitted record the same way.
+        for originals in [withdrawn, present] {
+            XCTAssertEqual(view(.page, originals).historyContent(reader: false).input, input.history)
+            let reader = view(.reader(.history), originals).historyContent(reader: true).input
+            XCTAssertEqual(reader.series, input.history.series)
+            XCTAssertEqual(reader.inspection, input.history.inspection)
+            XCTAssertEqual(view(.page, originals).model.contextReadings[0].slot,
+                           FieldHistoryReadoutSlot10868(label: "Selected minute",
+                                                        display: .figure("27%", provenance: "Oct 12, 8:47 AM EDT · Kalshi trade")))
+        }
+        let omitted = DartsEndpointsModel10868(Self.movement(catalogue: Array(Self.catalogue(.final).dropFirst())))
+        XCTAssertEqual(omitted.rows.map(\.resolution.original?.name), [nil, "Sander van Ockenburg"])
+        XCTAssertEqual(omitted.rows.map(\.name), ["Jim McEwan", "Sander van Ockenburg"])
+        XCTAssertTrue(omitted.rows[1].isComparison)
+        let returned = DartsEndpointsModel10868(Self.movement(catalogue: Self.catalogue(.final)))
+        XCTAssertEqual(returned.rows.map(\.resolution.original?.name), ["Jim McEwan", "Sander van Ockenburg"])
+
+        // Restored: the exact identity resolves again — its Details, its held
+        // card and its recorded Explore, after the page hook once.
+        log = []
+        let back = view(.original, present).originalDetailsContent()!
+        XCTAssertEqual(back.selection, held)
+        XCTAssertEqual(Originals.original(in: back.catalogue, selection: back.selection)?.outcome, "Jim McEwan")
+        guard case .recorded(let restored)? = Originals.recorded(catalogue: back.catalogue, selection: back.selection,
+                                                                 context: back.recorded, hasCallback: back.onHistory != nil),
+              let intent = Originals.intent(.explore, in: restored) else {
+            return XCTFail("the restored identity resolves its recorded Details again")
+        }
+        XCTAssertEqual(intent.selection, held)
+        back.onHistory?(intent)
+        XCTAssertEqual(log, ["hold", "history:constructed.darts.explore"])
+        let backCards = cards(view(.page, present).catalogueContent()!)
+        XCTAssertEqual(backCards.map(\.choice.isSelected), [true, false])
+        XCTAssertEqual(backCards.map(\.choice.selection), [held, neighbour])
     }
 }
