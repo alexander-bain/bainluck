@@ -14,6 +14,7 @@ Usage (Procfile):
 
 import argparse
 import asyncio
+import atexit
 import gc
 import logging
 import os
@@ -318,6 +319,7 @@ async def run_venue(venue):
         raise ValueError(f"unknown venue: {venue}")
 
     stop = asyncio.Event()
+    sampler = _start_cpu_sampler() if venue == "polymarket" else None
     with _stop_signals(stop):
         logger.info("Starting %s WebSocket process pid=%d", venue, os.getpid())
         tasks = [asyncio.create_task(arm()) for arm in arms]
@@ -338,6 +340,27 @@ async def run_venue(venue):
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, stopped, return_exceptions=True)
+            if sampler is not None:
+                sampler.stop()
+
+
+def _start_cpu_sampler():
+    """#10090 — the PM venue process's low-rate stack sampler, for THIS (the
+    loop's, the main) thread. ON by default; ``PM_CPU_SAMPLER=0`` at process
+    start leaves it off. A sampler that cannot start is logged and skipped: it
+    never stops the venue."""
+    try:
+        from app.utils.loop_cpu_sampler import LoopCpuSampler
+
+        sampler = LoopCpuSampler().start()
+        if sampler is not None:
+            # Every exit path, not only run_venue's finally: atexit runs before
+            # interpreter shutdown resets SIGPROF to SIG_DFL under an armed timer.
+            atexit.register(sampler.stop)
+        return sampler
+    except Exception:
+        logger.exception("PM CPU sampler did not start")
+        return None
 
 
 async def _join_children(children, waiters):

@@ -82,12 +82,18 @@ def _write_helpers(module, consumer_name: str, flush) -> list[ast.AsyncFunctionD
 def _write_path(module, consumer_name: str) -> list[ast.AsyncFunctionDef]:
     flush = _flush_function(module, consumer_name)
     path = [flush, *_write_helpers(module, consumer_name, flush)]
-    # #10664: follow called module-level statement builders as well.
+    # #10664: follow called module-level statement builders as well — through
+    # every hop (#10090 C: the flush calls the execution helper, which calls
+    # the cached template, which calls the builder).
     tree = ast.parse(inspect.getsource(module))
-    called = {n.func.id for fn in path for n in ast.walk(fn)
-              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-    builders = [fn for fn in tree.body
-                if isinstance(fn, ast.FunctionDef) and fn.name in called]
+    builders, frontier = [], path
+    while frontier:
+        called = {n.func.id for fn in frontier for n in ast.walk(fn)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        frontier = [fn for fn in tree.body
+                    if isinstance(fn, ast.FunctionDef) and fn.name in called
+                    and fn not in builders]
+        builders += frontier
     path = [*path, *builders, *_pipeline_hops(module, path)]
     return [*path, *_factory_builders(module, path)]
 

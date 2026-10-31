@@ -359,10 +359,24 @@ def _ticker(**msg):
 
 class TestTheRealKalshiConsumer:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "repeat_skip_ms, accepted, repeats",
+        [
+            # Today's path: the identical ticker 0.15 s later is an accepted
+            # repeat, and a stamp carries it.
+            ("0", 3, 1),
+            # #11831 (`KALSHI_WS_REPEAT_SKIP_MS`, default 250): that repeat is
+            # skipped below the raw count, so it is raw but neither accepted
+            # nor carried — the receipt counts what the consumer handled.
+            ("250", 2, 0),
+        ],
+        ids=["repeat_skip_off", "repeat_skip_on"],
+    )
     async def test_ticker_inputs_reach_the_stamp_that_published_them(
-        self, monkeypatch, caplog, receipt_wall,
+        self, monkeypatch, caplog, receipt_wall, repeat_skip_ms, accepted, repeats,
     ):
         seen = {}
+        monkeypatch.setenv("KALSHI_WS_REPEAT_SKIP_MS", repeat_skip_ms)
 
         class _Recording(LiveBlendRefresher):
             def __init__(self, source, **kw):
@@ -411,9 +425,11 @@ class TestTheRealKalshiConsumer:
         assert lines, [m.getMessage() for m in caplog.records][-20:]
         total = {k: sum(int(x[k]) for x in lines)
                  for k in ("raw", "accepted", "changed", "repeats", "first")}
-        assert total == {"raw": 4, "accepted": 3, "changed": 1, "repeats": 1, "first": 1}
+        assert total == {
+            "raw": 4, "accepted": accepted, "changed": 1, "repeats": repeats, "first": 1,
+        }
         stamps = [s for x in lines for s in _stamps(x)]
-        assert sum(int(s["covered"]) for s in stamps) == 3
+        assert sum(int(s["covered"]) for s in stamps) == accepted
         assert all(s["stamped_at"] == f"stamp-{s['rev']}" for s in stamps)
         assert all(s["newest"] != "-" for s in stamps if s["covered"] != "0")
         assert _outcome_ids(lines) == {str(KALSHI_OUTCOME_ID)}

@@ -145,6 +145,7 @@ def consumer_rig(monkeypatch):
     tree = ast.parse(Path(consumer.__file__).read_text())
     nodes = [n for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
              and n.name in {"handle_book_observation", "flush_book_observations", "_parse_dollar"}]
+    ns["repeat_skip_s"] = 0.0  # #10090: KALSHI_WS_REPEAT_SKIP_MS=0, today's path
     exec(compile(ast.Module(body=nodes, type_ignores=[]), consumer.__file__, "exec"), ns)
     payloads = [{"market_ticker": tickers[row.id],
                  "yes_bid_dollars": str(row.current_probability - .01),

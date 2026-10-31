@@ -701,6 +701,9 @@ class KalshiWebSocket:
         if last is not None:
             quote["price_dollars"] = last  # the genuine last trade, never local
         quote = self._with_primary_identity(quote)
+        if data.get("type") == "orderbook_snapshot":
+            # #10090: the consumer's repeat skip never skips a snapshot.
+            quote["_book_snapshot"] = True
         self._book_quotes += 1
         await dispatch.submit(self.on_ticker, quote, "Ticker")
 

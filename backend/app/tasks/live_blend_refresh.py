@@ -908,7 +908,9 @@ class TailReceipts:
         """#10090 — one venue message for a contract of this event, counted
         BEFORE the price policy decides whether it is a price. `raw` minus
         `accepted` is what the policy refused (one-sided books, terminal
-        prices); a message that maps to no event is not this game's."""
+        prices) plus, on Kalshi, the repeats `KALSHI_WS_REPEAT_SKIP_MS` skipped
+        (counted as `repeats_skipped=` on the consumer's minute line); a
+        message that maps to no event is not this game's."""
         if event_id is None:
             return
         self._roll(_wall())
