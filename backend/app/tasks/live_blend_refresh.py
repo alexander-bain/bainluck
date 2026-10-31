@@ -827,6 +827,28 @@ def _reader_held_tag(source, event_id) -> str:
     except Exception:  # noqa: BLE001 — a log tag never fails its line
         return ""
 
+
+# #10090 held-owed-fresh — a LIVE game a reader holds open whose committed
+# price is OWED (its own offer was refused: the game's stamp was queued or
+# running, its cohort unfinished, or it was under the floor) does not wait for
+# the door's one live-debt slot. Production 16:16-16:31Z 2026-10-31 (v6005,
+# four held Polymarket games, held-first on): the price reached the reader in
+# ~0.85 s when its offer was admitted, but a refused price went to plain debt
+# and the next stamp that carried it came p50 4.3 s / p90 12-19 s later —
+# the live-debt slot is held by an unheld rider for its whole queue turn
+# (15-20 s), and `stamp_wait_reason` saw LIVE_DEBT_SLOT_BUSY on the held
+# games' episodes; once ADMITTED the held game stamped in 0.28 s. On, the
+# first admission that finds such a game admissible (not fenced, not
+# excluded, due) takes it as a cohort member on that flush's clock, picked
+# held-first, outside the debt slots. Unheld debt keeps its slots and turns;
+# the live pick bound (READER_FIRST_RUN) is unchanged. ``STAMP_HELD_OWED_FRESH=1``
+# turns it on; off (default), or with no held set, the order is today's.
+STAMP_HELD_OWED_FRESH_ENV = "STAMP_HELD_OWED_FRESH"
+
+
+def stamp_held_owed_fresh_on() -> bool:
+    return os.getenv(STAMP_HELD_OWED_FRESH_ENV, "0").strip() == "1"
+
 # #10090 (Argon flush-loop Rank 2) — a due throttle-deferred LIVE event rides
 # a running call's door outside its debt slots, at most this many at a time.
 # Production 2026-10-30 00:18Z (Kalshi 15338515, origin=throttle,
@@ -5063,6 +5085,21 @@ class LiveBlendRefresher:
         # Live throttle debt only; a row-lock retry is never "live" here.
         live = self._live_event_ids
         live_owed = (live & self._throttle_deferred) - self._lock_retry
+        if live_owed and stamp_held_owed_fresh_on():
+            # #10090 held-owed-fresh (STAMP_HELD_OWED_FRESH): an owed LIVE game
+            # a reader holds open joins this admission as a cohort member —
+            # on this flush's clock, picked held-first — rather than waiting
+            # for the live-debt slot an unheld rider holds for a whole queue
+            # turn. The same gate as the cohort's: never fenced (one attempt
+            # per event), never an unfinished cohort or buffered withdrawal
+            # (``excluded``), and due below as every taken event is.
+            held = self._reader_held_ids()
+            if held:
+                taken |= {
+                    eid for eid in live_owed
+                    if eid in held and eid not in taken and eid not in excluded
+                    and eid not in window.holding
+                }
         live_free = _admitted_live_debt_slots(slots) - len(window.live_debts)
         debt_excluded = excluded
         if free > 0 or (live_free > 0 and live_owed):
