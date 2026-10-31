@@ -120,7 +120,7 @@ final class CompactEventPriceStatusTests: XCTestCase {
     /// The disclosure button's body, from its declaration to the next member.
     private func probabilityDetailsBody() throws -> String {
         let page = try code("Views", "EventDetailView.swift")
-        guard let start = page.range(of: "privatefuncprobabilityDetails(confidenceTier:String?,statusInDetails:Bool=false)->someView{") else {
+        guard let start = page.range(of: "privatefuncprobabilityDetails(confidenceTier:String?,statusInDetails:Bool=false,ekgDrawn:Bool=false)->someView{") else {
             XCTFail("probabilityDetails moved; re-aim this scan"); return ""
         }
         let rest = page[start.upperBound...]

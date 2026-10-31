@@ -1095,18 +1095,26 @@ struct EventDetailView: View {
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
     }
 
-    /// #10090 (Alex 67) — the heartbeat under the big percentage, on by
-    /// default on a live game (`EkgHeartbeat.isVisible`). A tap opens the
-    /// page's one details popover — the same state the info control toggles,
-    /// anchored there — never a copy of it.
-    @ViewBuilder
-    private func heroEkg(_ event: EventDetail, isOpeningLine: Bool) -> some View {
-        if EkgHeartbeat.isVisible(
+    /// #10090 (Alex 67) — whether the hero draws the heartbeat: on by default
+    /// on a live game (`EkgHeartbeat.isVisible`). The info control beside it
+    /// reads the same answer (Alex 69), so the two cannot disagree.
+    private func heroEkgDrawn(_ event: EventDetail, isOpeningLine: Bool) -> Bool {
+        EkgHeartbeat.isVisible(
             eventStatus: event.status, finished: isFinished,
             venueSettledVerdict: EventState.showsVenueSettledVerdict(
                 event.status, venueSettled: event.venueSettled,
                 commenceTime: event.commenceTime?.asDate, now: displayNow()),
-            isOpeningLine: isOpeningLine) {
+            isOpeningLine: isOpeningLine)
+    }
+
+    /// #10090 (Alex 67) — the heartbeat under the big percentage. A tap opens
+    /// the page's one details popover — the same state the info control
+    /// toggles, anchored there — never a copy of it. Alex 69: beside it the
+    /// control draws no (i) and is no VoiceOver stop, so this button carries
+    /// the control's hint; its label stays the heartbeat's own.
+    @ViewBuilder
+    private func heroEkg(_ event: EventDetail, isOpeningLine: Bool) -> some View {
+        if heroEkgDrawn(event, isOpeningLine: isOpeningLine) {
             Button { showProbabilityDetails = true } label: {
                 EkgHeartbeatView(tracker: ekgTracker, status: vm.liveUpdateStatus, asOf: displayAsOf)
                     // A 44pt target that lays out as a short row: it overhangs
@@ -1116,7 +1124,7 @@ struct EventDetailView: View {
                     .padding(.vertical, -14)
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Opens the probability update details.")
+            .accessibilityHint(Self.probabilityDetailsHint(forecastShown: revealForecast11296 != nil))
             .accessibilityIdentifier("ekg-heartbeat-button")
         }
     }
@@ -1127,13 +1135,18 @@ struct EventDetailView: View {
     ///
     /// #11285 — `statusInDetails` (the adopted headline's top-row control):
     /// every state, waiting included, is said in the details and the label.
-    private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {
+    ///
+    /// #10090 (Alex 69) — `ekgDrawn`: the hero draws the heartbeat beside it,
+    /// whose tap opens this same popover. The (i) goes; with nothing wrong to
+    /// say the control collapses to the popover's anchor alone.
+    private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false, ekgDrawn: Bool = false) -> some View {
         Button { showProbabilityDetails.toggle() } label: {
             CompactEventPriceStatusView(status: vm.liveUpdateStatus,
                 sequence: vm.priceActivity?.sequence ?? 0,
                 receivedAt: vm.priceActivity?.receivedAt,
                 isDisclosure: true,
-                statusInDetails: statusInDetails)
+                statusInDetails: statusInDetails,
+                ekgDrawn: ekgDrawn)
             .frame(maxWidth: Self.probabilityDetailsMaxWidth(at: dynamicTypeSize,
                                                              statusInDetails: statusInDetails),
                    minHeight: 44)
@@ -1146,6 +1159,13 @@ struct EventDetailView: View {
             (priceStreamingEligible ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
                 receivedAt: vm.priceActivity?.receivedAt) : ""))
         .accessibilityHint(Self.probabilityDetailsHint(forecastShown: revealForecast11296 != nil))
+        // Alex 69 — collapsed: no row, no tap, no VoiceOver stop (the EKG
+        // button carries the hint), still the popover's anchor. The
+        // width stays: the stacked hero's movement caption is an overlay on
+        // this control and is proposed its width.
+        .frame(height: detailsCollapseBesideEkg(statusInDetails: statusInDetails, ekgDrawn: ekgDrawn) ? 0 : nil)
+        .allowsHitTesting(!detailsCollapseBesideEkg(statusInDetails: statusInDetails, ekgDrawn: ekgDrawn))
+        .accessibilityHidden(detailsCollapseBesideEkg(statusInDetails: statusInDetails, ekgDrawn: ekgDrawn))
         // #9408 — open BELOW the button (on iOS, `.top` measured below; the
         // default nil picked above, under the nav bar with 144pt to spare, and at
         // Alex's XXXL text the content overflowed both edges). The reveal
@@ -1163,6 +1183,12 @@ struct EventDetailView: View {
                 .presentationCompactAdaptation(.popover)
                 #endif
         }
+    }
+
+    /// #10090 (Alex 69) — the info control has nothing to draw beside the EKG.
+    private func detailsCollapseBesideEkg(statusInDetails: Bool, ekgDrawn: Bool) -> Bool {
+        CompactEventPriceStatus(status: vm.liveUpdateStatus, isDisclosure: true,
+                                statusInDetails: statusInDetails, ekgDrawn: ekgDrawn).collapsesBesideEkg
     }
 
     // MARK: - Chart Header Bar (v2: title + freshness)
@@ -2022,7 +2048,8 @@ struct EventDetailView: View {
                             // that padding, and in a row the taller crest columns
                             // set the card's height anyway, so both keep the slot
                             // below, unchanged.
-                            probabilityDetails(confidenceTier: confidenceTier)
+                            probabilityDetails(confidenceTier: confidenceTier,
+                                               ekgDrawn: heroEkgDrawn(event, isOpeningLine: shown.isOpeningLine))
                                 .overlay(alignment: .bottom) {
                                     if priceStreamingEligible && captionRidesPadding {
                                         movementCaptionSlot(event, colors: colors)
@@ -2931,7 +2958,9 @@ struct EventDetailView: View {
             sourceCount: event.winProbabilitySources?.count,
             hasMovement: home.flatMap { h in
                 event.openingOdds?.homeProbability.map { abs(h - $0) > 0.001 } } ?? false
-        )?.rawValue, statusInDetails: true)
+        )?.rawValue, statusInDetails: true,
+        // Both mounts sit on a priced paired page, which draws the EKG (Alex 69).
+        ekgDrawn: heroEkgDrawn(event, isOpeningLine: false))
     }
 
     private func nflPairedSide(
