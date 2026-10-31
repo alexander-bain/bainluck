@@ -18,9 +18,15 @@
  * Accessibility: real buttons with `aria-expanded`/`aria-controls`, headings
  * in document order (matrix → history → stories → All props), labelled values,
  * no motion to reduce, and layouts that wrap at 375 px and at 200% text.
+ *
+ * About is the approved design's compact info control beside the header
+ * (`HockeyJourneyPage.tsx`'s `InfoCircledIcon` button, prototype): an icon with
+ * the About words as its accessible name and a 44 px target, so it never takes
+ * a header row of its own on a phone. Its content is unchanged.
  */
 
 import { useId, useState } from "react";
+import { Info } from "lucide-react";
 import type { HockeyJourneyViewModel } from "@/lib/eventPage10868/hockeyJourney";
 import { teamColorStyle } from "@/lib/teamColors";
 import HockeyJourneyMatrix from "./HockeyJourneyMatrix";
@@ -51,8 +57,8 @@ export default function HockeyJourneyPage({ journey }: { journey: HockeyJourneyV
       style={style}
     >
       <header className="space-y-2">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-0.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 space-y-0.5">
             <p className="text-sm font-semibold">{headline.state}</p>
             {headline.stateContext && <p className="text-sm text-text-secondary">{headline.stateContext}</p>}
             <h2 id={headingId} className="break-words text-lg font-bold">
@@ -64,9 +70,13 @@ export default function HockeyJourneyPage({ journey }: { journey: HockeyJourneyV
             aria-expanded={aboutOpen}
             aria-controls={aboutId}
             onClick={() => setAboutOpen((open) => !open)}
-            className="min-h-11 rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
+            className={`-mr-2 -mt-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-text-primary hover:bg-surface-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand ${
+              aboutOpen ? "bg-surface-elevated" : ""
+            }`}
           >
-            {journey.header.aboutLabel}
+            {/* rem-sized, so the icon grows with the reader's text like the target does. */}
+            <Info aria-hidden="true" className="h-5 w-5" />
+            <span className="sr-only">{journey.header.aboutLabel}</span>
           </button>
         </div>
         <div id={aboutId} hidden={!aboutOpen} className="rounded-lg bg-surface-deep p-3">

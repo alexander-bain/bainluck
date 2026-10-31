@@ -11,6 +11,24 @@
  * stretched text at 375 px). Its one control, the Details disclosure, opens
  * the real notes list and is not offered when there are none. No Full chart or
  * Inspect control: neither has a destination on web yet.
+ *
+ * Compact, as the approved design draws it (`HockeyJourneyPage.tsx` +
+ * `hockeyJourney.css`, prototype): under the plot one `.hj-line-key` row names
+ * both teams (glyph + full name) with each team's own labelled readings — the
+ * pregame slot, and the recorded slot only when the readout asks for it — and
+ * a `.hj-history-basis` line carries the caption and mark key. These are the
+ * line's own readings, labelled by the view model; nothing here is the
+ * headline's current quote. Every reading's exact provenance (its clock words)
+ * moves into the existing Details disclosure, beside the source notes. An
+ * absent slot keeps its words; nothing shrinks to fit.
+ *
+ * Time axis (Design decision, 2026-10-30): the labels drawn are a measured,
+ * text-size-aware SUBSET of the owner's ticks — first and last first, an
+ * intermediate only when it fits with clear space — so enlarged text on a
+ * phone reads two clear endpoints rather than a staircase. When even the two
+ * endpoints cannot share a row, the last takes a second row (the minimal clear
+ * placement); type never shrinks. Tick times, positions, guides and every
+ * observation are unchanged.
  */
 
 import { useId, useRef, useState } from "react";
@@ -35,42 +53,62 @@ export function estimateLabelWidth(text: string, fontPx: number): number {
   return text.length * fontPx * GLYPH_EM;
 }
 
-export interface AxisLabelSlot {
+export interface AxisLabelPlacement {
+  /** Position of the drawn label's tick in the owner's `xTicks`. */
+  index: number;
   /** Left edge, from the start of the plot. */
   start: number;
-  /** 0 is the row nearest the plot. */
+  /** 0 is the row nearest the plot; 1 only when the two endpoints cannot share a row. */
   lane: number;
 }
 
 /**
- * Native `FieldHistoryGeometry10868.labelSlots` (FieldProbabilityHistoryPresentation10868
- * .swift:1094): each label centred on its tick, slid inward to stay inside
- * `extent` (the plot's width, so no x label can reach the y-axis labels in the
- * left margin), and placed in the first lane where it keeps `gap` clear of
- * every label already there. NOTHING IS DROPPED and no tick moves — a label
- * that would collide takes the next lane down.
+ * Which owner tick labels the axis draws, and where. Each label is centred on
+ * its own tick and slid inward only as far as needed to stay inside `extent`
+ * (the plot's width, so no x label can reach the y labels in the left margin).
+ * The first and last ticks come first; an intermediate is drawn only when it
+ * keeps `clearGap` from every label already drawn ("clearly fits"). When the
+ * first and last cannot keep `gap` in one row, the last takes a second row and
+ * no intermediate is drawn. A pure function of measured (or estimated) widths:
+ * nothing is shortened, rewritten or moved off its tick beyond the slide.
  */
-export function axisLabelSlots(centers: number[], lengths: number[], extent: number, gap: number): AxisLabelSlot[] {
+export function axisLabelSubset(
+  centers: number[],
+  lengths: number[],
+  extent: number,
+  gap: number,
+  clearGap: number = gap,
+): AxisLabelPlacement[] {
   const span = Math.max(0, Number.isFinite(extent) ? extent : 0);
-  const clear = Math.max(0, gap);
-  const lanes: Array<Array<[number, number]>> = [];
-  const slots: AxisLabelSlot[] = [];
   const count = Math.min(centers.length, lengths.length);
-  for (let i = 0; i < count; i += 1) {
-    const length = Math.min(Math.max(0, Number.isFinite(lengths[i]) ? lengths[i] : 0), span);
-    const middle = Number.isFinite(centers[i]) ? centers[i] : 0;
-    const start = Math.min(Math.max(0, middle - length / 2), span - length);
-    const lo = start - clear;
-    const hi = start + length + clear;
-    let lane = lanes.findIndex((taken) => !taken.some(([a, b]) => a <= hi && lo <= b));
-    if (lane < 0) {
-      lane = lanes.length;
-      lanes.push([]);
-    }
-    lanes[lane].push([start, start + length]);
-    slots.push({ start, lane });
+  if (count === 0) return [];
+  const place = (index: number) => {
+    const length = Math.min(Math.max(0, Number.isFinite(lengths[index]) ? lengths[index] : 0), span);
+    const middle = Number.isFinite(centers[index]) ? centers[index] : 0;
+    return { index, length, start: Math.min(Math.max(0, middle - length / 2), span - length) };
+  };
+  type Placed = ReturnType<typeof place>;
+  const apart = (a: Placed, b: Placed, space: number) =>
+    a.start + a.length + space <= b.start || b.start + b.length + space <= a.start;
+
+  const first = place(0);
+  if (count === 1) return [{ index: 0, start: first.start, lane: 0 }];
+  const last = place(count - 1);
+  if (!apart(first, last, Math.max(0, gap))) {
+    return [
+      { index: first.index, start: first.start, lane: 0 },
+      { index: last.index, start: last.start, lane: 1 },
+    ];
   }
-  return slots;
+  const shown: Placed[] = [first, last];
+  const space = Math.max(0, gap, clearGap);
+  for (let i = 1; i < count - 1; i += 1) {
+    const candidate = place(i);
+    if (shown.every((label) => apart(label, candidate, space))) shown.push(candidate);
+  }
+  return shown
+    .sort((a, b) => a.index - b.index)
+    .map((label) => ({ index: label.index, start: label.start, lane: 0 }));
 }
 
 export interface HockeyJourneyLineColors {
@@ -103,19 +141,15 @@ function Mark({
   );
 }
 
-function Reading({ label, reading }: { label: string; reading: HockeyJourneyReading }) {
+/** One labelled reading in the line key: the label, then the figure or the slot's own absence words. */
+function KeySlot({ label, reading }: { label: string; reading: HockeyJourneyReading }) {
+  // An absent slot whose words are its label (no history response) prints them once.
+  const once = reading.kind === "absent" && reading.words === label;
   return (
-    <div className="min-w-0">
-      <dt className="text-sm font-medium text-text-secondary">{label}</dt>
-      <dd className="mt-0.5">
-        {reading.kind === "reading" ? (
-          <>
-            <span className="text-xl font-bold tabular-nums text-text-primary">{reading.figure}</span>
-            <span className="block text-sm text-text-secondary break-words">{reading.provenance}</span>
-          </>
-        ) : (
-          <span className="text-sm font-medium text-text-secondary">{reading.words}</span>
-        )}
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-1">
+      <dt className={once ? "sr-only" : "text-text-secondary"}>{label}</dt>
+      <dd className={reading.kind === "reading" ? "text-base font-bold tabular-nums text-text-primary" : "text-text-secondary"}>
+        {reading.kind === "reading" ? reading.figure : reading.words}
       </dd>
     </div>
   );
@@ -162,23 +196,26 @@ export default function HockeyJourneyHistoryChart({
   const path = (run: HockeyJourneyHistoryPoint[]) =>
     run.map((pt, i) => `${i === 0 ? "M" : "L"} ${x(pt.t).toFixed(1)} ${y(pt.p).toFixed(1)}`).join(" ");
 
-  // X labels: kept clear of each other and of the y labels (lanes, nothing dropped).
-  const slots = axisLabelSlots(
+  // X labels: a measured subset of the owner's ticks — endpoints first, an intermediate only
+  // with a full em of clear space — kept clear of each other and of the y labels.
+  const placements = axisLabelSubset(
     history.xTicks.map((tick) => x(tick.t) - MARGIN.left),
     history.xTicks.map((tick) => lengthOf(tick.label)),
     plotW,
     LABEL_GAP_PX,
+    Math.max(LABEL_GAP_PX, fontPx),
   );
-  const laneCount = slots.reduce((n, slot) => Math.max(n, slot.lane + 1), 0);
+  const laneCount = placements.reduce((n, label) => Math.max(n, label.lane + 1), 0);
   const laneHeight = Math.ceil(fontPx * 1.25);
   // The first lane starts below the lower half of the "0%" label, which is centred on the plot's floor.
   const labelBandTop = PLOT_HEIGHT - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
   const svgHeight = Math.max(PLOT_HEIGHT + 26, labelBandTop + laneCount * laneHeight + 4);
 
   // Real text lengths replace the estimate once the browser can measure them (not in jsdom/SSR).
+  // A label drawn for the first time is measured too, so the drawn subset is re-checked against real widths.
   const labelSignature = `${fontPx}|${history.xTicks.map((tick) => tick.label).join("\u0001")}|${history.yTicks
     .map((tick) => tick.label)
-    .join("\u0001")}`;
+    .join("\u0001")}|${placements.map((label) => label.index).join(",")}`;
   useIsomorphicLayoutEffect(() => {
     const next: Record<string, number> = {};
     let changed = false;
@@ -192,32 +229,31 @@ export default function HockeyJourneyHistoryChart({
       if (Math.abs((measured[key] ?? -1) - length) > 0.5) changed = true;
     });
     if (changed) setMeasured((prev) => ({ ...prev, ...next }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure only when the labels or their size change
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure only when the labels, their size or the drawn subset change
   }, [labelSignature]);
+
+  // Each team's labelled slots: the pregame slot always, the recorded slot only when the readout asks.
+  const slotsOf = (series: HockeyJourneyHistorySeries) => [
+    { key: "before", label: history.beforeLabel, reading: series.before },
+    ...(history.readout === "beforeAndRecorded"
+      ? [{ key: "recorded", label: history.recordedLabel, reading: series.recorded }]
+      : []),
+  ];
+  // Exact source and timing support lives in Details: each reading's own provenance, then the notes.
+  const readingDetails = history.series.flatMap((series) =>
+    slotsOf(series).flatMap(({ label, reading }) =>
+      reading.kind === "reading" ? [`${series.name} · ${label} ${reading.figure} · ${reading.provenance}`] : [],
+    ),
+  );
+  const detailLines = [...readingDetails, ...history.notes];
 
   return (
     <section aria-labelledby={titleId} className="space-y-3">
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
+      <header>
         <h3 id={titleId} className="text-base font-semibold">
           {history.title}
         </h3>
-        <span className="text-sm text-text-secondary">{history.caption}</span>
       </header>
-
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="Lines">
-        {history.series.map((series) => (
-          <li key={series.id} className="flex items-center gap-2">
-            <svg width="14" height="14" aria-hidden="true">
-              {shapes[series.side] === "circle" ? (
-                <circle cx="7" cy="7" r="5" style={{ fill: colorOf(series) }} />
-              ) : (
-                <rect x="2" y="2" width="10" height="10" style={{ fill: colorOf(series) }} />
-              )}
-            </svg>
-            <span className="font-medium">{series.name}</span>
-          </li>
-        ))}
-      </ul>
 
       <div ref={frame} className="w-full">
         {history.absence || !domain ? (
@@ -301,43 +337,60 @@ export default function HockeyJourneyHistoryChart({
                   )),
               ),
             )}
-            {history.xTicks.map((tick, i) => (
+            {placements.map((label) => (
               <text
-                key={tick.t}
+                key={history.xTicks[label.index].t}
                 ref={(el) => {
-                  xLabelRefs.current[i] = el;
+                  xLabelRefs.current[label.index] = el;
                 }}
-                x={MARGIN.left + (slots[i]?.start ?? 0)}
-                y={labelBandTop + (slots[i]?.lane ?? 0) * laneHeight}
+                x={MARGIN.left + label.start}
+                y={labelBandTop + label.lane * laneHeight}
                 textAnchor="start"
                 dominantBaseline="hanging"
                 className="fill-text-secondary text-xs"
-                data-axis-lane={slots[i]?.lane ?? 0}
+                data-axis-lane={label.lane}
+                data-axis-tick={label.index}
               >
-                {tick.label}
+                {history.xTicks[label.index].label}
               </text>
             ))}
           </svg>
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {/* .hj-line-key: both teams, glyph + full name, each with its own labelled readings.
+          Side by side while they fit, one under the other when they do not (200% text). */}
+      <ul className="flex flex-wrap justify-between gap-x-6 gap-y-2 text-sm" aria-label="Lines" data-line-key="">
         {history.series.map((series) => (
-          <div key={series.id} className="rounded-lg bg-surface-deep p-3">
-            <p className="font-semibold">{series.name}</p>
-            <dl className="mt-1 grid grid-cols-1 gap-2">
-              <Reading label={history.beforeLabel} reading={series.before} />
-              {history.readout === "beforeAndRecorded" && <Reading label={history.recordedLabel} reading={series.recorded} />}
+          <li key={series.id} className="min-w-0 max-w-full">
+            <p className="flex items-center gap-2 font-semibold">
+              <svg viewBox="0 0 14 14" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                {shapes[series.side] === "circle" ? (
+                  <circle cx="7" cy="7" r="5" style={{ fill: colorOf(series) }} />
+                ) : (
+                  <rect x="2" y="2" width="10" height="10" style={{ fill: colorOf(series) }} />
+                )}
+              </svg>
+              <span className="min-w-0 break-words">{series.name}</span>
+            </p>
+            <dl className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+              {slotsOf(series).map(({ key, label, reading }) => (
+                <KeySlot key={key} label={label} reading={reading} />
+              ))}
             </dl>
-          </div>
+          </li>
         ))}
-      </div>
+      </ul>
 
-      {history.markKey && !history.absence && <p className="text-sm text-text-secondary">{history.markKey}</p>}
+      {/* .hj-history-basis */}
+      <p className="flex flex-wrap gap-x-3 text-sm text-text-secondary" data-history-basis="">
+        <span>{history.caption}</span>
+        {history.markKey && !history.absence && <span>{history.markKey}</span>}
+      </p>
 
-      {/* The disclosure exists only over real notes: with no history response there is
+      {/* The disclosure exists only over real support: with no history response there is
           nothing to disclose, so no control is offered (and no retry is invented). */}
-      {history.notes.length > 0 && (
+      {detailLines.length > 0 && (
         <div>
           <button
             type="button"
@@ -349,8 +402,10 @@ export default function HockeyJourneyHistoryChart({
             {history.detailsLabel}
           </button>
           <ul id={detailsId} hidden={!detailsOpen} className="list-disc space-y-1 pl-5 text-sm text-text-secondary">
-            {history.notes.map((note, i) => (
-              <li key={`${i}:${note}`}>{note}</li>
+            {detailLines.map((line, i) => (
+              <li key={`${i}:${line}`} className="break-words">
+                {line}
+              </li>
             ))}
           </ul>
         </div>

@@ -34,7 +34,7 @@ import HockeyJourneyAllProps from "@/components/event/eventpage10868/HockeyJourn
 import HockeyJourneyContributionCard from "@/components/event/eventpage10868/HockeyJourneyContributionCard";
 import HockeyJourneyMatrix, { matrixArrangements } from "@/components/event/eventpage10868/HockeyJourneyMatrix";
 import HockeyJourneyHistoryChart, {
-  axisLabelSlots,
+  axisLabelSubset,
   estimateLabelWidth,
 } from "@/components/event/eventpage10868/HockeyJourneyHistoryChart";
 
@@ -491,53 +491,111 @@ it("points columns that do not fit their frame give way to stacked rows at stand
   }
 });
 
-describe("axis labels never collide (native labelSlots: lanes, nothing dropped, ticks unmoved)", () => {
-  const collide = (slots: { start: number; lane: number }[], lengths: number[], gap: number) =>
-    slots.some((a, i) =>
-      slots.some((b, j) => j > i && a.lane === b.lane && a.start < b.start + lengths[j] + gap && b.start < a.start + lengths[i] + gap),
+const COLORS = { home: "var(--series-1)", away: "var(--series-2)" };
+
+describe("the time axis draws a measured subset of the owner's tick labels (Design decision 2026-10-30)", () => {
+  type Placed = { index: number; start: number; lane: number };
+  /** Two labels in one row closer than `gap` (or overlapping). */
+  const collide = (placed: Placed[], lengths: number[], gap: number) =>
+    placed.some((a, i) =>
+      placed.some(
+        (b, j) =>
+          j > i &&
+          a.lane === b.lane &&
+          a.start < b.start + lengths[b.index] + gap &&
+          b.start < a.start + lengths[a.index] + gap,
+      ),
     );
 
-  it("keeps separate labels in one lane, centred, and slides edge labels inward", () => {
-    expect(axisLabelSlots([50, 150, 250], [40, 40, 40], 300, 6)).toEqual([
-      { start: 30, lane: 0 },
-      { start: 130, lane: 0 },
-      { start: 230, lane: 0 },
-    ]);
-    expect(axisLabelSlots([0, 300], [40, 40], 300, 6)).toEqual([
-      { start: 0, lane: 0 },
-      { start: 260, lane: 0 },
+  it("draws every tick, centred on it, when all fit with clear space", () => {
+    expect(axisLabelSubset([50, 150, 250, 350], [40, 40, 40, 40], 400, 6, 12)).toEqual([
+      { index: 0, start: 30, lane: 0 },
+      { index: 1, start: 130, lane: 0 },
+      { index: 2, start: 230, lane: 0 },
+      { index: 3, start: 330, lane: 0 },
     ]);
   });
 
-  it("moves a label that would overlap its neighbour to the next lane, dropping none", () => {
-    // CONSTRUCTED: three date-and-time labels 100 px apart in a 261 px plot at a 24 px axis font (200% text).
-    const lengths = ["Oct 3, 5:00 PM", "Oct 3, 6:00 PM", "Oct 3, 7:00 PM"].map((t) => estimateLabelWidth(t, 24));
-    const slots = axisLabelSlots([20, 120, 220], lengths, 261, 6);
-    expect(slots).toHaveLength(3);
-    expect(collide(slots, lengths, 6)).toBe(false);
-    slots.forEach((slot, i) => {
-      expect(slot.start).toBeGreaterThanOrEqual(0);
-      expect(slot.start + Math.min(lengths[i], 261)).toBeLessThanOrEqual(261 + 1e-9);
-    });
-    expect(new Set(slots.map((s) => s.lane)).size).toBeGreaterThan(1);
+  it("slides an edge label inward only as far as the plot needs", () => {
+    expect(axisLabelSubset([0, 300], [40, 40], 300, 6)).toEqual([
+      { index: 0, start: 0, lane: 0 },
+      { index: 1, start: 260, lane: 0 },
+    ]);
   });
 
-  it("the rendered chart at 200% keeps every x label clear of its lane neighbours and of the y labels", () => {
+  it("draws an intermediate only when it clears its neighbours by the clear gap, not merely the gap", () => {
+    // first [0,80], last [180,260], middle [90,170]: 10 px either side.
+    expect(axisLabelSubset([0, 130, 260], [80, 80, 80], 260, 6, 6).map((l) => l.index)).toEqual([0, 1, 2]);
+    expect(axisLabelSubset([0, 130, 260], [80, 80, 80], 260, 6, 24).map((l) => l.index)).toEqual([0, 2]);
+  });
+
+  it("prefers two clear endpoints when the labels are large for the width", () => {
+    // CONSTRUCTED: four 120 px labels (enlarged text) across a 261 px plot.
+    expect(axisLabelSubset([0, 87, 174, 261], [120, 120, 120, 120], 261, 6, 24)).toEqual([
+      { index: 0, start: 0, lane: 0 },
+      { index: 3, start: 141, lane: 0 },
+    ]);
+  });
+
+  it("gives the endpoints a second row only when they cannot share one, and then draws nothing between", () => {
+    expect(axisLabelSubset([0, 87, 174, 261], [140, 140, 140, 140], 261, 6, 24)).toEqual([
+      { index: 0, start: 0, lane: 0 },
+      { index: 3, start: 121, lane: 1 },
+    ]);
+  });
+
+  it("keeps a lone tick and draws nothing for none", () => {
+    expect(axisLabelSubset([100], [40], 300, 6)).toEqual([{ index: 0, start: 80, lane: 0 }]);
+    expect(axisLabelSubset([], [], 300, 6)).toEqual([]);
+  });
+
+  it("across widths and text sizes: endpoints always, no collision, inside the plot, on its tick unless slid", () => {
+    const families = [
+      ["5 PM", "6 PM", "7 PM", "8 PM"],
+      ["Oct 10, 5 PM", "Oct 10, 6 PM", "Oct 10, 7 PM", "Oct 10, 8 PM"], // CONSTRUCTED label shapes
+    ];
+    for (const words of families) {
+      for (const extent of [180, 261, 340, 600]) {
+        for (const fontPx of [12, 18, 24]) {
+          const lengths = words.map((w) => estimateLabelWidth(w, fontPx));
+          const centers = words.map((_, i) => (extent * i) / (words.length - 1));
+          const placed = axisLabelSubset(centers, lengths, extent, 6, Math.max(6, fontPx));
+          expect(placed[0].index).toBe(0);
+          expect(placed[placed.length - 1].index).toBe(words.length - 1);
+          expect(collide(placed, lengths, 6)).toBe(false);
+          for (const label of placed) {
+            const length = Math.min(lengths[label.index], extent);
+            expect(label.start).toBeGreaterThanOrEqual(0);
+            expect(label.start + length).toBeLessThanOrEqual(extent + 1e-9);
+            expect(label.start).toBeCloseTo(Math.min(Math.max(0, centers[label.index] - length / 2), extent - length), 9);
+            expect(label.lane === 0 || (label.lane === 1 && placed.length === 2)).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it("the rendered chart at 200%: endpoints drawn, a subset of the ticks in order, clear of each other, the y labels and 0%", () => {
     withRootFont(32);
     const { history } = finalJourney(finalMarkets);
-    act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={{ home: "var(--series-1)", away: "var(--series-2)" }} />));
+    act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={COLORS} />));
     const svg = host.querySelector('svg[role="img"]')!;
     const xLabels = Array.from(svg.querySelectorAll("text[data-axis-lane]"));
-    // Nothing dropped: one label per tick, in tick order.
-    expect(xLabels.map((el) => el.textContent)).toEqual(history.xTicks.map((tick) => tick.label));
-    expect(xLabels.length).toBeGreaterThan(1);
+    const ticks = xLabels.map((el) => Number(el.getAttribute("data-axis-tick")));
+    expect(history.xTicks.length).toBeGreaterThan(1);
+    expect(ticks[0]).toBe(0);
+    expect(ticks[ticks.length - 1]).toBe(history.xTicks.length - 1);
+    expect([...ticks].sort((a, b) => a - b)).toEqual(ticks);
+    // Each drawn label is the owner's own words for its tick, unchanged.
+    expect(xLabels.map((el) => el.textContent)).toEqual(ticks.map((i) => history.xTicks[i].label));
     const fontPx = 24; // text-xs (12 px) at a 32 px root
+    const lengths = history.xTicks.map((tick) => estimateLabelWidth(tick.label, fontPx));
     const placed = xLabels.map((el) => ({
+      index: Number(el.getAttribute("data-axis-tick")),
       start: Number(el.getAttribute("x")),
       lane: Number(el.getAttribute("data-axis-lane")),
-      length: estimateLabelWidth(el.textContent ?? "", fontPx),
     }));
-    expect(collide(placed, placed.map((p) => p.length), 6)).toBe(false);
+    expect(collide(placed, lengths, 6)).toBe(false);
     // The y labels end at their anchor (text-anchor end); every x label starts to its right …
     const yLabels = Array.from(svg.querySelectorAll('text[text-anchor="end"]'));
     expect(yLabels.length).toBeGreaterThan(0);
@@ -547,4 +605,188 @@ describe("axis labels never collide (native labelSlots: lanes, nothing dropped, 
     const lowestYLabelBottom = Math.max(...yLabels.map((el) => Number(el.getAttribute("y")))) + fontPx / 2;
     for (const el of xLabels) expect(Number(el.getAttribute("y"))).toBeGreaterThan(lowestYLabelBottom);
   });
+
+  it("enlarged text never draws more time labels than standard text, and both keep the endpoints", () => {
+    const { history } = finalJourney(finalMarkets);
+    const drawn = () =>
+      Array.from(host.querySelectorAll('svg[role="img"] text[data-axis-tick]')).map((el) => Number(el.getAttribute("data-axis-tick")));
+    act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={COLORS} />));
+    const standard = drawn();
+    act(() => root.unmount());
+    withRootFont(32);
+    root = createRoot(host);
+    act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={COLORS} />));
+    const enlarged = drawn();
+    expect(enlarged.length).toBeLessThanOrEqual(standard.length);
+    for (const set of [standard, enlarged]) {
+      expect(set[0]).toBe(0);
+      expect(set[set.length - 1]).toBe(history.xTicks.length - 1);
+    }
+  });
+});
+
+// ─── Fidelity pass (Design 2026-10-30: compact About, line key, missing baselines, shown player) ─
+
+it("About is a compact info control beside the header, its words the accessible name", () => {
+  act(() => root.render(<HockeyJourneyPage journey={journey} />));
+  const about = button("About these sources");
+  expect(about.querySelector("svg")).not.toBeNull();
+  expect(about.querySelector(".sr-only")?.textContent).toBe("About these sources");
+  // Nothing printed beside the icon: the words are its accessible name only.
+  const printed = Array.from(about.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== "");
+  expect(printed).toHaveLength(0);
+  for (const cls of ["min-h-11", "min-w-11", "shrink-0"]) expect(about.classList.contains(cls)).toBe(true);
+  // In the heading's row, which does not wrap the control onto a line of its own.
+  const row = about.parentElement!;
+  expect(row.contains(host.querySelector("h2"))).toBe(true);
+  expect(row.classList.contains("flex-wrap")).toBe(false);
+  // Still a real disclosure with the same content.
+  click(about);
+  expect(about.getAttribute("aria-expanded")).toBe("true");
+  expect(document.getElementById(about.getAttribute("aria-controls") ?? "")?.textContent).toContain("Pregame chance: Pre-match");
+});
+
+it("prints the history's readings as one compact key under the plot; exact timing moves into Details", () => {
+  const { history } = finalJourney(finalMarkets);
+  act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={COLORS} />));
+  const key = host.querySelector("[data-line-key]")!;
+  const [home, away] = Array.from(key.children);
+  expect(key.children).toHaveLength(2);
+  expect(home.querySelector("p")?.textContent).toBe("Minnesota Wild");
+  expect(away.querySelector("p")?.textContent).toBe("Boston Bruins");
+  expect(home.querySelector("dl")?.textContent).toBe("Pregame66%");
+  expect(away.querySelector("dl")?.textContent).toBe("Pregame34%");
+  // The key follows the plot; no per-team boxes; no clock words on the face.
+  const plot = host.querySelector('svg[role="img"]')!;
+  expect(plot.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(host.querySelector(".bg-surface-deep")).toBeNull();
+  expect(key.textContent).not.toContain("Last pregame");
+  const basis = host.querySelector("[data-history-basis]")?.textContent ?? "";
+  expect(basis).toContain("Game history");
+  expect(basis).toContain("Hollow · last pregame");
+  const details = button("History & source details");
+  const region = document.getElementById(details.getAttribute("aria-controls") ?? "")!;
+  expect(region.hidden).toBe(true);
+  click(details);
+  expect(region.hidden).toBe(false);
+  expect(region.textContent).toContain("Minnesota Wild · Pregame 66% · Last pregame · ");
+  expect(region.textContent).toContain("Boston Bruins · Pregame 34% · Last pregame · ");
+  expect(region.textContent).toContain("Source: Bain Luck");
+  expect(region.textContent).toContain("Gaps remain blank.");
+});
+
+it("when the readout asks, each team keeps its own labelled pregame and recorded slots; an absent slot keeps its words", () => {
+  const { history: base } = finalJourney(finalMarkets);
+  // CONSTRUCTED presentation input: the final history given a live readout; one side has no recorded row.
+  const history = {
+    ...base,
+    readout: "beforeAndRecorded" as const,
+    series: [
+      { ...base.series[0], recorded: { kind: "reading" as const, figure: "71%", provenance: "Recorded 9:30 PM", pointId: null } },
+      { ...base.series[1], recorded: { kind: "absent" as const, words: "Not recorded" } },
+    ] as typeof base.series,
+  };
+  act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={COLORS} />));
+  const [home, away] = Array.from(host.querySelector("[data-line-key]")!.children);
+  expect(Array.from(home.querySelectorAll("dt")).map((d) => d.textContent)).toEqual(["Pregame", "Recorded"]);
+  expect(Array.from(home.querySelectorAll("dd")).map((d) => d.textContent)).toEqual(["66%", "71%"]);
+  expect(Array.from(away.querySelectorAll("dt")).map((d) => d.textContent)).toEqual(["Pregame", "Recorded"]);
+  expect(Array.from(away.querySelectorAll("dd")).map((d) => d.textContent)).toEqual(["34%", "Not recorded"]);
+  expect(home.textContent).not.toContain("9:30 PM");
+  const details = button("History & source details");
+  click(details);
+  const region = document.getElementById(details.getAttribute("aria-controls") ?? "")!;
+  expect(region.textContent).toContain("Minnesota Wild · Recorded 71% · Recorded 9:30 PM");
+  expect(region.textContent).not.toContain("Boston Bruins · Recorded");
+});
+
+it("with no history response both teams are still named in the key, each slot's words printed once", () => {
+  const missing = buildHockeyJourney({
+    event: finalEvent,
+    history: null, // CONSTRUCTED: no history response
+    gameMarkets: finalMarkets,
+    host: { nowMs: FINAL_NOW, hero: null, probabilityObservedAt: null },
+  });
+  act(() => root.render(<HockeyJourneyHistoryChart history={missing.history} colors={COLORS} />));
+  const entries = Array.from(host.querySelector("[data-line-key]")!.children);
+  expect(entries.map((li) => li.querySelector("p")?.textContent)).toEqual(["Minnesota Wild", "Boston Bruins"]);
+  for (const li of entries) {
+    expect(li.querySelector("dd")?.textContent).toBe("History unavailable");
+    expect(li.querySelector("dt")?.classList.contains("sr-only")).toBe(true);
+  }
+});
+
+const finalPointsCard = () => hockeyJourneyContribution("points", finalEvent, finalMarkets, FINAL_NOW)!;
+
+it("a player with no pregame chance on any milestone takes a compact row of targets — absence, result and count kept, no empty bars", () => {
+  const card = finalPointsCard();
+  const hughes = card.players.find((p) => p.name === "Quinn Hughes")!;
+  expect(hughes.milestones.length).toBeGreaterThan(1);
+  expect(hughes.milestones.every((m) => m.before === null)).toBe(true);
+  const onHold = jest.fn();
+  act(() => root.render(<HockeyJourneyContributionCard card={card} held={{ playerId: hughes.id, milestoneId: null }} onHold={onHold} />));
+  const rail = host.querySelector("[data-milestone-form]")!;
+  expect(rail.getAttribute("data-milestone-form")).toBe("targets");
+  const buttons = Array.from(rail.querySelectorAll("button"));
+  // Each target, its own absence words and its settled result — in milestone order.
+  expect(buttons.map((b) => b.textContent)).toEqual(hughes.milestones.map((m) => `${m.target}${m.beforeMissing}${m.result?.words ?? ""}`));
+  // No bar is drawn, no chance printed.
+  expect(rail.querySelectorAll('[aria-hidden="true"]')).toHaveLength(0);
+  expect(rail.textContent).not.toContain("%");
+  // The count stays its own block, untouched.
+  const text = host.textContent ?? "";
+  expect(text).toContain("Final count");
+  expect(text).toContain("1 goal + 1 assist");
+  // No default milestone (none has a chance); every target can still be chosen.
+  expect(buttons.map((b) => b.getAttribute("aria-pressed"))).toEqual(hughes.milestones.map(() => "false"));
+  click(buttons[1]);
+  expect(onHold).toHaveBeenCalledWith({ playerId: hughes.id, milestoneId: hughes.milestones[1].id });
+  // Even at an accessibility text size the targets keep this form.
+  act(() => root.unmount());
+  withRootFont(32);
+  root = createRoot(host);
+  act(() => root.render(<HockeyJourneyContributionCard card={card} held={{ playerId: hughes.id, milestoneId: null }} onHold={onHold} />));
+  expect(host.querySelector("[data-milestone-form]")?.getAttribute("data-milestone-form")).toBe("targets");
+});
+
+it("a player with some chances keeps the full columns, the missing milestone honest in its own place", () => {
+  const base = pregamePointsCard();
+  const eichel = base.players[0];
+  // CONSTRUCTED: the first milestone without its pregame chance; the rest unchanged.
+  const mixed = {
+    ...base,
+    players: [
+      { ...eichel, milestones: eichel.milestones.map((m, i) => (i === 0 ? { ...m, before: null, beforeMissing: "Unavailable" } : m)) },
+      ...base.players.slice(1),
+    ],
+  };
+  act(() => root.render(<HockeyJourneyContributionCard card={mixed} held={NO_HELD_CHOICE} onHold={() => {}} />));
+  const rail = host.querySelector("[data-milestone-form]")!;
+  expect(rail.getAttribute("data-milestone-form")).toBe("columns");
+  const buttons = Array.from(rail.querySelectorAll("button"));
+  expect(buttons[0].textContent).toContain("Unavailable");
+  expect(buttons[0].querySelector(".absolute")).toBeNull(); // its column stays empty — never a neighbour's height
+  const populated = mixed.players[0].milestones.findIndex((m) => m.before !== null);
+  expect(populated).toBeGreaterThan(0);
+  expect(buttons[populated].querySelector(".absolute")).not.toBeNull();
+  expect(buttons[populated].textContent).toContain(mixed.players[0].milestones[populated].before!.text);
+});
+
+it("prints the shown player's whole name and team on the card, outside the closed picker", () => {
+  const card = finalPointsCard();
+  const [kaprizov, shabanov] = card.players;
+  act(() => root.render(<HockeyJourneyContributionCard card={card} held={NO_HELD_CHOICE} onHold={() => {}} />));
+  const shown = () => host.querySelector("[data-shown-player]")!;
+  expect(shown().textContent).toBe(`${kaprizov.name}${kaprizov.team ?? ""}`);
+  expect(shown().contains(host.querySelector("select"))).toBe(false);
+  expect(shown().querySelector(".truncate")).toBeNull();
+  expect(shown().querySelector("p")?.classList.contains("break-words")).toBe(true);
+  // The picker keeps its constrained footprint.
+  expect(host.querySelector("select")?.classList.contains("max-w-full")).toBe(true);
+  // A held choice of another player (team not served) moves the identity with it.
+  act(() => root.render(<HockeyJourneyContributionCard card={card} held={{ playerId: shabanov.id, milestoneId: null }} onHold={() => {}} />));
+  expect(shown().textContent).toBe(shabanov.name);
+  // A held player no longer served shows no one else's identity.
+  act(() => root.render(<HockeyJourneyContributionCard card={card} held={{ playerId: "player:nobody", milestoneId: null }} onHold={() => {}} />));
+  expect(host.querySelector("[data-shown-player]")).toBeNull();
 });

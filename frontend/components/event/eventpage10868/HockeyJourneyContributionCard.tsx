@@ -24,6 +24,19 @@
  * milestones change). The player chooser never exceeds its container: it takes
  * the full width under its label and the closed control truncates; the open
  * list keeps every name whole.
+ *
+ * The shown player's full name and team are always printed on the card,
+ * wrapping, outside the picker (the approved design's `.hc-player`, prototype
+ * `HockeyContributionVisual.tsx`), so a long identity never lives only inside
+ * the closed control's ellipsis.
+ *
+ * When NO milestone of the shown player has a pregame chance, there is nothing
+ * to draw a bar for: the milestones take a compact row of targets instead (the
+ * prototype's `.hc-thresholds` pills under its `.hc-chart-key`), each keeping
+ * its target, its own absence words, its phase-gated reading or result and its
+ * pressed state; the count block above is untouched. No bar is drawn empty, and
+ * no result or count is shown as a chance. A player with at least one chance
+ * keeps the full columns/bars, every missing milestone keeping its own words.
  */
 
 import { useId, useRef, useState } from "react";
@@ -44,13 +57,22 @@ function currentWords(current: HockeyJourneyCurrent): { text: string; strong: bo
   return { text: current.words, strong: current.kind === "reached" };
 }
 
-function MilestoneFoot({ milestone, phase }: { milestone: HockeyJourneyMilestone; phase: HockeyJourneyPhase }) {
+function MilestoneFoot({
+  milestone,
+  phase,
+  inline = false,
+}: {
+  milestone: HockeyJourneyMilestone;
+  phase: HockeyJourneyPhase;
+  /** Beside the target in the compact row rather than under a bar. */
+  inline?: boolean;
+}) {
   // The in-game slot during play only; the result after the final only.
   const current = phase === "live" ? milestone.current : null;
   const result = phase === "final" ? milestone.result : null;
   if (!current && !result) return null;
   return (
-    <span className="mt-1 block space-y-0.5 text-sm">
+    <span className={inline ? "flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm" : "mt-1 block space-y-0.5 text-sm"}>
       {current && (
         <span className={`block ${currentWords(current).strong ? "font-semibold text-text-primary" : "text-text-secondary"}`}>
           {current.kind === "recorded" ? "In-game " : ""}
@@ -101,7 +123,11 @@ export default function HockeyJourneyContributionCard({
   ]);
   const [railFit, setRailFit] = useState({ key: railKey, overflowed: false });
   const overflowed = railFit.key === railKey && railFit.overflowed;
-  const columns = card.orientation === "columns" && !measure.accessibilitySize && !overflowed;
+  // Every milestone without a pregame chance: no bar has anything to show.
+  const shownMilestones = player?.milestones ?? [];
+  const noChances = shownMilestones.length > 0 && shownMilestones.every((m) => m.before === null);
+  const columns = !noChances && card.orientation === "columns" && !measure.accessibilitySize && !overflowed;
+  const form = noChances ? "targets" : columns ? "columns" : "bars";
   useIsomorphicLayoutEffect(() => {
     const el = rail.current?.querySelector("ul");
     if (!columns || !el) return;
@@ -122,10 +148,19 @@ export default function HockeyJourneyContributionCard({
         <h4 id={titleId} className="text-lg font-bold">
           {card.title}
         </h4>
-        <p className="text-sm text-text-secondary">{card.definition}</p>
       </header>
 
-      {chooserLabel ? (
+      {/* The shown player, whole (prototype .hc-player, above the definition): never only
+          inside the closed picker's ellipsis. */}
+      {player && (
+        <div className="min-w-0" data-shown-player="">
+          <p className="break-words text-xl font-bold">{player.name}</p>
+          {player.team && <p className="break-words text-sm text-text-secondary">{player.team}</p>}
+        </div>
+      )}
+      <p className="text-sm text-text-secondary">{card.definition}</p>
+
+      {chooserLabel && (
         <div className="flex min-w-0 flex-col items-stretch gap-1">
           <label htmlFor={chooserId} className="text-sm font-medium">
             {chooserLabel}
@@ -154,13 +189,6 @@ export default function HockeyJourneyContributionCard({
             ))}
           </select>
         </div>
-      ) : (
-        player && (
-          <p className="text-base font-semibold">
-            {player.name}
-            {player.team && <span className="font-normal text-text-secondary"> · {player.team}</span>}
-          </p>
-        )
       )}
 
       {notice && (
@@ -187,8 +215,30 @@ export default function HockeyJourneyContributionCard({
 
       {player && <p className="text-sm font-medium text-text-secondary">{card.chartTitle}</p>}
       {player && (
-        <div ref={rail} role="group" aria-label={`${player.name} milestones`} data-milestone-form={columns ? "columns" : "bars"}>
-          {columns ? (
+        <div ref={rail} role="group" aria-label={`${player.name} milestones`} data-milestone-form={form}>
+          {form === "targets" ? (
+            <ul className="flex flex-wrap gap-2">
+              {player.milestones.map((m) => {
+                const pressed = selected?.id === m.id;
+                return (
+                  <li key={m.id} className="min-w-0 max-w-full">
+                    <button
+                      type="button"
+                      aria-pressed={pressed}
+                      onClick={() => chooseMilestone(m.id)}
+                      className={`flex min-h-11 max-w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-xl border border-surface-border bg-surface-card px-3 py-1.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand ${
+                        pressed ? "ring-2 ring-text-primary" : ""
+                      }`}
+                    >
+                      <span className="text-base font-semibold">{m.target}</span>
+                      <span className="text-sm text-text-secondary">{m.beforeMissing}</span>
+                      <MilestoneFoot milestone={m} phase={card.phase} inline />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : columns ? (
             <ul className="flex items-end gap-2 overflow-x-auto pb-1">
               {player.milestones.map((m) => {
                 const pressed = selected?.id === m.id;
