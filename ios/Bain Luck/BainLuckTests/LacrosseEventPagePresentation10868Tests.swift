@@ -463,6 +463,25 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
             absentWords: series.absentWords, choose: series.choose, keyContext: series.keyContext)
     }
 
+    /// The same input with another readout intent or key visibility — every
+    /// other field the owner's.
+    private static func variant(_ input: FieldHistoryInput10868, readout: FieldHistoryReadoutIntent10868? = nil,
+                                showsKey: Bool? = nil) -> FieldHistoryInput10868 {
+        FieldHistoryInput10868(
+            title: input.title, caption: input.caption, series: input.series, selection: input.selection,
+            domain: input.domain, ceiling: input.ceiling, yTicks: input.yTicks, xTicks: input.xTicks,
+            guides: input.guides, breaks: input.breaks, readout: readout ?? input.readout, markKey: input.markKey,
+            comparisonExplanation: input.comparisonExplanation, notes: input.notes, summary: input.summary,
+            plotHeight: input.plotHeight, unboundReadingWords: input.unboundReadingWords,
+            plotUnavailableWords: input.plotUnavailableWords, windows: input.windows, scale: input.scale,
+            moreOriginals: input.moreOriginals, details: input.details, expand: input.expand, inspect: input.inspect,
+            previous: input.previous, next: input.next, inspection: input.inspection, layout: input.layout,
+            probabilityLowerBound: input.probabilityLowerBound,
+            probabilityRangeExplanation: input.probabilityRangeExplanation, selectedReadout: input.selectedReadout,
+            inspectionRingShape: input.inspectionRingShape, plotAbsence: input.plotAbsence,
+            showsKey: showsKey ?? input.showsKey)
+    }
+
     /// A CONSTRUCTED ambiguous update: the Syracuse series listed twice.
     private static func duplicated(_ input: FieldHistoryInput10868) -> FieldHistoryInput10868 {
         replacingSeries(input, input.series + input.series.filter { $0.id == Team.syracuse.rawValue })
@@ -997,7 +1016,9 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
             }
             for reader in [false, true] {
                 for enlarged in [false, true] {
-                    outputs += comparisonOutputs(view.comparisonContent(reader: reader, enlarged: enlarged))
+                    if let comparison = view.comparisonContent(reader: reader, enlarged: enlarged) {
+                        outputs += comparisonOutputs(comparison)
+                    }
                     outputs += historyOutputs(view.historyContent(reader: reader, enlarged: enlarged).input)
                 }
             }
@@ -1527,10 +1548,11 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
         ])
         // The comparison draws the same slots, so the equal figures stay separately dated there too.
         let comparison = LacrosseEventPagePresentation10868(input: Self.page(.final, history: equal)).comparisonContent(reader: false)
-        XCTAssertEqual(comparison.entries.first?.slots, Self.slots(equal)[0])
-        XCTAssertEqual(Array(RugbyMatchEventPageComparisonPresentation10868.figures(comparison.entries).prefix(2)), ["70%", "70%"])
+        XCTAssertNotNil(comparison)
+        XCTAssertEqual(comparison?.entries.first?.slots, Self.slots(equal)[0])
+        XCTAssertEqual(Array(RugbyMatchEventPageComparisonPresentation10868.figures(comparison?.entries ?? []).prefix(2)), ["70%", "70%"])
         let sameComparison = LacrosseEventPagePresentation10868(input: Self.page(.final, history: same)).comparisonContent(reader: true)
-        XCTAssertEqual(sameComparison.entries.map(\.slots.count), [1, 1])
+        XCTAssertEqual(sameComparison?.entries.map(\.slots.count), [1, 1])
     }
 
     // MARK: Identity
@@ -1994,10 +2016,11 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
         let page = view()
         let headline = page.headlineContent()
         let comparison = page.comparisonContent(reader: false)
+        XCTAssertNotNil(comparison, "the final mounts the comparison inline")
         let anchor = page.historyContent(reader: false)
         let periods = page.periodsContent(reader: false)
         let chooser = page.chooserContent()
-        _ = comparison.entries
+        _ = comparison?.entries
         _ = page.catalogueContent()
         _ = page.originalDetailsContent()
         _ = page.aboutContent()
@@ -2097,16 +2120,26 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
             XCTAssertEqual(reader.windows, inline.windows)
             XCTAssertEqual(reader.readout, inline.readout)
             XCTAssertEqual(reader.domain, inline.domain)
-            XCTAssertEqual(reader.showsKey, inline.showsKey)
+            // Key: the reader always mounts the comparison, which stands in for
+            // the plain key; the page mounts it only at the final, and before
+            // play and live keeps the owner's own key.
+            XCTAssertFalse(reader.showsKey)
+            XCTAssertEqual(inline.showsKey, phase == .final ? false : input.history.showsKey)
+            XCTAssertTrue(input.history.showsKey)
+            XCTAssertEqual(Self.slots(reader), Self.slots(inline), "the readouts never depend on the mount")
             XCTAssertEqual(reader.plotHeight, inline.plotHeight)
             XCTAssertEqual(reader.layout, .expanded)
             XCTAssertNil(reader.expand)
             XCTAssertEqual(inline.expand, input.history.expand)
-            // The comparison: the same View with the same resolved slots inline and full size.
-            XCTAssertEqual(view.comparisonContent(reader: false).history, inline)
-            XCTAssertEqual(view.comparisonContent(reader: true).history, reader)
-            XCTAssertEqual(view.comparisonContent(reader: false).entries.map(\.slots),
-                           view.comparisonContent(reader: true).entries.map(\.slots))
+            // The comparison: the same View with the same resolved slots wherever it is shown.
+            XCTAssertEqual(view.comparisonContent(reader: true)?.history, reader)
+            if phase == .final {
+                XCTAssertEqual(view.comparisonContent(reader: false)?.history, inline)
+                XCTAssertEqual(view.comparisonContent(reader: false)?.entries.map(\.slots),
+                               view.comparisonContent(reader: true)?.entries.map(\.slots))
+            } else {
+                XCTAssertNil(view.comparisonContent(reader: false), "\(phase): the headline already carries the chances inline")
+            }
             // The full-size quarters: the same input under the same headline input.
             XCTAssertEqual(view.periodsContent(reader: true)?.input, view.periodsContent(reader: false)?.input)
             XCTAssertEqual(view.headlineContent(reader: true)?.input, view.headlineContent()?.input)
@@ -2119,7 +2152,8 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
         for phase in Phase.allCases {
             let input = Self.page(phase)
             let view = LacrosseEventPagePresentation10868(input: input)
-            let comparison = view.comparisonContent(reader: false)
+            XCTAssertEqual(view.comparisonContent(reader: false) != nil, phase == .final)
+            guard let comparison = view.comparisonContent(reader: true) else { return XCTFail("\(phase): full size always mounts it") }
             XCTAssertEqual(comparison.label, "Win chances, each with its own date")
             // Names and shapes are the history's own; the slots are the shared resolver's.
             XCTAssertEqual(comparison.entries.map(\.series.name), ["Notre Dame", "Syracuse"])
@@ -2129,31 +2163,31 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
         }
         // Dates: each figure carries its own label and date.
         let final = LacrosseEventPagePresentation10868(input: Self.page(.final)).comparisonContent(reader: false)
-        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures(final.entries), ["70%", "99%", "36%", "1%"])
-        XCTAssertEqual(final.entries.map(RugbyMatchEventPageComparisonPresentation10868.spoken), [
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures(final?.entries ?? []), ["70%", "99%", "36%", "1%"])
+        XCTAssertEqual(final?.entries.map(RugbyMatchEventPageComparisonPresentation10868.spoken), [
             "Notre Dame. Pre-match 70%, \(Self.baselineProvenance). Last recorded 99%, May 23, 3:27 PM PDT",
             "Syracuse. Pre-match 36%, \(Self.baselineProvenance). Last recorded 1%, May 23, 3:13 PM PDT",
         ])
         let before = LacrosseEventPagePresentation10868(input: Self.page(.before)).comparisonContent(reader: true)
-        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures(before.entries), ["70%", "36%"])
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures(before?.entries ?? []), ["70%", "36%"])
 
         // Missing: an exact-minute absence keeps the history's words, never a figure.
         let missingMinute = LacrosseEventPagePresentation10868(
             input: Self.page(.final, history: Self.history(.final, window: .all, inspect: Self.notreDameLastAt)))
             .comparisonContent(reader: false)
-        XCTAssertEqual(missingMinute.entries.last?.slots.last?.display, .words(Self.noTradeHere))
-        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures(missingMinute.entries), ["70%", "99%", "36%"])
+        XCTAssertEqual(missingMinute?.entries.last?.slots.last?.display, .words(Self.noTradeHere))
+        XCTAssertEqual(RugbyMatchEventPageComparisonPresentation10868.figures(missingMinute?.entries ?? []), ["70%", "99%", "36%"])
         // Missing history: the team keeps its name and the history's absence words.
         let empty = LacrosseEventPagePresentation10868(input: Self.page(
             .final, history: Self.history(.final, omit: Set(Self.syracuseCloses.map { Self.pointID(.syracuse, $0.at) }))))
             .comparisonContent(reader: false)
-        XCTAssertEqual(empty.entries.last?.series.name, "Syracuse")
-        XCTAssertEqual(empty.entries.last?.note, Self.noTrades)
-        XCTAssertEqual(empty.entries.last?.slots.map(\.display), [.words(Self.unbound), .words(Self.unbound)])
+        XCTAssertEqual(empty?.entries.last?.series.name, "Syracuse")
+        XCTAssertEqual(empty?.entries.last?.note, Self.noTrades)
+        XCTAssertEqual(empty?.entries.last?.slots.map(\.display), [.words(Self.unbound), .words(Self.unbound)])
         // An exact on-the-hour minute: both figures, one clock each.
         let hour = LacrosseEventPagePresentation10868(input: Self.page(.final, history: Self.history(.final, inspect: 1779562800)))
             .comparisonContent(reader: false)
-        XCTAssertEqual(hour.entries.map { $0.slots.last?.display }, [
+        XCTAssertEqual(hour?.entries.map { $0.slots.last?.display }, [
             .figure("62%", provenance: "May 23, 12:00 PM PDT"), .figure("37%", provenance: "May 23, 12:00 PM PDT"),
         ])
 
@@ -2194,6 +2228,125 @@ final class LacrosseEventPagePresentation10868Tests: XCTestCase {
         // A key context with no visible words is not a context: the key may hide.
         let blank = FieldHistoryKeyContext10868(label: "Contract result", words: " ", spoken: nil)
         XCTAssertTrue(LacrosseEventPageModel10868(Self.page(.final, history: Self.history(.final, keyContext: blank))).hidesSharedKey)
+    }
+
+    // MARK: Inline mount and key (L3)
+
+    func testTheInlineComparisonMountsOnlyAtTheFinalOrWhileAMinuteIsInspectedAndTheKeyFollowsIt() {
+        // Each context: its page input and whether the comparison is mounted inline.
+        let contexts: [(name: String, input: LacrosseEventPageInput10868, inline: Bool)] = [
+            ("before", Self.page(.before), false),
+            ("ordinary during", Self.page(.during), false),
+            ("inspected before", Self.page(.before, history: Self.history(.before, inspect: 1779559560)), true),
+            ("inspected before at the pre-match minute", Self.page(.before, history: Self.history(.before, inspect: Self.baselineAt)), true),
+            ("inspected during", Self.page(.during, history: Self.history(.during, inspect: 1779563280)), true),
+            ("final", Self.page(.final), true),
+            ("inspected final", Self.page(.final, history: Self.history(.final, inspect: 1779559560)), true),
+        ]
+        for context in contexts {
+            let input = context.input
+            let model = LacrosseEventPageModel10868(input)
+            let view = LacrosseEventPagePresentation10868(input: input)
+            // The mount decision: the explicit phase and the history's own inspection or intent.
+            XCTAssertEqual(model.showsComparison(reader: false), context.inline, context.name)
+            XCTAssertEqual(model.isInspecting, context.name.hasPrefix("inspected"), context.name)
+            XCTAssertTrue(model.showsComparison(reader: true), context.name)
+            XCTAssertEqual(view.comparisonContent(reader: false) != nil, context.inline, context.name)
+
+            // The full reader mounts it in every phase, from its own copy, and
+            // the plain key gives way to it there.
+            let readerCopy = model.readerHistory(enlarged: false)
+            guard let reader = view.comparisonContent(reader: true) else { return XCTFail(context.name) }
+            XCTAssertEqual(reader.history, readerCopy, context.name)
+            XCTAssertEqual(reader.entries.map(\.slots), Self.slots(readerCopy), context.name)
+            XCTAssertFalse(readerCopy.showsKey, context.name)
+
+            // Inline the key follows the mount: the owner's own where absent,
+            // hidden only where the comparison stands in for it.
+            let inlineCopy = model.history(enlarged: false)
+            XCTAssertEqual(inlineCopy.showsKey, !context.inline, context.name)
+            XCTAssertEqual(view.historyContent(reader: false).input, inlineCopy, context.name)
+            if let inline = view.comparisonContent(reader: false) {
+                XCTAssertEqual(inline.history, inlineCopy, context.name)
+                XCTAssertEqual(inline.entries.map(\.slots), reader.entries.map(\.slots), "\(context.name): same slots wherever shown")
+            }
+            // Readouts, actions and the owner's input never depend on the mount.
+            XCTAssertEqual(Self.slots(inlineCopy), Self.slots(input.history), context.name)
+            XCTAssertEqual(Self.slots(readerCopy), Self.slots(input.history), context.name)
+            XCTAssertEqual(FieldHistoryGeometry10868.actions(inlineCopy), FieldHistoryGeometry10868.actions(input.history), context.name)
+            XCTAssertEqual(inlineCopy.series, input.history.series, context.name)
+            XCTAssertEqual(inlineCopy.inspection, input.history.inspection, context.name)
+            XCTAssertEqual(model.input, input, context.name)
+            XCTAssertTrue(input.history.showsKey, context.name)
+        }
+        // Where the comparison is absent, the inline copy IS the owner's input.
+        XCTAssertEqual(LacrosseEventPageModel10868(Self.page(.before)).history(enlarged: false), Self.page(.before).history)
+        XCTAssertEqual(LacrosseEventPageModel10868(Self.page(.during)).history(enlarged: false), Self.page(.during).history)
+
+        // Same observation versus equal values at different minutes, inline before play.
+        let sameMinute = LacrosseEventPagePresentation10868(
+            input: Self.page(.before, history: Self.history(.before, inspect: Self.baselineAt))).comparisonContent(reader: false)
+        XCTAssertEqual(sameMinute?.entries.map(\.slots.count), [1, 1])
+        let equalValue = LacrosseEventPagePresentation10868(
+            input: Self.page(.before, history: Self.history(.before, inspect: 1779559560))).comparisonContent(reader: false)
+        XCTAssertEqual(equalValue?.entries.first?.slots.map(\.display), [
+            .figure("70%", provenance: Self.baselineProvenance), .figure("70%", provenance: "May 23, 11:06 AM PDT"),
+        ])
+
+        // A readout intent that reads the inspected observation mounts it, even without an inspection.
+        let intentOnly = Self.variant(Self.history(.during), readout: .beforeAndInspected(beforeLabel: "Pre-match", inspectedLabel: "Inspected"))
+        XCTAssertNil(intentOnly.inspection)
+        XCTAssertTrue(LacrosseEventPageModel10868(Self.page(.during, history: intentOnly)).showsComparison(reader: false))
+
+        // A choose action or a visible key context keeps the key wherever the
+        // comparison is mounted, so the key is visible in every phase and size.
+        let keyContext = FieldHistoryKeyContext10868(label: "Contract result", words: "Lost", spoken: nil)
+        for phase in Phase.allCases {
+            for history in [Self.history(phase, choose: true), Self.history(phase, keyContext: keyContext)] {
+                let model = LacrosseEventPageModel10868(Self.page(phase, history: history))
+                XCTAssertFalse(model.hidesSharedKey, "\(phase)")
+                XCTAssertTrue(model.history(enlarged: false).showsKey, "\(phase)")
+                XCTAssertTrue(model.readerHistory(enlarged: false).showsKey, "\(phase)")
+            }
+        }
+        XCTAssertEqual(FieldHistoryGeometry10868.keyContext(
+            LacrosseEventPageModel10868(Self.page(.before, history: Self.history(.before, keyContext: keyContext)))
+                .history(enlarged: false).series[1]), keyContext)
+        // An owner that hides its key is never forced to show it, and the key
+        // is never hidden where the owner shows it and the comparison is absent.
+        let hiddenByOwner = LacrosseEventPageModel10868(Self.page(.before, history: Self.variant(Self.history(.before), showsKey: false)))
+        XCTAssertFalse(hiddenByOwner.history(enlarged: false).showsKey)
+        XCTAssertFalse(hiddenByOwner.readerHistory(enlarged: false).showsKey)
+        XCTAssertFalse(hiddenByOwner.showsComparison(reader: false))
+
+        // With the inline key visible before play, its choose control acts once
+        // after the hold on the page and exactly in the reader.
+        var log: [String] = []
+        let choosingBefore = Self.page(.before, history: Self.history(.before, choose: true))
+        let page = LacrosseEventPagePresentation10868(input: choosingBefore,
+                                                      onHistoryAction: { log.append("history:\($0)") },
+                                                      onInteraction: { log.append("hold") })
+        XCTAssertNil(page.comparisonContent(reader: false))
+        XCTAssertNotNil(page.comparisonContent(reader: true))
+        let anchor = page.historyContent(reader: false)
+        XCTAssertTrue(anchor.input.showsKey)
+        guard let notreDame = anchor.input.series.first else { return XCTFail("the Notre Dame series") }
+        XCTAssertEqual(FieldHistoryGeometry10868.chooseState(notreDame, hasCallback: true, in: anchor.input), .live(id: "choose.not"))
+        XCTAssertEqual(log, [], "deciding the mount and building the comparison call nothing")
+        anchor.onAction?("choose.not")
+        page.historyContent(reader: true).onAction?("choose.syr")
+        XCTAssertEqual(log, ["hold", "history:choose.not", "history:choose.syr"])
+
+        // Absent callbacks: the key stays with a static choose control; nothing acts and nothing holds.
+        log = []
+        let silent = LacrosseEventPagePresentation10868(input: choosingBefore, onInteraction: { log.append("hold") })
+        XCTAssertNil(silent.comparisonContent(reader: false))
+        XCTAssertNotNil(silent.comparisonContent(reader: true))
+        XCTAssertNil(silent.historyContent(reader: false).onAction)
+        XCTAssertNil(silent.historyContent(reader: true).onAction)
+        XCTAssertEqual(FieldHistoryGeometry10868.chooseState(notreDame, hasCallback: false,
+                                                             in: silent.historyContent(reader: false).input), .shownStatic)
+        XCTAssertEqual(log, [])
     }
 
     // MARK: Plot heights (L2)

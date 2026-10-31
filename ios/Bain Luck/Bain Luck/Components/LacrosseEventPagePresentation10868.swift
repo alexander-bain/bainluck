@@ -37,8 +37,9 @@ import SwiftUI
 //   • `RugbyMatchEventPageComparisonPresentation10868` (the accepted rugby
 //     page's standalone comparison, read only) — every team's dated readouts
 //     exactly as the history resolves them, at one equal scaled figure size,
-//     each with its own label and date, above the history inline and full
-//     size, from the same history copy the history leaf receives;
+//     each with its own label and date, above the history — full size in
+//     every phase, inline only at the final or while a minute is inspected —
+//     from the same history copy the history leaf receives;
 //   • `FieldProbabilityHistoryPresentation10868` — the anchor: the owner's
 //     runs with their real gaps, readouts bound to their exact observations,
 //     windows, inspection and previous/next;
@@ -98,11 +99,18 @@ import SwiftUI
 // The history leaf and the comparison read one presentation copy of the
 // owner's history: every series, run, readout, inspection, mark, word and
 // action exactly as supplied, with only the plot height, the expand control
-// and the shared key's visibility set here. The comparison stands in for the
-// shared key — the copy hides the key — only while no series carries a choose
-// action or a visible key context; otherwise the owner's key stays. The
-// owner's input is never changed, and the shared resolver stays the sole
-// authority for every readout.
+// and the shared key's visibility set here. Where the comparison is mounted
+// is a pure presentation decision from the owner's explicit phase and the
+// history's own inspection or readout intent — never from a figure, a clock
+// or a value: full size it is always mounted; inline only at the final or
+// while the owner's history inspects a minute, because before play and in
+// ordinary live play the headline already carries the same chances. Where
+// the comparison is mounted it stands in for the shared key — that copy
+// hides the key — only while no series carries a choose action or a visible
+// key context; where it is not mounted the owner's key shows exactly as the
+// owner set it. The page and the reader may therefore differ in key
+// visibility. The owner's input is never changed, and the shared resolver
+// stays the sole authority for every readout.
 //
 // The full-size history is that copy in its expanded layout, without its
 // expand control, under the same comparison. Plot heights are geometry only:
@@ -965,23 +973,45 @@ nonisolated struct LacrosseEventPageModel10868: Equatable {
         input.history.series.allSatisfy { $0.choose == nil && FieldHistoryGeometry10868.keyContext($0) == nil }
     }
 
-    /// The key's visibility in both presentation copies.
-    var presentedKey: Bool { hidesSharedKey ? false : input.history.showsKey }
+    /// Whether the owner's history inspects a minute: an inspection, or a
+    /// readout intent that reads the inspected observation. The owner's own
+    /// inputs only — never a figure or a clock.
+    var isInspecting: Bool {
+        if input.history.inspection != nil { return true }
+        if case .beforeAndInspected = input.history.readout { return true }
+        return false
+    }
+
+    /// Where the comparison is mounted: full size always; inline only at the
+    /// final or while the owner's history inspects a minute. Before play and
+    /// in ordinary live play the headline carries the same chances inline.
+    func showsComparison(reader: Bool) -> Bool {
+        reader || input.phase == .final || isInspecting
+    }
+
+    /// The key's visibility in one presentation copy: hidden only where the
+    /// comparison is mounted and stands in for it; otherwise exactly the
+    /// owner's.
+    func presentedKey(reader: Bool) -> Bool {
+        (showsComparison(reader: reader) && hidesSharedKey) ? false : input.history.showsKey
+    }
 
     /// The anchor: a presentation copy of the owner's history at the plot
-    /// height for the text size, with the duplicate key hidden. Every other
-    /// field is the owner's; the owner's input is never changed.
+    /// height for the text size, with the key as the inline mount decides.
+    /// Every other field is the owner's; the owner's input is never changed.
     func history(enlarged: Bool) -> FieldHistoryInput10868 {
         Self.history(input.history, plotHeight: plotHeight(enlarged: enlarged),
-                     layout: input.history.layout, expand: input.history.expand, showsKey: presentedKey)
+                     layout: input.history.layout, expand: input.history.expand,
+                     showsKey: presentedKey(reader: false))
     }
 
     /// The anchor's full-size content: the same copy in its expanded layout,
-    /// without an expand control inside the reader, at the same plot height
-    /// and key rules. Every other field is the owner's.
+    /// without an expand control inside the reader, at the same plot height,
+    /// under the always-mounted comparison and its key rule. Every other
+    /// field is the owner's.
     func readerHistory(enlarged: Bool) -> FieldHistoryInput10868 {
         Self.history(input.history, plotHeight: plotHeight(enlarged: enlarged), layout: .expanded, expand: nil,
-                     showsKey: presentedKey)
+                     showsKey: presentedKey(reader: true))
     }
 
     /// A presentation copy: every series, run, readout, inspection, mark, word,
@@ -1252,11 +1282,13 @@ struct LacrosseEventPagePresentation10868: View {
         }
     }
 
-    /// The equal-size dated comparison: the accepted standalone View, read
-    /// from the very history copy the history leaf shows beside it — the same
-    /// resolved slots inline and full size. It acts on nothing.
-    func comparisonContent(reader: Bool, enlarged: Bool = false) -> RugbyMatchEventPageComparisonPresentation10868 {
-        RugbyMatchEventPageComparisonPresentation10868(
+    /// The equal-size dated comparison where it is mounted: the accepted
+    /// standalone View, read from the very history copy the history leaf
+    /// shows beside it — the same resolved slots wherever it is shown. Nil
+    /// where the mount decision leaves it out. It acts on nothing.
+    func comparisonContent(reader: Bool, enlarged: Bool = false) -> RugbyMatchEventPageComparisonPresentation10868? {
+        guard model.showsComparison(reader: reader) else { return nil }
+        return RugbyMatchEventPageComparisonPresentation10868(
             history: reader ? model.readerHistory(enlarged: enlarged) : model.history(enlarged: enlarged),
             label: input.copy.comparisonLabel)
     }
@@ -1453,11 +1485,13 @@ struct LacrosseEventPagePresentation10868: View {
         }
     }
 
-    /// The equal-size dated comparison above the history, then the source
-    /// entry when the owner names one.
+    /// The equal-size dated comparison above the history where it is mounted,
+    /// the history, then the source entry when the owner names one.
     private var anchor: some View {
         VStack(alignment: .leading, spacing: 12) {
-            comparisonContent(reader: false, enlarged: typeSize.isAccessibilitySize)
+            if let comparison = comparisonContent(reader: false, enlarged: typeSize.isAccessibilitySize) {
+                comparison
+            }
             historyContent(reader: false, enlarged: typeSize.isAccessibilitySize)
             if model.sourceAvailable(canOpen: onSource != nil), let label = input.copy.sourceLabel {
                 entry(label, action: openSource, id: LacrosseEventPageAccessibilityID10868.sourceEntry)
@@ -1515,7 +1549,9 @@ struct LacrosseEventPagePresentation10868: View {
     private var fullHistoryMode: some View {
         VStack(alignment: .leading, spacing: 16) {
             compactHeader
-            comparisonContent(reader: true, enlarged: typeSize.isAccessibilitySize)
+            if let comparison = comparisonContent(reader: true, enlarged: typeSize.isAccessibilitySize) {
+                comparison
+            }
             historyContent(reader: true, enlarged: typeSize.isAccessibilitySize)
         }
         .accessibilityElement(children: .contain)
