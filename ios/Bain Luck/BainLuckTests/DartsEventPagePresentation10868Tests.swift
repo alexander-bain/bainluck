@@ -452,7 +452,7 @@ final class DartsEventPagePresentation10868Tests: XCTestCase {
             return DartsEventPageReaderHeader10868(title: "McEwan vs van Ockenburg",
                                                    state: "Final · Result not reported · Pre-match unavailable")
         }
-        switch phase {
+        return switch phase {
         case .before: DartsEventPageReaderHeader10868(title: "McEwan vs van Ockenburg", state: "Not started · Pre-match unavailable")
         case .during: DartsEventPageReaderHeader10868(title: "McEwan vs van Ockenburg", state: "In play · Legs not reported")
         case .final: DartsEventPageReaderHeader10868(title: "McEwan vs van Ockenburg",
