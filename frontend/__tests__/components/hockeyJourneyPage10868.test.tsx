@@ -636,10 +636,17 @@ it("About is a compact info control beside the header, its words the accessible 
   const printed = Array.from(about.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== "");
   expect(printed).toHaveLength(0);
   for (const cls of ["min-h-11", "min-w-11", "shrink-0"]) expect(about.classList.contains(cls)).toBe(true);
-  // In the heading's row, which does not wrap the control onto a line of its own.
+  // Beside the state lines, in a row that does not wrap the control onto a line of its own…
   const row = about.parentElement!;
-  expect(row.contains(host.querySelector("h2"))).toBe(true);
+  expect(row.hasAttribute("data-hockey-journey-header-row")).toBe(true);
+  expect(row.textContent).toContain(journey.headline.state);
   expect(row.classList.contains("flex-wrap")).toBe(false);
+  // …while the title sits below that row at the card's full width, so the target's column never narrows it
+  // (at 200% text on a 375px phone that column left the event's name one word per line).
+  const heading = host.querySelector("h2")!;
+  expect(row.contains(heading)).toBe(false);
+  expect(heading.parentElement?.tagName).toBe("HEADER");
+  expect(row.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   // Still a real disclosure with the same content.
   click(about);
   expect(about.getAttribute("aria-expanded")).toBe("true");

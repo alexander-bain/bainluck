@@ -57,13 +57,12 @@ export default function HockeyJourneyPage({ journey }: { journey: HockeyJourneyV
       style={style}
     >
       <header className="space-y-2">
-        <div className="flex items-start justify-between gap-2">
+        {/* The info control shares a row with the state lines only: the title takes the card's full width
+            below it, so at large text the target's column never narrows the event's name. */}
+        <div data-hockey-journey-header-row="" className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1 space-y-0.5">
             <p className="text-sm font-semibold">{headline.state}</p>
             {headline.stateContext && <p className="text-sm text-text-secondary">{headline.stateContext}</p>}
-            <h2 id={headingId} className="break-words text-lg font-bold">
-              {journey.header.title}
-            </h2>
           </div>
           <button
             type="button"
@@ -79,6 +78,9 @@ export default function HockeyJourneyPage({ journey }: { journey: HockeyJourneyV
             <span className="sr-only">{journey.header.aboutLabel}</span>
           </button>
         </div>
+        <h2 id={headingId} className="break-words text-lg font-bold">
+          {journey.header.title}
+        </h2>
         <div id={aboutId} hidden={!aboutOpen} className="rounded-lg bg-surface-deep p-3">
           <ul className="list-disc space-y-1 pl-5 text-sm">
             {journey.about.map((line, i) => (
