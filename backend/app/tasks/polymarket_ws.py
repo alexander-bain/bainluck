@@ -603,6 +603,25 @@ class _PMStampOwner:
             return self.events
         return set(holding)
 
+    def fenced_events(self) -> Optional[set[int]]:
+        """#10090 write-under-queued — the events a game price chunk must not
+        write: the refresher's `fenced_event_ids` (with STAMP_WRITE_UNDER_QUEUED
+        on, the events whose stamp is RUNNING or past the lift horizon; off,
+        every queued or running one) — `held_events` for a refresher without
+        it, and the whole captured membership while that is unknown, exactly
+        as `held_events` is. The write of an event this leaves out takes the
+        refresher's write lease first (`writing_begin`).
+        """
+        if self.events is None:
+            return None
+        reader = getattr(self.refresher, "fenced_event_ids", None)
+        if reader is None:
+            return self.held_events()
+        fenced = reader()
+        if fenced is None:
+            return self.events
+        return set(fenced)
+
     def shed_queued(self) -> int:
         """#10090 — close the running call's door and hand its queued, not yet
         started attempts back to debt (`LiveBlendRefresher.shed_queued`), so a
@@ -5808,6 +5827,54 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
             stamp_done = stamp_owner.join
 
+            # #10090 write-under-queued (STAMP_WRITE_UNDER_QUEUED): the lease.
+            # Every event this flush plans to write is leased from here until
+            # its last chunk has returned (or the flush ends), so no QUEUED
+            # stamp attempt of it starts meanwhile: an attempt's read never
+            # straddles a write of its own event (I1). The fence below then
+            # fences only what the refresher says is running (or past the
+            # lift horizon); an event written while its attempt stayed queued
+            # gains the right to ride that attempt with this cohort at its
+            # offer (`writing_end` -> `admit_fresh`). Off, the fence is the
+            # old `held_events` and the lease has nothing to hold back.
+            lease_begin = getattr(blend_refresher, "writing_begin", None)
+            lease_end = getattr(blend_refresher, "writing_end", None)
+            leased: set[int] = set()
+            leased_written: set[int] = set()
+            if (
+                lease_begin is not None and lease_end is not None
+                and not final and flush_started is not None
+            ):
+                leased = set(last_chunk_of_event)
+                if leased:
+                    lease_begin(leased)
+
+            def lease_release(through_index):
+                # Events whose last planned chunk has returned (every one at
+                # the end), with those this flush committed rows for.
+                if not leased:
+                    return
+                done = {
+                    eid for eid in leased
+                    if last_chunk_of_event.get(eid, through_index) <= through_index
+                }
+                if done:
+                    leased.difference_update(done)
+                    lease_end(done, written=leased_written.intersection(done))
+
+            def lease_yield():
+                # Before this flush WAITS for the running call to end while
+                # it still holds a lease: a leased event's queued attempt could
+                # not start until the lease ends, and the lease could not end
+                # until this flush resumed. Their queued attempts go back to
+                # debt (as a hand-over's shed does); the offer after their last
+                # chunk admits a fresh attempt. The lease itself stays, so the
+                # chunks still to come are written exactly as planned.
+                if leased:
+                    yielding = getattr(blend_refresher, "writing_yield", None)
+                    if yielding is not None:
+                        yielding(leased)
+
             try:
                 for index, chunk_ids in enumerate(chunks):
                     traced = (
@@ -5827,7 +5894,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         held = (
                             None
                             if final or flush_started is None or stamp_owner.task.done()
-                            else stamp_owner.held_events()
+                            else stamp_owner.fenced_events()
                         )
                         if held is None:
                             # refresh() also admits retry/deferred events. Their
@@ -5840,6 +5907,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             ):
                                 if traced is not None:
                                     stage_trace.chunk_note(traced, "JOINED_RUNNING_STAMP")
+                                lease_yield()
                                 await stamp_done()
                         else:
                             # #10090, twin of the Kalshi socket's: joining here
@@ -5863,6 +5931,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             if newly_fenced:
                                 fenced_events.update(newly_fenced)
                                 stamp_owner.note_fenced(newly_fenced)
+                                # #10090 write-under-queued: the fence is
+                                # sticky, so nothing more of these is written
+                                # in this flush — they leave the lease now and
+                                # a freed worker may start their queued attempt
+                                # (an N horizon fences a planned queued event).
+                                fenced_leased = newly_fenced & leased
+                                if fenced_leased:
+                                    leased.difference_update(fenced_leased)
+                                    lease_end(
+                                        fenced_leased,
+                                        written=leased_written & fenced_leased,
+                                    )
                             if traced is not None:
                                 stage_trace.fence(traced, held, fenced_events)
                     if fenced_events:
@@ -5875,6 +5955,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         if not chunk_ids:
                             if traced is not None:
                                 stage_trace.chunk_write(traced, {}, {})
+                            lease_release(index)
                             continue
                     if catalog_boundary.bridges.reserved:
                         # #10090: a cohort the bridged writer still owns stays
@@ -5893,6 +5974,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         if not chunk_ids:
                             if traced is not None:
                                 stage_trace.chunk_write(traced, {}, {})
+                            lease_release(index)
                             continue
                     note_flush_work()
                     # The plan freezes membership/caps, not a later chunk's
@@ -6086,6 +6168,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             oid for oid in chunk_ids if oid not in skipped
                         )
                         owed.extend(getattr(wrote, "written_ids", chunk_ids))
+                        if leased:
+                            leased_written.update(event_ids_for_outcomes(
+                                headline_event_ids, getattr(wrote, "written_ids", chunk_ids),
+                            ))
                         if skipped:
                             # Unfinished and lock-deferred, as a refused chunk:
                             # no stamp reads its event until the row lands
@@ -6104,6 +6190,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         failed_price_events.update(
                             event_ids_for_outcomes(event_id_by_outcome, chunk_ids)
                         )
+                    # #10090 write-under-queued: this chunk has returned; the
+                    # events it finished leave the lease BEFORE their offer
+                    # below, so one still queued rides its attempt there.
+                    lease_release(index)
                     if held_ready:
                         # Withdrawals still wait for the row (failed above).
                         unfinished_price_ids.difference_update(held_ready)
@@ -6228,6 +6318,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 and not stamp_owner.task.done()):
                             await held_quotes.sample_database_clock(get_task_session)
                             clock_after_delivery = False
+                        lease_yield()
                         await stamp_done()
                         tail_receipts.stage(
                             [batch_marks[oid] for oid in ready if oid in batch_marks
@@ -6263,6 +6354,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     await market_publish_done(cancel=True)
                 raise
             finally:
+                # The lease ends with the chunks, however they ended; a chunk
+                # that never wrote granted no right.
+                lease_release(len(chunks))
                 try:
                     # Ordinary batches leave the sole owner running so the
                     # next unrelated batch can COMMIT and join its free slot.

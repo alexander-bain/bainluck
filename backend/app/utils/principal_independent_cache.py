@@ -160,7 +160,7 @@ class NotPlainData(TypeError):
 # response header. A fixed allowlist of fixed strings — never a key, never a
 # principal, never a query parameter. Anything else shares silently.
 SHARED_ARTIFACT_NAMES: frozenset[str] = frozenset(
-    {"concepts", "canonical_counts", "market_load"}
+    {"concepts", "canonical_counts", "market_load", "sports_metadata"}
 )
 
 #: Per-namespace entry cap. Concepts key on (sport_filter, hour-bucket) and
@@ -185,7 +185,7 @@ MAX_ENTRIES_PER_NAMESPACE = 64
 #: set changes. Undershooting costs a rebuild, which is exactly today's
 #: behaviour; overshooting costs resident memory on the flagship route, which is
 #: not recoverable by failing open.
-MAX_ENTRIES_BY_NAMESPACE: dict[str, int] = {"market_load": 6}
+MAX_ENTRIES_BY_NAMESPACE: dict[str, int] = {"market_load": 6, "sports_metadata": 6}
 
 #: Default staleness bound. The concept build embeds `now`-derived text and pin
 #: state, so the TTL is what bounds how wrong that can be. 60s is far below the
@@ -2312,6 +2312,26 @@ def oldest_consumed_artifact_age_s(origin_sink: Optional[Iterable[float]]) -> fl
     if not origins:
         return 0.0
     return max(0.0, time.monotonic() - min(origins))
+
+
+def note_validated_metadata_reuse(tiers: Iterable[str], observed_at: float) -> None:
+    """Publish a Sports metadata hit only after its fresh row proof passes.
+
+    get_or_build already counted the hit inside a provisional reuse_scope.
+    Its storage age is not the data's age after current-version validation;
+    use the monotonic instant before that probe, without resetting other ages.
+    """
+    sink = _reuse_sink_var.get()
+    if sink is not None and "sports_metadata" not in sink:
+        sink.append("sports_metadata")
+    tier_sink = _tier_sink_var.get()
+    if tier_sink is not None:
+        for tier in tiers:
+            if tier in SHARED_TIER_NAMES and tier not in tier_sink:
+                tier_sink.append(tier)
+    age_sink = _age_sink_var.get()
+    if age_sink is not None:
+        age_sink.append(float(observed_at))
 
 
 def _note_reuse(
