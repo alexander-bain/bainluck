@@ -11,6 +11,7 @@ Events:
 
 import asyncio
 import contextlib
+import itertools
 import json
 import logging
 import math
@@ -559,6 +560,40 @@ def _bridged_side_first_env() -> bool:
             "Polymarket WS: PM_BRIDGED_SIDE_FIRST=%r is not on/off; using off", raw,
         )
     return False
+
+
+#: #10090: how long a repeated top of book stays skippable, and how often the
+#: per-token memo of the last handled book drops entries too old to skip on.
+PM_WS_REPEAT_SKIP_DEFAULT_MS = 250
+REPEAT_SKIP_PRUNE_S = 1.0
+
+
+def _repeat_skip_window_s() -> float:
+    """#10090 — env `PM_WS_REPEAT_SKIP_MS`, read at each consumer start.
+
+    A `price_change` / `best_bid_ask` that repeats the top of book this process
+    last handled for the token, within this window, changes nothing a reader
+    sees except "confirmed at", which the skip still feeds (`handle_price`).
+    Production 2026-10-30 23:23Z: the loop's cpu was 0.96-0.97 at ~2,900
+    msgs/s; on an in-play capture 98.8 % of the quotes reaching `handle_price`
+    repeated the last book (43,910 of 44,444), and a 250 ms window skips 93.2 %.
+
+    Missing or blank is the default (250 ms); `0` (or any value <= 0) is off,
+    today's path exactly; anything unparseable is off with one warning.
+    """
+    raw = os.environ.get("PM_WS_REPEAT_SKIP_MS")
+    if raw is None or not raw.strip():
+        return PM_WS_REPEAT_SKIP_DEFAULT_MS / 1000.0
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        logger.warning(
+            "Polymarket WS: PM_WS_REPEAT_SKIP_MS=%r is not a number; repeat skip off", raw,
+        )
+        return 0.0
+    if not math.isfinite(value) or value <= 0:
+        return 0.0
+    return value / 1000.0
 
 
 #: #10090: a pure bridged cohort feeds its event's blend; a standalone leg and
@@ -3194,7 +3229,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
         "| held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
-        "lock_timeouts=%d skipped_locked=%d",
+        "lock_timeouts=%d skipped_locked=%d repeats_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -3231,6 +3266,9 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         # while the rest of their chunk committed. Counted, never logged per
         # flush; each stays buffered and is retried by the next flush.
         stats.get("price_rows_skipped_locked", 0),
+        # #10090: repeated tops of book skipped below the raw count
+        # (`PM_WS_REPEAT_SKIP_MS`); `raw - accepted` now includes them.
+        stats.get("repeats_skipped", 0),
     )
 
 
@@ -3894,6 +3932,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         "moneyline_legs_subscribed": len(outcome_yes_token),
         "price_updates": 0,
         "trade_updates": 0,
+        # #10090: repeated tops of book skipped below `handle_price`'s raw
+        # count (`PM_WS_REPEAT_SKIP_MS`); each still fed "confirmed at".
+        "repeats_skipped": 0,
         # #9733: trades refused because they were smaller than the smallest
         # order the venue accepts (`trade_sets_a_price`).
         "trades_below_min_order": 0,
@@ -4085,6 +4126,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # flush asks whether the held price survives it; a tight book for the leg
     # clears the entry, since its midpoint is about to replace the price.
     withdraw_buffer: dict[int, tuple] = {}
+    # #10090 repeat skip: token -> (book, routing generation, handled at
+    # (mono), ((leg, price), ...), each leg's write stamp right after, the
+    # "confirmed at" notes) for the last book `handle_price` fully handled.
+    # `leg_writes` stamps every leg a handler buffers a price or a withdrawal
+    # for, from one counter that never repeats, so any later write to a leg —
+    # this token's, a mirror's, a complement's, a trade's, a wide book's —
+    # tells the memo apart. Entries older than the window skip nothing; both
+    # maps are pruned each second to what a live entry still reads.
+    repeat_skip_s = _repeat_skip_window_s()
+    repeat_memo: dict[str, tuple] = {}
+    leg_writes: dict[int, int] = {}
+    leg_write_counter = itertools.count(1)
+    repeat_memo_pruned = [0.0]
+    stats["repeat_skip_ms"] = int(round(repeat_skip_s * 1000))
 
     async def write_chunk(
         chunk: dict[int, float], *, final=False, start_market_publish=None,
@@ -6007,7 +6062,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         """Admit frozen unchanged inputs beside an unrelated price transaction."""
         boundary = catalog_boundary
 
-        def owners():
+        def owners(events):
+            """Which of `events` other work owns; None while a stamp's is unknown.
+
+            #10090: callers only ask about `events`, so the price-buffer scan
+            reads only the legs of the ones nothing cheaper already owns (it
+            walked every buffered leg on each call: the top self frame, 7 %).
+            """
             owner = boundary.stamp_owner(blend_refresher)
             held = (owner.held_events()
                     if owner.task is not None and not owner.task.done() else set())
@@ -6015,22 +6076,27 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             pending_reader = getattr(blend_refresher, "pending_event_ids", None)
             pending = set(pending_reader()) if callable(pending_reader) else set()
+            busy = set(events) & (
+                held | pending | boundary.observation_writing
+                | boundary.bridges.reserved | boundary.bridges.unstamped
+                | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer))
+            free = set(events) - busy
+            if not free:
+                return busy
             # PM buffers unchanged BBOs too. Only acknowledged uninterrupted
             # values may pass; another leg's queued change owns the whole event
             # even before its price chunk starts (including A-B-A).
-            price_owned = {
-                event_id_by_outcome.get(oid) for oid, value in price_buffer.items()
-                if oid not in non_blend_outcome_ids
+            return busy | {
+                eid for oid, value in price_buffer.items()
+                if (eid := event_id_by_outcome.get(oid)) in free
+                and oid not in non_blend_outcome_ids
                 and (observation_continuity.get(oid) is None
                      or boundary.observation_ack.get(oid) != observation_continuity[oid]
                      or observation_continuity[oid][1] != round(float(value), 6))
             }
-            return (held | pending | price_owned | boundary.observation_writing
-                    | boundary.bridges.reserved | boundary.bridges.unstamped
-                    | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer))
 
         async with buffer_lock:
-            busy = owners()
+            busy = owners({entry[0] for entry in boundary.observation_pending.values()})
             if busy is None:
                 return
             snapshot = {oid: entry for oid, entry in boundary.observation_pending.items()
@@ -6051,7 +6117,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
         async def validate(event_ids):
             async with buffer_lock:
-                busy = owners()
+                busy = owners(event_ids)
                 if busy is None or getattr(blend_refresher, "_admission", None) is not window:
                     return set()
                 return {
@@ -6261,7 +6327,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
         if not market_id and asset_id not in open_asset_mirrors:
             return
-        _note_raw(asset_id)
+        # #10090: a token with a remembered book in this routing generation
+        # counts its raw message against the games that book's handling read
+        # (the same set, since the maps change only with the generation).
+        remembered = repeat_memo.get(asset_id) if repeat_skip_s > 0 else None
+        if remembered is not None and remembered[1] == input_generation:
+            try:
+                for event_id in remembered[6]:
+                    tail_receipts.note_raw(event_id)
+            except Exception:
+                pass
+        else:
+            _note_raw(asset_id)
 
         best_bid = msg.get("best_bid")
         best_ask = msg.get("best_ask")
@@ -6280,6 +6357,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         if latest != (bid_f, ask_f):
             books_by_asset[asset_id] = ((bid_f, ask_f), latest)
 
+        # #10090: below the raw count, nothing awaited since the generation
+        # was read, so the check and the state it reads are one instant.
+        if repeat_skip_s > 0:
+            if msg.get("book_snapshot"):
+                # A snapshot (every subscribe and reconnect) is always handled,
+                # and so is the first quote after it.
+                repeat_memo.pop(asset_id, None)
+            elif _skip_repeat(asset_id, bid_f, ask_f, input_generation):
+                return
+
         # #1578: never stream a midpoint from a book nobody will trade inside.
         # This path matters most of the five, because it is the only one that
         # UPDATEs an outcome directly rather than going through the upsert — a
@@ -6294,11 +6381,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             _tick_targets(asset_id), bid_f, ask_f, open_complement_of
         )
         if _poly_book_is_untradeable(bid_f, ask_f):
+            if repeat_skip_s > 0:
+                repeat_memo.pop(asset_id, None)
             async with buffer_lock:
                 if input_generation != routing_generation:
                     return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
+                    if repeat_skip_s > 0:
+                        leg_writes[outcome_id] = next(leg_write_counter)
                     if getattr(blend_refresher, "preview_events", ()):
                         observation_continuity.pop(outcome_id, None)
                     # #10090 decision J: a book that prices a published leg
@@ -6351,6 +6442,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "price", msg)
+            if repeat_skip_s > 0:
+                for outcome_id, _leg_prob in priced:
+                    leg_writes[outcome_id] = next(leg_write_counter)
+                if not msg.get("book_snapshot"):
+                    _remember_handled(asset_id, bid_f, ask_f, input_generation, priced)
             wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
             if wake_outcomes is not None:
                 wake_outcomes(
@@ -6364,6 +6460,76 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for oid, _prob in priced
             ):
                 catalog_boundary.flush_wake.set()
+
+    def _remember_handled(asset_id, bid_f, ask_f, generation, priced):
+        """#10090: the book `handle_price` just handled for this token, and
+        what a repeat of it would have to find unchanged to be skipped. Under
+        `buffer_lock`, right after the legs were buffered and marked."""
+        from app.tasks.live_blend_refresh import _mono
+
+        now = _mono()
+        if now - repeat_memo_pruned[0] >= REPEAT_SKIP_PRUNE_S:
+            repeat_memo_pruned[0] = now
+            for token in [t for t, entry in repeat_memo.items()
+                          if now - entry[2] >= repeat_skip_s]:
+                del repeat_memo[token]
+            # A stamp no live entry reads can go: a leg written again later
+            # takes a fresh, never-repeated stamp.
+            live = {oid for entry in repeat_memo.values() for oid, _p in entry[3]}
+            live.update(oid for oid, _p in priced)
+            for oid in [oid for oid in leg_writes if oid not in live]:
+                del leg_writes[oid]
+        legs = tuple(priced)
+        # Exactly the notes `_mark_input` makes to `ConfirmedAt` for these legs.
+        confirm = []
+        for outcome_id, leg_prob in legs:
+            if outcome_id in non_blend_outcome_ids:
+                continue
+            event_id = event_id_by_outcome.get(outcome_id)
+            if event_id is None and outcome_id in open_outcome_ids:
+                event_id = event_id_by_outcome.get(open_complement_of.get(outcome_id))
+            if event_id is not None:
+                confirm.append((event_id, outcome_id, leg_prob))
+        repeat_memo[asset_id] = (
+            (bid_f, ask_f), generation, now, legs,
+            tuple(leg_writes.get(oid) for oid, _p in legs), tuple(confirm),
+            # `_note_raw`'s games for this token, for the raw count above.
+            frozenset(event_id_by_outcome.get(oid) for oid in _tick_targets(asset_id)),
+        )
+
+    def _skip_repeat(asset_id, bid_f, ask_f, generation) -> bool:
+        """#10090: is this quote a repeat that changes nothing a reader sees?
+
+        Only when it repeats the last book handled for the token, inside the
+        window, in the same routing generation, and no handler has since
+        written any leg it would price (`leg_writes`: a trade, a mirror, a
+        complement, a wide book), the buffered price is still this one (or
+        written and gone) and no withdrawal is buffered. Then the price, mark, receipts,
+        held-quote bound, observation token and flush wake it would produce
+        are the ones already in place, so only "confirmed at" is fed — the
+        same `ConfirmedAt.note_input` `_mark_input` makes, at this receipt."""
+        entry = repeat_memo.get(asset_id)
+        if entry is None:
+            return False
+        from app.tasks.live_blend_refresh import _mono, _wall
+
+        book, memo_generation, handled_at, legs, writes, confirm, _raw = entry
+        if (book != (bid_f, ask_f) or memo_generation != generation
+                or _mono() - handled_at >= repeat_skip_s):
+            return False
+        for (outcome_id, leg_prob), write in zip(legs, writes):
+            if (leg_writes.get(outcome_id) != write
+                    or price_buffer.get(outcome_id, leg_prob) != leg_prob
+                    or outcome_id in withdraw_buffer):
+                return False
+        stats["repeats_skipped"] += 1
+        confirmed = getattr(tail_receipts, "confirmed", None)
+        if confirmed is not None and confirm:
+            recv_wall = _wall()
+            for event_id, outcome_id, leg_prob in confirm:
+                with contextlib.suppress(Exception):
+                    confirmed.note_input(event_id, outcome_id, leg_prob, recv_wall)
+        return True
 
     def _tick_targets(asset_id: str) -> list[int]:
         """Every leg a tick in this token prices: its owner, then its mirrors.
@@ -6495,6 +6661,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "trade", msg)
+                if repeat_skip_s > 0:
+                    leg_writes[outcome_id] = next(leg_write_counter)
             wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
             if wake_outcomes is not None:
                 wake_outcomes(
