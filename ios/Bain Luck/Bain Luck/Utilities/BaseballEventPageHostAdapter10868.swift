@@ -60,6 +60,17 @@ import SwiftUI
 /// has no Details route yet (nil — no button), and every original stays
 /// reachable through All props.
 ///
+/// ONE HOLD PER ACTION (`routes`). The page's hold (`onInteraction`) is asked
+/// for exactly once before each page action lands, and never by a routing
+/// callback after it. A story card's select, Details and disclosure write
+/// reach the stream's activation hook first, and the stream's open sends its
+/// interaction before the open: that `.interaction` is the hold, so the
+/// card's callback and the open route with no second one. Full-size content
+/// calls the same callbacks with no activation and is already held while it
+/// is open, so nothing there holds again. The anchor's Full chart, All props
+/// and a catalogue original's selection have no stream hook, so each holds
+/// once here, then lands. Appearance and binding reads ask for nothing.
+///
 /// EXTRA INNINGS INPUT. `extraInnings` is the owner's explicit admission of
 /// each served extra-innings row's pregame chance and recorded in-game chance
 /// (`BaseballExtraInningsAdmission10868`), keyed by the row's exact provider
@@ -77,8 +88,9 @@ struct BaseballEventPageHost10868: View {
     let probabilityObservedAt: Date?
     var deliveryInterrupted: Bool = false
     var now: Date = Date()
-    /// The page's existing hold, requested BEFORE any reader action the stream
-    /// or a card starts. Appearance and reads call nothing.
+    /// The page's existing hold, requested exactly once BEFORE each page
+    /// action (see `routes`). Appearance, reads and full-size content call
+    /// nothing.
     var onInteraction: (() -> Void)? = nil
 
     /// MLB games only (part one's rule).
@@ -146,26 +158,27 @@ struct BaseballEventPageHost10868: View {
     }
 
     private func page(_ built: Built, mode: BaseballEventPageMode10868) -> BaseballEventPagePresentation10868 {
-        BaseballEventPagePresentation10868(
+        let routes = Self.routes(
+            built, hold: onInteraction,
+            present: { presented = Presented(mode: $0) },
+            select: { selection = $0 },
+            browse: { story = $0 },
+            show: { original in showStoryOriginal(original) })
+        return BaseballEventPagePresentation10868(
             input: built.input, mode: mode, originals: built.originals,
-            onAllProps: { open(.catalogue) },
-            onOriginalSelect: { chosen in
-                selection = chosen
-                open(.original)
-            },
+            onAllProps: routes.allProps,
+            onOriginalSelect: routes.originalSelect,
             onOriginalHistory: nil,
-            onStoryIntent: { intent in handle(intent) },
-            onHistoryAction: { id in
-                if id == HockeyJourneyHistoryAdapter10868.expandActionID { open(.reader(.history)) }
-            },
+            onStoryIntent: routes.storyIntent,
+            onHistoryAction: routes.historyAction,
             onHistoryInspectionChoice: nil,
             onHistoryPlotPosition: nil,
-            onHomeRunDetails: { showStoryOriginal($0) },
+            onHomeRunDetails: routes.storyDetails,
             onStrikeoutSelect: { selections.strikeout = $0 },
-            onStrikeoutDetails: { showStoryOriginal($0) },
+            onStrikeoutDetails: routes.storyDetails,
             onTotalSelect: { selections.total = $0 },
             onTotalMilestoneDetails: nil,
-            onTotalLineDetails: { showStoryOriginal($0) },
+            onTotalLineDetails: routes.storyDetails,
             onSeriesMarket: { question in
                 // A market change resets the outcome: an outcome belongs to one market.
                 selections.seriesQuestion = question
@@ -175,40 +188,82 @@ struct BaseballEventPageHost10868: View {
                 selections.seriesQuestion = question
                 selections.seriesOption = option
             },
-            onSeriesDetails: { showStoryOriginal($0) },
+            onSeriesDetails: routes.storyDetails,
             onExtraInningsSelect: { selections.extraInnings = $0 },
-            onExtraInningsDetails: { showStoryOriginal($0) },
+            onExtraInningsDetails: routes.storyDetails,
             totalTimingExpanded: $totalTiming)
     }
 
-    /// The hold first, then the exact mode — never the reverse.
-    private func open(_ mode: BaseballEventPageMode10868) {
-        onInteraction?()
-        presented = Presented(mode: mode)
+    /// Where each page action lands, with the page's one hold.
+    struct Routes {
+        /// All props: one hold, then the catalogue.
+        let allProps: () -> Void
+        /// A catalogue original: one hold, then the exact selection, then its Details.
+        let originalSelect: (OriginalMarketDetails9483.Selection) -> Void
+        /// The anchor's Full chart: one hold, then the full-size history.
+        /// Any other id lands nowhere and holds nothing.
+        let historyAction: (String) -> Void
+        /// The stream's requests: `.interaction` is the hold; `.browse` and
+        /// `.open` (each sent after it) land with no hold of their own.
+        let storyIntent: (StoryStreamPresentation10868.Intent) -> Void
+        /// A story original's Details: no hold of its own — on the page the
+        /// card's stream hook already asked, and full-size content is held.
+        let storyDetails: (String) -> Void
+    }
+
+    /// One pass's routes — pure: building them calls nothing. `hold` is the
+    /// page's hold; `present`, `select`, `browse` and `show` are the host's
+    /// own writes, each handed the exact mode, selection, card or original. A
+    /// Details id resolves only an original this pass's stories carry
+    /// (`BaseballStoriesAdapter10868.original`), never a neighbour; an id
+    /// that resolves none shows nothing.
+    static func routes(_ built: Built, hold: (() -> Void)?,
+                       present: @escaping (BaseballEventPageMode10868) -> Void,
+                       select: @escaping (OriginalMarketDetails9483.Selection) -> Void,
+                       browse: @escaping (BaseballEventPageCard10868?) -> Void,
+                       show: @escaping (MLBOriginal11284) -> Void) -> Routes {
+        let input = built.input
+        return Routes(
+            allProps: {
+                hold?()
+                present(.catalogue)
+            },
+            originalSelect: { chosen in
+                hold?()
+                select(chosen)
+                present(.original)
+            },
+            historyAction: { id in
+                guard id == HockeyJourneyHistoryAdapter10868.expandActionID else { return }
+                hold?()
+                present(.reader(.history))
+            },
+            storyIntent: { intent in
+                switch intent {
+                case .interaction:
+                    hold?()
+                case .browse(_, let target):
+                    browse(BaseballEventPageCard10868(rawValue: target.id))
+                case .open(let target):
+                    if let card = BaseballEventPageCard10868(rawValue: target.id) { present(.reader(card)) }
+                case .pause, .resume, .applyUpdates:
+                    break // the manual stream offers none of these controls
+                }
+            },
+            storyDetails: { id in
+                guard let original = BaseballStoriesAdapter10868.original(id, in: input) else { return }
+                show(original)
+            })
     }
 
     /// The exact original the held stories carry, frozen as shown, over the
-    /// page or over the full-size reader the request came from.
-    private func showStoryOriginal(_ id: String) {
-        guard let original = BaseballStoriesAdapter10868.original(id, in: make().input) else { return }
-        onInteraction?()
+    /// page or over the full-size reader the request came from. No hold: the
+    /// request that reached here already asked for it.
+    private func showStoryOriginal(_ original: MLBOriginal11284) {
         if presented == nil {
             pageStoryOriginal = original
         } else {
             readerStoryOriginal = original
-        }
-    }
-
-    private func handle(_ intent: StoryStreamPresentation10868.Intent) {
-        switch intent {
-        case .interaction:
-            onInteraction?()
-        case .browse(_, let target):
-            story = BaseballEventPageCard10868(rawValue: target.id)
-        case .open(let target):
-            if let card = BaseballEventPageCard10868(rawValue: target.id) { open(.reader(card)) }
-        case .pause, .resume, .applyUpdates:
-            break // the manual stream offers none of these controls
         }
     }
 

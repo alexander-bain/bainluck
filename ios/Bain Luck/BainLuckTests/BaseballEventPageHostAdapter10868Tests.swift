@@ -7,11 +7,15 @@ import XCTest
 ///
 /// PREPARED, NOT RUN: written under a source-only hold (no build, no XCTest).
 ///
-/// The host view itself (sheets, Done, the hold before each mode) is SwiftUI
-/// state and is not driven here; what is pinned is that its input comes only
-/// from the passed values, that another event's history is never drawn, and
-/// that every held selection reaches its story unchanged. The mount into
-/// `EventDetailView` is a proposal and is not exercised.
+/// The host view itself (sheets, Done, which sheet a Details opens in) is
+/// SwiftUI state and is not driven here; what is pinned is that its input
+/// comes only from the passed values, that another event's history is never
+/// drawn, that every held selection reaches its story unchanged, and — through
+/// the host's pure `routes` handed to the actual presentation and the actual
+/// stream's own intents — that each page action asks for the page's hold
+/// exactly once, before it lands, and full-size content asks for none. The
+/// mount into `EventDetailView` is a proposal and is not exercised; no stream
+/// hold qualification, native runtime or rendered behaviour is claimed.
 @MainActor
 final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
     private typealias F = BaseballRetained10868
@@ -124,5 +128,193 @@ final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(try build([admission], held: "withdrawn-outcome").input.extraInnings?.selectedID,
                        "withdrawn-outcome")
         XCTAssertNil(BaseballStoriesAdapter10868.original("withdrawn-outcome", in: admitted))
+    }
+
+    // MARK: One hold per action
+
+    /// The retained final, built as the host builds each pass.
+    private static func final(_ reading: Host.Reading = Host.Reading()) throws -> Host.Built {
+        Host.build(event: try F.finalEvent(), history: try F.history(F.finalHistory), markets: try F.markets(),
+                   related: try F.related(), probabilityObservedAt: nil, now: F.finalNow, reading: reading,
+                   calendar: F.pacific, locale: F.locale)
+    }
+
+    /// The host's routes for one pass, each landing logged with its exact
+    /// value: the page's hold as "hold", a presented mode by its `Presented`
+    /// id, a catalogue selection by its scope and market, a browse by its
+    /// card, a story original by its id.
+    private static func wired(_ built: Host.Built, log: @escaping (String) -> Void) -> Host.Routes {
+        Host.routes(built, hold: { log("hold") },
+                    present: { log("present:\(Host.Presented(mode: $0).id)") },
+                    select: { log("select:\($0.scope)|\($0.identity.market)") },
+                    browse: { log("browse:\($0?.rawValue ?? "-")") },
+                    show: { log("original:\($0.id)") })
+    }
+
+    /// The actual presentation with the routes wired as the host's `page`
+    /// wires them; a story selection is the host's plain write (logged), with
+    /// no hold of its own.
+    private static func drawn(_ built: Host.Built, _ routes: Host.Routes,
+                              mode: BaseballEventPageMode10868 = .page,
+                              log: @escaping (String) -> Void) -> BaseballEventPagePresentation10868 {
+        BaseballEventPagePresentation10868(
+            input: built.input, mode: mode, originals: built.originals,
+            onAllProps: routes.allProps,
+            onOriginalSelect: routes.originalSelect,
+            onOriginalHistory: nil,
+            onStoryIntent: routes.storyIntent,
+            onHistoryAction: routes.historyAction,
+            onHistoryInspectionChoice: nil,
+            onHistoryPlotPosition: nil,
+            onHomeRunDetails: routes.storyDetails,
+            onStrikeoutSelect: { log("strikeoutSelect:\($0)") },
+            onStrikeoutDetails: routes.storyDetails,
+            onTotalSelect: { log("totalSelect:\($0)") },
+            onTotalMilestoneDetails: nil,
+            onTotalLineDetails: routes.storyDetails,
+            onSeriesMarket: { log("seriesMarket:\($0)") },
+            onSeriesOption: { log("seriesOption:\($0):\($1)") },
+            onSeriesDetails: routes.storyDetails,
+            onExtraInningsSelect: { log("extraSelect:\($0)") },
+            onExtraInningsDetails: routes.storyDetails)
+    }
+
+    /// The hook the actual stream view hands its displayed card, sending to
+    /// the host's route exactly as `StoryStreamPresentationView10868` does.
+    private static func activation(_ built: Host.Built, _ card: StoryStreamPresentation10868.CardRef,
+                                   routes: Host.Routes) -> StoryStreamCardActivation10868 {
+        let stream = built.input.stream
+        let resolved = stream.resolve(reduceMotion: false, actionable: true)
+        return StoryStreamCardActivation10868(
+            card: card, intents: stream.activationIntents(for: card, resolved: resolved), send: routes.storyIntent)
+    }
+
+    func testAPageStoryDetailsHoldsOnceThroughTheStreamAndTheRouteAddsNoSecondHold() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.final()
+        let routes = Self.wired(built, log: record)
+        let page = Self.drawn(built, routes, log: record)
+        let primary = try XCTUnwrap(built.input.stream.primary)
+        XCTAssertEqual(primary.id, "homeRuns")
+        let homeRuns = try XCTUnwrap(page.homeRunsContent(activation: Self.activation(built, primary, routes: routes)))
+        XCTAssertEqual(log, [], "building the routes, the page and the card asks for nothing")
+
+        let homeRun = try XCTUnwrap(built.input.homeRuns?.card.entries.first?.original.id)
+        homeRuns.onDetails?(homeRun)
+        XCTAssertEqual(log, ["hold", "original:\(homeRun)"])
+
+        // Two actions on one card: one hold each, never two for one.
+        log = []
+        let held = try Self.final(Host.Reading(story: .strikeouts))
+        let heldRoutes = Self.wired(held, log: record)
+        let shown = try XCTUnwrap(held.input.stream.primary)
+        XCTAssertEqual(shown.id, "strikeouts")
+        let ladder = try XCTUnwrap(Self.drawn(held, heldRoutes, log: record)
+            .strikeoutsContent(activation: Self.activation(held, shown, routes: heldRoutes)))
+        let row = try XCTUnwrap(held.input.strikeouts?.card.targets.first?.rowID)
+        let target = try XCTUnwrap(held.input.strikeouts?.card.targets.first?.original.id)
+        ladder.onSelect(row)
+        ladder.onDetails?(target)
+        XCTAssertEqual(log, ["hold", "strikeoutSelect:\(row)", "hold", "original:\(target)"])
+    }
+
+    func testThePageStreamsOpenAndBrowseHoldOnceAndTheOpenLandsWithNoSecondHold() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.final()
+        let routes = Self.wired(built, log: record)
+        let stream = built.input.stream
+        let resolved = stream.resolve(reduceMotion: false, actionable: true)
+        let primary = try XCTUnwrap(stream.primary)
+
+        // The intents the actual stream sends for its open: the interaction, then the open.
+        let open = stream.intents(for: .open(primary), resolved: resolved)
+        XCTAssertEqual(open, [.interaction(scope: stream.scope, card: primary), .open(primary)])
+        open.forEach(routes.storyIntent)
+        XCTAssertEqual(log, ["hold", "present:reader.homeRuns"])
+
+        log = []
+        stream.intents(for: .browse(.next), resolved: resolved).forEach(routes.storyIntent)
+        XCTAssertEqual(log, ["hold", "browse:strikeouts"])
+    }
+
+    func testFullSizeDetailsShowTheExactOriginalWithNoHold() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.final(Host.Reading(readerOpen: true))
+        let routes = Self.wired(built, log: record)
+        let homeRun = try XCTUnwrap(built.input.homeRuns?.card.entries.first?.original.id)
+        let target = try XCTUnwrap(built.input.strikeouts?.card.targets.first?.original.id)
+        guard case .finalTargets(let totals)? = built.input.totals else { return XCTFail("final targets") }
+        let line = try XCTUnwrap(totals.card.lines.last?.original.id)
+        let outcome = try XCTUnwrap(built.input.series?.card.questions.first?.options.first?.original.id)
+
+        // Full-size content: the same leaves, no activation (`reader(_:)`).
+        Self.drawn(built, routes, mode: .reader(.homeRuns), log: record).homeRunsContent()?.onDetails?(homeRun)
+        Self.drawn(built, routes, mode: .reader(.strikeouts), log: record)
+            .strikeoutsContent(expanded: true)?.onDetails?(target)
+        Self.drawn(built, routes, mode: .reader(.totals), log: record)
+            .finalTotalsContent(expanded: true)?.onDetails(line)
+        Self.drawn(built, routes, mode: .reader(.series), log: record).seriesContent()?.onDetails?(outcome)
+        XCTAssertEqual(log, ["original:\(homeRun)", "original:\(target)", "original:\(line)", "original:\(outcome)"])
+    }
+
+    func testTheAnchorsFullChartHoldsOnceThenOpensTheFullSizeHistory() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.final()
+        let routes = Self.wired(built, log: record)
+        let expand = try XCTUnwrap(built.input.history.expand)
+        XCTAssertEqual(expand.id, HockeyJourneyHistoryAdapter10868.expandActionID)
+        XCTAssertTrue(expand.isAvailable)
+        let anchor = Self.drawn(built, routes, log: record).historyContent(reader: false)
+
+        anchor.onAction?(expand.id)
+        XCTAssertEqual(log, ["hold", "present:reader.history"])
+
+        // An id the host routes nowhere lands nowhere and holds nothing.
+        log = []
+        anchor.onAction?("not-an-action")
+        XCTAssertEqual(log, [])
+    }
+
+    func testAllPropsAndACatalogueSelectionEachHoldOnceBeforeTheyLand() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.final()
+        let routes = Self.wired(built, log: record)
+
+        Self.drawn(built, routes, log: record).openAllProps()
+        XCTAssertEqual(log, ["hold", "present:catalogue"])
+
+        log = []
+        let catalogue = try XCTUnwrap(built.originals.catalogue)
+        let first = try XCTUnwrap(catalogue.originals.first)
+        let chosen = OriginalMarketDetails9483.Selection(scope: catalogue.scope, identity: first.identity)
+        let select = try XCTUnwrap(Self.drawn(built, routes, mode: .catalogue, log: record).catalogueContent()?.onSelect)
+        select(chosen)
+        XCTAssertEqual(log, ["hold", "select:\(catalogue.scope)|\(first.identity.market)", "present:original"])
+    }
+
+    func testBuildingEveryModeAndAnUnresolvedDetailsAskForNothing() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.final()
+        let routes = Self.wired(built, log: record)
+        let modes: [BaseballEventPageMode10868] = [.page, .reader(.history), .reader(.homeRuns), .reader(.strikeouts),
+                                                   .reader(.totals), .reader(.series), .catalogue, .original]
+        for mode in modes {
+            let view = Self.drawn(built, routes, mode: mode, log: record)
+            _ = view.historyContent(reader: mode != .page)
+            _ = view.homeRunsContent()
+            _ = view.strikeoutsContent()
+            _ = view.finalTotalsContent()
+            _ = view.seriesContent()
+            _ = view.catalogueContent()
+            _ = view.originalDetailsContent()
+        }
+        routes.storyDetails("not-an-original")
+        XCTAssertEqual(log, [])
     }
 }
