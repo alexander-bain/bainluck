@@ -58,7 +58,13 @@ import SwiftUI
 /// EVENT IDENTITY. A history response whose `event_id` is not this event's is
 /// refused whole (`TennisHistoryAdapter10868.admitted`), for the chart AND for
 /// the dated reading: no foreign plot, baseline, series, held or latest reading,
-/// and no plot-reading control. The rest of the page is unaffected.
+/// and no plot-reading control. The rest of the page is unaffected. Supplied
+/// story cards are admitted only for this event (`cards?.eventID`). A
+/// `/game-markets` body whose `event_id` is not this event's is refused whole
+/// too (`HockeyJourneyContributionAdapter10868.ownMarkets`), decided once here
+/// and checked again in `TennisOriginalsAdapter10868.originals`: All props, its
+/// count, grades, original ids, matrix pins and Details read as with no body.
+/// The reader's held selection passes through unchanged.
 ///
 /// Without a history response (not arrived, or failed) the page still shows its
 /// chances and All props; only the chart slot says "History unavailable"
@@ -293,7 +299,8 @@ struct TennisEventPageHost10868: View {
     /// The page input, originals and readout series from the passed values
     /// alone — pure, so every changed value reaches the screen on the next
     /// pass. A missing or foreign history response leaves only the chart slot
-    /// and the dated reading unavailable.
+    /// and the dated reading unavailable; a missing or foreign `/game-markets`
+    /// body leaves All props (and the Details it routes) empty.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
                       probabilityObservedAt: Date?, deliveryInterrupted: Bool = false, now: Date,
                       cards: TennisCardsAdapter10868.Supplied? = nil,
@@ -313,8 +320,10 @@ struct TennisEventPageHost10868: View {
         let series = admitted.flatMap { TennisReadingAdapter10868.series($0, event: event, now: now) }
         let dated = series.map { TennisReadingAdapter10868.reading($0, held: reading.held, event: event, now: now) }
         let tint = TennisMatchPageAdapter10868.tints(event).home
+        // One identity gate for the originals' catalogue and matrix alike.
+        let ownMarkets = HockeyJourneyContributionAdapter10868.ownMarkets(markets, for: event)
         let originals = TennisOriginalsAdapter10868.originals(
-            event, markets: markets,
+            event, markets: ownMarkets,
             host: TennisOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
             tint: tint, selection: reading.selection)
         let stories = TennisCardsAdapter10868.admit(cards, event: event, phase: phase, originals: originals,

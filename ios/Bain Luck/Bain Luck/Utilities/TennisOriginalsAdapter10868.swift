@@ -62,6 +62,15 @@ import SwiftUI
 /// resolve by exact scope and identity. The held original's recorded history is
 /// not built here: no owner admits one for these originals yet. Nothing here
 /// fetches.
+///
+/// WHOSE BODY (#10868 tennis own markets): `originals` reads `/game-markets`
+/// only when its `eventId` is exactly `event.id`
+/// (`HockeyJourneyContributionAdapter10868.ownMarkets`), checked once BEFORE
+/// either the catalogue or the matrix is read, so both come from the same owned
+/// body. Another match's body reads as no body: no original, matrix pin, count,
+/// grade, original id or Details. The held selection still passes through.
+/// The host decides this once too. `matrix` and the hockey catalogue matching
+/// know no event: they describe the body they are given.
 enum TennisOriginalsAdapter10868 {
     typealias Details = OriginalMarketDetails9483
     /// The sport-free catalogue matching this file calls.
@@ -107,13 +116,15 @@ enum TennisOriginalsAdapter10868 {
     // MARK: - The page's originals
 
     /// The originals group for the page at `host.now`. No served outcome is no
-    /// catalogue, which draws `emptyWords`.
+    /// catalogue, which draws `emptyWords`; another match's body is no body.
     static func originals(_ event: EventDetail, markets: GameMarketsResponse?, host: Host, tint: Color,
                           selection: Details.Selection? = nil) -> TennisEventPageOriginals10868 {
         let phase = TennisMatchPageAdapter10868.phase(event, now: host.now)
         let started = HockeyJourneyContributionAdapter10868.hasStarted(event, now: host.now)
-        let found = markets.map { Catalogue.matched($0, status: event.status, now: host.now) } ?? []
-        let served = matrix(markets)
+        // A missing body and another match's body read the same: no catalogue and no matrix.
+        let own = HockeyJourneyContributionAdapter10868.ownMarkets(markets, for: event)
+        let found = own.map { Catalogue.matched($0, status: event.status, now: host.now) } ?? []
+        let served = matrix(own)
         let built = found.map {
             original($0, event: event, phase: phase, started: started, matrix: served, host: host)
         }
@@ -138,7 +149,8 @@ enum TennisOriginalsAdapter10868 {
     }
 
     /// The game matrix this build reads (contract `NBAEventCards9483.matrixContract`,
-    /// game scope), or nil.
+    /// game scope), or nil. Describes the body it is given and knows no event:
+    /// whose body that is, is established by the event-aware caller (`originals`).
     static func matrix(_ markets: GameMarketsResponse?) -> EventQuestionMatrix? {
         guard let matrix = markets?.gameQuestionMatrix, matrix.contract == NBAEventCards9483.matrixContract,
               matrix.displayScope == nil || matrix.displayScope == QuestionMatrixScope.game.rawValue
