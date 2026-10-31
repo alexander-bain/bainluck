@@ -233,6 +233,18 @@ final class WeatherEventPagePresentation10868Tests: XCTestCase {
 
     private static func x(_ t: Int) -> Double { Double(t - dayStart) / 3600 }
 
+    /// The archived gaps between consecutive retained samples (indices into `samples`):
+    /// Oct 15 8 → 10 PM, and Oct 16 1 → 3 PM.
+    private static let archivedGaps: [(before: Int, after: Int)] = [(0, 1), (8, 9)]
+
+    /// The owner's explicit breaks over the archived gaps each phase admits: the Oct 15
+    /// 8 → 10 PM gap in every phase, the Oct 16 1 → 3 PM gap after the day only. Both the
+    /// cohort history and the original's Details history carry exactly these.
+    private static func gapBreaks(_ phase: WeatherEventPagePhase10868) -> [FieldHistoryBreak10868] {
+        [FieldHistoryBreak10868(id: "gap.oct15.8pm", lower: -3.9, upper: -2.1, mark: "//")]
+            + (phase == .final ? [FieldHistoryBreak10868(id: "gap.oct16.1pm", lower: 13.1, upper: 14.9, mark: "//")] : [])
+    }
+
     /// The owner's admission cut per phase: before the day start, through noon, through the day end.
     private static func cutoff(_ phase: WeatherEventPagePhase10868) -> (Int) -> Bool {
         let limit: Int
@@ -363,8 +375,7 @@ final class WeatherEventPagePresentation10868Tests: XCTestCase {
                 + (phase == .before ? [] : [FieldHistoryTick10868(value: 12, lines: ["Noon"])])
                 + (phase == .final ? [FieldHistoryTick10868(value: 24, lines: ["Oct 17", "12 AM"])] : []),
             guides: phase == .before ? [] : [FieldHistoryGuide10868(id: "day-start", x: 0, label: "Oct 16 begins · midnight in New York")],
-            breaks: [FieldHistoryBreak10868(id: "gap.oct15.8pm", lower: -3.9, upper: -2.1, mark: "//")]
-                + (phase == .final ? [FieldHistoryBreak10868(id: "gap.oct16.1pm", lower: 13.1, upper: 14.9, mark: "//")] : []),
+            breaks: gapBreaks(phase),
             readout: readout,
             markKey: FieldHistoryMarkKey10868(hollow: "Hollow: sampled before Oct 16 began in New York",
                                               filled: "Filled: sampled during Oct 16"),
@@ -511,7 +522,7 @@ final class WeatherEventPagePresentation10868Tests: XCTestCase {
     private static func header(_ phase: WeatherEventPagePhase10868) -> WeatherEventPageHeader10868 {
         WeatherEventPageHeader10868(
             title: "New York’s daily high", place: "LaGuardia Airport · KLGA",
-            date: "Thursday, October 16, 2026 · the day runs midnight to midnight in New York",
+            date: "Friday, October 16, 2026 · the day runs midnight to midnight in New York",
             status: phase == .before ? "Before the day began" : phase == .during ? "Captured by noon in New York" : "74-75°F resolved",
             selectedMeaning: "74-75°F Yes · the day’s high falls in this range",
             infoLabel: "About this temperature event", infoHint: "Opens timing, sources and the original rules")
@@ -674,7 +685,7 @@ final class WeatherEventPagePresentation10868Tests: XCTestCase {
             selection: .series(id: seriesID, missingWords: "This original isn’t in this history"),
             domain: FieldHistoryDomain10868(lower: -24, upper: phase == .before ? 0 : phase == .during ? 12 : 24), ceiling: 1,
             yTicks: [FieldHistoryTick10868(value: 0, lines: ["0%"]), FieldHistoryTick10868(value: 1, lines: ["100%"])],
-            xTicks: [], guides: [], breaks: [], readout: .singleBefore(label: baselineLabel),
+            xTicks: [], guides: [], breaks: gapBreaks(phase), readout: .singleBefore(label: baselineLabel),
             markKey: FieldHistoryMarkKey10868(hollow: "Hollow: before Oct 16", filled: "Filled: during the day"),
             comparisonExplanation: nil, notes: [], summary: "74-75°F Yes: its own independently sampled history; no complementary series or appended result.",
             plotHeight: 160, unboundReadingWords: "Unavailable", plotUnavailableWords: "Original history unavailable",
@@ -922,6 +933,39 @@ final class WeatherEventPagePresentation10868Tests: XCTestCase {
         return StoryStreamCardActivation10868(card: ref, intents: stream.activationIntents(for: ref, resolved: resolved)) { intent in
             if case .interaction(_, let card) = intent { log("stream-hold:\(card?.id ?? "-")") } else { log("other") }
         }
+    }
+
+    /// Every archived gap one series' drawn lines join, through the shared geometry, named
+    /// "earlier→later" by the series' own point ids. Empty when every gap stays open.
+    private static func joinedGaps(_ series: FieldHistorySeries10868, in history: FieldHistoryInput10868,
+                                   id: (Int) -> String) -> [String] {
+        let drawn = FieldHistoryGeometry10868.lines(series, in: history)
+        return archivedGaps.compactMap { gap -> String? in
+            let earlier = id(gap.before)
+            let later = id(gap.after)
+            let joined = drawn.contains { line in
+                zip(line, line.dropFirst()).contains { pair in pair.0.id == earlier && pair.1.id == later }
+            }
+            return joined ? "\(earlier)→\(later)" : nil
+        }
+    }
+
+    /// The same history with its breaks removed: the joined-line control.
+    private static func unbroken(_ input: FieldHistoryInput10868) -> FieldHistoryInput10868 {
+        FieldHistoryInput10868(
+            title: input.title, caption: input.caption, series: input.series, selection: input.selection,
+            domain: input.domain, ceiling: input.ceiling, yTicks: input.yTicks, xTicks: input.xTicks,
+            guides: input.guides, breaks: [], readout: input.readout, markKey: input.markKey,
+            comparisonExplanation: input.comparisonExplanation, notes: input.notes, summary: input.summary,
+            plotHeight: input.plotHeight, unboundReadingWords: input.unboundReadingWords,
+            plotUnavailableWords: input.plotUnavailableWords, windows: input.windows, scale: input.scale,
+            moreOriginals: input.moreOriginals, details: input.details, expand: input.expand,
+            inspect: input.inspect, previous: input.previous, next: input.next,
+            inspection: input.inspection, layout: input.layout,
+            probabilityLowerBound: input.probabilityLowerBound,
+            probabilityRangeExplanation: input.probabilityRangeExplanation,
+            selectedReadout: input.selectedReadout, inspectionRingShape: input.inspectionRingShape,
+            plotAbsence: input.plotAbsence, showsKey: input.showsKey)
     }
 
     private static func points(_ history: FieldHistoryInput10868) -> [FieldHistoryPoint10868] {
@@ -1184,6 +1228,53 @@ final class WeatherEventPagePresentation10868Tests: XCTestCase {
             let archived = Set(Self.samples.flatMap { market, list in list.map { "\(market).yes.\($0.t)" } })
             XCTAssertTrue(Self.points(history).allSatisfy { archived.contains($0.id) }, phase.rawValue)
             XCTAssertFalse(Self.points(history).contains { $0.probability == 0 || $0.probability == 1 }, phase.rawValue)
+            // No cohort line crosses an archived gap; without the breaks, the same check catches the joined line.
+            for member in Self.cohort {
+                let series = history.series.first { $0.id == Self.row(member.market).outcome }!
+                XCTAssertEqual(Self.joinedGaps(series, in: history) { Self.pointID(member.market, $0) }, [], phase.rawValue)
+                XCTAssertFalse(Self.joinedGaps(series, in: Self.unbroken(history)) { Self.pointID(member.market, $0) }.isEmpty,
+                               phase.rawValue)
+            }
+        }
+
+        // The original's Details chart: the history `Originals.recorded` actually shows, through the
+        // shared geometry. Every retained sample stays a mark; no line crosses an archived gap.
+        for phase in WeatherEventPagePhase10868.allCases {
+            let originals = Self.originals(phase)
+            guard case .recorded(let shown)? = Originals.recorded(catalogue: originals.catalogue, selection: originals.selection,
+                                                                  context: originals.recorded, hasCallback: true),
+                  let series = shown.history.series.first else {
+                XCTFail("the held original shows its recorded history (\(phase.rawValue))")
+                continue
+            }
+            func sampleID(_ index: Int) -> String { "original.\(Self.sample("5680548", index).t)" }
+            let retained: [Int] = phase == .before ? [0, 1, 2] : phase == .during ? Array(0...6) : Array(0...12)
+            let expected: [[Int]]
+            switch phase {
+            case .before:
+                // 8 PM alone | break | 10 → 11 PM.
+                expected = [[1, 2]]
+            case .during:
+                expected = [[1, 2, 3, 4], [5, 6]]
+            case .final:
+                // … 12 → 1 PM | break | 3 → 4 PM; 10 → 11 PM.
+                expected = [[1, 2, 3, 4], [5, 6], [7, 8], [9, 10], [11, 12]]
+            }
+            XCTAssertEqual(FieldHistoryGeometry10868.marks(series, in: shown.history).map(\.id), retained.map(sampleID),
+                           phase.rawValue)
+            XCTAssertEqual(FieldHistoryGeometry10868.lines(series, in: shown.history).map { $0.map(\.id) },
+                           expected.map { $0.map(sampleID) }, phase.rawValue)
+            XCTAssertEqual(Self.joinedGaps(series, in: shown.history, id: sampleID), [], phase.rawValue)
+
+            // Positive control: the same shown history without its breaks draws the joined line, and the
+            // check names exactly the gaps it crosses.
+            let joined = Self.unbroken(shown.history)
+            let evening = "\(sampleID(0))→\(sampleID(1))"
+            let afternoon = "\(sampleID(8))→\(sampleID(9))"
+            XCTAssertEqual(Self.joinedGaps(joined.series[0], in: joined, id: sampleID),
+                           phase == .final ? [evening, afternoon] : [evening], phase.rawValue)
+            let joinedLines = FieldHistoryGeometry10868.lines(joined.series[0], in: joined)
+            XCTAssertEqual(joinedLines.first.map { Array($0.prefix(2).map(\.id)) }, [sampleID(0), sampleID(1)], phase.rawValue)
         }
     }
 
