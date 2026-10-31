@@ -1141,6 +1141,7 @@ class PolymarketWebSocket:
                                     await self._price_quotes(
                                         quotes, shard, book_snapshot=False,
                                         quote_versions=quote_versions,
+                                        normalized=True,
                                     )
                                     continue
 
@@ -1357,6 +1358,7 @@ class PolymarketWebSocket:
         *,
         book_snapshot: bool = True,
         quote_versions: Optional[dict] = None,
+        normalized: bool = False,
     ) -> None:
         """Hand extracted current quotes to `on_price`, in order.
 
@@ -1364,7 +1366,9 @@ class PolymarketWebSocket:
         earlier quote's callback waited still applies. ``failure`` is the
         extraction error that stopped the frame part-way: the quotes before it
         are priced, then it is raised, as when extraction and pricing
-        alternated batch by batch.
+        alternated batch by batch. ``normalized``: the quotes came from
+        `_price_change_quotes`, so their identity is read without validating
+        each one a second time (#10090).
         """
         # An async price callback can complete without suspending (#10665).
         batch_size = SNAPSHOT_BATCH_SIZE
@@ -1377,11 +1381,10 @@ class PolymarketWebSocket:
                 if quote_versions is not None and asset in quote_versions:
                     # Validate identity without changing legacy top-level price
                     # handling when the old protocol omitted its timestamp.
-                    normalized = _price_change_quotes({
+                    if normalized or _price_change_quotes({
                         "timestamp": quote.get("timestamp"),
                         "price_changes": [quote],
-                    })
-                    if normalized:
+                    }):
                         identity = (
                             int(float(quote["timestamp"])),
                             float(quote["best_bid"]), float(quote["best_ask"]),
