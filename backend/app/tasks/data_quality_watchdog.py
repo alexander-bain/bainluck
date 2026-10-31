@@ -1288,6 +1288,17 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
             # A busy-db deferred check was not run; it is neither red nor green.
             if not r.get("passed") and not r.get("deferred")
         ]
+        # ...so it keeps the verdict it last EARNED: a deferred census carries
+        # its previous failing entry forward instead of dropping out (#10090).
+        deferred = {n for n, r in stats["results"].items() if r.get("deferred")}
+        if deferred:
+            try:
+                prev = json.loads(get_redis_client().get("bainluck:data_quality_watchdog:last") or "{}")
+            except Exception:
+                prev = {}
+            for f in prev.get("failing") or []:
+                if isinstance(f, dict) and f.get("name") in deferred:
+                    failing.append({**f, "carried_from": f.get("carried_from") or prev.get("computed_at")})
         red = any(f["severity"] in ("P0", "P1") for f in failing)
         amber = bool(failing) or bool(stats["errors"])
         summary = {

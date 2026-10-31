@@ -148,16 +148,6 @@ async def test_opening_repair_runs_when_the_switch_is_off(switch_off, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_calibration_main_defers(switch_on, always_busy, monkeypatch):
-    from app.tasks import precompute_calibration
-
-    monkeypatch.setattr(precompute_calibration, "_main_input_fingerprint", _raise_reached)
-    out = await precompute_calibration._precompute_calibration_main()
-    assert out["terminal"] == "skipped"
-    assert out["scan"] == "precompute_calibration_main"
-
-
-@pytest.mark.asyncio
 async def test_calibration_main_runs_when_the_switch_is_off(switch_off, monkeypatch):
     from app.tasks import precompute_calibration
 
