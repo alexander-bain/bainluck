@@ -26,7 +26,7 @@ HELD_FIRST = [HELD, {900: .7}]
 
 
 async def held_rig(monkeypatch, *, held=frozenset({1}), live=frozenset({1}),
-                   unit=None, preview=False, final=False):
+                   unit=None, preview=False, final=False, open_leg=False):
     rig = consumer_rig(monkeypatch)
     rig.ns['FLUSH_CHUNK_ROWS'] = 10
     await warm(rig)
@@ -41,6 +41,13 @@ async def held_rig(monkeypatch, *, held=frozenset({1}), live=frozenset({1}),
         rig.ns['market_by_outcome'][900] = 10
     elif unit == 'complement':
         rig.ns['open_complement_of'] = {101: 900, 900: 101}
+    if open_leg:
+        # Mixed held game: the linked binary 101/102 plus a bridged
+        # open-catalog leg 103 of the same event, so it stays on this flush.
+        rig.ns['event_id_by_outcome'][103] = 1
+        rig.ns['market_by_outcome'][103] = 11
+        rig.ns['open_outcome_ids'].add(103)
+        rig.ns['price_buffer'][103] = .3
     original = rig.ns['write_chunk']
     writes = []
 
@@ -118,6 +125,19 @@ async def test_a_unit_shared_with_an_unheld_game_is_never_split(monkeypatch, uni
         assert writes == ONE_TRANSACTION
     finally:
         await finish(rig, task)
+
+
+async def test_a_mixed_held_game_with_an_open_leg_keeps_the_old_order(monkeypatch):
+    # Authority R1 on 1090ab92: promoting it would pull open leg 103 into the
+    # head transaction ([101, 102, 103]), which is then no game chunk and
+    # makes every other live game in the flush wait behind it. The
+    # changed-preview path already refuses an event with an open leg.
+    rig, task, writes = await held_rig(monkeypatch, open_leg=True)
+    try:
+        assert writes == ONE_TRANSACTION
+    finally:
+        await finish(rig, task)
+    assert writes == ONE_TRANSACTION + [{103: .3}]
 
 
 async def test_final_drain_keeps_its_order(monkeypatch):

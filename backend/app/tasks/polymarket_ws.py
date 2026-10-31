@@ -5676,7 +5676,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # whole, and a lock-retried event keeps its isolation. A game
                 # whose stamp is queued or running is left where it was: written
                 # first it would meet the sticky fence sooner. Unknown stamp
-                # debt, the switch off or no held set: the old order.
+                # debt, the switch off or no held set: the old order. A mixed
+                # game (an admitted open-catalog leg beside its slate legs) is
+                # left in place too, as the changed-preview path above leaves
+                # it: promoted, its open leg would join the head transaction,
+                # which is then no game chunk, and every other game waits.
                 held_first = set()
                 reader_held = getattr(blend_refresher, "_reader_held_ids", None)
                 held_ids = reader_held() if callable(reader_held) else ()
@@ -5689,12 +5693,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             else set()
                         )
                     if stamping is not None:
+                        admitted = [oid for chunk in chunks for oid in chunk]
+                        mixed = event_ids_for_outcomes(
+                            event_id_by_outcome,
+                            (oid for oid in admitted if oid in open_outcome_ids),
+                        )
                         held_first = {
-                            eid for eid in event_ids_for_outcomes(
-                                event_id_by_outcome,
-                                (oid for chunk in chunks for oid in chunk),
-                            )
-                            if eid in held_ids and eid in live_ids
+                            eid for eid in event_ids_for_outcomes(event_id_by_outcome, admitted)
+                            if eid in held_ids and eid in live_ids and eid not in mixed
                         } - stamping
                 changed_events |= held_first
                 # A known unchanged cohort need not share an unrelated SQL
