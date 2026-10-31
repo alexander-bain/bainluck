@@ -38,9 +38,12 @@ import SwiftUI
 ///                       them; `TeamShortName.shortPair` for the run-line card's
 ///                       spoken team words.
 ///
-/// The extra-innings slot the deck also deals is not a story here (it is not
-/// one of the route's required cards and its production view needs the deck's
-/// shared state object); its originals stay in All props.
+/// The fifth slot the deck deals, extra innings, IS one of the approved
+/// route's five story families (strikeouts, extra innings, home runs, run
+/// totals, the series). Its production view needs the deck's shared state
+/// object, so it is composed by part seven (`BaseballExtraInningsAdapter10868`
+/// over the same `MLBExtraInningsCard11284`) and mounted in every phase it is
+/// served; its held outcome is `Selections.extraInnings`.
 ///
 /// Before first pitch and during play there is no accepted baseball leaf for
 /// home runs or the strikeout ladder (both accepted comparisons are pregame
@@ -59,6 +62,8 @@ enum BaseballStoriesAdapter10868 {
         var seriesQuestion: String? = nil
         /// A series outcome's `optionKey`, inside `seriesQuestion`.
         var seriesOption: String? = nil
+        /// An extra-innings outcome's exact `original.id`.
+        var extraInnings: String? = nil
     }
 
     /// The final MLB deal, as the event page builds it.
@@ -142,6 +147,7 @@ enum BaseballStoriesAdapter10868 {
         held += input.homeRuns?.card.entries.map(\.original) ?? []
         held += input.strikeouts?.card.targets.map(\.original) ?? []
         if case .finalTargets(let totals)? = input.totals { held += totals.card.lines.map(\.original) }
+        held += input.extraInnings?.options.map(\.original) ?? []
         held += input.series?.card.questions.flatMap(\.options).map(\.original) ?? []
         let matches = held.filter { $0.id == id }
         return matches.count == 1 ? matches.first : nil

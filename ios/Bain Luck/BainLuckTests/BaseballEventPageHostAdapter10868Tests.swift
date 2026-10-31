@@ -23,6 +23,7 @@ final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(Host.Presented(mode: .page).id, "page")
         XCTAssertEqual(Host.Presented(mode: .reader(.history)).id, "reader.history")
         XCTAssertEqual(Host.Presented(mode: .reader(.series)).id, "reader.series")
+        XCTAssertEqual(Host.Presented(mode: .reader(.extraInnings)).id, "reader.extraInnings")
         XCTAssertEqual(Host.Presented(mode: .catalogue).id, "catalogue")
         XCTAssertEqual(Host.Presented(mode: .original).id, "original")
     }
@@ -88,5 +89,40 @@ final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
         guard case .milestones(let milestones)? = live.totals else { return XCTFail("run milestones") }
         XCTAssertEqual(milestones.selectedMilestoneID, "o:244311410")
         XCTAssertEqual(live.stream.primary?.id, "series")
+    }
+
+    /// CONSTRUCTED: the live `/game-markets` body carrying the retained live
+    /// extra-innings row; the admission is the owner's reading of that row's
+    /// own served values.
+    func testTheExtraInningsAdmissionReachesItsStoryItsHeldOutcomeAndItsDetails() throws {
+        let admission = try F.liveExtraAdmission()
+        func build(_ admissions: [BaseballExtraInningsAdmission10868], held: String? = nil) throws -> Host.Built {
+            Host.build(event: try F.liveEvent(), history: nil, markets: try F.liveExtraMarkets(),
+                       related: try F.related(), extraInnings: admissions, probabilityObservedAt: nil,
+                       now: F.extraNow,
+                       reading: Host.Reading(selections: BaseballStoriesAdapter10868.Selections(extraInnings: held)),
+                       calendar: F.pacific, locale: F.locale)
+        }
+        let admitted = try build([admission]).input
+        let story = try XCTUnwrap(admitted.extraInnings)
+        let option = try XCTUnwrap(story.options.first)
+        XCTAssertEqual(option.pregame.text, formatProbability(0.11))
+        XCTAssertEqual(option.recorded.text, formatProbability(0.16))
+        XCTAssertEqual(story.selectedID, option.id)
+
+        // Details resolves the exact original the page holds, readings named.
+        let details = try XCTUnwrap(BaseballStoriesAdapter10868.original(option.id, in: admitted))
+        XCTAssertEqual(details, option.original)
+
+        // No admission: the same production outcome, each chance in its own words.
+        let bare = try XCTUnwrap(try build([]).input.extraInnings?.options.first)
+        XCTAssertEqual(bare.id, option.id)
+        XCTAssertEqual(bare.pregame, .unavailable("Pregame chance unavailable"))
+        XCTAssertEqual(bare.recorded, .unavailable("In-game chance unavailable"))
+
+        // A held outcome is passed through unchanged, even one no longer carried.
+        XCTAssertEqual(try build([admission], held: "withdrawn-outcome").input.extraInnings?.selectedID,
+                       "withdrawn-outcome")
+        XCTAssertNil(BaseballStoriesAdapter10868.original("withdrawn-outcome", in: admitted))
     }
 }

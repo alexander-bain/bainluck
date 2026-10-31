@@ -28,7 +28,11 @@ import XCTest
 ///   0.5755, 21:09Z 0.592895 and the last real row 00:18Z 0.010558 — a REDUCED
 ///   SUBSET, one run per span consecutive in it; never one run across an
 ///   omitted span;
-/// - the run lines 9+ / 10+ by their served option keys.
+/// - the run lines 9+ / 10+ by their served option keys;
+/// - the fifth story, extra innings, on the retained live Kalshi row
+///   (`BaseballRetained10868.liveExtraRow`) with the owner's admission of its
+///   own served values — the final body serves no such row, so the final deal
+///   above has four stories.
 ///
 /// CONSTRUCTED owner input (this layer resolves none of it): every display
 /// word, figure text, clock line, colour, tick, scope, story link, copy and
@@ -214,6 +218,15 @@ final class BaseballEventPagePresentation10868Tests: XCTestCase {
             markStyle: .stems)
     }
 
+    /// The fifth story on the retained live row with the owner's admission of
+    /// its own served values (`BaseballRetained10868.liveExtraAdmission`), at
+    /// the CONSTRUCTED reader time `extraNow`.
+    private static func extraStory(selected: String? = nil) throws -> BaseballExtraInningsStory10868 {
+        try XCTUnwrap(BaseballExtraInningsAdapter10868.story(
+            try F.liveEvent(), markets: try F.liveExtraMarkets(), admissions: [try F.liveExtraAdmission()],
+            selected: selected, host: F.milestoneHost(F.extraNow)))
+    }
+
     // MARK: Stream and page
 
     private static func scope(_ phase: BaseballEventPagePhase10868) -> String { "mlb:15321836:\(phase)" }
@@ -224,6 +237,7 @@ final class BaseballEventPagePresentation10868Tests: XCTestCase {
         case .homeRuns: "Home runs"
         case .strikeouts: "Hunter Brown · Strikeouts"
         case .totals: "Run totals"
+        case .extraInnings: "Extra innings"
         case .series: "The series"
         }
     }
@@ -261,6 +275,7 @@ final class BaseballEventPagePresentation10868Tests: XCTestCase {
                              links: [BaseballEventPageStory10868]? = nil,
                              matrix: BaseballMatrix10868? = nil,
                              allProps: String?? = nil,
+                             extra: BaseballExtraInningsStory10868? = nil,
                              wide: Bool = false) -> BaseballEventPageInput10868 {
         let cards = offered(phase)
         let defaultTotals: BaseballTotalsStory10868 = switch phase {
@@ -276,7 +291,7 @@ final class BaseballEventPagePresentation10868Tests: XCTestCase {
         return BaseballEventPageInput10868(
             phase: phase, headline: headline(phase, matrix: matrix), history: history(phase),
             homeRuns: stories.homeRuns, strikeouts: stories.strikeouts,
-            totals: totals ?? defaultTotals, series: stories.series,
+            totals: totals ?? defaultTotals, extraInnings: extra, series: stories.series,
             stream: stream(phase, cards: cards, wide: wide),
             stories: links ?? cards.map { BaseballEventPageStory10868(cardID: $0.rawValue, card: $0) },
             copy: words)
@@ -304,6 +319,8 @@ final class BaseballEventPagePresentation10868Tests: XCTestCase {
             onSeriesMarket: { log("seriesMarket:\($0)") },
             onSeriesOption: { log("seriesOption:\($0):\($1)") },
             onSeriesDetails: { log("seriesDetails:\($0)") },
+            onExtraInningsSelect: { log("extraSelect:\($0)") },
+            onExtraInningsDetails: { log("extraDetails:\($0)") },
             totalTimingExpanded: timing)
     }
 
@@ -747,5 +764,60 @@ final class BaseballEventPagePresentation10868Tests: XCTestCase {
         XCTAssertNil(Page(input: input, originals: originals).originalDetailsContent()?.onHistory)
         XCTAssertEqual(log, [], "building the modes acts on nothing")
         XCTAssertEqual(BaseballEventPageAccessibilityID10868.card(.series), "baseballEventPage10868.card.series")
+    }
+
+    // MARK: Extra innings — the fifth story
+
+    func testExtraInningsIsMountedInEveryPhaseItIsSuppliedAndItsLeafGetsTheStoryUnchanged() throws {
+        let stories = try Self.stories()
+        let extra = try Self.extraStory()
+        for phase in [BaseballEventPagePhase10868.before, .live, .final] {
+            let links = (Self.offered(phase) + [.extraInnings]).map {
+                BaseballEventPageStory10868(cardID: $0.rawValue, card: $0)
+            }
+            let input = Self.page(phase, stories: stories, links: links, extra: extra)
+            let model = Model(input)
+            XCTAssertEqual(model.extraInnings, extra, "\(phase)")
+            XCTAssertTrue(model.isMounted(.extraInnings), "\(phase)")
+            XCTAssertEqual(model.storyCard("extraInnings"), .extraInnings, "\(phase)")
+            let quiet = Page(input: input)
+            XCTAssertEqual(quiet.storyKind("extraInnings"), .extraInnings, "its chooser and Details are optional")
+            XCTAssertTrue(quiet.shows(.extraInnings))
+            XCTAssertEqual(quiet.extraInningsContent()?.story, extra)
+            XCTAssertEqual(quiet.extraInningsContent()?.expanded, false)
+            XCTAssertEqual(quiet.extraInningsContent(expanded: true)?.expanded, true)
+        }
+        // Not supplied: not mounted, and its link is the unavailable cell.
+        let none = Model(Self.page(.final, stories: stories, links: [
+            BaseballEventPageStory10868(cardID: "extraInnings", card: .extraInnings),
+        ]))
+        XCTAssertFalse(none.isMounted(.extraInnings))
+        XCTAssertNil(none.storyCard("extraInnings"))
+        XCTAssertNil(Page(input: Self.page(.final, stories: stories)).extraInningsContent())
+    }
+
+    func testAnExtraInningsActionInTheStreamRequestsTheHoldBeforeTheExactCallbackAndReadersPassThrough() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let extra = try Self.extraStory()
+        let outcome = try XCTUnwrap(extra.options.first?.id)
+        let input = Self.page(.live, stories: try Self.stories(), extra: extra)
+        let view = Self.connected(input, log: record)
+
+        let leaf = try XCTUnwrap(view.extraInningsContent(activation: Self.activation(input, .extraInnings, log: record)))
+        XCTAssertEqual(log, [], "building the leaf asks for nothing")
+        leaf.onSelect?(outcome)
+        leaf.onDetails?(outcome)
+        XCTAssertEqual(log, ["hold:extraInnings", "extraSelect:\(outcome)", "hold:extraInnings", "extraDetails:\(outcome)"])
+
+        log = []
+        let reader = Self.connected(input, log: record, mode: .reader(.extraInnings))
+        reader.extraInningsContent(expanded: true)?.onDetails?(outcome)
+        reader.extraInningsContent(expanded: true)?.onSelect?(outcome)
+        XCTAssertEqual(log, ["extraDetails:\(outcome)", "extraSelect:\(outcome)"])
+
+        let quiet = Page(input: input)
+        XCTAssertNil(quiet.extraInningsContent(activation: Self.activation(input, .extraInnings, log: record))?.onSelect)
+        XCTAssertNil(quiet.extraInningsContent()?.onDetails)
     }
 }

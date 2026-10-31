@@ -27,6 +27,10 @@ import SwiftUI
 //   • `TotalMilestonePresentation10868` — run milestones before and during
 //     play; `MLBTotalTargetsCardView11284` — the final total against every
 //     offered run line, after the final;
+//   • `BaseballExtraInningsPresentation10868` — extra innings, in every
+//     phase: the owned composition over `MLBExtraInningsCard11284` and the
+//     home-run comparison's shared scale (the production extra-innings view
+//     needs the Native deck's shared state object);
 //   • `MLBSeriesComparison11284` — the associated series, in every phase;
 //   • `StoryStreamPresentationView10868` — the controlled story stream;
 //   • `OriginalMarketCatalogueView9483` / `OriginalMarketDetailsView9483` —
@@ -51,12 +55,17 @@ import SwiftUI
 // beside the official final) and are mounted after the final only. The totals
 // story is mounted only in its own form for the phase: run milestones before
 // and during play, the final total against every offered line after it. The
-// series is separate from this game and is mounted in every phase. A leaf from
-// another phase is not mounted — never coerced to appear.
+// extra-innings story (the venue's market on this game, its pregame chance
+// beside a chance recorded during play) and the series (separate from this
+// game) are mounted in every phase they are supplied. A leaf from another
+// phase is not mounted — never coerced to appear. These are the approved
+// route's five story families: strikeouts, extra innings, home runs, run
+// totals and the series.
 //
 // The host supplies each leaf's own immutable input, already admitted for the
 // same snapshot, including every selection: the strikeout target, the run
-// line or milestone, and the series market and outcome. This layer groups them
+// line or milestone, the extra-innings outcome, and the series market and
+// outcome. This layer groups them
 // and never re-elects, defaults, copies, filters or formats an observation, a
 // count, a chance or a result.
 //
@@ -109,6 +118,7 @@ nonisolated enum BaseballEventPageCard10868: String, Hashable, CaseIterable {
     case homeRuns
     case strikeouts
     case totals
+    case extraInnings
     case series
 }
 
@@ -348,6 +358,8 @@ struct BaseballEventPageInput10868: Equatable {
     let homeRuns: BaseballHomeRunsStory10868?
     let strikeouts: BaseballStrikeoutsStory10868?
     let totals: BaseballTotalsStory10868?
+    /// In every phase: the venue's extra-innings market (the fifth story).
+    let extraInnings: BaseballExtraInningsStory10868?
     let series: BaseballSeriesStory10868?
     let stream: StoryStreamPresentation10868
     let stories: [BaseballEventPageStory10868]
@@ -510,6 +522,8 @@ struct BaseballEventPageModel10868: Equatable {
         return totals
     }
 
+    var extraInnings: BaseballExtraInningsStory10868? { input.extraInnings }
+
     var series: BaseballSeriesStory10868? { input.series }
 
     func isMounted(_ card: BaseballEventPageCard10868) -> Bool {
@@ -518,6 +532,7 @@ struct BaseballEventPageModel10868: Equatable {
         case .homeRuns: homeRuns != nil
         case .strikeouts: strikeouts != nil
         case .totals: totals != nil
+        case .extraInnings: extraInnings != nil
         case .series: series != nil
         }
     }
@@ -611,6 +626,11 @@ struct BaseballEventPagePresentation10868: View {
     var onSeriesOption: ((String, String) -> Void)? = nil
     /// The selected series outcome's `original.id`.
     var onSeriesDetails: ((String) -> Void)? = nil
+    /// An extra-innings outcome's `original.id`. Optional: without it the
+    /// leaf draws no chooser.
+    var onExtraInningsSelect: ((String) -> Void)? = nil
+    /// The selected extra-innings outcome's `original.id`.
+    var onExtraInningsDetails: ((String) -> Void)? = nil
     /// Page-owned run milestones timing disclosure. Full-size content gets it
     /// unchanged; a card in the stream gets it through `relay(_:through:)`.
     var totalTimingExpanded: Binding<Bool>? = nil
@@ -669,7 +689,7 @@ struct BaseballEventPagePresentation10868: View {
     /// draws as a control.
     func controlsReady(_ card: BaseballEventPageCard10868) -> Bool {
         switch card {
-        case .history, .homeRuns:
+        case .history, .homeRuns, .extraInnings:
             return true
         case .strikeouts:
             return onStrikeoutSelect != nil
@@ -764,6 +784,16 @@ struct BaseballEventPagePresentation10868: View {
             selectedOptionKey: story.selectedOptionKey, color: story.color,
             onSelectMarket: market, onSelectOption: option,
             onDetails: Self.relay(onSeriesDetails, through: activation))
+    }
+
+    func extraInningsContent(activation: StoryStreamCardActivation10868? = nil,
+                             expanded: Bool = false) -> BaseballExtraInningsPresentation10868? {
+        model.extraInnings.map {
+            BaseballExtraInningsPresentation10868(
+                story: $0, expanded: expanded,
+                onSelect: Self.relay(onExtraInningsSelect, through: activation),
+                onDetails: Self.relay(onExtraInningsDetails, through: activation))
+        }
     }
 
     /// The existing catalogue with the owner's originals and select callback.
@@ -1103,6 +1133,8 @@ struct BaseballEventPagePresentation10868: View {
             } else {
                 finalTotalsContent(activation: activation, expanded: expanded)
             }
+        case .extraInnings:
+            extraInningsContent(activation: activation, expanded: expanded)
         case .series:
             seriesContent(activation: activation)
         }

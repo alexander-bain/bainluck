@@ -137,4 +137,25 @@ final class BaseballHistoryAdapter10868Tests: XCTestCase {
         XCTAssertEqual(missing.details?.isAvailable, false)
         XCTAssertTrue(missing.series.allSatisfy { $0.runs.isEmpty })
     }
+
+    /// The wrapper's own exact event guard, behind the host's filter.
+    /// CONSTRUCTED: the final history subset with only `event_id` changed.
+    func testAnotherEventsHistoryDrawsNothingAndTheSameEventsIsUnchanged() throws {
+        let event = try F.finalEvent()
+        let host = F.historyHost(F.finalNow)
+        let served = try F.history(F.finalHistory)
+        let foreign = try F.history(F.edited(F.finalHistory, setting: ["event_id": 1]))
+
+        let refused = A.history(foreign, event: event, phase: .final, host: host)
+        XCTAssertEqual(refused, A.unavailable(event: event, phase: .final))
+        XCTAssertTrue(refused.series.allSatisfy { $0.runs.isEmpty }, "no foreign row escapes")
+        XCTAssertFalse(refused.series.contains { $0.id.hasPrefix("blend:1:") || $0.id.hasPrefix("consensus:1:") })
+        XCTAssertNil(refused.expand)
+
+        // The same event's history is H2's, unchanged but for its expand words.
+        let drawn = A.history(served, event: event, phase: .final, host: host)
+        let shared = H.history(served, event: event, phase: .final, host: host)
+        XCTAssertEqual(drawn, A.withExpand(shared, drawn.expand))
+        XCTAssertFalse(points(drawn, Self.home).isEmpty)
+    }
 }

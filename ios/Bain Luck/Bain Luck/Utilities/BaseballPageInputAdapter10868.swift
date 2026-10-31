@@ -12,13 +12,15 @@ import Foundation
 ///   - history             part two (`BaseballHistoryAdapter10868`), passed in
 ///   - totals              parts three and four, passed in
 ///   - home runs, strikeouts, series   part four, passed in
+///   - extra innings       part seven (`BaseballExtraInningsAdapter10868`), passed in
 ///   - originals count     part five's catalogue size, for the All props entry
 ///
 /// The stories are offered in the finished MLB page's own fixed slot order
-/// (`MLBFinalDeck11284`: home runs, strikeouts, run totals, the series), each
-/// only where its phase mounts it. Their names are the production cards' own
-/// titles (`MLBFinalCard11284.title`: "Home runs", "<pitcher> · <stat>",
-/// "Run totals", "The series").
+/// (`MLBFinalDeck11284`: home runs, strikeouts, run totals, extra innings, the
+/// series — the approved five families), each only where its phase mounts it.
+/// Their names are the production cards' own titles (`MLBFinalCard11284.title`:
+/// "Home runs", "<pitcher> · <stat>", "Run totals", "Extra innings", "The
+/// series").
 ///
 /// THE STREAM IS MANUAL, exactly as hockey's and soccer's: the only owner that
 /// ranks and auto-advances story cards is NBA's (`NBAStoryStreamPolicy9483`).
@@ -56,6 +58,7 @@ enum BaseballPageInputAdapter10868 {
         static let homeRuns = "Home runs"
         static let strikeouts = "Strikeouts"
         static let runTotals = "Run totals"
+        static let extraInnings = "Extra innings"
         static let series = "The series"
         static let history = "Win probability"
         static let allProps = "All props"
@@ -67,6 +70,7 @@ enum BaseballPageInputAdapter10868 {
         homeRuns: BaseballHomeRunsStory10868?,
         strikeouts: BaseballStrikeoutsStory10868?,
         totals: BaseballTotalsStory10868?,
+        extraInnings: BaseballExtraInningsStory10868?,
         series: BaseballSeriesStory10868?,
         originalsCount: Int?,
         stream state: StreamState,
@@ -74,7 +78,7 @@ enum BaseballPageInputAdapter10868 {
     ) -> BaseballEventPageInput10868 {
         let phase = BaseballGamePageAdapter10868.phase(event, now: host.now)
         let offered = offeredCards(phase: phase, homeRuns: homeRuns, strikeouts: strikeouts,
-                                   totals: totals, series: series)
+                                   totals: totals, extraInnings: extraInnings, series: series)
         return BaseballEventPageInput10868(
             phase: phase,
             headline: BaseballGamePageAdapter10868.headline(event, host: host),
@@ -82,6 +86,7 @@ enum BaseballPageInputAdapter10868 {
             homeRuns: homeRuns,
             strikeouts: strikeouts,
             totals: totals,
+            extraInnings: extraInnings,
             series: series,
             stream: stream(scope: scope(event, phase: phase), offered: offered, strikeouts: strikeouts,
                            state: state),
@@ -99,11 +104,13 @@ enum BaseballPageInputAdapter10868 {
                              homeRuns: BaseballHomeRunsStory10868?,
                              strikeouts: BaseballStrikeoutsStory10868?,
                              totals: BaseballTotalsStory10868?,
+                             extraInnings: BaseballExtraInningsStory10868? = nil,
                              series: BaseballSeriesStory10868?) -> [BaseballEventPageCard10868] {
         var cards: [BaseballEventPageCard10868] = []
         if phase == .final, homeRuns != nil { cards.append(.homeRuns) }
         if phase == .final, strikeouts != nil { cards.append(.strikeouts) }
         if let totals, totals.belongs(to: phase) { cards.append(.totals) }
+        if extraInnings != nil { cards.append(.extraInnings) }
         if series != nil { cards.append(.series) }
         return cards
     }
@@ -115,6 +122,7 @@ enum BaseballPageInputAdapter10868 {
         case .homeRuns: Words.homeRuns
         case .strikeouts: strikeouts.map { "\($0.card.player) · \($0.card.stat)" } ?? Words.strikeouts
         case .totals: Words.runTotals
+        case .extraInnings: Words.extraInnings
         case .series: Words.series
         }
     }

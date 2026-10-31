@@ -84,6 +84,7 @@ final class BaseballPageInputAdapter10868Tests: XCTestCase {
         XCTAssertEqual(P.offeredCards(phase: .final, homeRuns: final.homeRuns, strikeouts: nil,
                                       totals: nil, series: final.series), [.homeRuns, .series])
         XCTAssertEqual(P.name(.strikeouts, strikeouts: nil), "Strikeouts", "never a raw identifier")
+        XCTAssertEqual(P.name(.extraInnings, strikeouts: nil), "Extra innings")
         XCTAssertEqual(P.name(.history, strikeouts: nil), "Win probability")
         XCTAssertNil(P.copy(originalsCount: 0).allPropsLabel)
         XCTAssertNil(P.copy(originalsCount: nil).allPropsLabel)
@@ -119,5 +120,26 @@ final class BaseballPageInputAdapter10868Tests: XCTestCase {
         XCTAssertNil(none.primary)
         XCTAssertNil(none.position)
         XCTAssertTrue(none.cards.isEmpty)
+    }
+
+    /// The fifth story takes the production deck's slot — after run totals,
+    /// before the series — in every phase it is supplied. CONSTRUCTED: the live
+    /// `/game-markets` body carrying the retained live extra-innings row.
+    func testExtraInningsIsOfferedInTheDecksSlotInEveryPhaseItIsServed() throws {
+        let live = Host.build(event: try F.liveEvent(), history: nil, markets: try F.liveExtraMarkets(),
+                              related: try F.related(), extraInnings: [try F.liveExtraAdmission()],
+                              probabilityObservedAt: nil, now: F.extraNow, calendar: F.pacific, locale: F.locale).input
+        XCTAssertEqual(live.stream.cards.map(\.id), ["extraInnings", "series"],
+                       "this constructed body serves no run lines, so no milestones")
+        XCTAssertEqual(live.stream.cards.first?.name, "Extra innings")
+        XCTAssertNotNil(live.extraInnings)
+
+        let final = try built(try F.finalEvent(), now: F.finalNow).input
+        XCTAssertNil(final.extraInnings, "the retained final body files no extra-innings row")
+        XCTAssertFalse(final.stream.cards.map(\.id).contains("extraInnings"))
+
+        let order = P.offeredCards(phase: .final, homeRuns: final.homeRuns, strikeouts: final.strikeouts,
+                                   totals: final.totals, extraInnings: live.extraInnings, series: final.series)
+        XCTAssertEqual(order, [.homeRuns, .strikeouts, .totals, .extraInnings, .series])
     }
 }

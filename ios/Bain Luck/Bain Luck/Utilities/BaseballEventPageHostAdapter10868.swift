@@ -5,15 +5,16 @@ import SwiftUI
 ///
 /// PILLARS: FORMATTING / DISCOVER. SHIP: an MLB event page opens on both
 /// teams' chances and runs, the win probability history and the stories the
-/// game has content for in its phase — run milestones and the series before
-/// and during play; home runs, the strikeout ladder, the final total against
-/// every offered run line and the series after the final — and every
-/// full-size card, the All props catalogue, an original's Details and each
-/// story original's Details open over it and close back to the same place.
+/// game has content for in its phase — run milestones, extra innings and the
+/// series before and during play; home runs, the strikeout ladder, the final
+/// total against every offered run line, extra innings and the series after
+/// the final — and every full-size card, the All props catalogue, an
+/// original's Details and each story original's Details open over it and
+/// close back to the same place.
 ///
 /// What it owns is only the screen's own reading state: which mode is shown,
-/// which story is held, which strikeout target, run line and series market and
-/// outcome each story is on, the held original, the run milestones' timing
+/// which story is held, which strikeout target, run line, extra-innings
+/// outcome and series market and outcome each story is on, the held original, the run milestones' timing
 /// disclosure and the story original on show. It builds the page input from the
 /// values the page already holds — passed in; it reads no view model, opens no
 /// network, subscribes to nothing, runs no timer and ranks nothing.
@@ -38,6 +39,7 @@ import SwiftUI
 ///     BaseballEventPageHost10868(
 ///         event: vm.headline(event), history: vm.history, markets: vm.gameMarkets,
 ///         related: vm.relatedFutures,
+///         extraInnings: [], // Native's admitted readings, once its model decodes them
 ///         probabilityObservedAt: vm.displayedProbabilityObservedAt(event),
 ///         deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
 ///         now: now,
@@ -57,11 +59,21 @@ import SwiftUI
 /// (`MLBOriginalDetails11284`), frozen as it was on screen; a run milestone
 /// has no Details route yet (nil — no button), and every original stays
 /// reachable through All props.
+///
+/// EXTRA INNINGS INPUT. `extraInnings` is the owner's explicit admission of
+/// each served extra-innings row's pregame chance and recorded in-game chance
+/// (`BaseballExtraInningsAdmission10868`), keyed by the row's exact provider
+/// identity. `GameMarketOther` does not decode the served `pregame_mark`, so
+/// until Native's model and history adoption supply these values the default
+/// is empty and the story shows the production card's outcomes and venue
+/// results with each chance's own absence words — a partial card, said so.
 struct BaseballEventPageHost10868: View {
     let event: EventDetail
     let history: EventHistoryResponse?
     let markets: GameMarketsResponse?
     let related: RelatedFuturesResponse?
+    /// The owner's admitted extra-innings readings; empty admits none.
+    var extraInnings: [BaseballExtraInningsAdmission10868] = []
     let probabilityObservedAt: Date?
     var deliveryInterrupted: Bool = false
     var now: Date = Date()
@@ -164,6 +176,8 @@ struct BaseballEventPageHost10868: View {
                 selections.seriesOption = option
             },
             onSeriesDetails: { showStoryOriginal($0) },
+            onExtraInningsSelect: { selections.extraInnings = $0 },
+            onExtraInningsDetails: { showStoryOriginal($0) },
             totalTimingExpanded: $totalTiming)
     }
 
@@ -200,6 +214,7 @@ struct BaseballEventPageHost10868: View {
 
     private func make() -> Built {
         Self.build(event: event, history: history, markets: markets, related: related,
+                   extraInnings: extraInnings,
                    probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
                    now: now,
                    reading: Reading(story: story, selections: selections, selection: selection,
@@ -209,9 +224,12 @@ struct BaseballEventPageHost10868: View {
     /// The page input and originals from the passed values alone — pure, so
     /// every changed value reaches the screen on the next pass. A missing (or
     /// another event's) history response leaves only the chart slot
-    /// unavailable.
+    /// unavailable: this filter and the history wrapper's own exact event
+    /// guard both refuse it.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
-                      related: RelatedFuturesResponse?, probabilityObservedAt: Date?,
+                      related: RelatedFuturesResponse?,
+                      extraInnings: [BaseballExtraInningsAdmission10868] = [],
+                      probabilityObservedAt: Date?,
                       deliveryInterrupted: Bool = false, now: Date, reading: Reading = Reading(),
                       calendar: Calendar = .current, locale: Locale = .current) -> Built {
         let host = BaseballGamePageAdapter10868.Host(
@@ -233,13 +251,16 @@ struct BaseballEventPageHost10868: View {
         let strikeouts = BaseballStoriesAdapter10868.strikeouts(cards, event: event, selected: picked.strikeout)
         let series = BaseballStoriesAdapter10868.series(event, related: related, question: picked.seriesQuestion,
                                                         option: picked.seriesOption)
+        let extra = BaseballExtraInningsAdapter10868.story(
+            event, markets: markets, admissions: extraInnings, selected: picked.extraInnings,
+            host: BaseballRunMilestonesAdapter10868.Host(now: now, calendar: calendar, locale: locale))
         let originals = BaseballOriginalsAdapter10868.originals(
             event, markets: markets,
             host: BaseballOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
             tint: BaseballGamePageAdapter10868.tints(event).home, selection: reading.selection)
         let input = BaseballPageInputAdapter10868.input(
             event, history: historyInput, homeRuns: homeRuns, strikeouts: strikeouts, totals: totals,
-            series: series, originalsCount: originals.catalogue?.originals.count,
+            extraInnings: extra, series: series, originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)
         return Built(input: input, originals: originals)

@@ -37,8 +37,17 @@ import SwiftUI
 ///                      ("1st", "2nd", …) — and the served scoring plays.
 ///   - axes, words      H2's ticks, frame, readouts and source note.
 ///
-/// What is baseball's own: only the expand control's spoken words ("Expand
-/// baseball win probability history"); every other field is H2's, unchanged.
+/// What is baseball's own: the exact event guard below, and the expand
+/// control's spoken words ("Expand baseball win probability history"); every
+/// other field is H2's, unchanged.
+///
+/// THE EVENT GUARD. H2 takes the response and the event as independent
+/// arguments and draws the response's rows under the event's names, start and
+/// status. So this wrapper first requires `response.eventId == event.id`; a
+/// response for any other event draws nothing of it — the chart slot is this
+/// event's own "History unavailable" (`unavailable`), and the page's other
+/// parts compose from their own inputs. The host's filter
+/// (`BaseballEventPageHost10868.build`) stays as well; the two agree.
 ///
 /// Where the in-game frame opens stays H2's host parameter (default: the last
 /// pregame row). The host's held inspection, the window and scale controls and
@@ -60,6 +69,7 @@ enum BaseballHistoryAdapter10868 {
 
     static func history(_ response: EventHistoryResponse, event: EventDetail,
                         phase: BaseballEventPagePhase10868, host: Host) -> FieldHistoryInput10868 {
+        guard response.eventId == event.id else { return unavailable(event: event, phase: phase) }
         let drawn = H.history(response, event: event, phase: h2Phase(phase), host: host)
         return withExpand(drawn, drawn.expand.map {
             H.action($0.id, $0.label, spoken: Words.expandSpoken, available: $0.isAvailable)
