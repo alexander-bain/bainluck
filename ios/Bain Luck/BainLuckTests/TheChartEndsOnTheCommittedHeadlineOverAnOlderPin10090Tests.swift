@@ -199,6 +199,31 @@ final class TheChartEndsOnTheCommittedHeadlineOverAnOlderPin10090Tests: XCTestCa
         XCTAssertEqual(served, copy, "the served history is never written")
     }
 
+    /// The timing seam's chart mark names the point the chart DRAWS (b94:
+    /// committed chart marks named the buffer's last frame, under `-`, while
+    /// the line ended on this pin). The re-valued pin at its own time, with
+    /// the headline's value under the revision the marker carries, observed
+    /// at the headline's clock; the commit at +30 s is not the end.
+    func testTheTimingSeamNamesTheRevaluedPinUnderTheMarkersOwnRevision() throws {
+        let event = try Self.committed(), served = try Self.staleAt52()
+        let frames = Self.frames(served, event, nil, now: 52.415)
+        let drawn = try XCTUnwrap(Self.drawnBlend(served, frames).last)
+        let shown = LiveTimingSeam.presented(committed: event, headline: event, observed: Self.date(Self.commitAt),
+                                             chartEnd: frames.last, projected: false, preview: nil, history: served)
+        XCTAssertEqual(shown.chartEdge, drawn.date, "the pin's time, where the line ends")
+        XCTAssertEqual(shown.chartEdge, Self.date(Self.readAt52))
+        XCTAssertEqual(shown.chartProbability, drawn.probability)
+        XCTAssertEqual(shown.chartBasis, "rev:1=3;2=5", "the revision that authorized the value drawn there")
+        XCTAssertEqual(shown.chartBasis, shown.headlineBasis, "the marker is the headline's own value")
+        XCTAssertEqual(shown.chartObserved, Self.date(Self.commitAt), "observed at the headline's clock, not the pin's")
+
+        // A read that no longer re-values that pin (it already prints 71%)
+        // draws no marker value, so the seam names no end at the marker's time.
+        let printed = try Self.staleAt52(edgeValue: 0.71)
+        XCTAssertNil(LiveTimingSeam.drawnChartEnd(frames.last, projected: false, preview: nil, history: printed).edge)
+        XCTAssertNil(LiveTimingSeam.drawnChartEnd(frames.last, projected: false, preview: nil, history: nil).edge)
+    }
+
     /// A commit observed before the read's carry-forward minute: that minute
     /// carried the older value too, so it goes with the pin's value. Kept, the
     /// line would dip back to 63% between the commit and the pin.

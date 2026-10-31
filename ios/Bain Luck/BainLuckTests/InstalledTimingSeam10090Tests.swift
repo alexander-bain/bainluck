@@ -165,15 +165,16 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         // The chart point and the headline are the same value — agreement survives.
         XCTAssertEqual(vm.liveBlend.last?.homeProbability, vm.event?.currentOdds?.homeProbability)
 
-        // The view mark names the same revision and the same chart point.
+        // The view mark names the same revision and the same chart point: the
+        // chart's end under the basis it was appended with (#10090), not `-`.
         marks = []
         let after = vm.timingPresented(try XCTUnwrap(vm.event))
         LiveTimingSeam.viewUpdated(from: before, to: after)
         XCTAssertEqual(marks, [
             .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: "rev:4242=21", stamp: "-",
                   probability: "0.55", observed: stamp),
-            .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "-", stamp: stamp,
-                  probability: "0.55"),
+            .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "rev:4242=21", stamp: stamp,
+                  probability: "0.55", observed: stamp),
         ])
         marks = []
         LiveTimingSeam.viewUpdated(from: after, to: after)
@@ -236,6 +237,9 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
             .init(name: .modelHeadlineAdopted, eventId: 4242, path: "folded", basis: "rev:4242=21;999=5", stamp: "-"),
         ])
         XCTAssertEqual(vm.liveBlend.last?.homeProbability, 0.52)
+        let drawn = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(drawn.chartBasis, "rev:4242=21;999=5", "the chart's end names the quote's full vector too")
+        XCTAssertEqual(drawn.chartEdge, "2026-09-25T17:10:00Z".asDate)
 
         // A replayed or older fold, and an explicit null: receipts only.
         marks = []
@@ -268,6 +272,16 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.48)
         XCTAssertEqual(marks, [.init(name: .modelHeadlineAdopted, eventId: 4242, path: "read",
                                      basis: "rev:4242=22", stamp: "-")])
+
+        // #10090 — a read moves the headline and draws no chart point, so the
+        // chart still ends on the stream's frame: its mark names THAT frame's
+        // revision, value and clock, never the newer headline's basis.
+        let shown = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(shown.headlineBasis, "rev:4242=22")
+        XCTAssertEqual(shown.chartBasis, "rev:4242=21", "the drawn point's own commit")
+        XCTAssertEqual(shown.chartProbability, 0.55)
+        XCTAssertEqual(shown.chartEdge, "2026-09-25T17:10:00Z".asDate)
+        XCTAssertEqual(shown.chartObserved, "2026-09-25T17:10:00Z".asDate)
     }
 
     // MARK: - Preview v3 (#10090 preview seam)
@@ -318,7 +332,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
             .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: basis(session, seq: 1), stamp: "-",
                   probability: "0.7", observed: t1Stamp),
             .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: basis(session, seq: 1), stamp: t1Stamp,
-                  probability: "0.7"),
+                  probability: "0.7", observed: t1Stamp),
         ], "the hero and chart print the preview, named as the preview")
 
         // The same value under a new sequence: a new identity at every depth.
@@ -356,8 +370,8 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
                                       .viewHeadlineUpdated, .viewChartUpdated])
         XCTAssertEqual(marks[3], .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: "rev:4242=21",
                                        stamp: "-", probability: "0.55", observed: committed))
-        XCTAssertEqual(marks[4], .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "-",
-                                       stamp: committed, probability: "0.55"))
+        XCTAssertEqual(marks[4], .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "rev:4242=21",
+                                       stamp: committed, probability: "0.55", observed: committed))
     }
 
     /// An expired preview gives way to the committed headline without a frame;
@@ -425,7 +439,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
                 .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: id, stamp: "-",
                       probability: "0.7", observed: atStamp),
                 .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: id, stamp: atStamp,
-                      probability: "0.7"),
+                      probability: "0.7", observed: atStamp),
             ], "fold_seq \(seq): one identity from receipt to the hero and the chart")
         }
         XCTAssertNotEqual(foldedBasis(session, seq: 1), foldedBasis(session, seq: 2))

@@ -54,7 +54,9 @@ enum LiveTimingSeam {
     /// `stamp` is the exact reference-date Double bit pattern or `-`: the chart
     /// edge on chart marks. `probability` is the home probability the mark
     /// speaks for, or `-`; `observed` is its source observation clock as a
-    /// stamp, or `-`. Receipt (the observer's own clock), observation and
+    /// stamp, or `-`; on a chart mark, the drawn value's own observation,
+    /// which differs from `stamp` when the value re-values an older pin
+    /// (`drawnChartEnd`). Receipt (the observer's own clock), observation and
     /// chart edge stay three separate clocks.
     nonisolated struct Mark: Equatable, Sendable {
         let name: Name
@@ -207,8 +209,8 @@ enum LiveTimingSeam {
 
     /// What the event page's hero and chart print, compared across updates.
     /// Headline and chart are separate: each carries its own identity (the
-    /// displayed preview's, else the committed basis for the headline and `-`
-    /// for a committed chart point), value and clock.
+    /// displayed preview's, else the committed basis for the headline and the
+    /// drawn point's own for the chart, `drawnChartEnd`), value and clock.
     nonisolated struct Presented: Equatable, Sendable {
         let eventId: Int
         let headlineBasis: String
@@ -217,6 +219,7 @@ enum LiveTimingSeam {
         let chartBasis: String
         let chartEdge: Date?
         let chartProbability: Double?
+        var chartObserved: Date? = nil
 
         /// Compares equal to itself, so a page whose marks nobody can see
         /// never fires its `onChange`.
@@ -226,18 +229,47 @@ enum LiveTimingSeam {
 
     /// `committed` is the page's event; `headline` and `observed` what its hero
     /// prints (`headline(event)`, `displayedProbabilityObservedAt(event)`);
-    /// `chartEnd` the last point its chart draws (`chartFrames(event)`), and
-    /// `projected` whether that point is the preview's projection. `preview`
-    /// is the identity of the displayed preview, nil when the hero prints
-    /// committed truth; it names the chart only when the chart's end is its
-    /// projection.
+    /// `chartEnd` the last point of the frames its chart draws
+    /// (`chartFrames(event)`), and `projected` whether that point is the
+    /// preview's projection. `preview` is the identity of the displayed
+    /// preview, nil when the hero prints committed truth; it names the chart
+    /// only when the chart's end is its projection. `history` is the read the
+    /// chart draws those frames over.
     nonisolated static func presented(committed: EventDetail, headline: EventDetail, observed: Date?,
-                                      chartEnd: LiveBlendPoint?, projected: Bool, preview: String?) -> Presented {
-        Presented(eventId: committed.id,
-                  headlineBasis: preview ?? headlineBasis(of: committed),
-                  probability: headline.currentOdds?.homeProbability, observed: observed,
-                  chartBasis: projected ? preview ?? "none" : "-",
-                  chartEdge: chartEnd?.date, chartProbability: chartEnd?.homeProbability)
+                                      chartEnd: LiveBlendPoint?, projected: Bool, preview: String?,
+                                      history: EventHistoryResponse?) -> Presented {
+        let chart = drawnChartEnd(chartEnd, projected: projected, preview: preview, history: history)
+        return Presented(eventId: committed.id,
+                         headlineBasis: preview ?? headlineBasis(of: committed),
+                         probability: headline.currentOdds?.homeProbability, observed: observed,
+                         chartBasis: chart.basis, chartEdge: chart.edge,
+                         chartProbability: chartEnd?.homeProbability, chartObserved: chartEnd?.date)
+    }
+
+    /// #10090 — where the chart draws `end` and under whose identity. Each
+    /// kind of end carries its own provenance; none borrows the headline's:
+    /// - the preview's projection: the displayed preview's identity, at its
+    ///   observation time.
+    /// - the committed headline's marker over an older pin
+    ///   (`BlendPreview.headlineOverOlderPin`): the marker itself is never
+    ///   drawn; the chart re-values the pin and the pin keeps its time
+    ///   (`OddsChartView.extendingBlendToLiveEdge`). So the edge is the pin's,
+    ///   and the basis is the revision the marker carries, which authorized
+    ///   the value drawn there. A pin this read no longer re-values has no
+    ///   edge (no mark), never the marker's own time.
+    /// - a committed buffer frame: the basis it was appended under
+    ///   (`LiveBlendPoint.basis`), or `-` when it carries none.
+    nonisolated static func drawnChartEnd(_ end: LiveBlendPoint?, projected: Bool, preview: String?,
+                                          history: EventHistoryResponse?) -> (basis: String, edge: Date?) {
+        guard let end else { return ("-", nil) }
+        if projected { return (preview ?? "none", end.date) }
+        if let authority = end.headlineOverPin {
+            let pin = history.flatMap {
+                BlendPreview.olderPinUnderHeadline($0, authority: authority, at: end.date, p: end.homeProbability)
+            }
+            return (basis(revision: authority.base, clock: nil), pin?.timestamp.asDate)
+        }
+        return (end.basis ?? "-", end.date)
     }
 
     static func viewUpdated(from old: Presented, to new: Presented) {
@@ -248,9 +280,11 @@ enum LiveTimingSeam {
                       probability: probability(new.probability), observed: stamp(new.observed)))
         }
         if let edge = new.chartEdge,
-           edge != old.chartEdge || new.chartBasis != old.chartBasis || new.chartProbability != old.chartProbability {
+           edge != old.chartEdge || new.chartBasis != old.chartBasis || new.chartProbability != old.chartProbability
+            || new.chartObserved != old.chartObserved {
             emit(Mark(name: .viewChartUpdated, eventId: new.eventId, path: "view", basis: new.chartBasis,
-                      stamp: stamp(edge), probability: probability(new.chartProbability)))
+                      stamp: stamp(edge), probability: probability(new.chartProbability),
+                      observed: stamp(new.chartObserved)))
         }
     }
 

@@ -1566,46 +1566,54 @@ final class EventDetailViewModel: ObservableObject {
     ///
     /// Evaluated with every body. With no preview displayed, `headline` and
     /// `displayedProbabilityObservedAt` return the committed value at their
-    /// first guard, so it reads those directly: no copy, no projection.
-    /// `chartFrames` may then add the committed headline as a marker that
-    /// re-values an older pin (`BlendPreview.headlineOverOlderPin`); the seam
-    /// does not see it, and `chartEnd` stays the committed buffer's last
-    /// frame. While a preview shows, the chart's end is projected once per
-    /// change of its inputs (`timingChartEnd`), not once per body.
+    /// first guard, so it reads those directly: no copy, no projection. The
+    /// chart's end is `chartFrames`' last point, projected once per change of
+    /// its inputs (`timingChartEnd`), not once per body: the preview's
+    /// projection, the committed headline's marker over an older pin
+    /// (`BlendPreview.headlineOverOlderPin`), or the committed buffer's last
+    /// frame. Each is named by its own provenance (`LiveTimingSeam.drawnChartEnd`).
     @MainActor
     func timingPresented(_ event: EventDetail) -> LiveTimingSeam.Presented {
         guard LiveTimingSeam.isRecording else { return .idle }
-        guard let shown = BlendPreview.displayed(blendPreview, held: event, now: previewNow()),
-              let state = blendPreview else {
-            return LiveTimingSeam.presented(
-                committed: event, headline: event, observed: event.heroProbabilityObservedAt?.asDate,
-                chartEnd: liveBlend.last, projected: false, preview: nil)
-        }
-        let key = TimingChartKey(state: state, shown: shown, committedEnd: liveBlend.last,
-                                 committedCount: liveBlend.count, history: historyGeneration)
+        let shown = BlendPreview.displayed(blendPreview, held: event, now: previewNow())
+        let key = TimingChartKey(state: shown == nil ? nil : blendPreview, shown: shown,
+                                 hero: event.heroProbability, heroObservedAt: event.heroProbabilityObservedAt,
+                                 revision: LiveEventPriceReconciliation.pairedFoldRevision(in: event),
+                                 committedEnd: liveBlend.last, committedCount: liveBlend.count,
+                                 history: historyGeneration)
         if timingChartEnd?.key != key {
             let chart = chartFrames(event)
-            timingChartEnd = (key, chart.last, chart.count > liveBlend.count)
+            // Only a displayed preview projects; a committed page's extra point is the marker.
+            timingChartEnd = (key, chart.last, shown != nil && chart.count > liveBlend.count)
+        }
+        guard shown != nil, let state = blendPreview else {
+            return LiveTimingSeam.presented(
+                committed: event, headline: event, observed: event.heroProbabilityObservedAt?.asDate,
+                chartEnd: timingChartEnd?.end, projected: false, preview: nil, history: history)
         }
         return LiveTimingSeam.presented(
             committed: event, headline: headline(event), observed: state.observedAt,
             chartEnd: timingChartEnd?.end, projected: timingChartEnd?.projected ?? false,
-            preview: LiveTimingSeam.previewBasis(of: state, in: blendPreviewReader))
+            preview: LiveTimingSeam.previewBasis(of: state, in: blendPreviewReader), history: history)
     }
 
-    /// Everything `chartFrames` reads while a preview shows: the displayed
-    /// preview and value (which carry the page and clock), the committed
-    /// line's end and the history read.
+    /// Everything `chartFrames` reads: the displayed preview and value (which
+    /// carry the page and clock; nil while none shows), the committed
+    /// headline an older pin's marker carries, the committed line's end and
+    /// the history read.
     private struct TimingChartKey: Equatable {
-        let state: BlendPreviewState
-        let shown: Double
+        let state: BlendPreviewState?
+        let shown: Double?
+        let hero: Double?
+        let heroObservedAt: String?
+        let revision: FoldRevision?
         let committedEnd: LiveBlendPoint?
         let committedCount: Int
         let history: Int
     }
 
-    /// The timing seam's last projected chart end, and whether it was the
-    /// preview's. Diagnostic only: the chart itself always calls `chartFrames`.
+    /// The timing seam's last chart end, and whether it was the preview's
+    /// projection. Diagnostic only: the chart itself always calls `chartFrames`.
     private var timingChartEnd: (key: TimingChartKey, end: LiveBlendPoint?, projected: Bool)?
 
     /// #11564 — a `preview_open_v3`: the domain and session this stream's
@@ -1718,12 +1726,12 @@ final class EventDetailViewModel: ObservableObject {
             }
             if let observed {
                 let edge = liveBlend.last?.date
+                let basis = LiveTimingSeam.headlineBasis(of: current)
                 liveBlend = LiveBlendBuffer.appending(
-                    LiveBlendPoint(date: observed, homeProbability: p), to: liveBlend
+                    LiveBlendPoint(date: observed, homeProbability: p, basis: basis), to: liveBlend
                 )
                 if liveBlend.last?.date != edge {
-                    LiveTimingSeam.modelChartAppended(eventId: current.id, path: "folded",
-                        basis: LiveTimingSeam.headlineBasis(of: current), at: observed)
+                    LiveTimingSeam.modelChartAppended(eventId: current.id, path: "folded", basis: basis, at: observed)
                 }
             }
         }
@@ -1914,15 +1922,15 @@ final class EventDetailViewModel: ObservableObject {
         // chart draws — so it is the one that has to keep up with the hero.
         if !priceIsNotNewer, let p = frame.p, let stamped {
             let edge = liveBlend.last?.date
+            let basis = LiveTimingSeam.basis(revision: frame.rev?.revision, clock: frame.updatedAt)
             liveBlend = LiveBlendBuffer.appending(
                 LiveBlendPoint(date: stamped, homeProbability: p,
-                               source: frame.source, sourceProbability: frame.sourceValue),
+                               source: frame.source, sourceProbability: frame.sourceValue, basis: basis),
                 to: liveBlend
             )
             // The buffer refuses an invalid or not-strictly-newer point.
             if liveBlend.last?.date != edge {
-                LiveTimingSeam.modelChartAppended(eventId: frame.eventId, path: "stream",
-                    basis: LiveTimingSeam.basis(revision: frame.rev?.revision, clock: frame.updatedAt), at: stamped)
+                LiveTimingSeam.modelChartAppended(eventId: frame.eventId, path: "stream", basis: basis, at: stamped)
             }
         }
 
