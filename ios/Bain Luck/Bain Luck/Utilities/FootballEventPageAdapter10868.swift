@@ -51,6 +51,12 @@ import SwiftUI
 /// unstarted game), so the page shows the suspended treatment and its
 /// unavailable words — production keeps its private `nflPairedHeadlineView`
 /// there. Nothing here subscribes, schedules, ranks or fetches.
+///
+/// IDENTITY: the ladders' projected-final pair (`pmSpreadData.projectedFinal`)
+/// that the live forecast and the pregame projection fall back on is read from
+/// the history the host holds, and only when that history's served `eventId` is
+/// this event's (`FootballInputIdentityAdapter10868.ladder`). A foreign history
+/// gives no ladder; the headline's own served values are unaffected.
 enum FootballEventPageAdapter10868 {
     typealias H1 = HockeyJourneyPageAdapter10868
 
@@ -60,29 +66,34 @@ enum FootballEventPageAdapter10868 {
         let probabilityObservedAt: Date?
         /// `vm.liveUpdateStatus == .interrupted`.
         let deliveryInterrupted: Bool
-        /// `vm.history?.pmSpreadData?.projectedFinal`, the ladders' pair.
-        let ladderHome: Double?
-        let ladderAway: Double?
+        /// `vm.history` — read here for the ladders' pair only, and only when it
+        /// is this event's (`ladder(for:)`).
+        let history: EventHistoryResponse?
         let now: Date
         let calendar: Calendar
         let locale: Locale
 
         init(probabilityObservedAt: Date?, deliveryInterrupted: Bool = false,
-             ladderHome: Double? = nil, ladderAway: Double? = nil, now: Date = Date(),
+             history: EventHistoryResponse? = nil, now: Date = Date(),
              calendar: Calendar = .current, locale: Locale = .current) {
             self.probabilityObservedAt = probabilityObservedAt
             self.deliveryInterrupted = deliveryInterrupted
-            self.ladderHome = ladderHome
-            self.ladderAway = ladderAway
+            self.history = history
             self.now = now
             self.calendar = calendar
             self.locale = locale
         }
 
-        /// H1's host, for its phase, state and clock words.
+        /// This event's own ladders' pair, or none.
+        func ladder(for event: EventDetail) -> (home: Double?, away: Double?) {
+            FootballInputIdentityAdapter10868.ladder(history, for: event)
+        }
+
+        /// H1's host, for its phase, state and clock words. Football reads no
+        /// H1 projection, so no ladder is handed to it.
         var words: H1.Host {
             H1.Host(probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
-                    ladderHome: ladderHome, ladderAway: ladderAway, now: now, calendar: calendar, locale: locale)
+                    ladderHome: nil, ladderAway: nil, now: now, calendar: calendar, locale: locale)
         }
     }
 
@@ -180,7 +191,7 @@ enum FootballEventPageAdapter10868 {
             baseline: PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds),
             score: center,
             forecast: EventDetailView.liveForecast11296(
-                event, ladderHome: host.ladderHome, ladderAway: host.ladderAway,
+                event, ladderHome: host.ladder(for: event).home, ladderAway: host.ladder(for: event).away,
                 hasScore: actual != nil, now: host.now),
             gameState: H1.stateWords(event, phase: .live, host: host.words).state)
     }
@@ -239,8 +250,9 @@ enum FootballEventPageAdapter10868 {
     /// The headline's printed integers: `projectionText` → `projectionFigure9483`
     /// → `projectedPair11285`. A figure that is not a plain pair is none.
     static func projectedPair(_ event: EventDetail, host: Host) -> FootballPointsPair10868? {
+        let ladder = host.ladder(for: event)
         guard let text = EventDetailView.projectionText(
-            event, ladderHome: host.ladderHome, ladderAway: host.ladderAway,
+            event, ladderHome: ladder.home, ladderAway: ladder.away,
             hasScore: score(event) != nil, now: host.now),
               let pair = EventDetailView.projectedPair11285(EventDetailView.projectionFigure9483(text))
         else { return nil }

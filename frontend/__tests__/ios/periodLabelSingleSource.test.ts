@@ -154,6 +154,13 @@ const NOT_PERIOD_PARSERS = new Map([
     // producer's.
     "ports the producer's SOCCER REGULATION PHASES ('1st half', 'halftime', minutes) to decide whether a 90-minute forecast still applies — returns a phase, never labels a period",
   ],
+  [
+    join(IOS_ROOT, "Utilities/FootballPeriodWinnersCopyAdapter10868.swift"),
+    // #10868. The final quarter-winner card's reader copy, in one file. Its
+    // period labels come from `PeriodLabel.lineScoreColumn` / `PeriodLabel.spoken`
+    // (FootballPeriodWinnersAdapter10868); this file only holds prose around them.
+    "holds the final quarter-winner card's reader copy ('Quarter winners · final', 'Tied quarter', 'No overtime', '… excludes overtime.') — prose only, never parses or labels a clock or period string",
+  ],
 ]);
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo

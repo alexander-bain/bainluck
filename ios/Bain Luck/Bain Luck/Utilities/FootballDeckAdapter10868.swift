@@ -34,8 +34,17 @@ import Foundation
 /// NFL only (`NFLRecognizablePage9483.isNFL`); the NBA ladders and MLB stories
 /// the same deck carries for other sports are not this screen's. The host passes
 /// the event the headline prints (`vm.headline(event)`), the history, the game
-/// markets, the clock the history arrived on, the ladders' pair and now.
+/// markets, the clock the history arrived on and now.
 /// Nothing here fetches, subscribes or schedules.
+///
+/// IDENTITY: `ProjectedFinalPointsMount.input` takes a sport, a status and a
+/// history but no expected event, and `NFLMilestoneCard9483.cards` takes bare
+/// props, so each entry point below scopes its own payload first
+/// (`FootballInputIdentityAdapter10868`): another game's history draws no
+/// projected finish, and another game's markets deal no milestone card. The
+/// ladders' pair the live forecast reads comes from this event's own history,
+/// never from a number handed in beside it. A foreign history leaves the
+/// milestones standing, and foreign markets leave the projected finish.
 enum FootballDeckAdapter10868 {
 
     /// What the host already holds, passed in unchanged.
@@ -43,16 +52,10 @@ enum FootballDeckAdapter10868 {
         /// `vm.historyArrivedAt` — the reader's clock when the history arrived.
         /// Nil keeps the projected points to a finished page, as production does.
         let historyArrivedAt: Date?
-        /// `vm.history?.pmSpreadData?.projectedFinal`, which the live headline's
-        /// forecast reads.
-        let ladderHome: Double?
-        let ladderAway: Double?
         let now: Date
 
-        init(historyArrivedAt: Date?, ladderHome: Double? = nil, ladderAway: Double? = nil, now: Date = Date()) {
+        init(historyArrivedAt: Date?, now: Date = Date()) {
             self.historyArrivedAt = historyArrivedAt
-            self.ladderHome = ladderHome
-            self.ladderAway = ladderAway
             self.now = now
         }
     }
@@ -68,10 +71,11 @@ enum FootballDeckAdapter10868 {
         return cards.map { $0.current(at: host.now) }
     }
 
-    /// `EventDetailView.projectedPointsInput`.
+    /// `EventDetailView.projectedPointsInput`, on this event's own history only.
     static func projectedInput(_ event: EventDetail, history: EventHistoryResponse?,
                                host: Host) -> ProjectedFinalPointsSeries.Input? {
-        ProjectedFinalPointsMount.input(
+        guard let history = FootballInputIdentityAdapter10868.history(history, for: event) else { return nil }
+        return ProjectedFinalPointsMount.input(
             sportKey: event.sport, eventStatus: event.status, history: history,
             finalHome: event.homeScore, finalAway: event.awayScore, asOf: host.historyArrivedAt)
     }
@@ -81,22 +85,27 @@ enum FootballDeckAdapter10868 {
         NFLFinishCard9483.build(
             projectedInput(event, history: history, host: host),
             finalBaseline: EventDetailView.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) },
-            liveBaseline: liveBaseline(event, host: host))
+            liveBaseline: liveBaseline(event, history: history, host: host))
     }
 
     /// `EventDetailView.liveCardBaseline11296`: the live headline's admitted
-    /// retained pair, its served halves unrounded, or nil.
-    static func liveBaseline(_ event: EventDetail, host: Host) -> (away: Double, home: Double)? {
+    /// retained pair, its served halves unrounded, or nil. The ladders' pair is
+    /// this event's own history's.
+    static func liveBaseline(_ event: EventDetail, history: EventHistoryResponse?,
+                             host: Host) -> (away: Double, home: Double)? {
         let hasScore = EventDetailView.showsScore(status: event.status, away: event.awayScore, home: event.homeScore)
+        let ladder = FootballInputIdentityAdapter10868.ladder(history, for: event)
         let headline = EventDetailView.liveForecast11296(
-            event, ladderHome: host.ladderHome, ladderAway: host.ladderAway, hasScore: hasScore, now: host.now)
+            event, ladderHome: ladder.home, ladderAway: ladder.away, hasScore: hasScore, now: host.now)
         return LivePregameComparison11296.servedHalves(headline, projection: event.pregameProjection)
     }
 
-    /// The player milestone cards, as `nflCardDeck` builds them.
+    /// The player milestone cards, as `nflCardDeck` builds them, from this
+    /// event's own markets only.
     static func milestones(_ event: EventDetail, markets: GameMarketsResponse?, host: Host) -> [NFLMilestoneCard9483] {
-        NFLMilestoneCard9483.cards(
-            props: markets?.playerProps ?? [], eventStatus: event.status,
+        guard let markets = FootballInputIdentityAdapter10868.markets(markets, for: event) else { return [] }
+        return NFLMilestoneCard9483.cards(
+            props: markets.playerProps ?? [], eventStatus: event.status,
             commenceTime: event.commenceTime?.asDate,
             homeTeam: event.homeTeam, awayTeam: event.awayTeam, now: host.now)
     }

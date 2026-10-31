@@ -145,11 +145,14 @@ enum FootballTeamMilestonesAdapter10868 {
         var rows: [GameMarketPlayerProp]
     }
 
-    /// The rows of the one served market this card reads, in served order.
+    /// The rows of the one served market this card reads, in served order —
+    /// from this event's own markets only (`FootballInputIdentityAdapter10868`):
+    /// another game's markets, however plausible their clubs, draw no card.
     static func market(_ stat: Stat, event: EventDetail, markets: GameMarketsResponse?) -> [GameMarketPlayerProp]? {
+        guard let markets = FootballInputIdentityAdapter10868.markets(markets, for: event) else { return nil }
         var order: [String] = []
         var groups: [String: Market] = [:]
-        for prop in markets?.playerProps ?? [] {
+        for prop in markets.playerProps ?? [] {
             guard let subject = H3.subject(prop),
                   PlayerPropsFamily.isTeamSubject(subject, teams: [event.homeTeam, event.awayTeam]),
                   isStat(stat, prop, subject: subject, event: event),

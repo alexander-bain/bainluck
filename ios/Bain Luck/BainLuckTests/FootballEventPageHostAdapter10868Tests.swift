@@ -13,12 +13,13 @@ final class FootballEventPageHostAdapter10868Tests: XCTestCase {
     private typealias Card = FootballEventPageCard10868
 
     private func build(_ event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
-                       route: FootballRoute10868 = .nfl, reading: Host.Reading = Host.Reading()) -> Host.Built {
-        let pair = F.ladder(history)
-        return Host.build(route: route, event: event, history: history, historyArrivedAt: F.liveNow,
-                          markets: markets, probabilityObservedAt: F.liveObservedAt,
-                          ladderHome: pair.home, ladderAway: pair.away, now: F.liveNow, reading: reading,
-                          calendar: F.pacific, locale: F.locale)
+                       route: FootballRoute10868 = .nfl, reading: Host.Reading = Host.Reading(),
+                       binding: FootballPeriodWinnersAdapter10868.Binding? = nil,
+                       now: Date? = nil) -> Host.Built {
+        let clock = now ?? F.liveNow
+        return Host.build(route: route, event: event, history: history, historyArrivedAt: clock,
+                          markets: markets, probabilityObservedAt: F.liveObservedAt, periodBinding: binding,
+                          now: clock, reading: reading, calendar: F.pacific, locale: F.locale)
     }
 
     func testOnlyAnNFLGameTakesTheFootballScreen() throws {
@@ -93,7 +94,7 @@ final class FootballEventPageHostAdapter10868Tests: XCTestCase {
     func testAMilestoneLinesDetailsNameTheExactServedRow() throws {
         let markets = try F.markets(F.liveMarkets)
         let built = build(try F.detail(F.liveDetail), history: try F.history(F.liveHistory), markets: markets)
-        let rows = Host.rows(built.input, markets: markets)
+        let rows = Host.rows(built.input, event: try F.detail(F.liveDetail), markets: markets)
         let id = "Philadelphia vs Jacksonville: Passing Yards-Jalen Hurts: 200+"
         XCTAssertEqual(rows[id]?.pregameMark, 0.425)
         // The team field goals are not a milestone card's rows.
@@ -113,5 +114,63 @@ final class FootballEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(chosen.count, 1)
         XCTAssertNil(Host.teamOriginal("kalshi|no such row", event: event, markets: markets, now: F.liveNow,
                                        scope: built.originals))
+    }
+
+    // MARK: - The restored final period-winner story (Design 2026-10-31)
+
+    func testTheCompletedNflLivePageMountsThePeriodWinnersDirectlyBeforeThePlayers() throws {
+        let event = try F.detail(F.finalDetail)
+        let markets = try F.markets(F.finalMarkets)
+        let built = build(event, history: nil, markets: markets, route: .live, binding: F.quarterBinding,
+                          now: F.finalNow)
+        let cards = built.input.stories.map(\.card)
+        // No history here, so no projected finish: the period card leads, then the players.
+        XCTAssertEqual(cards.first, .periodWinners)
+        let model = FootballEventPageModel10868(built.input)
+        XCTAssertFalse(model.milestones.isEmpty)
+        XCTAssertEqual(Array(cards.dropFirst()), model.milestones.map { Card.milestone($0.id) })
+        XCTAssertTrue(model.isMounted(.periodWinners))
+        XCTAssertEqual(built.periodWinners.count, 12)
+
+        // Another route, the same game: not its card.
+        let nfl = build(event, history: nil, markets: markets, route: .nfl, binding: F.quarterBinding,
+                        now: F.finalNow)
+        XCTAssertFalse(nfl.input.stories.contains { $0.card == .periodWinners })
+        XCTAssertFalse(FootballEventPageModel10868(nfl.input).isMounted(.periodWinners))
+
+        // No owner binding: the story is not offered at all.
+        let unbound = build(event, history: nil, markets: markets, route: .live, now: F.finalNow)
+        XCTAssertNil(unbound.input.periodWinners)
+        XCTAssertFalse(unbound.input.stories.contains { $0.card == .periodWinners })
+
+        // The live game: not its phase.
+        let live = build(try F.detail(F.liveDetail), history: try F.history(F.liveHistory),
+                         markets: try F.markets(F.liveMarkets), route: .live, binding: F.quarterBinding)
+        XCTAssertNil(live.input.periodWinners)
+    }
+
+    func testAPeriodOriginalsDetailsOpenThatExactCatalogueOriginalWithTheSameTrade() throws {
+        let event = try F.detail(F.finalDetail)
+        let built = build(event, history: nil, markets: try F.markets(F.finalMarkets), route: .live,
+                          binding: F.quarterBinding, now: F.finalNow)
+        let q2 = try XCTUnwrap(built.periodWinners.first { $0.original.period == 2 && $0.original.side == .away })
+        let selection = try XCTUnwrap(Host.periodOriginal(q2.cellID, admitted: built.periodWinners,
+                                                          scope: built.originals))
+        XCTAssertEqual(selection.scope, built.originals.catalogue?.scope)
+        XCTAssertEqual(selection.identity, q2.identity)
+        let made = try XCTUnwrap(built.originals.catalogue?.originals.first { $0.identity == q2.identity })
+        XCTAssertEqual(made.pregame.figure, .value("29%"))
+        XCTAssertNil(Host.periodOriginal("kalshi|0|0", admitted: built.periodWinners, scope: built.originals))
+    }
+
+    func testTheHeldPeriodOriginalReachesTheCardUnchanged() throws {
+        let event = try F.detail(F.finalDetail)
+        let first = build(event, history: nil, markets: try F.markets(F.finalMarkets), route: .live,
+                          binding: F.quarterBinding, now: F.finalNow)
+        let q3Home = try XCTUnwrap(first.periodWinners.first { $0.original.period == 3 && $0.original.side == .home })
+        let held = build(event, history: nil, markets: try F.markets(F.finalMarkets), route: .live,
+                         reading: Host.Reading(periodSelection: q3Home.cellID), binding: F.quarterBinding,
+                         now: F.finalNow)
+        XCTAssertEqual(held.input.periodWinners?.selectedID, q3Home.cellID)
     }
 }

@@ -29,6 +29,13 @@ import Foundation
 /// then the player milestones — `NFLEventCardDeck9483.cards`), then the team
 /// milestones, then combined yards. The tracker lists the groups, not an order.
 ///
+/// ONE PHASE-SPECIFIC ADDITION (Design, 2026-10-31 review): the completed
+/// `nfl-live` page also mounts the approved final period-winner story
+/// (`FinalQuarterOutlooks` in the reference `Atlas.tsx`, mounted only on a
+/// completed `nfl-live` and directly before the player stories). The tracker
+/// omitted it; no other route and no pregame or live phase gains it. It sits
+/// after the projected finish and immediately before the player milestones.
+///
 /// `nfl-replay` serves its card set at the reader's `now` in this pass. Its
 /// replay mechanic — rebuilding every input as of a chosen instant and the
 /// transport to move that instant — is not built here (`replayDependency`).
@@ -55,6 +62,10 @@ nonisolated enum FootballCardFamily10868: String, CaseIterable, Equatable, Senda
     /// Combined rushing + receiving yards: the combined contract's milestone
     /// card beside `AdditiveStatSplitPresentation10868`.
     case combinedYards
+    /// The final period winners: every regulation period's outcomes, each with
+    /// its own pregame chance, the period's points and its own contract result
+    /// (`FootballPeriodWinnersPresentation10868`). Completed `nfl-live` only.
+    case periodWinners
 }
 
 nonisolated enum FootballRouteCardSet10868 {
@@ -66,7 +77,9 @@ nonisolated enum FootballRouteCardSet10868 {
         case .nfl, .stories, .replay:
             return [.totalAndMargin, .playerMilestones, .teamMilestones, .combinedYards]
         case .live:
-            return [.totalAndMargin, .playerMilestones]
+            return phase == .final
+                ? [.totalAndMargin, .periodWinners, .playerMilestones]
+                : [.totalAndMargin, .playerMilestones]
         case .teamStats:
             return [.teamMilestones]
         case .combined:

@@ -36,7 +36,7 @@ final class FootballDeckAdapter10868Tests: XCTestCase {
         let event = try F.detail(F.liveDetail)
         let history = try F.history(F.liveHistory)
         let markets = try F.markets(F.liveMarkets)
-        let host = F.deckHost(F.liveNow, arrivedAt: F.liveNow, history: history)
+        let host = F.deckHost(F.liveNow, arrivedAt: F.liveNow)
         let deck = D.deck(event, history: history, markets: markets, host: host)
 
         XCTAssertEqual(deck.map(\.id), [
@@ -69,7 +69,7 @@ final class FootballDeckAdapter10868Tests: XCTestCase {
         let event = try F.detail(F.liveDetail)
         let history = try F.history(F.liveHistory)
         let markets = try F.markets(F.liveMarkets)
-        let host = F.deckHost(F.liveNow, arrivedAt: F.liveNow, history: history)
+        let host = F.deckHost(F.liveNow, arrivedAt: F.liveNow)
 
         let input = ProjectedFinalPointsMount.input(
             sportKey: event.sport, eventStatus: event.status, history: history,
@@ -83,7 +83,7 @@ final class FootballDeckAdapter10868Tests: XCTestCase {
         XCTAssertEqual(D.deck(event, history: history, markets: markets, host: host), expected)
         // The detail serves no pregame projection, so the live card compares
         // with the history's own earlier pair.
-        XCTAssertNil(D.liveBaseline(event, host: host))
+        XCTAssertNil(D.liveBaseline(event, history: history, host: host))
     }
 
     func testWithoutTheHistoryClockTheLiveFinishIsRefusedAsProductionRefusesIt() throws {
@@ -91,7 +91,7 @@ final class FootballDeckAdapter10868Tests: XCTestCase {
         let history = try F.history(F.liveHistory)
         let markets = try F.markets(F.liveMarkets)
         let deck = D.deck(event, history: history, markets: markets,
-                          host: F.deckHost(F.liveNow, arrivedAt: nil, history: history))
+                          host: F.deckHost(F.liveNow, arrivedAt: nil))
         XCTAssertNil(D.finishCard(deck))
         XCTAssertEqual(D.milestoneCards(deck).count, 2)
     }

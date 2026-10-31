@@ -27,6 +27,12 @@ import SwiftUI
 /// last pregame row). The held inspection, window/scale controls and the live
 /// preview overlay are not built (H2's nil), and Details and Inspect stay offered
 /// unavailable until their owner contracts exist. Nothing here fetches.
+///
+/// IDENTITY: H2 takes the response and the event as two independent arguments
+/// and does not compare them. This wrapper does, before H2 reads a row: a
+/// response whose served `eventId` is not this event's id is another game's
+/// history and draws H2's honest "History unavailable" slot instead
+/// (`FootballInputIdentityAdapter10868`). Exact id only; H2 is not changed.
 enum FootballHistoryAdapter10868 {
     typealias H2 = HockeyJourneyHistoryAdapter10868
     typealias Host = HockeyJourneyHistoryAdapter10868.Host
@@ -38,6 +44,9 @@ enum FootballHistoryAdapter10868 {
     static func history(_ response: EventHistoryResponse, event: EventDetail,
                         phase: FootballEventPagePhase10868, host: Host,
                         inGameStart: H2.InGameStart = .lastPregameRow) -> FieldHistoryInput10868 {
+        guard let response = FootballInputIdentityAdapter10868.history(response, for: event) else {
+            return unavailable(event: event, phase: phase)
+        }
         let built = H2.history(response, event: event, phase: FootballEventPageAdapter10868.hockeyPhase(phase),
                                host: host, inGameStart: inGameStart)
         return footballWorded(built)

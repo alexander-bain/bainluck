@@ -132,6 +132,8 @@ nonisolated enum FootballEventPageCard10868: Hashable, Sendable {
     case teamFieldGoals
     /// Combined yards, by its milestone card's own `NFLMilestoneCard9483.id`.
     case combined(String)
+    /// The final period winners (completed `nfl-live` only).
+    case periodWinners
 
     /// The route family the card belongs to; the anchor belongs to none.
     var family: FootballCardFamily10868? {
@@ -141,6 +143,7 @@ nonisolated enum FootballEventPageCard10868: Hashable, Sendable {
         case .milestone: .playerMilestones
         case .teamSacks, .teamFieldGoals: .teamMilestones
         case .combined: .combinedYards
+        case .periodWinners: .periodWinners
         }
     }
 
@@ -153,6 +156,7 @@ nonisolated enum FootballEventPageCard10868: Hashable, Sendable {
         case .teamSacks: "teamSacks"
         case .teamFieldGoals: "teamFieldGoals"
         case .combined(let id): "combined:\(id)"
+        case .periodWinners: "periodWinners"
         }
     }
 }
@@ -308,6 +312,8 @@ struct FootballEventPageInput10868: Equatable {
     let stream: StoryStreamPresentation10868
     let stories: [FootballEventPageStory10868]
     let copy: FootballEventPageCopy10868
+    /// The final period-winner card, or nil (no owner binding, or not final).
+    var periodWinners: FootballPeriodWinnersInput10868? = nil
 }
 
 /// The owner's retained originals behind "All props", for the catalogue and
@@ -450,6 +456,14 @@ struct FootballEventPageModel10868: Equatable {
         return matches.count == 1 ? matches.first : nil
     }
 
+    /// The period-winner card: the route's own family, after the final only,
+    /// with at least one admitted original.
+    var periodWinners: FootballPeriodWinnersInput10868? {
+        guard routeShows(.periodWinners), input.phase == .final, let card = input.periodWinners,
+              card.hasOriginals else { return nil }
+        return card
+    }
+
     func isMounted(_ card: FootballEventPageCard10868) -> Bool {
         switch card {
         case .history: true
@@ -458,6 +472,7 @@ struct FootballEventPageModel10868: Equatable {
         case .teamSacks: teamSacks != nil
         case .teamFieldGoals: teamFieldGoals != nil
         case .combined(let id): combined(id) != nil
+        case .periodWinners: periodWinners != nil
         }
     }
 
@@ -557,6 +572,11 @@ struct FootballEventPagePresentation10868: View {
     var onTeamMilestoneDetails: ((FootballEventPageCard10868, String) -> Void)? = nil
     var onTeamMilestoneExpand: ((FootballEventPageCard10868, String) -> Void)? = nil
     var onSplitDetails: ((String) -> Void)? = nil
+    /// The period-winner card's exact original to hold, its Details, and its
+    /// full card (offered from the stream only).
+    var onPeriodSelect: ((String) -> Void)? = nil
+    var onPeriodDetails: ((String) -> Void)? = nil
+    var onPeriodExpand: (() -> Void)? = nil
 
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -733,6 +753,22 @@ struct FootballEventPagePresentation10868: View {
                     secondaryTint: DS.textSecondary,
                     onDetails: Self.relay(onSplitDetails, through: activation))
             }
+        }
+    }
+
+    /// The period-winner card with the host's callbacks, each after the
+    /// stream's activation hook when it sits in the stream. Full size offers
+    /// no open control of its own.
+    func periodWinnersContent(activation: StoryStreamCardActivation10868?) -> FootballPeriodWinnersPresentation10868? {
+        model.periodWinners.map { card in
+            let expand: (() -> Void)? = activation == nil ? nil : onPeriodExpand.map { open in
+                { activation?.request(); open() }
+            }
+            return FootballPeriodWinnersPresentation10868(
+                input: card,
+                onSelect: Self.relay(onPeriodSelect, through: activation),
+                onDetails: Self.relay(onPeriodDetails, through: activation),
+                onExpand: expand)
         }
     }
 
@@ -976,6 +1012,7 @@ struct FootballEventPagePresentation10868: View {
         case .milestone(let id): milestoneContent(id, reader: reader)
         case .teamSacks, .teamFieldGoals: pairedContent(card, activation: activation)
         case .combined(let id): combinedContent(id, reader: reader, activation: activation)
+        case .periodWinners: periodWinnersContent(activation: activation)
         }
     }
 

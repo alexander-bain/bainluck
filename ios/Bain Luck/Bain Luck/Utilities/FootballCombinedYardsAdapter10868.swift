@@ -67,7 +67,9 @@ enum FootballCombinedYardsAdapter10868 {
     /// `NFLMilestoneCard9483.cards` over the combined contract's rows only, each
     /// `current(at:)` now.
     static func cards(_ event: EventDetail, markets: GameMarketsResponse?, now: Date) -> [NFLMilestoneCard9483] {
-        let rows = (markets?.playerProps ?? []).filter { isCombined($0, event: event) }
+        // This event's own markets only (`FootballInputIdentityAdapter10868`).
+        let own = FootballInputIdentityAdapter10868.markets(markets, for: event)
+        let rows = (own?.playerProps ?? []).filter { isCombined($0, event: event) }
         guard !rows.isEmpty else { return [] }
         return NFLMilestoneCard9483.cards(
             props: rows, eventStatus: event.status, commenceTime: event.commenceTime?.asDate,

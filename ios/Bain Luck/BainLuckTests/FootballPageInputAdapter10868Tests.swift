@@ -24,7 +24,7 @@ final class FootballPageInputAdapter10868Tests: XCTestCase {
         let history = try F.history(F.liveHistory)
         let markets = try F.markets(F.liveMarkets)
         let deck = FootballDeckAdapter10868.deck(event, history: history, markets: markets,
-                                                 host: F.deckHost(F.liveNow, arrivedAt: F.liveNow, history: history))
+                                                 host: F.deckHost(F.liveNow, arrivedAt: F.liveNow))
         let team = F.teamHost(F.liveNow)
         let originals = FootballOriginalsAdapter10868.originals(event, markets: markets,
                                                                 host: F.originalsHost(F.liveNow), tint: .blue)

@@ -259,7 +259,11 @@ final class FootballEventPagePresentation10868Tests: XCTestCase {
         ]
         for route in FootballRoute10868.allCases {
             for phase in [FootballEventPagePhase10868.before, .live, .final] {
-                XCTAssertEqual(FootballRouteCardSet10868.families(route, phase: phase), expected[route],
+                // Design 2026-10-31: the completed nfl-live page restores the
+                // approved period-winner story, directly before the players.
+                let wanted: [FootballCardFamily10868]? = route == .live && phase == .final
+                    ? [.totalAndMargin, .periodWinners, .playerMilestones] : expected[route]
+                XCTAssertEqual(FootballRouteCardSet10868.families(route, phase: phase), wanted,
                                "\(route.rawValue) \(phase)")
             }
             XCTAssertEqual(FootballRouteCardSet10868.route(id: route.rawValue), route)

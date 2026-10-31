@@ -31,6 +31,16 @@ import SwiftUI
 /// The host passes the event, `/game-markets`, now, the reader's calendar, the
 /// tint and its held selection, passed through unchanged for the leaf to resolve
 /// by exact scope and identity. Nothing here fetches.
+///
+/// IDENTITY: the markets are read only when their served `eventId` is this
+/// event's (`FootballInputIdentityAdapter10868`); another game's markets list no
+/// original here, whatever their clubs and players.
+///
+/// PERIOD WINNERS: an original the period-winner story admitted
+/// (`FootballPeriodWinnersAdapter10868.Admitted`) shows, in its Details, the
+/// SAME admitted pregame trade and clock the card draws
+/// (`detailsReadings`), and its contract's own bound rule text
+/// (`detailsRules`); every other original is unchanged.
 enum FootballOriginalsAdapter10868 {
     typealias Details = OriginalMarketDetails9483
     typealias H4 = HockeyJourneyOriginalsAdapter10868
@@ -57,13 +67,18 @@ enum FootballOriginalsAdapter10868 {
     /// The originals group for the page at `host.now`. No served outcome is no
     /// catalogue, which draws `emptyWords`.
     static func originals(_ event: EventDetail, markets: GameMarketsResponse?, host: Host, tint: Color,
-                          selection: Details.Selection? = nil) -> FootballEventPageOriginals10868 {
+                          selection: Details.Selection? = nil,
+                          periodWinners: [FootballPeriodWinnersAdapter10868.Admitted] = []) -> FootballEventPageOriginals10868 {
         let phase = FootballEventPageAdapter10868.phase(event, now: host.now)
         let started = HockeyJourneyContributionAdapter10868.hasStarted(event, now: host.now)
-        let found = markets.map { H4.matched($0, status: event.status, now: host.now) } ?? []
-        let matrix = markets?.gameQuestionMatrix
+        let own = FootballInputIdentityAdapter10868.markets(markets, for: event)
+        let found = own.map { H4.matched($0, status: event.status, now: host.now) } ?? []
+        let matrix = own?.gameQuestionMatrix
+        let readings = FootballPeriodWinnersAdapter10868.detailsReadings(periodWinners)
+        let rules = FootballPeriodWinnersAdapter10868.detailsRules(periodWinners)
         let built = found.map {
-            original($0, event: event, phase: phase, started: started, matrix: matrix, host: host)
+            withPeriodBinding(original($0, event: event, phase: phase, started: started, matrix: matrix, host: host),
+                              reading: readings, rules: rules)
         }
         var labels: [Details.Identity: String] = [:]
         for (match, made) in zip(found, built) {
@@ -86,6 +101,22 @@ enum FootballOriginalsAdapter10868 {
     }
 
     // MARK: - One original
+
+    /// The original with the period-winner story's admitted reading and bound
+    /// rules for its exact identity, when it has them; otherwise unchanged.
+    static func withPeriodBinding(_ made: Details.Original, reading readings: [Details.Identity: Details.Reading],
+                                  rules: [Details.Identity: [String]]) -> Details.Original {
+        let reading = readings[made.identity]
+        let bound = rules[made.identity]
+        guard reading != nil || bound != nil else { return made }
+        let about = bound.map {
+            Details.About(source: made.about.source, rules: .verified($0), provenance: made.about.provenance,
+                          historicalQuote: made.about.historicalQuote)
+        } ?? made.about
+        return Details.Original(identity: made.identity, title: made.title, outcome: made.outcome, mode: made.mode,
+                                pregame: reading ?? made.pregame, later: made.later, grade: made.grade,
+                                about: about, beforeLabel: made.beforeLabel)
+    }
 
     static func original(_ match: H4.Match, event: EventDetail, phase: FootballEventPagePhase10868,
                          started: Bool, matrix: EventQuestionMatrix?, host: Host) -> Details.Original {

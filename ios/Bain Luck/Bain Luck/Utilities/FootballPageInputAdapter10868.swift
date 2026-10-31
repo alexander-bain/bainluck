@@ -13,6 +13,8 @@ import Foundation
 ///   - deck                             part two (the production deck), passed in
 ///   - team sacks / field goals         part three, passed in
 ///   - combined yards                   part four, passed in
+///   - period winners                   `FootballPeriodWinnersAdapter10868`, passed in
+///                                      (completed `nfl-live` only, by the route set)
 ///   - originals count                  part six's catalogue size, for All props
 ///   - which stories                    `FootballRouteCardSet10868` for the route,
 ///                                      and the screen's own mount rules
@@ -24,9 +26,11 @@ import Foundation
 /// is NBA's (`NBAStoryStreamPolicy9483`); football has none, so this file offers
 /// no playback control and no dwell, elects no "latest" card and runs no timer:
 /// the host's held card is shown, Previous/Next name its neighbours in the
-/// screen's fixed order (the production deck's — the projected finish, then the
-/// player milestones — then team milestones, then combined yards), and nothing
-/// moves unless the reader asks. Ranking stays the stream owner's (#9483).
+/// screen's fixed order (the projected finish, the final period winners, the
+/// player milestones, team milestones, then combined yards — the deck's own
+/// order with the period card directly before the players, as the approved
+/// completed page mounts it), and nothing moves unless the reader asks.
+/// Ranking stays the stream owner's (#9483).
 enum FootballPageInputAdapter10868 {
 
     /// The host's own stream state — what the reader is looking at.
@@ -59,6 +63,7 @@ enum FootballPageInputAdapter10868 {
         teamSacks: PairedMilestoneInput10868?,
         teamFieldGoals: PairedMilestoneInput10868?,
         combined: [FootballCombinedStory10868],
+        periodWinners: FootballPeriodWinnersInput10868? = nil,
         originalsCount: Int?,
         stream state: StreamState,
         host: FootballEventPageAdapter10868.Host
@@ -76,16 +81,17 @@ enum FootballPageInputAdapter10868 {
                 headline: FootballEventPageAdapter10868.headline(event, host: host),
                 history: history, deck: deck, teamSacks: teamSacks, teamFieldGoals: teamFieldGoals,
                 combined: combined, stream: stream, stories: stories,
-                copy: copy(originalsCount: originalsCount))
+                copy: copy(originalsCount: originalsCount), periodWinners: periodWinners)
         }
         let candidates = candidateCards(deck: deck, teamSacks: teamSacks, teamFieldGoals: teamFieldGoals,
-                                        combined: combined)
+                                        combined: combined, periodWinners: periodWinners)
         let draft = FootballEventPageModel10868(page(
             stream: StoryStreamPresentation10868(scope: scope, heading: Words.streamHeading, cards: []),
             stories: []))
         let offered = candidates.filter { draft.isMounted($0) }
         let names = Dictionary(offered.map { ($0, name($0, deck: deck, teamSacks: teamSacks,
-                                                       teamFieldGoals: teamFieldGoals, combined: combined)) },
+                                                       teamFieldGoals: teamFieldGoals, combined: combined,
+                                                       periodWinners: periodWinners)) },
                                uniquingKeysWith: { first, _ in first })
         return page(stream: stream(scope: scope, offered: offered, names: names, state: state),
                     stories: offered.map { FootballEventPageStory10868(cardID: $0.key, card: $0) })
@@ -99,9 +105,11 @@ enum FootballPageInputAdapter10868 {
     /// Every card the parts supplied, in the screen's fixed order.
     static func candidateCards(deck: [NFLEventCard9483], teamSacks: PairedMilestoneInput10868?,
                                teamFieldGoals: PairedMilestoneInput10868?,
-                               combined: [FootballCombinedStory10868]) -> [FootballEventPageCard10868] {
+                               combined: [FootballCombinedStory10868],
+                               periodWinners: FootballPeriodWinnersInput10868? = nil) -> [FootballEventPageCard10868] {
         var cards: [FootballEventPageCard10868] = []
         if FootballDeckAdapter10868.finishCard(deck) != nil { cards.append(.finish) }
+        if periodWinners != nil { cards.append(.periodWinners) }
         cards += FootballDeckAdapter10868.milestoneCards(deck).map { .milestone($0.id) }
         if teamSacks != nil { cards.append(.teamSacks) }
         if teamFieldGoals != nil { cards.append(.teamFieldGoals) }
@@ -141,7 +149,8 @@ enum FootballPageInputAdapter10868 {
     /// Each card's full name, in its own owner's words.
     static func name(_ card: FootballEventPageCard10868, deck: [NFLEventCard9483],
                      teamSacks: PairedMilestoneInput10868?, teamFieldGoals: PairedMilestoneInput10868?,
-                     combined: [FootballCombinedStory10868]) -> String {
+                     combined: [FootballCombinedStory10868],
+                     periodWinners: FootballPeriodWinnersInput10868? = nil) -> String {
         switch card {
         case .history:
             return HockeyJourneyHistoryAdapter10868.Words.title
@@ -157,6 +166,8 @@ enum FootballPageInputAdapter10868 {
         case .combined(let id):
             let story = combined.first { $0.card.id == id }
             return story.map { NFLEventCard9483.milestone($0.card).title } ?? card.key
+        case .periodWinners:
+            return periodWinners?.words.title ?? card.key
         }
     }
 
