@@ -43,7 +43,9 @@ import os
 /// frame, never the newest revision the stream has seen.
 ///
 /// IDs, revisions, printed probabilities and source clocks only; no user data.
-/// Not a framework: seven event names, no export, no collector.
+/// Not a framework: seven event names, no export, no collector. The detail
+/// read's clock exchange writes two more lines to the same log
+/// (`ClockExchange`).
 @MainActor
 enum LiveTimingSeam {
     /// One emitted mark. `basis` is `rev:<row>=<n>;…` (rows sorted), else
@@ -343,5 +345,71 @@ enum LiveTimingSeam {
     nonisolated private static func message(_ mark: Mark) -> String {
         "event=\(mark.eventId) path=\(mark.path) basis=\(mark.basis) stamp=\(mark.stamp)"
             + " p=\(mark.probability) observed=\(mark.observed)"
+    }
+}
+
+/// #10090 — the detail read's clock exchange: two Default (`notice`) lines in
+/// the `liveTiming` log that bracket one `GET /api/events/<id>` on the same
+/// trace clock as every mark above. The second carries the window the response
+/// read its row in, on the database's own clock (`state_read_not_before` /
+/// `state_read_not_after`), and whether this request's build read it
+/// (`state_read_fresh`). Build 96 had no exchange, so every hold was scored
+/// on an ASSUMED phone↔server clock.
+///
+/// A reader pairs the lines by `seq` and uses only `http=200 fresh=true`: the
+/// offset θ = database − trace then lies in
+/// (`not_after` − received, `not_before` − sent).
+///
+/// `sent` is written after the auth token is read and immediately before the
+/// request leaves; `received` immediately after the body lands, from a 3-key
+/// decode of the same bytes. The decode follows the true receipt, so it can
+/// only widen the bracket, never narrow it. A transport failure still answers
+/// its `sent` line, with `http=-`. A local TTL serve never reaches the wire and
+/// prints nothing. IDs and server clocks only; no user data.
+nonisolated enum ClockExchange {
+    private static let log = Logger(subsystem: "com.bainluck", category: "liveTiming")
+
+    /// The event id of a detail read: `/api/events/<digits>` exactly. History,
+    /// publications, game markets and the live list are not exchanges.
+    static func eventId(path: String) -> Int? {
+        let prefix = "/api/events/"
+        guard path.hasPrefix(prefix) else { return nil }
+        let id = path.dropFirst(prefix.count)
+        guard !id.isEmpty, id.allSatisfy({ ("0"..."9").contains($0) }) else { return nil }
+        return Int(id)
+    }
+
+    nonisolated private struct Anchors: Decodable {
+        let fresh: Bool?
+        let notBefore: String?
+        let notAfter: String?
+
+        enum CodingKeys: String, CodingKey {
+            case fresh = "state_read_fresh"
+            case notBefore = "state_read_not_before"
+            case notAfter = "state_read_not_after"
+        }
+    }
+
+    static func sentLine(seq: Int, eventId: Int, freshAsk: Bool) -> String {
+        "clock.exchange.sent seq=\(seq) event=\(eventId) fresh_ask=\(freshAsk ? 1 : 0)"
+    }
+
+    /// `status` nil: the transport failed and no response arrived. A body that
+    /// does not decode, or a key it lacks, prints `-`; so does a stamp with a
+    /// space in it, which would split the line.
+    static func receivedLine(seq: Int, eventId: Int, status: Int?, body: Data?) -> String {
+        let anchors = body.flatMap { try? JSONDecoder().decode(Anchors.self, from: $0) }
+        func field(_ value: String?) -> String {
+            guard let value, !value.isEmpty, !value.contains(where: \.isWhitespace) else { return "-" }
+            return value
+        }
+        return "clock.exchange.received seq=\(seq) event=\(eventId) http=\(status.map(String.init) ?? "-")"
+            + " fresh=\(anchors?.fresh.map { $0 ? "true" : "false" } ?? "-")"
+            + " not_before=\(field(anchors?.notBefore)) not_after=\(field(anchors?.notAfter))"
+    }
+
+    static func emit(_ line: String) {
+        log.notice("\(line, privacy: .public)")
     }
 }
