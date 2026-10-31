@@ -712,6 +712,255 @@ def _wall() -> float:
     return time.time()
 
 
+def _stamp_span_clock() -> float:
+    """#10090 `StampSpans`' monotonic clock. Its own seam, so the spans never
+    take a reading from (or advance) a rig's `_mono`."""
+    return time.monotonic()
+
+
+def _stamp_span_cpu() -> float:
+    """#10090 `StampSpans`: CPU seconds on this thread, the event loop's."""
+    return time.thread_time()
+
+
+class StampSpans:
+    """#10090 — where this refresher's stamp time went, per venue minute line.
+
+    Every `_refresh_batch` transaction, from any caller (game flush, side
+    loops, admitted workers, debt), on wall clock:
+
+    - `slot`: waiting for one of the FRESH_STAMP_WORKERS session slots, then
+      opening the session.
+    - `read`: `_read_groups` and the cold orientation fallback (`_oriented`).
+      An AsyncSession checks its connection out on its first statement, so pool
+      checkout lands here (in `write` for a prepared group).
+    - `compute`: the synchronous rest of the transaction body (readings,
+      proofs, frames). Nothing in it awaits, so it is CPU on the loop.
+    - `write`: the lock-budget SET plus the stamp's savepoint scope (its row
+      UPDATE, owed chart point and custody INSERTs, savepoint release or
+      rollback).
+    - `commit`: leaving the session (COMMIT, close) and its slot.
+    - `publish`: previews published inside the transaction, then everything
+      after COMMIT (committed frames and preview settlement).
+
+    `prepared` reads (`_prepare_groups`, one shared read for several fresh
+    events, no stamp of its own) add their slot wait and read to `slot` and
+    `read` and are counted apart from `stamp_tx`.
+
+    `checkout` is the part of `read`/`write` spent until the consumer pool
+    handed a connection over (`ws_consumer_sessions.checkout_probe`), and
+    `pool_full=K/P` is K of P probed transactions whose body began with every
+    pool connection out. Both are nested, never added to the buckets.
+
+    LOOP WAIT. The exact time a ready stamp waited for the loop is not
+    attributable without hooking every resume. What the line gives instead,
+    from two thread-CPU reads per transaction: `loop_busy`, the loop thread's
+    CPU spent while stamps awaited (other tasks, plus the stamp's own work
+    inside its awaits), the upper bound on that wait; and `loop_idle`, the
+    awaited time with the loop thread idle, which is time spent truly waiting
+    on the database, the pool or Redis. Mostly `loop_busy` means more workers
+    will not help; mostly `loop_idle` means they can.
+
+    `workers` is FRESH_STAMP_WORKERS; `slots_max`/`slots_mean` are slots in
+    use (any holder, the stamp included) as each transaction got its own;
+    `slot_full` is how many transactions found no slot free and waited.
+
+    Transactions overlap, so every bucket is stamp-seconds and can sum past
+    60 s a minute. A transaction joins the minute it ends in. Log only:
+    monotonic deltas, no await, no query.
+    """
+
+    SPANS = ("slot", "read", "compute", "write", "commit", "publish")
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.transactions = 0
+        self.events = 0
+        self.prepared = 0
+        self.spent = dict.fromkeys(self.SPANS, 0.0)
+        self.checkout = 0.0
+        self.pool_full = 0
+        self.probed = 0
+        self.busy = 0.0
+        self.idle = 0.0
+        self.slots_max = 0
+        self.slots_sum = 0
+        self.slots_seen = 0
+        self.slot_full = 0
+
+    def add_prepared(self, slot_s: float, read_s: float) -> None:
+        self.prepared += 1
+        self.spent["slot"] += max(0.0, slot_s)
+        self.spent["read"] += max(0.0, read_s)
+
+    def line(self) -> str:
+        spent = self.spent
+        mean = self.slots_sum / self.slots_seen if self.slots_seen else 0.0
+        return (
+            f"stamp_tx={self.transactions} events={self.events} "
+            f"prepared={self.prepared} "
+            f"stamp_slot={spent['slot']:.1f}s stamp_read={spent['read']:.1f}s "
+            f"stamp_compute={spent['compute']:.1f}s "
+            f"stamp_write={spent['write']:.1f}s "
+            f"stamp_commit={spent['commit']:.1f}s "
+            f"stamp_publish={spent['publish']:.1f}s "
+            f"stamp_checkout={self.checkout:.1f}s "
+            f"pool_full={self.pool_full}/{self.probed} "
+            f"loop_busy={self.busy:.1f}s loop_idle={self.idle:.1f}s "
+            f"workers={FRESH_STAMP_WORKERS} slots_max={self.slots_max} "
+            f"slots_mean={mean:.1f} slot_full={self.slot_full}"
+        )
+
+
+class _StampSpan:
+    """Times its body into one `_StampTx` bucket. Sync or async ``with``; the
+    async form never suspends."""
+
+    __slots__ = ("_tx", "_bucket", "_started")
+
+    def __init__(self, tx: "_StampTx", bucket: str) -> None:
+        self._tx = tx
+        self._bucket = bucket
+
+    def __enter__(self) -> None:
+        self._started = _stamp_span_clock()
+
+    def __exit__(self, *_exc) -> bool:
+        self._tx.spent[self._bucket] += _stamp_span_clock() - self._started
+        return False
+
+    async def __aenter__(self) -> None:
+        self.__enter__()
+
+    async def __aexit__(self, *exc) -> bool:
+        return self.__exit__(*exc)
+
+
+class _StampBody:
+    """The transaction body's bounds, entered once the session is open."""
+
+    __slots__ = ("_tx", "_probe_cm")
+
+    def __init__(self, tx: "_StampTx") -> None:
+        self._tx = tx
+        self._probe_cm = None
+
+    async def __aenter__(self) -> None:
+        tx = self._tx
+        tx.body_started = _stamp_span_clock()
+        free = getattr(tx.slots, "_value", None)
+        if isinstance(free, int):
+            tx.slots_in_use = max(0, FRESH_STAMP_WORKERS - free)
+        try:
+            from app.tasks.ws_consumer_sessions import checkout_probe
+
+            self._probe_cm = checkout_probe(_stamp_span_clock)
+            tx.probe = self._probe_cm.__enter__()
+        except Exception:  # a log field never fails a stamp
+            self._probe_cm = tx.probe = None
+
+    async def __aexit__(self, *_exc) -> bool:
+        tx = self._tx
+        tx.body_ended = _stamp_span_clock()
+        awaited = sum(tx.spent.values())
+        tx.compute = max(0.0, tx.body_ended - tx.body_started - awaited)
+        if self._probe_cm is not None:
+            with contextlib.suppress(Exception):  # exited in another context
+                self._probe_cm.__exit__(None, None, None)
+        return False
+
+
+class _StampTx:
+    """One `_refresh_batch` transaction's spans (`StampSpans`).
+
+    As an async context manager it brackets the whole ``async with``: entered
+    before the session slot is taken, left after COMMIT and the slot's release.
+    The publication after it is added by `published`.
+    """
+
+    __slots__ = (
+        "spans", "events", "slots", "spent", "started", "cpu_started",
+        "body_started", "body_ended", "compute", "ended", "cpu_ended",
+        "slots_in_use", "probe",
+    )
+
+    def __init__(self, spans: Optional[StampSpans], events: int, slots) -> None:
+        self.spans = spans
+        self.events = events
+        self.slots = slots
+        self.spent = {"read": 0.0, "write": 0.0, "publish": 0.0}
+        self.started = self.cpu_started = None
+        self.body_started = self.body_ended = None
+        self.compute = 0.0
+        self.ended = self.cpu_ended = None
+        self.slots_in_use = None
+        self.probe = None
+
+    def span(self, bucket: str) -> _StampSpan:
+        return _StampSpan(self, bucket)
+
+    def body(self) -> _StampBody:
+        return _StampBody(self)
+
+    async def __aenter__(self) -> "_StampTx":
+        self.started = _stamp_span_clock()
+        self.cpu_started = _stamp_span_cpu()
+        spans = self.spans
+        locked = getattr(self.slots, "locked", None)
+        if spans is not None and callable(locked):
+            with contextlib.suppress(Exception):
+                if locked():
+                    spans.slot_full += 1
+        return self
+
+    async def __aexit__(self, *_exc) -> bool:
+        self.ended = _stamp_span_clock()
+        self.cpu_ended = _stamp_span_cpu()
+        spans = self.spans
+        if spans is None:
+            return False
+        spans.transactions += 1
+        spans.events += self.events
+        spent = spans.spent
+        wall = self.ended - self.started
+        if self.body_started is None:  # never got a session: all slot
+            spent["slot"] += wall
+        else:
+            spent["slot"] += self.body_started - self.started
+            body_ended = self.body_ended if self.body_ended is not None else self.ended
+            spent["commit"] += self.ended - body_ended
+        spent["compute"] += self.compute
+        for bucket, seconds in self.spent.items():
+            spent[bucket] += seconds
+        busy = max(0.0, min(self.cpu_ended - self.cpu_started, wall) - self.compute)
+        spans.busy += busy
+        spans.idle += max(0.0, wall - self.compute - busy)
+        if self.slots_in_use is not None:
+            spans.slots_max = max(spans.slots_max, self.slots_in_use)
+            spans.slots_sum += self.slots_in_use
+            spans.slots_seen += 1
+        probe = self.probe
+        if probe is not None and self.body_started is not None:
+            spans.probed += 1
+            spans.pool_full += bool(probe.full_at_start)
+            if probe.checked_out_at is not None:
+                spans.checkout += max(0.0, probe.checked_out_at - self.body_started)
+        return False
+
+    def published(self) -> None:
+        """The publication after COMMIT ended (or raised): add it."""
+        spans = self.spans
+        if spans is None or self.ended is None:
+            return
+        wall = max(0.0, _stamp_span_clock() - self.ended)
+        busy = min(wall, max(0.0, _stamp_span_cpu() - self.cpu_ended))
+        spans.spent["publish"] += wall
+        spans.busy += busy
+        spans.idle += wall - busy
+
+
 # Call-local timing for the existing optional-read failure receipt. A fetch
 # cancellation alone cannot say whether checkout/admission consumed its budget.
 # Ordinary stamp reads have no timing state; no payloads or event IDs are kept.
@@ -2783,6 +3032,8 @@ class LiveBlendRefresher:
         # One owner across refresh calls. A chart session cannot borrow slots
         # from a newer admission window or escape the three-session ceiling.
         self._session_slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
+        #: #10090 — this minute's stamp transaction spans, for the venue line.
+        self.stamp_spans = StampSpans()
         self._history: list[tuple] = []
         self._history_task: Optional[asyncio.Task] = None
         self._history_count = 0  # committed debt plus pre-COMMIT reservations
@@ -4826,8 +5077,15 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
 
         factory = self._session_factory or get_task_session
+        started = _stamp_span_clock()  # #10090 `StampSpans` (`prepared`)
         async with self._session_slot(), factory() as session:
-            return await self._read_groups(session, event_ids)
+            entered = _stamp_span_clock()
+            try:
+                return await self._read_groups(session, event_ids)
+            finally:
+                spans = getattr(self, "stamp_spans", None)
+                if spans is not None:
+                    spans.add_prepared(entered - started, _stamp_span_clock() - entered)
 
     def _session_slot(self):
         """The run's existing three slots, across quote and history owners."""
@@ -5048,20 +5306,25 @@ class LiveBlendRefresher:
             raise interrupted
 
     @contextlib.asynccontextmanager
-    async def _event_stamp_scope(self, session, *, single_event: bool):
-        """One event already owns the transaction; only siblings need a savepoint."""
-        if not single_event:
-            async with session.begin_nested():
+    async def _event_stamp_scope(self, session, *, single_event: bool, span=None):
+        """One event already owns the transaction; only siblings need a savepoint.
+
+        ``span`` (#10090 `StampSpans`) times the whole scope, its savepoint
+        and any rollback included. Log only.
+        """
+        with span if span is not None else contextlib.nullcontext():
+            if not single_event:
+                async with session.begin_nested():
+                    yield
+                return
+            try:
                 yield
-            return
-        try:
-            yield
-        except BaseException:
-            # A lock timeout aborts PostgreSQL's transaction. Without the
-            # redundant event SAVEPOINT, rollback the whole single-event
-            # transaction before the caller handles/requeues the failure.
-            await session.rollback()
-            raise
+            except BaseException:
+                # A lock timeout aborts PostgreSQL's transaction. Without the
+                # redundant event SAVEPOINT, rollback the whole single-event
+                # transaction before the caller handles/requeues the failure.
+                await session.rollback()
+                raise
 
     async def _refresh_batch(
         self,
@@ -5136,16 +5399,25 @@ class LiveBlendRefresher:
         # (a lock-budget raise, a cancellation), is closed as unsent.
         select_open = self._stage_hook("selection_open")
         selections: Optional[dict[int, tuple]] = None if select_open is None else {}
+        # #10090: this transaction's spans (`StampSpans`): slot to COMMIT, its
+        # body's awaited spans, then the publication after it. Log only.
+        tx = _StampTx(
+            getattr(self, "stamp_spans", None), len(event_ids),
+            getattr(self, "_session_slots", None),
+        )
         async with (
+            tx,
             self._normal_holds() as held,
             self._history_reservations(event_ids, now, owed_snapshots) as reservation,
             self._session_slot(), get_task_session() as session,
             self._selections_closer(selections),
+            tx.body(),
         ):
             reserved, history_ready = reservation
             self._stage_trace("attempt_session", event_ids)
             if prepared is None:
-                grouped = await self._read_groups(session, event_ids)
+                with tx.span("read"):
+                    grouped = await self._read_groups(session, event_ids)
             else:
                 grouped = {
                     eid: prepared[eid] for eid in event_ids if eid in prepared
@@ -5159,9 +5431,10 @@ class LiveBlendRefresher:
                 if self.preview:
                     # #10090: this source spoke for none of these events, so
                     # none of its pending values may keep speaking.
-                    await self._publish_previews(self._preview_settlement(
-                        event_ids, grouped, {}, set(), {},
-                    ))
+                    with tx.span("publish"):
+                        await self._publish_previews(self._preview_settlement(
+                            event_ids, grouped, {}, set(), {},
+                        ))
                 return
 
             # #837 — ONE LOCK ORDER, ONE SAVEPOINT PER EVENT WITH SIBLINGS.
@@ -5254,10 +5527,11 @@ class LiveBlendRefresher:
                 work = [("both", eid) for eid in ordered]
             for phase, event_id in work:
                 if phase == "preview":
-                    await self._preview_before_stamp(
-                        grouped, preview_plans, preview_seq, observation_only=preview_only,
-                        **({"selections": selections} if selections else {}),
-                    )
+                    with tx.span("publish"):
+                        await self._preview_before_stamp(
+                            grouped, preview_plans, preview_seq, observation_only=preview_only,
+                            **({"selections": selections} if selections else {}),
+                        )
                     continue
                 if phase == "stamp" and (event_id not in preview_plans or event_id in preview_only):
                     continue
@@ -5287,12 +5561,13 @@ class LiveBlendRefresher:
                                 )
                             continue
 
-                        home_prob = await self._oriented(
-                            session, event_id, reading.home_probability, reading=reading,
-                            **({"before_fallback": ensure_lock_budget} if len(grouped) == 1
-                               else {"before_fallback": sibling_fallback,
-                                     "fallback_scope": session.begin_nested}),
-                        )
+                        with tx.span("read"):
+                            home_prob = await self._oriented(
+                                session, event_id, reading.home_probability, reading=reading,
+                                **({"before_fallback": ensure_lock_budget} if len(grouped) == 1
+                                   else {"before_fallback": sibling_fallback,
+                                         "fallback_scope": session.begin_nested}),
+                            )
                         value = round(home_prob, 4)
 
                         # #5661 — before the throttle decides WHEN to re-stamp, ask
@@ -5402,9 +5677,10 @@ class LiveBlendRefresher:
                     # no SET command. Every actual stamp still installs the
                     # same budget before its savepoint and row UPDATE, and
                     # (#11138) bounds that UPDATE as a whole statement.
-                    await ensure_lock_budget(whole_statement=True)
+                    with tx.span("write"):
+                        await ensure_lock_budget(whole_statement=True)
                     async with self._event_stamp_scope(
-                        session, single_event=len(grouped) == 1,
+                        session, single_event=len(grouped) == 1, span=tx.span("write"),
                     ):
                         if proof_kwargs:
                             checked = compute_source_home_probability(
@@ -5704,6 +5980,7 @@ class LiveBlendRefresher:
             # first publication await. Cancellation cannot strand it.
             history_ready.set()
             self._start_history()
+            tx.published()  # #10090 `StampSpans`: COMMIT to here is `publish`
 
     async def _write_owed_snapshots(
         self, owed: list[tuple], now: float, get_task_session,

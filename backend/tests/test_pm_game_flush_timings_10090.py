@@ -54,7 +54,7 @@ def test_the_segment_sits_before_held_and_repeats_skipped_still_ends_the_line(ca
         "rank_commit=4.0s publish=0.5s stamp=0.5s",
     )
     assert "| game_flush n=7 total=6.0s max=2.5s phases=9 save=1.0s rank_commit=4.0s " \
-        "publish=0.5s stamp=0.5s | held withdrawn=0 " in line
+        "publish=0.5s stamp=0.5s | stamp_tx - | held withdrawn=0 " in line
     # The existing minute-line parsers keep reading what they read.
     assert re.search(r"skipped_locked=(\d+) repeats_skipped=(\d+)$", line).groups() == (
         "5", "4321",
@@ -64,7 +64,7 @@ def test_the_segment_sits_before_held_and_repeats_skipped_still_ends_the_line(ca
 
 def test_a_caller_without_timings_prints_a_dash(caplog):
     line = logged_line(caplog)
-    assert "outside_wide_book=0 | game_flush - | held withdrawn=0" in line
+    assert "outside_wide_book=0 | game_flush - | stamp_tx - | held withdrawn=0" in line
     assert line.endswith("repeats_skipped=4321")
 
 
@@ -212,10 +212,12 @@ def test_the_consumer_times_the_game_loop_and_logs_then_resets_each_minute():
     assert "_PM_GAME_FLUSH_TIMINGS.reset(token)" in timed
     stats = source[source.index("    async def stats_loop():"):]
     stats = stats[:stats.index("_report_liveness(")]
-    assert (
-        "_log_stats_line(stats, ws_stats, blend, game_flush=game_flush_timings.line())\n"
-        "            game_flush_timings.reset()"
-    ) in stats
+    assert "stats, ws_stats, blend, game_flush=game_flush_timings.line()," in stats
+    assert stats.index("game_flush=game_flush_timings.line(),") < stats.index(
+        "game_flush_timings.reset()")
+    # #10090 stamp_tx: the refresher's stamp spans ride the same line and reset.
+    assert '"stamp_tx": stamp_spans.line()' in stats
+    assert "stamp_spans.reset()" in stats
     # The side loops stay off it.
     side = source[source.index("    async def standalone_loop():"):source.index(
         "    async def stats_loop():")]

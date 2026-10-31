@@ -3309,6 +3309,7 @@ def _format_by_shard(ws_stats: dict) -> str:
 
 def _log_stats_line(
     stats: dict, ws_stats: dict, blend: dict, *, game_flush: str = "game_flush -",
+    stamp_tx: str = "stamp_tx -",
 ) -> None:
     """The once-a-minute socket line, including #837's coverage ratio.
 
@@ -3339,13 +3340,18 @@ def _log_stats_line(
     own `|` segment before `held`, so every existing field keeps its place and
     `repeats_skipped=` still ends the line. A caller without one prints
     `game_flush -`.
+
+    ``stamp_tx`` (#10090) is the minute's `live_blend_refresh.StampSpans.line()`
+    (every stamp transaction of this refresher, not only the game flush's),
+    its own `|` segment right after `game_flush`. A caller without one prints
+    `stamp_tx -`.
     """
     logger.info(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
-        "| %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
+        "| %s | %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
         "lock_timeouts=%d skipped_locked=%d repeats_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
@@ -3369,6 +3375,8 @@ def _log_stats_line(
         stats.get("trades_outside_wide_book", 0),
         # #10090: this minute's game flushes and where their time went.
         game_flush,
+        # #10090: this minute's stamp transactions and where their time went.
+        stamp_tx,
         # #9934: held prices a wide book priced out, withdrawn.
         stats.get("held_prices_withdrawn", 0),
         # #10090: still-held NOWAIT probes, kept out of `errors`.
@@ -7011,8 +7019,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             ws_stats = ws.stats
             owner = catalog_boundary.stamps
             stats["stamp_wait_s"] = owner.waited_s if owner is not None else 0.0
-            _log_stats_line(stats, ws_stats, blend, game_flush=game_flush_timings.line())
+            stamp_spans = getattr(blend_refresher, "stamp_spans", None)
+            _log_stats_line(
+                stats, ws_stats, blend, game_flush=game_flush_timings.line(),
+                **({"stamp_tx": stamp_spans.line()} if stamp_spans is not None else {}),
+            )
             game_flush_timings.reset()
+            if stamp_spans is not None:
+                stamp_spans.reset()
             open_connected = any(s.is_connected for s in open_sockets)
             if open_sockets:
                 stats.update(catalog_boundary.bridges.take_timing())
