@@ -372,6 +372,8 @@ RECEIPT_PREVIEW_INTERVAL_ENV = "PREVIEW_AT_RECEIPT_INTERVAL_S"
 #: held game's next stamp read is 13-21 s away under load (2026-10-31), and a
 #: graph that old is exactly the case this exists for. Review before raising.
 RECEIPT_GRAPH_MAX_AGE_S = 15.0
+#: The receipt worker logs its cumulative `receipt_preview_stats` at most this often.
+RECEIPT_STATS_LOG_INTERVAL_S = 60.0
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
 RECEIPT_QUOTE_RETENTION_S = 60.0
@@ -3837,9 +3839,13 @@ class LiveBlendRefresher:
         self.receipt_preview_stats: dict[str, int] = {
             "noted": 0, "proposed": 0, "unchanged": 0, "no_graph": 0, "old_graph": 0,
             "ambiguous": 0, "not_admitted": 0, "returned": 0, "withdrawn": 0, "errors": 0,
+            # Skips before composition (counted only; same returns as before):
+            "no_bound": 0, "routing": 0, "kept_no_graph": 0, "not_speaking": 0,
         }
         #: Wall seconds spent composing receipt previews (local CPU, no await).
         self.receipt_compose_s = 0.0
+        #: Monotonic time of the last `receipt-preview stats` line (0: none yet).
+        self._receipt_stats_logged_at = 0.0
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -8614,12 +8620,16 @@ class LiveBlendRefresher:
         """
         event_id = getattr(mark, "event_id", None)
         oid = getattr(mark, "outcome_id", None)
-        if (bound is None or event_id is None or oid is None
+        if (event_id is None or oid is None
                 or not _preview_at_receipt(self.source, event_id)):
+            return
+        if bound is None:
+            self.receipt_preview_stats["no_bound"] += 1
             return
         route = self.receipt_route
         token = route() if route is not None else 0
         if token is None:
+            self.receipt_preview_stats["routing"] += 1
             return
         quotes = self._receipt_quotes
         prior = quotes.pop(oid, None)
@@ -8630,9 +8640,11 @@ class LiveBlendRefresher:
         quotes[oid] = (round(float(mark.probability), 6), float(bound), mark, event_id, token, now)
         self.receipt_preview_stats["noted"] += 1
         if self._preview_graph_outcomes.get(oid) != event_id:
+            self.receipt_preview_stats["kept_no_graph"] += 1
             return  # kept for the overlay; no graph to compose it on yet
         speaking = self._receipt_speaking.get(event_id)
         if speaking is not None and oid not in speaking:
+            self.receipt_preview_stats["not_speaking"] += 1
             return  # kept for the overlay; not a leg of the market that speaks
         self._receipt_due[event_id] = None
         last = self._receipt_last.get(event_id)
@@ -8682,6 +8694,15 @@ class LiveBlendRefresher:
         while self._receipt_due or self._receipt_withdrawn:
             now = _mono()
             interval = _receipt_interval()
+            if now - self._receipt_stats_logged_at >= RECEIPT_STATS_LOG_INTERVAL_S:
+                # Cumulative since this refresher started; readers diff lines.
+                self._receipt_stats_logged_at = now
+                logger.info(
+                    "live_blend_refresh[%s]: receipt-preview stats %s compose_s=%.3f interval_s=%.2f",
+                    self.source,
+                    " ".join(f"{k}={v}" for k, v in self.receipt_preview_stats.items()),
+                    self.receipt_compose_s, interval,
+                )
             due, deferred = [], {}
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
