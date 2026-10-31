@@ -265,8 +265,10 @@ final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
         XCTAssertEqual(try headline(vm), 0.65, "the 4242/4243 fold shows its pending blend")
         XCTAssertEqual(vm.blendPreview?.expiresAt, t0 + 60)
         // A commit of the row about to leave: the parent withheld every later fold on it.
+        // The hero keeps the shown value only for the commit's hand-over (#10090).
         first.fire("fold_preview_floor", #"{"event_id":4242,"floor":{"4243":21}}"#)
-        XCTAssertNil(vm.blendPreview)
+        XCTAssertEqual(vm.blendPreview?.expiresAt, t0 + BlendPreview.commitFloorHandover)
+        clock.t = t0 + BlendPreview.commitFloorHandover
         XCTAssertEqual(try headline(vm), 0.5)
 
         // The authoritative detail now folds 4242 with 4244 instead of 4243.

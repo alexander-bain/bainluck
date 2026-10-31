@@ -1126,7 +1126,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         try await burstCase(final: "0.6") { image, _ in
             let drawn = try Self.readDrawn(image, expected: Self.burstWindow, final: 0.6)
             print("SUBSECOND-10090 drawn=burst-final-0.6 \(drawn.ends) hero=\(drawn.hero.joined(separator: "|")) \(drawn.detail)")
-            XCTAssertTrue(drawn.hero.contains { $0.contains("60%") } && drawn.hero.contains { $0.contains("40%") },
+            // #10090 item 39: the hero prints tenths.
+            XCTAssertTrue(drawn.hero.contains { $0.contains("60.0%") } && drawn.hero.contains { $0.contains("40.0%") },
                           "the hero prints the last frame: \(drawn.hero)")
             if let end = Self.passingEnd(drawn) {
                 XCTAssertEqual(end.bottom, 0.60, accuracy: 0.04,
