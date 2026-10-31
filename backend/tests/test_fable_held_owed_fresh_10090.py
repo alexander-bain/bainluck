@@ -148,3 +148,29 @@ async def test_with_the_switch_off_a_held_owed_game_waits_for_the_live_slot_as_t
     assert r.pending_event_ids() == frozenset({2, 50})
     r.release.set()
     await task
+
+
+async def test_a_held_owed_game_inside_its_floor_is_not_taken(clock, monkeypatch):
+    # Authority N1: the debt pass only ever takes due games, and so does this.
+    # A not-due held game is never stamped either way; taken, it would leave
+    # the old-debt order a budget-cut refresh left and join the window's
+    # events for nothing.
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "1")
+    r = _Gated(blocked={99, 7})
+    r.min_refresh_interval_s = 5.0
+    r.reader_held = lambda: frozenset({50})
+    task = await _running_call(r)
+    r._live_event_ids.update({50, 2})
+    r._last_refresh_at[50] = 1000.5  # stamped inside the floor
+    r.adopt_pending([50, 2])
+    r._pending_continuation = [50, 2]
+    assert r.admit_fresh([60], flush_started=1001.0) == {60}
+    window = r._admission
+    # `7ed2550d`: cont == [] and 50 in window.events.
+    assert r._pending_continuation == [50], r._pending_continuation
+    assert 50 not in window.events
+    await _settle()
+    assert 50 not in r.started
+    assert 50 in r.pending_event_ids()
+    r.release.set()
+    await task

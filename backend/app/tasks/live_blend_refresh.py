@@ -279,7 +279,7 @@ HANDOVER_FRESH_SWITCH = "handover_fresh"
 ADMITTED_STAMP_BATCH_SWITCH = "admitted_stamp_batch"
 #: `ADMITTED_LIVE_BATCH`'s runtime trial name: ``alternate`` between two values
 #: by period, read once per admitted worker turn whose pick is a live game with
-#: more live games queued (`_admitted_live_batch`).
+#: more live games queued (`_admitted_live_batch_size`).
 ADMITTED_LIVE_BATCH_SWITCH = "admitted_live_batch"
 #: #10090 runtime trial (``alternate`` 0/1, today 0), read once per debt drain
 #: that a caller says is deferred only by a buffered, not yet written withdrawal
@@ -5092,13 +5092,15 @@ class LiveBlendRefresher:
             # for the live-debt slot an unheld rider holds for a whole queue
             # turn. The same gate as the cohort's: never fenced (one attempt
             # per event), never an unfinished cohort or buffered withdrawal
-            # (``excluded``), and due below as every taken event is.
+            # (``excluded``), and due — as the debt pass takes only due games;
+            # a not-due one would leave `_pending_continuation` and join
+            # ``window.events`` for nothing (Authority N1).
             held = self._reader_held_ids()
             if held:
                 taken |= {
                     eid for eid in live_owed
                     if eid in held and eid not in taken and eid not in excluded
-                    and eid not in window.holding
+                    and eid not in window.holding and self._due(eid, flush_started)
                 }
         live_free = _admitted_live_debt_slots(slots) - len(window.live_debts)
         debt_excluded = excluded
