@@ -102,7 +102,9 @@ import {
   timeWords,
   type HockeyJourneyHost,
   type HockeyJourneySlot,
+  MATRIX_WORDS,
 } from "@/lib/eventPage10868/hockeyJourney";
+import { CONTRIBUTION_WORDS, ORIGINALS_WORDS } from "@/lib/eventPage10868/hockeyJourneyProps";
 
 const finalDetail = fixtures.finalDetail as unknown as EventDetailResponse;
 const finalHistory = fixtures.finalHistory as unknown as EventHistoryResponse;
@@ -879,5 +881,47 @@ describe("#10868 points and assists — the reader's held choice (native selecti
     expect(held.player?.id).toBe(HUGHES);
     expect(held.selected).toBeNull();
     expect(held.notice).toBe("Selected milestone unavailable.");
+  });
+});
+
+// ─── Reader words: one spelling on both platforms (Design copy principle, 2026-10-31) ─
+
+describe("every reader word the native hockey adapters and the web twin both name is spelled the same", () => {
+  const UTILITIES = join(__dirname, "../../../ios/Bain Luck/Bain Luck/Utilities");
+  /** The `enum Words` string constants of one native adapter, by name. */
+  const nativeWords = (file: string): Record<string, string> => {
+    const source = readFileSync(join(UTILITIES, file), "utf8");
+    const start = source.indexOf("enum Words");
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf("\n    }\n", start));
+    const words: Record<string, string> = {};
+    for (const m of body.matchAll(/static let (\w+) = "((?:[^"\\]|\\.)*)"/g)) words[m[1]] = m[2];
+    return words;
+  };
+  const tables: [string, Record<string, unknown>, number][] = [
+    ["HockeyJourneyPageAdapter10868.swift", MATRIX_WORDS, 19],
+    ["HockeyJourneyContributionAdapter10868.swift", CONTRIBUTION_WORDS, 20],
+    ["HockeyJourneyOriginalsAdapter10868.swift", ORIGINALS_WORDS, 11],
+  ];
+
+  it.each(tables)("%s", (file, web, sharedAtLeast) => {
+    const native = nativeWords(file);
+    const shared = Object.keys(native).filter((key) => key in web);
+    // Not vacuous: the parse finds the tables (counts at 2026-10-31; a new shared word only raises them).
+    expect(shared.length).toBeGreaterThanOrEqual(sharedAtLeast);
+    expect(Object.fromEntries(shared.map((key) => [key, web[key]]))).toEqual(
+      Object.fromEntries(shared.map((key) => [key, native[key]])),
+    );
+  });
+
+  it("the availability words say what is unavailable, never the pipeline", () => {
+    expect([MATRIX_WORDS.forecastWithheld, CONTRIBUTION_WORDS.notPriced, CONTRIBUTION_WORDS.boxSoFar,
+      ORIGINALS_WORDS.noSettlement, ORIGINALS_WORDS.disputed]).toEqual([
+      "Forecast unavailable", "Chance unavailable", "box score · update time not recorded",
+      "Result not recorded yet", "Result sources disagree",
+    ]);
+    const all = [MATRIX_WORDS, CONTRIBUTION_WORDS, ORIGINALS_WORDS].flatMap((t) =>
+      Object.values(t as Record<string, unknown>).filter((v): v is string => typeof v === "string"));
+    for (const word of all) expect(word).not.toMatch(/\b(served|priced|withheld|admitted|payload)\b/i);
   });
 });
