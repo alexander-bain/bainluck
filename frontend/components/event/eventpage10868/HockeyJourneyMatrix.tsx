@@ -17,6 +17,15 @@
  *      per-column floor and 2px rather than 4px side padding. Type sizes are
  *      unchanged. A caller that does not pass `compactColumns` never reaches
  *      it: its arrangements, classes and fit key are exactly as before;
+ *   2c. OPT-IN ONLY, next (`compactNamesAbove`): the same content-sized
+ *      aligned columns with NO team column — each team's FULL name (and its
+ *      Won/Lost) sits on its own row above that team's values, spanning the
+ *      columns and wrapping as words. Each team is its own `<tbody>`: the name
+ *      is a `scope="rowgroup"` header and every value cell also names its
+ *      column and its team through `headers`. Same values, labels, order and
+ *      type sizes; nothing is elided, hidden or scrolled. It exists for a
+ *      final whose single-word team names leave no room for a name column
+ *      (Bucs–Steelers at a 375px phone);
  *   3. one block per team of labelled metric pairs (`matrix.groups`), each pair
  *      side by side when it fits and one value per line when it does not.
  *
@@ -60,7 +69,7 @@ import type {
 } from "@/lib/eventPage10868/hockeyJourneyTypes";
 import { ACCESSIBILITY_ROOT_FONT_PX } from "./useFrameMeasure";
 
-export type HockeyJourneyMatrixArrangement = "grid" | "shortGrid" | "compactGrid" | "pairs";
+export type HockeyJourneyMatrixArrangement = "grid" | "shortGrid" | "compactGrid" | "compactNamesAbove" | "pairs";
 
 /** The label over the columns stated once for both teams. */
 export const BOTH_TEAMS_LABEL = "Both teams";
@@ -75,7 +84,9 @@ export { ACCESSIBILITY_ROOT_FONT_PX };
  */
 export function matrixArrangements(accessibilitySize: boolean, compactColumns = false): HockeyJourneyMatrixArrangement[] {
   if (accessibilitySize) return ["pairs"];
-  return compactColumns ? ["grid", "shortGrid", "compactGrid", "pairs"] : ["grid", "shortGrid", "pairs"];
+  return compactColumns
+    ? ["grid", "shortGrid", "compactGrid", "compactNamesAbove", "pairs"]
+    : ["grid", "shortGrid", "pairs"];
 }
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -150,7 +161,10 @@ export default function HockeyJourneyMatrix({
   headline: HockeyJourneyHeadline;
   /** Print each column's source and clock under the matrix (false once About holds them all). */
   inlineProvenance?: boolean;
-  /** Opt-in: try a content-sized grid (`compactGrid`) before falling back to labelled pairs. */
+  /**
+   * Opt-in: try the content-sized grids (`compactGrid`, then `compactNamesAbove`)
+   * before falling back to labelled pairs.
+   */
   compactColumns?: boolean;
 }) {
   const { matrix } = headline;
@@ -161,6 +175,7 @@ export default function HockeyJourneyMatrix({
   const groups = matrix.groups.map((group) => group.filter((i) => kept.includes(i))).filter((group) => group.length > 0);
   const drawGrid = kept.length > 0 || matrix.rows.some((row) => row.result);
   const sharedLabelId = useId();
+  const tableId = useId();
 
   const frame = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -206,14 +221,66 @@ export default function HockeyJourneyMatrix({
 
   const short = arrangement === "shortGrid" || arrangement === "compactGrid";
   // Only the opt-in compact grid changes a class; every other arrangement keeps today's exact strings.
-  const compact = arrangement === "compactGrid";
+  const namesAbove = arrangement === "compactNamesAbove";
+  const compact = arrangement === "compactGrid" || namesAbove;
   const cell = compact ? "mx-auto block min-w-0 max-w-[7.5rem]" : "mx-auto block min-w-16 max-w-[7.5rem]";
   const pad = compact ? "px-0.5" : "px-1";
 
   return (
     <div className="space-y-3" data-hockey-matrix={matrix.phase}>
       <div ref={frame} hidden={!drawGrid} className="w-full overflow-x-auto" data-arrangement={arrangement}>
-        {!drawGrid ? null : arrangement === "pairs" ? (
+        {!drawGrid ? null : namesAbove ? (
+          <table className="w-full border-collapse" data-names-above="">
+            <caption className="sr-only">{headline.spokenLabel}</caption>
+            <thead>
+              <tr className="border-b border-surface-border">
+                {kept.map((i) => (
+                  <th
+                    key={matrix.columns[i].title}
+                    id={`${tableId}-c${i}`}
+                    scope="col"
+                    className={`${pad} py-2 text-center align-bottom text-sm font-semibold text-text-secondary`}
+                  >
+                    <span className={cell}>{matrix.columns[i].title}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            {matrix.rows.map((row) => {
+              const team = teams[row.side];
+              const nameId = `${tableId}-${row.side}`;
+              return (
+                <tbody key={row.side} data-side={row.side} className="border-b border-surface-border last:border-b-0">
+                  <tr>
+                    <th id={nameId} scope="rowgroup" colSpan={Math.max(1, kept.length)} className="pt-3 text-left align-middle text-base">
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="break-words font-semibold" style={team.tint ? { color: team.tint } : undefined}>
+                          {team.name}
+                        </span>
+                        <ResultChip result={row.result} />
+                      </span>
+                    </th>
+                  </tr>
+                  {kept.length > 0 && (
+                    <tr>
+                      {kept.map((i) => (
+                        <td
+                          key={matrix.columns[i].title}
+                          headers={`${tableId}-c${i} ${nameId}`}
+                          className={`${pad} pb-3 pt-1 text-center align-middle`}
+                        >
+                          <span className={cell}>
+                            <SlotValue slot={row.values[i]} lead={i === matrix.lead} tint={team.tint} />
+                          </span>
+                        </td>
+                      ))}
+                    </tr>
+                  )}
+                </tbody>
+              );
+            })}
+          </table>
+        ) : arrangement === "pairs" ? (
           <div className="space-y-4">
             {matrix.rows.map((row) => {
               const team = teams[row.side];

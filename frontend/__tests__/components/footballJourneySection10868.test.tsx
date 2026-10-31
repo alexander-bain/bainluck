@@ -451,8 +451,12 @@ describe("refusals (TEST MUTATIONS)", () => {
 // the real fit, which only the browser lab measures.
 // ---------------------------------------------------------------------------
 
-/** `fits(arrangement, header cells)` decides each measured frame's overflow. CONSTRUCTED layout. */
-function withForcedLayout(fits: (arrangement: string, headerCells: number) => boolean, run: () => void) {
+/**
+ * `fits(arrangement, metrics)` decides each measured frame's overflow, where
+ * `metrics` is the number of value cells in a team's row (the same in every
+ * table arrangement, with or without a team column). CONSTRUCTED layout.
+ */
+function withForcedLayout(fits: (arrangement: string, metrics: number) => boolean, run: () => void) {
   const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
   Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => 317 });
   Object.defineProperty(proto, "scrollWidth", {
@@ -460,7 +464,8 @@ function withForcedLayout(fits: (arrangement: string, headerCells: number) => bo
     get(this: HTMLElement) {
       const arrangement = this.dataset?.arrangement;
       if (arrangement === undefined) return 0;
-      return fits(arrangement, this.querySelectorAll("thead th").length) ? 317 : 1000;
+      const metrics = this.querySelector("tbody td")?.parentElement?.querySelectorAll("td").length ?? 0;
+      return fits(arrangement, metrics) ? 317 : 1000;
     },
   });
   try {
@@ -471,10 +476,18 @@ function withForcedLayout(fits: (arrangement: string, headerCells: number) => bo
   }
 }
 
-/** The phone the lab measured: a four-metric table (5 header cells) overflows the full and the short grid; the compact grid fits. */
-const PHONE = (arrangement: string, headerCells: number) => arrangement === "compactGrid" || headerCells < 5;
-/** A narrower phone: the compact grid overflows too. */
-const NARROW = (_arrangement: string, headerCells: number) => headerCells < 5;
+/**
+ * The phone the lab measured for Bears t0 at 375 and for Bucs final at 393: a four-metric table overflows the
+ * full and the short grid; the compact grid (names beside) fits.
+ */
+const PHONE = (arrangement: string, metrics: number) => metrics < 4 || arrangement === "compactGrid" || arrangement === "compactNamesAbove";
+/**
+ * The phone the lab measured for Bucs final at 375 (combined frames at 6bba547b): the compact grid with a name
+ * column ALSO overflows; only the names-above grid is left before pairs.
+ */
+const BUCS_375 = (arrangement: string, metrics: number) => metrics < 4 || arrangement === "compactNamesAbove";
+/** A narrower phone: no compact arrangement fits four metrics. */
+const NARROW = (_arrangement: string, metrics: number) => metrics < 4;
 
 const arrangementNow = () => host.querySelector("[data-arrangement]")?.getAttribute("data-arrangement");
 
@@ -501,11 +514,11 @@ function compactRows() {
 }
 
 describe("FQ1 — the shared matrix's opt-in compact grid", () => {
-  it("lists the arrangements: the default (hockey) path is exactly grid → shortGrid → pairs; only the opt-in adds compactGrid", () => {
+  it("lists the arrangements: the default (hockey) path is exactly grid → shortGrid → pairs; only the opt-in adds compactGrid and compactNamesAbove", () => {
     expect(matrixArrangements(false)).toEqual(["grid", "shortGrid", "pairs"]);
     expect(matrixArrangements(true)).toEqual(["pairs"]);
     expect(matrixArrangements(false, false)).toEqual(["grid", "shortGrid", "pairs"]);
-    expect(matrixArrangements(false, true)).toEqual(["grid", "shortGrid", "compactGrid", "pairs"]);
+    expect(matrixArrangements(false, true)).toEqual(["grid", "shortGrid", "compactGrid", "compactNamesAbove", "pairs"]);
     expect(matrixArrangements(true, true)).toEqual(["pairs"]);
   });
 
@@ -595,7 +608,7 @@ describe("FQ1 — the shared matrix's opt-in compact grid", () => {
 
   it("re-fits on the SAME mount: content changes reset the search and recover the compact grid when it fits again", () => {
     let compactFits = true;
-    withForcedLayout((a, n) => (a === "compactGrid" ? compactFits : n < 5), () => {
+    withForcedLayout((a, m) => (a === "compactGrid" ? compactFits : a === "compactNamesAbove" ? false : m < 4), () => {
       // Narrow content first: two metrics fit the full grid.
       render(<FootballJourneySection model={model(rams, ramsHistory, RAMS_NOW)} />);
       expect(arrangementNow()).toBe("grid");
@@ -672,3 +685,151 @@ describe("FQ1 — one action group under the chart, each action behind its own g
     expect(actions()).toEqual(["history"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Design FQ1b — the Bucs–Steelers final at a 375px phone. The combined frames at
+// 6bba547b measured its compact grid (names beside) overflowing at 375 and
+// fitting at 393; these tests take the REAL final content (finalForecast11296
+// detail_14966179) through those two measured outcomes. JSDOM proves the
+// stepping, the markup and the identity wiring, never the fit itself.
+// ---------------------------------------------------------------------------
+
+/** The names-above table: its column titles, and per team (in drawn order) the name row and the value row. */
+function namesAboveTable() {
+  const table = host.querySelector("table[data-names-above]") as HTMLTableElement | null;
+  if (!table) return null;
+  return {
+    titles: Array.from(table.querySelectorAll("thead th")).map((th) => th.textContent),
+    headerClasses: Array.from(table.querySelectorAll("thead th")).map((th) => th.className),
+    teams: Array.from(table.querySelectorAll("tbody")).map((tbody) => {
+      const nameTh = tbody.querySelector("th") as HTMLElement;
+      const nameSpan = nameTh.querySelector("span span") as HTMLElement;
+      const tds = Array.from(tbody.querySelectorAll("td"));
+      return {
+        side: tbody.getAttribute("data-side"),
+        scope: nameTh.getAttribute("scope"),
+        colSpan: (nameTh as HTMLTableCellElement).colSpan,
+        name: nameSpan.textContent,
+        color: nameSpan.style.color,
+        result: nameTh.textContent?.replace(nameSpan.textContent ?? "", "") || null,
+        cells: tds.map((td) => (td.querySelector('[aria-hidden="true"]') ?? td).textContent),
+        spoken: tds.map((td) => td.querySelector(".sr-only")?.textContent ?? null),
+        figureClasses: tds.map((td) => td.querySelector('[aria-hidden="true"]')?.className ?? ""),
+        // Each cell's `headers` resolved to the texts it points at: [column title, team header text].
+        headers: tds.map((td) =>
+          (td.getAttribute("headers") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? `missing:${id}`),
+        ),
+      };
+    }),
+  };
+}
+
+/** CONSTRUCTED layout switch for the same-mount test: whether the drawn content is the Bucs final. */
+let isBucs = false;
+
+describe("FQ1b — the Bucs–Steelers final at a phone width (REAL final content)", () => {
+  const BUCS_TITLES = ["Pregame chance", "Pregame forecast", "Final score", "vs forecast (pts)"];
+
+  it("at the lab's 375 phone: an aligned names-above grid — every value, title, Won/Lost and full name, each cell linked to its column and team", () => {
+    const m = model(bucs, null, BUCS_NOW);
+    const v = view(m);
+    withForcedLayout(BUCS_375, () => {
+      render(<FootballJourneySection model={m} onOpenForecast={() => {}} />);
+      expect(arrangementNow()).toBe("compactNamesAbove");
+      const t = namesAboveTable()!;
+      expect(t).not.toBeNull();
+      // No team column: the four real titles, at the standard header size.
+      expect(t.titles).toEqual(BUCS_TITLES);
+      for (const c of t.headerClasses) {
+        expect(c).toMatch(/\btext-sm\b/);
+        expect(c).toMatch(/\bpx-0\.5\b/);
+      }
+      // Away first; full names visible; Won/Lost with their own teams; tints by side.
+      expect(t.teams.map((x) => [x.side, x.scope, x.colSpan, x.name, x.result])).toEqual([
+        ["away", "rowgroup", 4, "Pittsburgh Steelers", "Won"],
+        ["home", "rowgroup", 4, "Tampa Bay Buccaneers", "Lost"],
+      ]);
+      const asStyled = (tint: string | null) => {
+        const probe = document.createElement("span");
+        if (tint) probe.style.color = tint;
+        return probe.style.color;
+      };
+      expect(t.teams.map((x) => x.color)).toEqual([asStyled(v.headline.away.tint), asStyled(v.headline.home.tint)]);
+      // All eight values, in display order, with their spoken forms.
+      expect(t.teams.map((x) => x.cells)).toEqual([
+        ["56%", "20.1", "26", "+5.9"],
+        ["44%", "17.8", "19", "+1.2"],
+      ]);
+      expect(t.teams.flatMap((x) => x.cells)).toHaveLength(8);
+      expect(t.teams[0].spoken).toEqual(["56 percent", "20.1 points", "26 points", "5.9 points above forecast"]);
+      expect(t.teams[1].spoken).toEqual(["44 percent", "17.8 points", "19 points", "1.2 points above forecast"]);
+      // Type sizes unchanged: the final's lead (Final score) is the large figure, every other value text-xl.
+      for (const x of t.teams) {
+        expect(x.figureClasses.map((c) => (c.includes("text-3xl") ? "3xl" : c.includes("text-xl") ? "xl" : "?"))).toEqual([
+          "xl",
+          "xl",
+          "3xl",
+          "xl",
+        ]);
+      }
+      // Identity: every value cell names its column and its team.
+      expect(t.teams[0].headers).toEqual(BUCS_TITLES.map((title) => [title, "Pittsburgh SteelersWon"]));
+      expect(t.teams[1].headers).toEqual(BUCS_TITLES.map((title) => [title, "Tampa Bay BuccaneersLost"]));
+      // Nothing elided, hidden or scrolled by this arrangement.
+      const frame = host.querySelector("[data-arrangement]") as HTMLElement;
+      expect(frame.innerHTML).not.toMatch(/\btruncate\b|text-ellipsis|overflow-hidden|line-clamp/);
+      expect(frame.scrollWidth).toBeLessThanOrEqual(frame.clientWidth);
+    });
+  });
+
+  it("at the lab's 393 phone (compact grid measured fitting) it keeps the names-beside compact grid", () => {
+    withForcedLayout(PHONE, () => {
+      render(<FootballJourneySection model={model(bucs, null, BUCS_NOW)} />);
+      expect(arrangementNow()).toBe("compactGrid");
+      expect(host.querySelector("table[data-names-above]")).toBeNull();
+      expect(compactRows().map((r) => [r.visible, r.spokenName, r.cells])).toEqual([
+        ["Steelers", "Pittsburgh Steelers", ["56%", "20.1", "26", "+5.9"]],
+        ["Buccaneers", "Tampa Bay Buccaneers", ["44%", "17.8", "19", "+1.2"]],
+      ]);
+    });
+  });
+
+  it("falls back to the readable pairs only when the names-above grid overflows too", () => {
+    withForcedLayout(NARROW, () => {
+      render(<FootballJourneySection model={model(bucs, null, BUCS_NOW)} />);
+      expect(arrangementNow()).toBe("pairs");
+    });
+  });
+
+  it("re-fits on the SAME mount: Bucs names-above → Bears compact → Bucs names-above, values intact", () => {
+    withForcedLayout((a, m) => (m < 4 ? true : a === "compactNamesAbove" ? true : a === "compactGrid" ? !isBucs : false), () => {
+      isBucs = true;
+      render(<FootballJourneySection model={model(bucs, null, BUCS_NOW)} />);
+      expect(arrangementNow()).toBe("compactNamesAbove");
+      isBucs = false;
+      render(<FootballJourneySection model={model(bears[0], null, BEARS_NOW[0])} />);
+      expect(arrangementNow()).toBe("compactGrid");
+      expect(compactRows().map((r) => r.cells)).toEqual([
+        ["41%", "21%", "21", "28"],
+        ["59%", "79%", "27", "33"],
+      ]);
+      isBucs = true;
+      render(<FootballJourneySection model={model(bucs, null, BUCS_NOW)} />);
+      expect(arrangementNow()).toBe("compactNamesAbove");
+      expect(namesAboveTable()!.teams.map((x) => x.cells)).toEqual([
+        ["56%", "20.1", "26", "+5.9"],
+        ["44%", "17.8", "19", "+1.2"],
+      ]);
+    });
+  });
+
+  it("the DEFAULT matrix (what hockey renders) never reaches the names-above grid either", () => {
+    const headline = view(model(bucs, null, BUCS_NOW)).headline;
+    withForcedLayout(BUCS_375, () => {
+      render(<HockeyJourneyMatrix headline={headline} />);
+      expect(arrangementNow()).toBe("pairs");
+      expect(host.querySelector("table[data-names-above]")).toBeNull();
+    });
+  });
+});
+
