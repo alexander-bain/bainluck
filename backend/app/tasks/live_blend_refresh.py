@@ -573,7 +573,11 @@ _SPEED_SWITCH_LOGGED_PID: Optional[int] = None
 # on rows/publication must not hold a third ready fresh event. Each holds one
 # session only inside its stamp; with a consumer's price writer and standalone
 # writer that is the lent engine's five connections (pool 3 + overflow 2).
-FRESH_STAMP_WORKERS = 3
+# Env `FRESH_STAMP_WORKERS` (1..8, read once at import); 3 is today's
+# behaviour. Everything sized from it follows: the session slots, the live
+# debt allowance, and the consumer engine's pool (`base._get_task_engine`:
+# these workers plus the two writers' connections, never below today's 5).
+FRESH_STAMP_WORKERS = _owed_budget_env("FRESH_STAMP_WORKERS", 3, int, 1, 8)
 
 # #10090 — an observation-preview read whose caller stopped waiting at its
 # 0.25 s deadline is left to end by itself instead of being cancelled. A
@@ -594,7 +598,10 @@ OBSERVATION_READ_DETACHED_S = 2.0
 # compete for three slots). While the share is taken every optional kind's next
 # opportunity passes exactly as it does when the slots are taken, and a read
 # that reaches its deadline then is cancelled, as it is with the switch off.
-OPTIONAL_DB_HELD_MAX = FRESH_STAMP_WORKERS - 2
+# More workers (`FRESH_STAMP_WORKERS` above 3) never widen this share past
+# today's 1: each held read pins a pool connection, and the added workers are
+# for stamps.
+OPTIONAL_DB_HELD_MAX = max(0, min(FRESH_STAMP_WORKERS - 2, 1))
 
 # #10090 — admitted cohorts are stamped live-first, as a call's own population
 # is. Stage trace 02:14Z 2026-10-15: a live game's admitted stamp started
@@ -2880,9 +2887,9 @@ class LiveBlendRefresher:
             logger.info(
                 "live_blend_refresh[%s]: owed-stamp budget "
                 "FRESH_FLUSH_PENDING_ATTEMPTS=%d PENDING_STAMP_BUDGET_S=%.3g "
-                "ADMITTED_DEBT_SLOTS=%d ADMITTED_STAMP_BATCH=%d",
+                "ADMITTED_DEBT_SLOTS=%d ADMITTED_STAMP_BATCH=%d FRESH_STAMP_WORKERS=%d",
                 source, FRESH_FLUSH_PENDING_ATTEMPTS, PENDING_STAMP_BUDGET_S,
-                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH,
+                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH, FRESH_STAMP_WORKERS,
             )
         global _SPEED_SWITCH_LOGGED_PID
         if _SPEED_SWITCH_LOGGED_PID != os.getpid():

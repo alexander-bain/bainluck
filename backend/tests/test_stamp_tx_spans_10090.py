@@ -1,4 +1,5 @@
-"""#10090: the venue minute lines say where the STAMP time went.
+"""#10090: the venue minute lines say where the STAMP time went, and the
+stamp worker count is a setting.
 
 Speed's PM `game_flush` readout (v5996): the game loop busy ~60 s a minute,
 `stamp=` ~41-53 s of it at ~0.16-0.18 s per stamped event. `stamp=` was one
@@ -11,6 +12,10 @@ won't). These drive the REAL `_refresh_batch` on a fake session and clock.
 
 import ast
 import asyncio
+import json
+import os
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -253,3 +258,45 @@ def test_the_kalshi_line_ends_with_the_segment_and_its_arity_holds():
     placeholders = fmt.count("%d") + fmt.count("%s")
     assert placeholders == len(call.args) - 1
     assert "stamp_spans.line()" in ast.unparse(call.args[-1])
+
+
+def _imported(env_overrides):
+    env = {k: v for k, v in os.environ.items() if k != "FRESH_STAMP_WORKERS"}
+    env.update(env_overrides)
+    out = subprocess.run(
+        [
+            sys.executable, "-c",
+            "import json, asyncio\n"
+            "import app.tasks.live_blend_refresh as m\n"
+            "from app.tasks import base\n"
+            "r = m.LiveBlendRefresher('polymarket')\n"
+            "print(json.dumps([m.FRESH_STAMP_WORKERS, m.OPTIONAL_DB_HELD_MAX,\n"
+            "  m.ADMITTED_LIVE_DEBT_SLOTS, m._admitted_live_debt_slots(1),\n"
+            "  r._session_slots._value, base._consumer_pool_size()]))",
+        ],
+        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120, check=True,
+    )
+    return json.loads(out.stdout.strip().splitlines()[-1]), out.stderr
+
+
+def test_missing_env_is_todays_three_workers_and_todays_budgets():
+    # workers, optional share, live debt allowance (both forms), slots, pool.
+    values, _ = _imported({})
+    assert values == [3, 1, 1, 1, 3, 5]
+
+
+def test_five_workers_size_every_derived_budget():
+    values, _ = _imported({"FRESH_STAMP_WORKERS": "5"})
+    # The optional-read share stays today's 1; the added slots are stamps'.
+    # The pool keeps the two writers' connections beside the five stamps.
+    assert values == [5, 1, 3, 3, 5, 7]
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("0", [1, 0, 0, 0, 1, 5]), ("99", [8, 1, 6, 6, 8, 10]), ("many", [3, 1, 1, 1, 3, 5])],
+)
+def test_out_of_range_clamps_and_invalid_is_the_default(raw, expected):
+    values, stderr = _imported({"FRESH_STAMP_WORKERS": raw})
+    assert values == expected
+    assert f"FRESH_STAMP_WORKERS={raw!r}" in stderr
