@@ -266,8 +266,8 @@ final class SquashEventPagePresentation10868Tests: XCTestCase {
                 spoken: "Before match. June 5 archive. Date boundary June 5, 4:00 PM PDT, not the start.", progress: nil)
         case .during:
             return FieldHeadlineState10868(
-                figure: "2–1", unit: "games", caption: "Constructed live example", detail: "Game 4 · score not reported",
-                spoken: "Constructed live example. 2 games to 1. Game 4 score not reported.", progress: nil)
+                figure: "2–1", unit: "games", caption: "Constructed live example", detail: "Current game · points not reported",
+                spoken: "Constructed live example. 2 games to 1. Current game points not reported.", progress: nil)
         case .final:
             return FieldHeadlineState10868(
                 figure: "3–2", unit: "games", caption: "Asal won · Final", detail: "Reported June 6 · 115 minutes",
@@ -342,12 +342,17 @@ final class SquashEventPagePresentation10868Tests: XCTestCase {
                                                       spoken: "Reported match duration 115 minutes.")
 
     /// The final's five games; the CONSTRUCTED live frame's first three with
-    /// its running total. The final-only match score and duration are supplied
-    /// in every frame so the phase, not their absence, keeps them off.
+    /// its running total, and its own live eyebrow, title, notes and report
+    /// label — none describes a finished match. The final-only match score and
+    /// duration are supplied in every frame so the phase, not their absence,
+    /// keeps them off.
     private static func games(_ phase: SquashEventPagePhase10868, rows: [SquashGameRow10868]? = nil,
                               ceiling: Double = 12) -> SquashGameScoresInput10868 {
-        SquashGameScoresInput10868(
-            phase: phase, eyebrow: "How the match was won", title: "Every game. Two points apart.",
+        let live = phase == .during
+        return SquashGameScoresInput10868(
+            phase: phase,
+            eyebrow: live ? "Games so far · constructed live example" : "How the match was won",
+            title: live ? "Games so far" : "Every game. Two points apart.",
             keyLabel: "Actual points", first: firstPlayer, second: secondPlayer,
             rows: rows ?? (phase == .during ? (0..<3).map(gameRow) : (0..<5).map(gameRow)),
             scale: SquashGameScale10868(
@@ -360,17 +365,22 @@ final class SquashEventPagePresentation10868Tests: XCTestCase {
                                       spoken: "Points so far 32 to 30. Not a win probability.")
                 : totalPoints,
             duration: duration,
-            notes: ["Game 2 went beyond 10–10.",
-                    "Pre-match expectation unavailable. Sparse trades do not establish how surprising this result was."],
-            reportLabel: "Match report", expandLabel: "Open the game scores full size")
+            notes: live
+                ? ["Game 2 went beyond 10–10.", "Constructed live example: later games are not part of this frame."]
+                : ["Game 2 went beyond 10–10.",
+                   "Pre-match expectation unavailable. Sparse trades do not establish how surprising this result was."],
+            reportLabel: live ? "Report so far" : "Match report", expandLabel: "Open the game scores full size")
     }
 
     // MARK: Text, copy and page
 
-    private static func about() -> SquashEventPageText10868 {
+    /// The CONSTRUCTED live frame's dates name no report, settlement or end.
+    private static func about(_ phase: SquashEventPagePhase10868) -> SquashEventPageText10868 {
         SquashEventPageText10868(title: "About this squash match", sections: [
             SquashEventPageSection10868(title: "Dates", paragraphs: [
-                "The report dates this semifinal June 6; the market lists June 7. Neither the schedule, the market close nor settlement gives the actual start or end.",
+                phase == .during
+                    ? "The market lists June 7; this constructed live frame is dated June 6. The schedule gives no actual start time."
+                    : "The report dates this semifinal June 6; the market lists June 7. Neither the schedule, the market close nor settlement gives the actual start or end.",
             ]),
             SquashEventPageSection10868(title: "Chances", paragraphs: [
                 "Each line is an independent recorded trade; the two need not total 100%.",
@@ -387,18 +397,30 @@ final class SquashEventPagePresentation10868Tests: XCTestCase {
         ])
     }
 
+    /// Before play: no result. The CONSTRUCTED live frame: only its three
+    /// admitted games and running points, and no link out to the finished
+    /// match report. The final: the whole report with its link.
     private static func report(_ phase: SquashEventPagePhase10868) -> SquashEventPageText10868 {
-        phase == .before
-            ? SquashEventPageText10868(title: "Match report", sections: [
+        switch phase {
+        case .before:
+            SquashEventPageText10868(title: "Match report", sections: [
                 SquashEventPageSection10868(title: nil, paragraphs: [
                     "A retrospective before-play reconstruction; no result is shown in this phase.",
                 ]),
             ])
-            : SquashEventPageText10868(title: "Five-game semifinal", sections: [
+        case .during:
+            SquashEventPageText10868(title: "Games so far · constructed live example", sections: [
+                SquashEventPageSection10868(title: nil, paragraphs: [
+                    "Constructed live example: Asal leads Elias 2–1 in games after 11–9, 10–12 and 11–9, with 32–30 in points so far. Later games are not part of this frame.",
+                ]),
+            ])
+        case .final:
+            SquashEventPageText10868(title: "Five-game semifinal", sections: [
                 SquashEventPageSection10868(title: nil, paragraphs: [
                     "The British Open match report records Asal beating Elias 3–2 on June 6, with games 11–9, 10–12, 11–9, 9–11, 11–9 in 115 minutes.",
                 ]),
             ], link: SquashEventPageLink10868(id: "report.link", label: "British Open match report"))
+        }
     }
 
     private static func reader(_ phase: SquashEventPagePhase10868) -> SquashEventPageReaderHeader10868 {
@@ -433,7 +455,7 @@ final class SquashEventPagePresentation10868Tests: XCTestCase {
             phase: phase, reader: reader(phase), headline: headline ?? Self.headline(phase),
             notice: nil, expectation: expectation(phase), history: history ?? Self.history(phase),
             readerPlotHeight: 350, games: games(phase == .before ? .final : phase),
-            about: about(), source: source(), report: report(phase), copy: copy)
+            about: about(phase), source: source(), report: report(phase), copy: copy)
     }
 
     // MARK: Originals
@@ -518,6 +540,101 @@ final class SquashEventPagePresentation10868Tests: XCTestCase {
 
     private static func allPoints(_ input: FieldHistoryInput10868) -> [FieldHistoryPoint10868] {
         input.series.flatMap { $0.runs.flatMap(\.points) }
+    }
+
+    // MARK: Reachable outputs
+
+    /// A fact as a whole token — no digit directly before or after it — so
+    /// "2–3" is not found inside the admitted "32–30".
+    private static func mentions(_ output: String, _ fact: String) -> Bool {
+        let pattern = "(?<![0-9])" + NSRegularExpression.escapedPattern(for: fact) + "(?![0-9])"
+        return output.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// Every word a reader can see or hear from one page input, collected
+    /// through the same Views in every content mode with every text callback
+    /// supplied: reader heading, copy, caution, the headline, page and
+    /// full-size history, page and full-size games, About, source and report
+    /// content with any link, and every original's chooser, Details, About
+    /// rows, rules and speech.
+    private static func reachableOutputs(_ input: SquashEventPageInput10868,
+                                         _ originals: SquashEventPageOriginals10868) -> [String] {
+        let model = SquashEventPageModel10868(input)
+        var outputs: [String] = [input.reader.title, input.copy.headlineUnavailable]
+        outputs += [input.reader.state, input.copy.sourceLabel, input.copy.allPropsLabel, model.notice].compactMap { $0 }
+        if let caution = model.expectation { outputs += [caution.title] + [caution.reason].compactMap { $0 } }
+        let modes: [SquashEventPageMode10868] = [.page, .fullHistory, .fullGames, .catalogue, .original, .about, .source, .report]
+        for mode in modes {
+            let view = SquashEventPagePresentation10868(input: input, mode: mode, originals: originals,
+                                                        onAbout: {}, onSource: {}, onReport: {}, onLink: { _ in })
+            if let headline = view.headlineContent()?.input {
+                let hm = headlineModel(headline)
+                outputs += hm.competitors.map(hm.competitorSummary)
+                outputs += hm.competitors.flatMap { $0.metrics.compactMap(FieldChaseModel10868.figure) }
+                outputs += [hm.eyebrow, hm.title, hm.stateSummary, hm.aboutLabel(canAbout: true)].compactMap { $0 }
+                if let state = hm.state { outputs += [state.figure] + [state.unit, state.caption, state.detail].compactMap { $0 } }
+                outputs += [headline.copy.graphicLabel, headline.copy.empty]
+                    + [headline.copy.aboutHint, headline.copy.openHint].compactMap { $0 }
+            }
+            outputs += historyOutputs(view.historyContent(reader: false).input)
+            outputs += historyOutputs(view.historyContent(reader: true).input)
+            for games in [view.gamesContent(reader: false), view.gamesContent(reader: true)].compactMap({ $0 }) {
+                outputs += gamesOutputs(games)
+            }
+            for content in [view.aboutContent(), view.sourceContent(), view.reportContent()].compactMap({ $0 }) {
+                outputs += [content.text.title] + content.text.sections.flatMap { [$0.title].compactMap { $0 } + $0.paragraphs }
+                outputs += [content.link?.label].compactMap { $0 }
+            }
+        }
+        outputs += [originals.heading, originals.emptyWords] + [originals.context].compactMap { $0 }
+        outputs += choices(originals).map(OriginalMarketChooser9483.spoken)
+        if let catalogue = originals.catalogue {
+            for original in catalogue.originals {
+                let selection = OriginalMarketDetails9483.Selection(scope: catalogue.scope, identity: original.identity)
+                guard let content = OriginalMarketDetails9483.content(catalogue: catalogue, selection: selection) else { continue }
+                outputs += [content.title, content.outcome, OriginalMarketDetails9483.spoken(content)]
+                outputs += content.readings.flatMap { [$0.label, $0.text] + [$0.provenance].compactMap { $0 } }
+                if let result = content.result { outputs += [result.words] + [result.provenance].compactMap { $0 } }
+                outputs += content.about.flatMap { [$0.label, $0.value] }
+                if case .verified(let paragraphs) = content.rules { outputs += paragraphs }
+            }
+        }
+        return outputs
+    }
+
+    private static func historyOutputs(_ input: FieldHistoryInput10868) -> [String] {
+        var outputs = [input.title, input.summary, input.unboundReadingWords]
+        outputs += [input.caption, input.plotUnavailableWords, input.windows?.groupLabel,
+                    input.markKey.hollow, input.markKey.filled].compactMap { $0 }
+        outputs += input.notes + input.xTicks.flatMap(\.lines) + input.yTicks.flatMap(\.lines) + input.breaks.map(\.mark)
+        outputs += FieldHistoryGeometry10868.actions(input).flatMap { [$0.label] + [$0.spokenLabel].compactMap { $0 } }
+        for series in input.series {
+            outputs += [series.name] + [FieldHistoryGeometry10868.absentWords(series, in: input)].compactMap { $0 }
+            outputs += FieldHistoryGeometry10868.readoutSlots(series, in: input).map(FieldHistoryGeometry10868.spokenSlot)
+        }
+        outputs.append(FieldHistoryGeometry10868.spokenValue(input))
+        if let inspection = input.inspection { outputs += [inspection.caption] + [inspection.note].compactMap { $0 } }
+        return outputs
+    }
+
+    /// The games leaf's drawn and spoken words, through its own gated reads.
+    private static func gamesOutputs(_ view: SquashGameScoresPresentation10868) -> [String] {
+        let games = view.input
+        guard games.isShown else { return [] }
+        var outputs = [games.title, games.keyLabel, games.first.name, games.second.name, games.expandLabel]
+        outputs += [games.eyebrow, games.accessibilityHeader, games.accessibilityKey, games.visibleScaleWords,
+                    view.reportLabel].compactMap { $0 }
+        if games.visibleRows.isEmpty { outputs.append(games.empty) }
+        for (index, row) in games.visibleRows.enumerated() {
+            outputs += [row.label, games.accessibilityRow(row)]
+            outputs += [row.first.figure, row.second.figure, row.first.unknownWords, row.second.unknownWords,
+                        row.games, games.accessibilityID(at: index)].compactMap { $0 }
+            if games.rowShowsNotDrawn(row) { outputs.append(games.notDrawn) }
+        }
+        for fact in [games.visibleMatch, games.visibleTotalPoints, games.visibleDuration].compactMap({ $0 }) {
+            outputs += [fact.value, fact.label, fact.spoken]
+        }
+        return outputs + games.visibleNotes
     }
 
     // MARK: Phases
@@ -651,6 +768,82 @@ final class SquashEventPagePresentation10868Tests: XCTestCase {
         // A final headline shows the owner's unavailable words instead.
         let mismatched = Self.page(.during, headline: Self.headline(.final))
         XCTAssertNil(SquashEventPagePresentation10868(input: mismatched).headlineContent())
+    }
+
+    func testDuringPlayEveryReachableOutputKeepsTheAdmittedGamesAndNoLaterFact() {
+        // Later than the CONSTRUCTED live frame: the final match score either
+        // way, the score after game 4, game 4's points, games 4 and 5, the
+        // final points total, the duration and any result words.
+        let later = ["3–2", "2–3", "2–2", "9–11", "Game 4", "Game 5", "game.4", "game.5",
+                     "52–50", "115", "Won", "Lost", "won the match", "Final"]
+
+        // Positive control: the same collector over the final frame reaches
+        // every one of them, so the live scan below cannot pass by reading
+        // nothing.
+        let finalOutputs = Self.reachableOutputs(Self.page(.final), Self.originals(.final))
+        for fact in later {
+            XCTAssertTrue(finalOutputs.contains { Self.mentions($0, fact) }, "the collector reaches “\(fact)” at the final")
+        }
+        // The token rule itself: the admitted running total is not "2–3".
+        XCTAssertFalse(Self.mentions("32–30", "2–3"))
+        XCTAssertTrue(Self.mentions("Lost 2–3, British Open report", "2–3"))
+
+        let input = Self.page(.during)
+        let originals = Self.originals(.during)
+        // The live frame still carries the final-only channels: the gating,
+        // not their absence, keeps them off.
+        XCTAssertEqual(input.games?.match?.value, "3–2")
+        XCTAssertEqual(input.games?.duration?.value, "115 min")
+        XCTAssertEqual(input.headline.finishes.count, 2)
+
+        let outputs = Self.reachableOutputs(input, originals)
+        XCTAssertGreaterThan(outputs.count, 100)
+
+        // Allowed: the admitted 2–1 games, each game's own row, the running
+        // 32–30, and the games-so-far report.
+        let admitted = ["2–1", "32–30", "1–0", "1–1", "Game 1", "Game 2", "Game 3",
+                        "Asal 11. Elias 9. Asal won the game. Games 1 to 0",
+                        "Asal 10. Elias 12. Elias won the game. Games 1 to 1",
+                        "Asal 11. Elias 9. Asal won the game. Games 2 to 1",
+                        "Points so far 32 to 30. Not a win probability.",
+                        "Games so far · constructed live example", "Report so far"]
+        for words in admitted {
+            XCTAssertTrue(outputs.contains { $0.contains(words) }, "the live frame shows “\(words)”")
+        }
+
+        // Rejected: nothing later than the frame, anywhere a reader can reach.
+        for output in outputs {
+            for fact in later {
+                XCTAssertFalse(Self.mentions(output, fact), "“\(fact)” reached the live frame: \(output)")
+            }
+        }
+
+        // The live report: reachable from the games' report control and in
+        // report mode, with only the admitted context and no link out to the
+        // finished match report.
+        var log: [String] = []
+        let page = SquashEventPagePresentation10868(input: input, onReport: { log.append("report") })
+        XCTAssertEqual(page.gamesContent(reader: false)?.reportLabel, "Report so far")
+        page.gamesContent(reader: false)?.onReport?()
+        XCTAssertEqual(log, ["report"])
+        let report = SquashEventPagePresentation10868(input: input, mode: .report, onLink: { _ in }).reportContent()
+        XCTAssertEqual(report?.text, Self.report(.during))
+        XCTAssertNil(report?.link)
+        XCTAssertEqual(report?.text.sections.flatMap(\.paragraphs).filter { $0.contains("2–1") && $0.contains("32–30") }.count, 1)
+
+        // No later history point is admitted to the live chart.
+        XCTAssertEqual(Self.allPoints(input.history).filter { $0.id.hasPrefix("elias.jun6.172") }.count, 0)
+        XCTAssertEqual(Self.allPoints(Self.history(.final)).filter { $0.id.hasPrefix("elias.jun6.172") }.count, 2)
+
+        // The final keeps the whole report and the originals' own grades.
+        XCTAssertEqual(Self.report(.final).link?.label, "British Open match report")
+        XCTAssertTrue(Self.report(.final).sections.flatMap(\.paragraphs).contains { $0.contains("9–11, 11–9 in 115 minutes") })
+        let finalOriginals = Self.originals(.final)
+        XCTAssertEqual(OriginalMarketDetails9483.content(catalogue: finalOriginals.catalogue,
+                                                         selection: Self.selection(.asal))?.result?.words, "Won")
+        XCTAssertEqual(OriginalMarketDetails9483.content(catalogue: finalOriginals.catalogue,
+                                                         selection: Self.selection(.elias))?.result?.words, "Lost")
+        XCTAssertNil(OriginalMarketDetails9483.content(catalogue: originals.catalogue, selection: Self.selection(.asal))?.result)
     }
 
     func testAtTheFinalTheResultSitsBesideNoPreMatchComparisonAndTheFiveGamesStayFixed() {
