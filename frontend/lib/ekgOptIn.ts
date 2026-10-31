@@ -1,26 +1,30 @@
 'use client';
 
 /**
- * #10090 — THE EVENT PAGE'S HEARTBEAT ("EKG"), OPT-IN WHILE ALEX TRIES IT.
+ * #10090 — THE EVENT PAGE'S HEARTBEAT ("EKG"), ON BY DEFAULT (Alex decision 66).
  *
- * Off by default. The same runtime pattern the tenths trial used:
+ * Alex tried it behind `?ekg=1`, then: "I absolutely love the ekg" — and the
+ * hero's three confidence bars went so the live number has one signal. So:
  *
- *   * `?ekg=1` turns it on and remembers that in localStorage, so it survives
+ *   * with no remembered choice it is ON;
+ *   * `?ekg=0` turns it off and remembers that in localStorage, so it survives
  *     navigation between event pages and reloads;
- *   * `?ekg=0` turns it off and forgets it;
- *   * anything else reads the remembered choice, and with none it is OFF.
+ *   * `?ekg=1` turns it back on (and remembers that too);
+ *   * a store that throws reads the URL alone, defaulting ON.
  *
- * The hook starts `false`, so the server render and every reader who never
- * asked print exactly today's page.
+ * This only resolves the reader's choice. The page still draws the heartbeat
+ * only for a quote-eligible live game with no terminal connection label that
+ * is not finished. The hook starts `false` so the server render and the first
+ * client render agree; the effect turns it on after mount.
  */
 import { useEffect, useState } from 'react';
 
 export const EKG_STORAGE_KEY = 'bl:ekg';
 
-/** Pure: whether the heartbeat draws for this URL query and store. A store that throws reads as no choice. */
+/** Pure: whether the reader wants the heartbeat, from this URL query and store. Only a remembered or asked `0` is off. */
 export function resolveEkgOptIn(
   search: string,
-  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null,
 ): boolean {
   const asked = new URLSearchParams(search).get('ekg');
   try {
@@ -29,12 +33,12 @@ export function resolveEkgOptIn(
       return true;
     }
     if (asked === '0') {
-      storage?.removeItem(EKG_STORAGE_KEY);
+      storage?.setItem(EKG_STORAGE_KEY, '0');
       return false;
     }
-    return storage?.getItem(EKG_STORAGE_KEY) === '1';
+    return storage?.getItem(EKG_STORAGE_KEY) !== '0';
   } catch {
-    return asked === '1';
+    return asked !== '0';
   }
 }
 

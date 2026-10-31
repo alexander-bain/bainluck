@@ -1,12 +1,12 @@
 /**
- * #10090 — THE EVENT PAGE'S HEARTBEAT ("EKG"): `?ekg=1` ONLY, AND IT BEATS ON
- * WHAT THE STREAM ACTUALLY DELIVERS.
+ * #10090 — THE EVENT PAGE'S HEARTBEAT ("EKG"): ON BY DEFAULT (Alex decision 66),
+ * AND IT BEATS ON WHAT THE STREAM ACTUALLY DELIVERS.
  *
  * Three things are proven here; the decision itself is
  * `__tests__/lib/ekgHeartbeat10090.test.ts`.
  *
- *   1. The opt-in: off by default and on the plain URL; `?ekg=1` turns it on and
- *      remembers it; `?ekg=0` forgets it.
+ *   1. The reader's choice: ON with nothing remembered; `?ekg=0` turns it off
+ *      and remembers that; `?ekg=1` turns it back on.
  *   2. The drawing: beating / flat / interrupted, the screen-reader label, and
  *      a beat that replays (a new path per beat).
  *   3. Through the REAL `useLiveEventStream` over a fake EventSource: a heartbeat
@@ -49,37 +49,45 @@ function memoryStore() {
   };
 }
 
-describe("#10090 resolveEkgOptIn", () => {
-  test("off on the plain URL with nothing remembered, and it writes nothing", () => {
+describe("#10090 resolveEkgOptIn (default ON, Alex decision 66)", () => {
+  test("ON on the plain URL with nothing remembered, and it writes nothing", () => {
     const s = memoryStore();
-    expect(resolveEkgOptIn("", s)).toBe(false);
-    expect(resolveEkgOptIn("?tenths=off", s)).toBe(false);
+    expect(resolveEkgOptIn("", s)).toBe(true);
+    expect(resolveEkgOptIn("?tenths=off", s)).toBe(true);
+    expect(resolveEkgOptIn("", null)).toBe(true);
     expect(s.setItem).not.toHaveBeenCalled();
   });
-  test("?ekg=1 turns it on and remembers; the plain URL then reads on", () => {
+  test("?ekg=0 turns it off and remembers; the plain URL then reads off", () => {
     const s = memoryStore();
+    expect(resolveEkgOptIn("?ekg=0", s)).toBe(false);
+    expect(s.m.get(EKG_STORAGE_KEY)).toBe("0");
+    expect(resolveEkgOptIn("", s)).toBe(false);
+    expect(resolveEkgOptIn("?tenths=off", s)).toBe(false);
+  });
+  test("?ekg=1 after ?ekg=0 turns it back on and remembers that", () => {
+    const s = memoryStore();
+    resolveEkgOptIn("?ekg=0", s);
     expect(resolveEkgOptIn("?ekg=1", s)).toBe(true);
     expect(s.m.get(EKG_STORAGE_KEY)).toBe("1");
     expect(resolveEkgOptIn("", s)).toBe(true);
   });
-  test("?ekg=0 forgets it", () => {
+  test("a reader who opted in during the trial stays on", () => {
     const s = memoryStore();
-    resolveEkgOptIn("?ekg=1", s);
-    expect(resolveEkgOptIn("?ekg=0", s)).toBe(false);
-    expect(resolveEkgOptIn("", s)).toBe(false);
+    s.m.set(EKG_STORAGE_KEY, "1");
+    expect(resolveEkgOptIn("", s)).toBe(true);
   });
-  test("only the exact value 1 opts in", () => {
-    expect(resolveEkgOptIn("?ekg=true", memoryStore())).toBe(false);
-    expect(resolveEkgOptIn("?ekg=on", memoryStore())).toBe(false);
+  test("only the exact value 0 opts out", () => {
+    expect(resolveEkgOptIn("?ekg=false", memoryStore())).toBe(true);
+    expect(resolveEkgOptIn("?ekg=off", memoryStore())).toBe(true);
   });
-  test("a store that throws reads the URL alone", () => {
+  test("a store that throws reads the URL alone, defaulting ON", () => {
     const broken = {
       getItem: () => { throw new Error("blocked"); },
       setItem: () => { throw new Error("blocked"); },
-      removeItem: () => { throw new Error("blocked"); },
     };
     expect(resolveEkgOptIn("?ekg=1", broken)).toBe(true);
-    expect(resolveEkgOptIn("", broken)).toBe(false);
+    expect(resolveEkgOptIn("", broken)).toBe(true);
+    expect(resolveEkgOptIn("?ekg=0", broken)).toBe(false);
   });
 });
 

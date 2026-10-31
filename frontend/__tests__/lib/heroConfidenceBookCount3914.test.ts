@@ -107,13 +107,16 @@ describe("#3914 hero confidence counts probability readings, not bag keys", () =
   });
 });
 
-describe("#3914 the event hero is wired to the reading counter", () => {
-  it("passes countProbabilitySources and no longer counts bag keys", () => {
+describe("#3914 the event hero no longer prints confidence bars (Alex decision 66)", () => {
+  // The hero's bars were removed in #10090 so the live number carries one
+  // signal (the EKG). The counter above still feeds every Discover card's bars;
+  // this pins that the hero did not come back on a key count either.
+  it("computes no hero confidence and never counts bag keys", () => {
     const page = fs.readFileSync(
       path.join(__dirname, "../../app/events/[id]/page.tsx"),
       "utf8"
     );
-    expect(page).toContain("sourceCount: countProbabilitySources(event.win_probability_sources)");
+    expect(page).not.toContain("heroConfidence");
     expect(page).not.toContain("Object.keys(event.win_probability_sources)");
   });
 });
