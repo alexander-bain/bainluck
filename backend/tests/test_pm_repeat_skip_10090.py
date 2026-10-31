@@ -75,7 +75,8 @@ def callbacks(monkeypatch, window_s=0.25):
     compile_functions(
         ROOT / "app/tasks/polymarket_ws.py",
         ["handle_price", "handle_trade", "_tick_targets", "_note_raw", "_mark_input",
-         "_skip_repeat", "_remember_handled"],
+         "_skip_repeat", "_repeat_holds", "_note_repeat_skipped", "handle_price_repeat",
+         "_remember_handled"],
         p.ns,
     )
     return SimpleNamespace(p=p, ns=p.ns, clock=clock, marks=marks, raws=raws,

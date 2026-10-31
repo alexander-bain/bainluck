@@ -323,6 +323,28 @@ def _price_change_quotes(message: dict) -> list[dict]:
     venue timestamp so the consumer's existing clock/eligibility guards decide
     whether it can advance an observation; missing clocks are not replaced.
     """
+    timestamp, _stamp, entries = _price_change_entries(message)
+    market = message.get("market")
+    return [
+        {
+            "event_type": "best_bid_ask",
+            "asset_id": asset,
+            "market": market,
+            "timestamp": timestamp,
+            "best_bid": bid,
+            "best_ask": ask,
+        }
+        for asset, bid, ask, _b, _a in entries
+    ]
+
+
+def _price_change_entries(message: dict) -> tuple[Any, int, list[tuple]]:
+    """`_price_change_quotes`' validation without its dicts (#10090).
+
+    (timestamp, its integer identity clock, [(asset, bid, ask, float bid,
+    float ask), ...]) for each leg `_price_change_quotes` would forward, in
+    order — so a repeat can be recognised before any quote is built.
+    """
     timestamp = message.get("timestamp")
     try:
         stamp = float(timestamp)
@@ -332,13 +354,13 @@ def _price_change_quotes(message: dict) -> list[dict]:
             or stamp <= 0
             or not stamp.is_integer()
         ):
-            return []
+            return timestamp, 0, []
     except (TypeError, ValueError, OverflowError):
-        return []
+        return timestamp, 0, []
     changes = message.get("price_changes")
     if not isinstance(changes, list):
-        return []
-    quotes = []
+        return timestamp, 0, []
+    entries = []
     for change in changes:
         if not isinstance(change, dict):
             continue
@@ -357,17 +379,8 @@ def _price_change_quotes(message: dict) -> list[dict]:
                 continue
         except (TypeError, ValueError, OverflowError):
             continue
-        quotes.append(
-            {
-                "event_type": "best_bid_ask",
-                "asset_id": asset,
-                "market": message.get("market"),
-                "timestamp": timestamp,
-                "best_bid": bid,
-                "best_ask": ask,
-            }
-        )
-    return quotes
+        entries.append((asset, bid, ask, b, a))
+    return timestamp, int(stamp), entries
 
 
 def _snapshot_quotes(message: Any) -> list[dict]:
@@ -644,6 +657,10 @@ class PolymarketWebSocket:
         self._shard_routed: dict[int, frozenset[str]] = {}
 
         self.on_price: Optional[Callable] = None
+        # #10090: `(asset_id, best_bid, best_ask) -> bool`, synchronous. True
+        # means the consumer settled this ``price_change`` leg as a repeat of
+        # the book it last handled, and `on_price` is not called for it.
+        self.on_price_repeat: Optional[Callable[[str, float, float], bool]] = None
         self.on_trade: Optional[Callable] = None
         self.on_resolved: Optional[Callable] = None
         self.on_new_market: Optional[Callable] = None
@@ -1127,21 +1144,9 @@ class PolymarketWebSocket:
                                     continue
 
                                 if event_type == "price_change" and self.on_price:
-                                    quotes = _price_change_quotes(data)
-                                    if asset_ids is not None:
-                                        # #10090: `quote_versions` holds exactly
-                                        # this connection's ids (never added to),
-                                        # so this is the list's membership in
-                                        # O(1), not a scan of up to 500 ids.
-                                        quotes = [
-                                            q
-                                            for q in quotes
-                                            if q["asset_id"] in quote_versions
-                                        ]
-                                    await self._price_quotes(
-                                        quotes, shard, book_snapshot=False,
-                                        quote_versions=quote_versions,
-                                        normalized=True,
+                                    await self._price_changes(
+                                        data, shard, quote_versions,
+                                        subscribed_only=asset_ids is not None,
                                     )
                                     continue
 
@@ -1344,6 +1349,73 @@ class PolymarketWebSocket:
         asset_id = entry.get("asset_id") or entry.get("assetId")
         return not asset_id or asset_id in routed
 
+    async def _price_changes(
+        self,
+        message: dict,
+        shard: Optional[int],
+        quote_versions: dict,
+        *,
+        subscribed_only: bool,
+    ) -> None:
+        """Each current BBO in a ``price_change`` frame, in order (#10090).
+
+        `_price_quotes` for this frame shape, with one difference: a leg the
+        consumer recognises as a repeat (`on_price_repeat`, read per leg and
+        after every earlier leg was handled — a binary's legs write each
+        other's complement) is settled by that hook, and its quote, the
+        `on_price` coroutine and `handle_price` are never built. Routing, the
+        identity check and its update, batching and error isolation are the
+        ones `_price_quotes` applies.
+        """
+        timestamp, stamp, entries = _price_change_entries(message)
+        if subscribed_only:
+            # `quote_versions` holds exactly this connection's ids (never
+            # added to), so this is the list's membership in O(1), not a scan
+            # of up to 500 ids.
+            entries = [e for e in entries if e[0] in quote_versions]
+        market = message.get("market")
+        message = None
+        batch_size = SNAPSHOT_BATCH_SIZE
+        for start in range(0, len(entries), batch_size):
+            for asset, bid, ask, b, a in entries[start : start + batch_size]:
+                if shard is not None:
+                    routed = self._shard_routed.get(shard)
+                    if routed is not None and asset not in routed:
+                        continue
+                identity = None
+                if asset in quote_versions:
+                    identity = (stamp, b, a)
+                    previous = quote_versions[asset]
+                    if previous is not None and (
+                        identity == previous or stamp < previous[0]
+                    ):
+                        continue
+                repeat = self.on_price_repeat
+                try:
+                    if repeat is not None and repeat(asset, b, a):
+                        if identity is not None:
+                            quote_versions[asset] = identity
+                        continue
+                    result = self.on_price({
+                        "event_type": "best_bid_ask",
+                        "asset_id": asset,
+                        "market": market,
+                        "timestamp": timestamp,
+                        "best_bid": bid,
+                        "best_ask": ask,
+                    })
+                    if asyncio.iscoroutine(result):
+                        await result
+                    if identity is not None:
+                        quote_versions[asset] = identity
+                except Exception:
+                    # A failed callback leaves the identity retryable; failure
+                    # in one child must not hide healthy siblings.
+                    logger.exception("Polymarket price handler error")
+                result = None
+            if start + batch_size < len(entries):
+                await asyncio.sleep(0)
+
     async def _price_snapshot(self, data: Any, shard: Optional[int] = None) -> None:
         """Each book in a snapshot frame, through `on_price` like a quote."""
         quotes, failure = await _snapshot_quotes_cooperatively(data)
@@ -1358,7 +1430,6 @@ class PolymarketWebSocket:
         *,
         book_snapshot: bool = True,
         quote_versions: Optional[dict] = None,
-        normalized: bool = False,
     ) -> None:
         """Hand extracted current quotes to `on_price`, in order.
 
@@ -1366,9 +1437,8 @@ class PolymarketWebSocket:
         earlier quote's callback waited still applies. ``failure`` is the
         extraction error that stopped the frame part-way: the quotes before it
         are priced, then it is raised, as when extraction and pricing
-        alternated batch by batch. ``normalized``: the quotes came from
-        `_price_change_quotes`, so their identity is read without validating
-        each one a second time (#10090).
+        alternated batch by batch. ``price_change`` frames take
+        `_price_changes` instead (#10090).
         """
         # An async price callback can complete without suspending (#10665).
         batch_size = SNAPSHOT_BATCH_SIZE
@@ -1381,7 +1451,7 @@ class PolymarketWebSocket:
                 if quote_versions is not None and asset in quote_versions:
                     # Validate identity without changing legacy top-level price
                     # handling when the old protocol omitted its timestamp.
-                    if normalized or _price_change_quotes({
+                    if _price_change_quotes({
                         "timestamp": quote.get("timestamp"),
                         "price_changes": [quote],
                     }):

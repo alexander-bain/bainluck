@@ -6509,11 +6509,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         are the ones already in place, so only "confirmed at" is fed — the
         same `ConfirmedAt.note_input` `_mark_input` makes, at this receipt."""
         entry = repeat_memo.get(asset_id)
-        if entry is None:
+        if entry is None or not _repeat_holds(entry, bid_f, ask_f, generation):
             return False
-        from app.tasks.live_blend_refresh import _mono, _wall
+        _note_repeat_skipped(entry)
+        return True
 
-        book, memo_generation, handled_at, legs, writes, confirm, _raw = entry
+    def _repeat_holds(entry, bid_f, ask_f, generation) -> bool:
+        """`_skip_repeat`'s test, with no side effect."""
+        from app.tasks.live_blend_refresh import _mono
+
+        book, memo_generation, handled_at, legs, writes, _confirm, _raw = entry
         if (book != (bid_f, ask_f) or memo_generation != generation
                 or _mono() - handled_at >= repeat_skip_s):
             return False
@@ -6522,13 +6527,46 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     or price_buffer.get(outcome_id, leg_prob) != leg_prob
                     or outcome_id in withdraw_buffer):
                 return False
+        return True
+
+    def _note_repeat_skipped(entry):
+        """What a skipped repeat still does: count, and feed "confirmed at"."""
+        from app.tasks.live_blend_refresh import _wall
+
         stats["repeats_skipped"] += 1
+        confirm = entry[5]
         confirmed = getattr(tail_receipts, "confirmed", None)
         if confirmed is not None and confirm:
             recv_wall = _wall()
             for event_id, outcome_id, leg_prob in confirm:
                 with contextlib.suppress(Exception):
                     confirmed.note_input(event_id, outcome_id, leg_prob, recv_wall)
+
+    def handle_price_repeat(asset_id: str, bid_f: float, ask_f: float) -> bool:
+        """#10090: settle a ``price_change`` leg at receipt when `handle_price`
+        would skip it as a repeat, without building its quote or coroutine.
+
+        True only when `_skip_repeat` would return True for this book now
+        (a price_change leg is never a snapshot); it then does exactly what
+        `handle_price` does on that path — the raw count against the
+        remembered games, the trade-side book, the skip count and "confirmed
+        at". Anything else returns False with no side effect, and the client
+        hands the leg to `handle_price` as before."""
+        entry = repeat_memo.get(asset_id)
+        if entry is None or not _repeat_holds(entry, bid_f, ask_f, routing_generation):
+            return False
+        if (not (asset_to_market.get(asset_id) or open_asset_to_market.get(asset_id))
+                and asset_id not in open_asset_mirrors):
+            return False
+        try:
+            for event_id in entry[6]:
+                tail_receipts.note_raw(event_id)
+        except Exception:
+            pass
+        latest = books_by_asset.get(asset_id, (None,))[0]
+        if latest != (bid_f, ask_f):
+            books_by_asset[asset_id] = ((bid_f, ask_f), latest)
+        _note_repeat_skipped(entry)
         return True
 
     def _tick_targets(asset_id: str) -> list[int]:
@@ -6825,6 +6863,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             logger.exception("Polymarket WS: resolution error")
 
     ws.on_price = handle_price
+    # #10090: off (`PM_WS_REPEAT_SKIP_MS=0`) leaves every leg on `handle_price`.
+    ws.on_price_repeat = handle_price_repeat if repeat_skip_s > 0 else None
     ws.on_trade = handle_trade
     ws.on_resolved = handle_resolved
 
@@ -7045,6 +7085,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     price_book_snapshots=book_snapshot_prices_enabled(),
                 )
                 open_ws.on_price = handle_price
+                # The child-process receiver forwards raw quotes and has no
+                # receipt-side hook; it ignores this.
+                open_ws.on_price_repeat = (
+                    handle_price_repeat if repeat_skip_s > 0 else None
+                )
                 open_ws.on_trade = handle_trade
                 open_sockets.append(open_ws)
             open_ws = open_sockets[0]
