@@ -59,6 +59,12 @@ struct ChartDataPoint: Identifiable {
     /// `win_prob_history` points: the sportsbook consensus and the blend are not
     /// classified by the producer.
     var servedEvidence: ServedEvidence?
+    /// #10090 — the index, in the `liveFrames` handed to
+    /// `extendingBlendToLiveEdge`, of the frame this blend point was drawn
+    /// from: an appended frame, or the headline marker that re-valued a pin.
+    /// Nil on every served point. Diagnostic only (the timing seam names the
+    /// drawn end by it, `LiveTimingSeam.drawnChartEnd`); nothing draws from it.
+    var liveFrameIndex: Int?
 }
 
 /// One point as the served evidence contract classifies it (#7878). Mirrors the
@@ -2811,6 +2817,18 @@ struct OddsChartView: View {
         return extendingBlendToLiveEdge(served, with: liveFrames, history: history)
     }
 
+    /// #10090 — the point the blend line ends on: the last `aggregate` point in
+    /// the order the plot draws them (`enrichWithGameState` sorts by date and
+    /// keeps the input order of equal dates, so a tie goes to the later one).
+    /// Nil when no blend is drawn. Reads `points`; never changes them.
+    static func drawnBlendEnd(_ points: [ChartDataPoint]) -> ChartDataPoint? {
+        var end: ChartDataPoint?
+        for point in points where point.source == "aggregate" && point.date >= (end?.date ?? point.date) {
+            end = point
+        }
+        return end
+    }
+
     /// The payload's half of `chartPoints`: every served point, no live frame.
     static func servedPoints(from history: EventHistoryResponse) -> [ChartDataPoint] {
         var points: [ChartDataPoint] = []
@@ -2924,7 +2942,8 @@ struct OddsChartView: View {
                let index = rendered.lastIndex(where: {
                    $0.source == "aggregate" && $0.date == edgeAt && $0.probability == edge.homeProbability
                }) {
-                rendered[index] = ChartDataPoint(date: edgeAt, probability: marker.homeProbability, source: "aggregate")
+                rendered[index] = ChartDataPoint(date: edgeAt, probability: marker.homeProbability, source: "aggregate",
+                                                 liveFrameIndex: liveFrames.count - 1)
                 // The carry-forward minute after the headline goes with the value it carried.
                 rendered.removeAll {
                     $0.source == "aggregate" && $0.date >= marker.date && $0.date < edgeAt && carried.contains($0.date)
@@ -2967,8 +2986,9 @@ struct OddsChartView: View {
         guard let publishedEdge else {
             // The removed pin itself proves this aggregate series existed.
             if replacedPin {
-                return rendered + frames.map {
-                    ChartDataPoint(date: $0.date, probability: $0.homeProbability, source: "aggregate")
+                return rendered + frames.enumerated().map {
+                    ChartDataPoint(date: $0.element.date, probability: $0.element.homeProbability, source: "aggregate",
+                                   liveFrameIndex: $0.offset)
                 }
             }
             return extendingServedSourceSeries(
@@ -2977,9 +2997,12 @@ struct OddsChartView: View {
         }
 
         var extended = rendered
-        for frame in frames where frame.date > publishedEdge {
+        // `frames` is always a prefix of `liveFrames` (only a trailing marker
+        // or preview is dropped), so its offsets index both.
+        for (index, frame) in frames.enumerated() where frame.date > publishedEdge {
             extended.append(
-                ChartDataPoint(date: frame.date, probability: frame.homeProbability, source: "aggregate")
+                ChartDataPoint(date: frame.date, probability: frame.homeProbability, source: "aggregate",
+                               liveFrameIndex: index)
             )
         }
         // Only a frame before the edge can sit inside the served blend.

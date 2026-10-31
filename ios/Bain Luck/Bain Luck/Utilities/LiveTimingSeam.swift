@@ -50,7 +50,10 @@ enum LiveTimingSeam {
     /// `clock:<source updated_at>`, else `none`; `null` for an explicit null
     /// folded result; a preview's `v3:<incarnation>/<namespace>/<session>/e<epoch>/s<seq>/b<base_rev>`,
     /// which a folded preview extends with `/o<origin>`, `/f<fold_session>` and
-    /// `/m<row>=<rev>;…` (`previewBasis`).
+    /// `/m<row>=<rev>;…` (`previewBasis`). A chart mark whose drawn end is a
+    /// served history point says `served:` before its basis: the read's pin
+    /// under the revision it was computed from, `served:none` for a point the
+    /// read gives no identity (`drawnChartEnd`).
     /// `stamp` is the exact reference-date Double bit pattern or `-`: the chart
     /// edge on chart marks. `probability` is the home probability the mark
     /// speaks for, or `-`; `observed` is its source observation clock as a
@@ -228,48 +231,68 @@ enum LiveTimingSeam {
     }
 
     /// `committed` is the page's event; `headline` and `observed` what its hero
-    /// prints (`headline(event)`, `displayedProbabilityObservedAt(event)`);
-    /// `chartEnd` the last point of the frames its chart draws
-    /// (`chartFrames(event)`), and `projected` whether that point is the
-    /// preview's projection. `preview` is the identity of the displayed
-    /// preview, nil when the hero prints committed truth; it names the chart
-    /// only when the chart's end is its projection. `history` is the read the
-    /// chart draws those frames over.
-    nonisolated static func presented(committed: EventDetail, headline: EventDetail, observed: Date?,
-                                      chartEnd: LiveBlendPoint?, projected: Bool, preview: String?,
-                                      history: EventHistoryResponse?) -> Presented {
-        let chart = drawnChartEnd(chartEnd, projected: projected, preview: preview, history: history)
+    /// prints (`headline(event)`, `displayedProbabilityObservedAt(event)`).
+    /// `drawn` is the point the chart's blend line ends on
+    /// (`OddsChartView.drawnBlendEnd`), built from `frames` (`chartFrames(event)`)
+    /// over `history`; nil when the chart draws no blend. `projected` is whether
+    /// the last of `frames` is the preview's projection, and `preview` the
+    /// identity of the displayed preview, nil when the hero prints committed
+    /// truth; it names the chart only when the drawn end is that projection.
+    static func presented(committed: EventDetail, headline: EventDetail, observed: Date?,
+                          drawn: ChartDataPoint?, frames: [LiveBlendPoint], projected: Bool,
+                          preview: String?, history: EventHistoryResponse?) -> Presented {
+        let chart = drawnChartEnd(drawn, frames: frames, projected: projected, preview: preview, history: history)
         return Presented(eventId: committed.id,
                          headlineBasis: preview ?? headlineBasis(of: committed),
                          probability: headline.currentOdds?.homeProbability, observed: observed,
                          chartBasis: chart.basis, chartEdge: chart.edge,
-                         chartProbability: chartEnd?.homeProbability, chartObserved: chartEnd?.date)
+                         chartProbability: chart.probability, chartObserved: chart.observed)
     }
 
-    /// #10090 — where the chart draws `end` and under whose identity. Each
-    /// kind of end carries its own provenance; none borrows the headline's:
-    /// - the preview's projection: the displayed preview's identity, at its
-    ///   observation time.
-    /// - the committed headline's marker over an older pin
-    ///   (`BlendPreview.headlineOverOlderPin`): the marker itself is never
-    ///   drawn; the chart re-values the pin and the pin keeps its time
-    ///   (`OddsChartView.extendingBlendToLiveEdge`). So the edge is the pin's,
-    ///   and the basis is the revision the marker carries, which authorized
-    ///   the value drawn there. A pin this read no longer re-values has no
-    ///   edge (no mark), never the marker's own time.
-    /// - a committed buffer frame: the basis it was appended under
-    ///   (`LiveBlendPoint.basis`), or `-` when it carries none.
-    nonisolated static func drawnChartEnd(_ end: LiveBlendPoint?, projected: Bool, preview: String?,
-                                          history: EventHistoryResponse?) -> (basis: String, edge: Date?) {
-        guard let end else { return ("-", nil) }
-        if projected { return (preview ?? "none", end.date) }
-        if let authority = end.headlineOverPin {
-            let pin = history.flatMap {
-                BlendPreview.olderPinUnderHeadline($0, authority: authority, at: end.date, p: end.homeProbability)
+    /// #10090 — the identity, place, value and observation clock of the point
+    /// the chart draws its blend line to (`drawn`). Each kind of end carries
+    /// its own provenance; none borrows the headline's or the buffer's:
+    /// - a point drawn from one of `frames` (`ChartDataPoint.liveFrameIndex`):
+    ///   - the preview's projection: the displayed preview's identity.
+    ///   - the committed headline's marker over an older pin
+    ///     (`BlendPreview.headlineOverOlderPin`): the marker is never drawn
+    ///     itself; the chart re-values the pin, which keeps its time
+    ///     (`OddsChartView.extendingBlendToLiveEdge`). The basis is the revision
+    ///     the marker carries, which authorized the value drawn there.
+    ///   - a committed buffer frame: the basis it was appended under
+    ///     (`LiveBlendPoint.basis`), or `-` when it carries none.
+    ///   Observed at that frame's own time.
+    /// - a served point: the buffer's last frame sits at or behind the read's
+    ///   edge, so the chart ends on the read (ties go to the served point). The
+    ///   read's pin (`blend_edge_pinned`, its `aggregate_line`'s last point) is
+    ///   `served:` + the revision it was computed from
+    ///   (`blend_edge_fold_revision`), observed at `blend_edge_observed_at`. Any
+    ///   other served bucket is `served:none`, observed `-`: an
+    ///   `aggregate_line` point carries no revision or observation clock of
+    ///   its own on the wire.
+    /// The edge and value are always the drawn point's own.
+    static func drawnChartEnd(_ drawn: ChartDataPoint?, frames: [LiveBlendPoint], projected: Bool,
+                              preview: String?, history: EventHistoryResponse?)
+        -> (basis: String, edge: Date?, probability: Double?, observed: Date?) {
+        guard let drawn else { return ("-", nil, nil, nil) }
+        if let index = drawn.liveFrameIndex, frames.indices.contains(index) {
+            let frame = frames[index]
+            let basis: String
+            if projected && index == frames.count - 1 {
+                basis = preview ?? "none"
+            } else if let authority = frame.headlineOverPin {
+                basis = Self.basis(revision: authority.base, clock: nil)
+            } else {
+                basis = frame.basis ?? "-"
             }
-            return (basis(revision: authority.base, clock: nil), pin?.timestamp.asDate)
+            return (basis, drawn.date, drawn.probability, frame.date)
         }
-        return (end.basis ?? "-", end.date)
+        if let history, history.blendEdgePinned == true, let pin = history.aggregateLine?.last,
+           pin.timestamp.asDate == drawn.date, pin.homeProbability == drawn.probability {
+            return ("served:" + basis(revision: history.blendEdgeFoldRevision?.revision, clock: nil),
+                    drawn.date, drawn.probability, history.blendEdgeObservedAt?.asDate)
+        }
+        return ("served:none", drawn.date, drawn.probability, nil)
     }
 
     static func viewUpdated(from old: Presented, to new: Presented) {

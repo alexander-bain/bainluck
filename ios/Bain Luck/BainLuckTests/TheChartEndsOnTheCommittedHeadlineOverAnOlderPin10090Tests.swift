@@ -208,8 +208,11 @@ final class TheChartEndsOnTheCommittedHeadlineOverAnOlderPin10090Tests: XCTestCa
         let event = try Self.committed(), served = try Self.staleAt52()
         let frames = Self.frames(served, event, nil, now: 52.415)
         let drawn = try XCTUnwrap(Self.drawnBlend(served, frames).last)
+        let end = OddsChartView.drawnBlendEnd(OddsChartView.chartPoints(from: served, liveFrames: frames))
+        XCTAssertEqual(end?.liveFrameIndex, frames.count - 1, "drawn from the marker")
         let shown = LiveTimingSeam.presented(committed: event, headline: event, observed: Self.date(Self.commitAt),
-                                             chartEnd: frames.last, projected: false, preview: nil, history: served)
+                                             drawn: end, frames: frames, projected: false, preview: nil,
+                                             history: served)
         XCTAssertEqual(shown.chartEdge, drawn.date, "the pin's time, where the line ends")
         XCTAssertEqual(shown.chartEdge, Self.date(Self.readAt52))
         XCTAssertEqual(shown.chartProbability, drawn.probability)
@@ -217,11 +220,24 @@ final class TheChartEndsOnTheCommittedHeadlineOverAnOlderPin10090Tests: XCTestCa
         XCTAssertEqual(shown.chartBasis, shown.headlineBasis, "the marker is the headline's own value")
         XCTAssertEqual(shown.chartObserved, Self.date(Self.commitAt), "observed at the headline's clock, not the pin's")
 
-        // A read that no longer re-values that pin (it already prints 71%)
-        // draws no marker value, so the seam names no end at the marker's time.
+        // A read that no longer re-values that pin (it already prints 71%):
+        // the line ends on the read's own pin, so the seam names THAT pin, by
+        // the read's revision and observation, never the marker's or the
+        // commit frame's (which sits behind the pin and is not the end).
         let printed = try Self.staleAt52(edgeValue: 0.71)
-        XCTAssertNil(LiveTimingSeam.drawnChartEnd(frames.last, projected: false, preview: nil, history: printed).edge)
-        XCTAssertNil(LiveTimingSeam.drawnChartEnd(frames.last, projected: false, preview: nil, history: nil).edge)
+        let printedEnd = try XCTUnwrap(OddsChartView.drawnBlendEnd(
+            OddsChartView.chartPoints(from: printed, liveFrames: frames)))
+        XCTAssertNil(printedEnd.liveFrameIndex)
+        XCTAssertEqual(printedEnd.date, try XCTUnwrap(Self.drawnBlend(printed, frames).last).date)
+        let pin = LiveTimingSeam.drawnChartEnd(printedEnd, frames: frames, projected: false, preview: nil,
+                                               history: printed)
+        XCTAssertEqual(pin.basis, "served:rev:1=2;2=5", "the read's pin under the revision it was computed from")
+        XCTAssertEqual(pin.edge, Self.date(Self.readAt52))
+        XCTAssertEqual(pin.probability, 0.71)
+        XCTAssertEqual(pin.observed, Self.date(Self.olderObserved), "the pin's own observation")
+        // No blend drawn: no end, no mark.
+        XCTAssertNil(LiveTimingSeam.drawnChartEnd(nil, frames: frames, projected: false, preview: nil,
+                                                  history: served).edge)
     }
 
     /// A commit observed before the read's carry-forward minute: that minute

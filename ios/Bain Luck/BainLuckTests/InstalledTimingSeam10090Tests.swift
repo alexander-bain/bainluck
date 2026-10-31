@@ -73,21 +73,50 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         }
     }
 
+    /// The read the chart draws: the blend served to `edge` (60% until then,
+    /// `value` there), pinned at `edge` under `pinRevision` when one is given.
+    /// The default ends before every frame and preview below, so those are
+    /// drawn past it.
+    private static func served(edge: String = "2026-09-25T16:59:00Z", value: Double = 0.6,
+                               pinRevision: String? = nil, pinObserved: String? = nil) throws -> EventHistoryResponse {
+        let pin = pinRevision.map { #","blend_edge_pinned":true,"blend_edge_fold_revision":\#($0)"# } ?? ""
+        let observed = pinObserved.map { #","blend_edge_observed_at":"\#($0)""# } ?? ""
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Celtics","away_team":"Knicks","status":"live","history":[],
+         "aggregate_line":[{"timestamp":"2026-09-25T16:58:00Z","home_probability":0.6},
+                           {"timestamp":"\(edge)","home_probability":\(value)}],
+         "win_prob_history":{"polymarket":[{"timestamp":"\(edge)","home_probability":\(value)}]}\(pin)\(observed)}
+        """.utf8))
+    }
+
     @MainActor
     private final class Client: EventDetailProviding {
         struct Missing: Error {}
         var response: EventDetail
-        init(_ response: EventDetail) { self.response = response }
+        var history: EventHistoryResponse?
+        init(_ response: EventDetail, history: EventHistoryResponse?) {
+            self.response = response
+            self.history = history
+        }
         func fetchEvent(id: Int) async throws -> EventDetail { response }
-        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { throw Missing() }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            guard let history else { throw Missing() }
+            return history
+        }
         func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Missing() }
         func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Missing() }
         func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Missing() }
         func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Missing() }
     }
 
-    private func loaded(_ held: EventDetail) async -> (Client, Handle, EventDetailViewModel) {
-        let client = Client(held), handle = Handle()
+    private func loaded(_ held: EventDetail) async throws -> (Client, Handle, EventDetailViewModel) {
+        await loaded(held, history: try Self.served())
+    }
+
+    private func loaded(_ held: EventDetail, history: EventHistoryResponse?) async -> (Client, Handle, EventDetailViewModel) {
+        let client = Client(held, history: history), handle = Handle()
         let vm = EventDetailViewModel(eventId: 4242, client: client, makeStreamHandle: { _ in handle },
             now: { 1_790_355_605 }, sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
         await vm.load(); handle.fire("open")
@@ -148,7 +177,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     // MARK: - Raw row
 
     func testAValidChangedFrameMarksReceiptThenModelHeadlineAndChartOnItsOwnRevision() async throws {
-        let (_, handle, vm) = await loaded(try page())
+        let (_, handle, vm) = try await loaded(try page())
         defer { vm.stopRefresh() }
         let before = vm.timingPresented(try XCTUnwrap(vm.event))
 
@@ -182,7 +211,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     }
 
     func testAStaleEqualInvalidOrForeignFrameLeavesOnlyItsReceipt() async throws {
-        let (_, handle, vm) = await loaded(try page())
+        let (_, handle, vm) = try await loaded(try page())
         defer { vm.stopRefresh() }
         handle.fire("probability", Self.raw())
         await drain()
@@ -218,7 +247,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     // MARK: - Folded
 
     func testAFoldedPageMarksTheQuotesFullVectorNeverTheRawRowsRevision() async throws {
-        let (_, handle, vm) = await loaded(try page(revision: Self.folded))
+        let (_, handle, vm) = try await loaded(try page(revision: Self.folded))
         defer { vm.stopRefresh() }
 
         handle.fire("probability", Self.raw(p: 0.9, pending: true))
@@ -256,7 +285,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     // MARK: - Read
 
     func testAStalePollIsNoAdoptionAndANewerReadIsMarkedAsARead() async throws {
-        let (client, handle, vm) = await loaded(try page())
+        let (client, handle, vm) = try await loaded(try page())
         defer { vm.stopRefresh() }
         handle.fire("probability", Self.raw())
         await drain()
@@ -282,6 +311,69 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(shown.chartProbability, 0.55)
         XCTAssertEqual(shown.chartEdge, "2026-09-25T17:10:00Z".asDate)
         XCTAssertEqual(shown.chartObserved, "2026-09-25T17:10:00Z".asDate)
+    }
+
+    // MARK: - Buffer at or behind the read (#10090 served end)
+
+    /// The chart's own end for `vm`'s page, as the plot draws it.
+    private func chartsOwnEnd(_ vm: EventDetailViewModel, _ history: EventHistoryResponse) throws -> ChartDataPoint {
+        try XCTUnwrap(OddsChartView.chartPoints(from: history, liveFrames: vm.chartFrames(try XCTUnwrap(vm.event)))
+            .filter { $0.source == "aggregate" }.sorted { $0.date < $1.date }.last)
+    }
+
+    /// A frame at EXACTLY the read's edge is not drawn there (ties go to the
+    /// served point): the line ends on the read's 58%, so the chart mark must
+    /// name that point, never the buffer frame's revision or value.
+    func testAFrameAtTheReadsEdgeIsNotTheEndSoTheMarkNamesTheServedPoint() async throws {
+        let history = try Self.served(edge: "2026-09-25T17:10:00Z", value: 0.58)
+        let (_, handle, vm) = await loaded(try page(), history: history)
+        defer { vm.stopRefresh() }
+        handle.fire("probability", Self.raw())
+        await drain()
+        XCTAssertEqual(names(marks), [.frameReceived, .modelChartAppended, .modelHeadlineAdopted],
+                       "the buffer took the frame at the edge's own time")
+        XCTAssertEqual(vm.liveBlend.last?.date, "2026-09-25T17:10:00Z".asDate)
+
+        let end = try chartsOwnEnd(vm, history)
+        XCTAssertEqual(end.probability, 0.58, "the chart draws the read's point at the shared time")
+        let shown = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(shown.headlineBasis, "rev:4242=21")
+        XCTAssertEqual(shown.chartBasis, "served:none", "an unpinned bucket carries no identity; never rev:4242=21")
+        XCTAssertEqual(shown.chartEdge, end.date)
+        XCTAssertEqual(shown.chartProbability, end.probability)
+        XCTAssertNil(shown.chartObserved)
+    }
+
+    /// A read pinned PAST the buffer's frame: the line ends on the pin, named
+    /// by the revision and observation the read gives it. The frame is drawn
+    /// inside the line, not at its end, so its revision is not the end's.
+    func testAFrameBehindAPinnedReadIsNotTheEndSoTheMarkNamesThePin() async throws {
+        let history = try Self.served(edge: "2026-09-25T17:12:00Z", value: 0.57, pinRevision: #"{"4242":21}"#,
+                                      pinObserved: "2026-09-25T17:11:00Z")
+        let (_, handle, vm) = await loaded(try page(), history: history)
+        defer { vm.stopRefresh() }
+        handle.fire("probability", Self.raw())
+        await drain()
+        XCTAssertEqual(vm.liveBlend.last?.basis, "rev:4242=21")
+        XCTAssertNil(vm.chartFrames(try XCTUnwrap(vm.event)).last?.headlineOverPin,
+                     "a pin observed after the headline is not re-valued")
+
+        let end = try chartsOwnEnd(vm, history)
+        XCTAssertEqual(end.date, "2026-09-25T17:12:00Z".asDate)
+        XCTAssertEqual(end.probability, 0.57)
+        let shown = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(shown.chartBasis, "served:rev:4242=21", "the read's pin, never the buffer frame's own name")
+        XCTAssertEqual(shown.chartEdge, end.date)
+        XCTAssertEqual(shown.chartProbability, 0.57, "the drawn value, not the frame's 0.55")
+        XCTAssertEqual(shown.chartObserved, "2026-09-25T17:11:00Z".asDate, "the pin's observation, not the frame's")
+
+        // The view mark carries exactly that.
+        marks = []
+        LiveTimingSeam.viewUpdated(from: .idle, to: shown)
+        XCTAssertEqual(marks.last, .init(name: .viewChartUpdated, eventId: 4242, path: "view",
+                                         basis: "served:rev:4242=21", stamp: LiveTimingSeam.stamp(end.date),
+                                         probability: "0.57",
+                                         observed: LiveTimingSeam.stamp("2026-09-25T17:11:00Z".asDate)))
     }
 
     // MARK: - Preview v3 (#10090 preview seam)
@@ -311,7 +403,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     /// never adopted; the hero and chart print the preview with that identity,
     /// and give way to a newer committed revision under its own basis.
     func testAV3PreviewMarksReceiptThenAdoptionAndTheViewPrintsItsIdentityUntilACommitOutranksIt() async throws {
-        let (_, handle, vm) = await loaded(try page())
+        let (_, handle, vm) = try await loaded(try page())
         defer { vm.stopRefresh() }
         let session = openV3(handle)
         var shown = vm.timingPresented(try XCTUnwrap(vm.event))
@@ -377,7 +469,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     /// An expired preview gives way to the committed headline without a frame;
     /// the view names the committed basis again.
     func testAnExpiredPreviewHandsTheHeroBackToItsCommittedBasis() async throws {
-        let (_, handle, vm) = await loaded(try page())
+        let (_, handle, vm) = try await loaded(try page())
         defer { vm.stopRefresh() }
         let session = openV3(handle)
         handle.fire("preview_v3", V3PageWire.preview(
@@ -393,8 +485,12 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(marks.first, .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: "rev:4242=20",
                                           stamp: "-", probability: "0.6",
                                           observed: LiveTimingSeam.stamp(try XCTUnwrap("2026-09-25T17:00:00Z".asDate))))
-        XCTAssertEqual(names(marks).filter { $0 != .viewHeadlineUpdated }, [],
-                       "the chart had no pushed point to fall back to, so it names none")
+        // No pushed point to fall back to: the line ends on the read's own
+        // last point again, named as served (the read gives it no identity).
+        XCTAssertEqual(Array(marks.dropFirst()), [
+            .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "served:none",
+                  stamp: LiveTimingSeam.stamp(try XCTUnwrap("2026-09-25T16:59:00Z".asDate)), probability: "0.6"),
+        ], "the chart falls back to the served line, never to the expired preview")
     }
 
     /// A folded v2 preview for this page on `session`: `p` observed at `at`,
@@ -415,7 +511,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     /// stay two identities that join stage to stage — and a replay or another
     /// session's frame is a receipt that joins nothing.
     func testTwoFoldedV2PreviewsOfOneValueKeepTheirOwnIdentityFromReceiptToHeroAndChart() async throws {
-        let (_, handle, vm) = await loaded(try page(revision: Self.folded))
+        let (_, handle, vm) = try await loaded(try page(revision: Self.folded))
         defer { vm.stopRefresh() }
         let session = V3PageWire.nextSession()
         handle.fire("preview_open_v3", V3PageWire.open(4242, members: [4242, 999], session: session))

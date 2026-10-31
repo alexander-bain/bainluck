@@ -1567,11 +1567,17 @@ final class EventDetailViewModel: ObservableObject {
     /// Evaluated with every body. With no preview displayed, `headline` and
     /// `displayedProbabilityObservedAt` return the committed value at their
     /// first guard, so it reads those directly: no copy, no projection. The
-    /// chart's end is `chartFrames`' last point, projected once per change of
-    /// its inputs (`timingChartEnd`), not once per body: the preview's
-    /// projection, the committed headline's marker over an older pin
-    /// (`BlendPreview.headlineOverOlderPin`), or the committed buffer's last
-    /// frame. Each is named by its own provenance (`LiveTimingSeam.drawnChartEnd`).
+    /// chart's end is worked out once per change of its inputs
+    /// (`timingChartEnd`), not once per body, by the chart's own rule:
+    /// `chartFrames` (the preview's projection, or the committed headline's
+    /// marker over an older pin, `BlendPreview.headlineOverOlderPin`) extended
+    /// over the read (`OddsChartView.extendingToLiveEdge`), ending where the
+    /// blend line ends (`OddsChartView.drawnBlendEnd`). A buffer frame at or
+    /// behind the read's edge is not drawn there, so the end is then the
+    /// read's point. Each end is named by its own provenance
+    /// (`LiveTimingSeam.drawnChartEnd`). No history, or one the chart refused
+    /// (`historyIsDrawn`): the chart's points are not this model's to know,
+    /// so no end is named.
     @MainActor
     func timingPresented(_ event: EventDetail) -> LiveTimingSeam.Presented {
         guard LiveTimingSeam.isRecording else { return .idle }
@@ -1582,25 +1588,30 @@ final class EventDetailViewModel: ObservableObject {
                                  committedEnd: liveBlend.last, committedCount: liveBlend.count,
                                  history: historyGeneration)
         if timingChartEnd?.key != key {
-            let chart = chartFrames(event)
+            let frames = chartFrames(event)
+            let drawn = historyIsDrawn ? history.flatMap { history in
+                OddsChartView.drawnBlendEnd(OddsChartView.extendingToLiveEdge(
+                    timingServedBlend(history), with: frames, history: history))
+            } : nil
             // Only a displayed preview projects; a committed page's extra point is the marker.
-            timingChartEnd = (key, chart.last, shown != nil && chart.count > liveBlend.count)
+            timingChartEnd = (key, drawn, frames, shown != nil && frames.count > liveBlend.count)
         }
+        let drawn = timingChartEnd?.drawn, frames = timingChartEnd?.frames ?? []
         guard shown != nil, let state = blendPreview else {
             return LiveTimingSeam.presented(
                 committed: event, headline: event, observed: event.heroProbabilityObservedAt?.asDate,
-                chartEnd: timingChartEnd?.end, projected: false, preview: nil, history: history)
+                drawn: drawn, frames: frames, projected: false, preview: nil, history: history)
         }
         return LiveTimingSeam.presented(
             committed: event, headline: headline(event), observed: state.observedAt,
-            chartEnd: timingChartEnd?.end, projected: timingChartEnd?.projected ?? false,
+            drawn: drawn, frames: frames, projected: timingChartEnd?.projected ?? false,
             preview: LiveTimingSeam.previewBasis(of: state, in: blendPreviewReader), history: history)
     }
 
     /// Everything `chartFrames` reads: the displayed preview and value (which
     /// carry the page and clock; nil while none shows), the committed
     /// headline an older pin's marker carries, the committed line's end and
-    /// the history read.
+    /// the history read (whose generation also moves `historyIsDrawn`).
     private struct TimingChartKey: Equatable {
         let state: BlendPreviewState?
         let shown: Double?
@@ -1612,9 +1623,25 @@ final class EventDetailViewModel: ObservableObject {
         let history: Int
     }
 
-    /// The timing seam's last chart end, and whether it was the preview's
-    /// projection. Diagnostic only: the chart itself always calls `chartFrames`.
-    private var timingChartEnd: (key: TimingChartKey, end: LiveBlendPoint?, projected: Bool)?
+    /// The timing seam's last drawn chart end, the frames it was drawn from,
+    /// and whether the last of them is the preview's projection. Diagnostic
+    /// only: the chart itself always calls `chartFrames`.
+    private var timingChartEnd: (key: TimingChartKey, drawn: ChartDataPoint?, frames: [LiveBlendPoint],
+                                 projected: Bool)?
+
+    /// The read's served blend points (`OddsChartView.servedPoints`), once per
+    /// payload. Only the blend: every step `extendingToLiveEdge` takes towards
+    /// the blend line's end reads `aggregate` points alone, so the venue and
+    /// sportsbook series would only cost the seam time on every frame.
+    private var timingServedMemo: (generation: Int, points: [ChartDataPoint])?
+
+    @MainActor
+    private func timingServedBlend(_ history: EventHistoryResponse) -> [ChartDataPoint] {
+        if let memo = timingServedMemo, memo.generation == historyGeneration { return memo.points }
+        let points = OddsChartView.servedPoints(from: history).filter { $0.source == "aggregate" }
+        timingServedMemo = (historyGeneration, points)
+        return points
+    }
 
     /// #11564 — a `preview_open_v3`: the domain and session this stream's
     /// previews belong to (`BlendPreview.readerOpenedV3`). Shows nothing itself.
