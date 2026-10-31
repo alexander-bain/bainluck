@@ -488,6 +488,18 @@ final class RacingFieldPageAdapter10868Tests: XCTestCase {
         XCTAssertEqual(final.beforeUnavailable, "Pre-race chance unavailable")
     }
 
+    func testTheRaceKeysAreNeutralRecordedNeverAQualifiedPreRaceBaseline() throws {
+        // No race start reaches the app: the keys are neutral and recorded in every phase (Design 2026-10-31).
+        let before = A.headline(try F.market(F.winnerBefore), host: F.host(F.beforeStamp))
+        let final = A.headline(try F.market(F.winnerFinal), host: F.host(F.finalCapture))
+        XCTAssertEqual(before.phase, .before)
+        XCTAssertEqual(before.keyTreatment, .neutralRecorded)
+        XCTAssertFalse(FieldHeadlineModel10868(before).keyIsHollow)
+        XCTAssertEqual(final.keyTreatment, .neutralRecorded)
+        XCTAssertFalse(FieldHeadlineModel10868(final).keyIsHollow)
+        XCTAssertEqual(before.copy.eyebrow?.hasSuffix("Recorded probabilities"), true)
+    }
+
     func testWithoutAHeldCohortTheFinalShowsTheServedOrder() throws {
         // A known gap, pinned: after settlement the served order follows the
         // settled prices, so a meaningful final cohort is the host's to hold.

@@ -298,7 +298,10 @@ enum RacingFieldPageAdapter10868 {
             state: nil,
             phase: phase,
             copy: headlineCopy(market, phase: phase, compact: compact),
-            unavailableWords: Words.unavailable)
+            unavailableWords: Words.unavailable,
+            // No race start reaches the app, so no reading is a qualified pre-race baseline:
+            // the keys stay neutral and recorded, like the chart's marks (Design 2026-10-31).
+            keyTreatment: .neutralRecorded)
     }
 
     /// The owner's one association per displayed driver: the raw price behind

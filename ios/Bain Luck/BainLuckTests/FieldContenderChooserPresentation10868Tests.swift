@@ -6350,6 +6350,34 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
         XCTAssertFalse(Self.model(Self.input(.lap(0), state: .some(nil))).keyIsHollow)
     }
 
+    func testANeutralRecordedKeyIsNeverHollowAndTheDefaultKeepsThePhaseConvention() {
+        // Default: unchanged for every existing owner.
+        XCTAssertEqual(Self.input(.before).keyTreatment, .phaseDefault)
+        XCTAssertTrue(Self.model(Self.input(.before)).keyIsHollow)
+        XCTAssertFalse(Self.model(Self.input(.lap(1))).keyIsHollow)
+        XCTAssertFalse(Self.model(Self.input(.final)).keyIsHollow)
+        // An owner with no qualified pre-event baseline: neutral in every phase, mixed and absent slots included.
+        for moment: Moment in [.before, .lap(1), .final] {
+            var neutral = Self.input(moment)
+            neutral.keyTreatment = .neutralRecorded
+            XCTAssertFalse(Self.model(neutral).keyIsHollow, "\(moment)")
+            // Display meaning only: the phase, readings and identities are the default input's.
+            var restored = neutral
+            restored.keyTreatment = .phaseDefault
+            XCTAssertEqual(restored, Self.input(moment), "\(moment)")
+            XCTAssertEqual(Self.model(neutral).competitors.map(\.metrics),
+                           Self.model(Self.input(moment)).competitors.map(\.metrics), "\(moment)")
+        }
+        // CONSTRUCTED: one displayed slot that names no catalogue original.
+        var mixed = Self.input(.before, displayed: [Self.slot(Self.drivers[0]), FieldHeadlineSlot10868(
+            ref: Self.ref("absent-market", "absent-outcome"), name: "Absent driver", compactName: nil, keyShape: .square)])
+        mixed.keyTreatment = .neutralRecorded
+        XCTAssertFalse(Self.model(mixed).keyIsHollow)
+        var absent = Self.input(.before, displayed: [])
+        absent.keyTreatment = .neutralRecorded
+        XCTAssertFalse(Self.model(absent).keyIsHollow)
+    }
+
     func testTheKeyPlanDrawsThreeDistinctShapesAtTheReferenceProportionsInsideOneFrame() {
         // The reference `HistoryTeamMark`: a circle of radius r, a diamond reaching 1.2 r, a square of side 1.6 r.
         let extents: [(FieldHeadlineKeyShape10868, CGFloat)] = [(.circle, 1), (.diamond, 1.2), (.square, 0.8)]

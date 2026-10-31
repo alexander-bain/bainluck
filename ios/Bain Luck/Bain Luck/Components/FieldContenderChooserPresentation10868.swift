@@ -5548,6 +5548,17 @@ nonisolated struct FieldHeadlineCopy10868: Equatable {
     let openHint: String?
 }
 
+/// What the headline's identity keys mean (#10868, Design 2026-10-31, approved
+/// amendment to this package): the phase default — hollow before the start,
+/// filled during and after the race — or a neutral recorded key for an owner
+/// whose readings carry no qualified pre-event baseline (a race with no start
+/// time). Owner-supplied display meaning only: never a phase, date, reading,
+/// identity, admission, currentness or settlement rule.
+nonisolated enum FieldHeadlineKeyTreatment10868: Equatable {
+    case phaseDefault
+    case neutralRecorded
+}
+
 nonisolated struct FieldHeadlineInput10868: Equatable {
     /// The exact scope every reference must share.
     let scope: String
@@ -5566,6 +5577,9 @@ nonisolated struct FieldHeadlineInput10868: Equatable {
     let copy: FieldHeadlineCopy10868
     /// A slot that does not resolve ("Driver unavailable in this update").
     let unavailableWords: String
+    /// The keys' meaning. The default keeps every existing owner's keys exactly;
+    /// only an owner without a qualified pre-event baseline says otherwise.
+    var keyTreatment: FieldHeadlineKeyTreatment10868 = .phaseDefault
 }
 
 nonisolated struct FieldHeadlineCompetitor10868: Equatable {
@@ -5829,8 +5843,10 @@ nonisolated struct FieldHeadlineModel10868: Equatable {
         competitor.slot.keyShape
     }
 
-    /// Hollow before the start, filled during and after the race — the chart's own convention.
-    var keyIsHollow: Bool { input.phase == .before }
+    /// Hollow before the start, filled during and after the race — the chart's own
+    /// convention — unless the owner's readings carry no qualified pre-event
+    /// baseline: then a neutral, filled recorded key in every phase.
+    var keyIsHollow: Bool { input.keyTreatment == .phaseDefault && input.phase == .before }
 
     // MARK: State
 
