@@ -51,6 +51,24 @@ class PrimaryQuoteCustody:
             if entry is not None and entry[1] == price:
                 self.held[oid] = (entry, bound)
 
+    def received_now(self, row, entry):
+        """#10090 DNPL: the receipt composition's row IS this received input.
+
+        `entry` is the socket's current primary input, which the live book's
+        ordinary policy still selects (`current_primary_input`); custody
+        received exactly that observation and the row carries its price. The
+        price that lands in the DB is this one, so the page may show it at
+        receipt instead of ~0.3-7 s later at the stamp (production 11/01
+        05:49-05:53Z, KXATPCHALLENGERMATCH: 9 refusals a minute, 6.9 s worst).
+        A stored row is never proved this way (`eligible`).
+        """
+        if entry is None or getattr(row, 'current_probability', None) is None:
+            return False
+        if getattr(row, 'resolution_source', None) is not None or getattr(row, 'is_winner', None) is not None:
+            return False
+        return (self.received.get(row.id) == entry
+                and round(float(row.current_probability), 6) == round(float(entry[1]), 6))
+
     def eligible(self, row, entry, held_quotes=None, *, overlaid=False):
         if entry is None or getattr(row, 'current_probability', None) is None:
             return False

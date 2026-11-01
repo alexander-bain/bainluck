@@ -1567,7 +1567,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             if value is not None:
                 values.append(value)
         return values[0] if values and all(v == values[0] for v in values) else None
-    def steady_primary_input(row, held_quotes=None, *, overlaid=False):
+    def steady_primary_input(row, held_quotes=None, *, overlaid=False, receipt=False):
         ticker = getattr(row, "external_id", None)
         if ticker not in ticker_to_ids or ticker_to_ids[ticker][0] in prices.settled_market_ids:
             return None
@@ -1581,9 +1581,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # Different input generations are not interchangeable, even at one price.
         if not found or any(entry != found[0] for entry in found):
             return None
-        return found[0][1] if primary_quote_custody.eligible(
-            row, found[0], held_quotes, overlaid=overlaid,
-        ) else None
+        if primary_quote_custody.eligible(row, found[0], held_quotes, overlaid=overlaid):
+            return found[0][1]
+        # #10090 DNPL: a receipt composition's row is the received input itself.
+        if receipt and primary_quote_custody.received_now(row, found[0]):
+            return found[0][1]
+        return None
     def steady_book_signature(ticker):
         # #11317 P2: every in-memory input the bundled proof reads for this
         # ticker, compared (never interpreted) by the refresher: a refused
@@ -3952,6 +3955,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "Kalshi WS: %d open-contract tickers over %d connection(s)",
                 len(ids), len(shards),
             )
+        # #10090: the slate and ~74k open contracts are the long-lived heap;
+        # freeze them out of the full collections, as the Polymarket process
+        # does. Unfrozen, every full collection walked them: 197-255 ms loop
+        # freezes every ~5-7 minutes (production 11/01 05:10-05:46Z).
+        from app.utils.ws_gc import refreeze_long_lived
+
+        refreeze_long_lived("kalshi")
 
     admission_task = asyncio.create_task(admit_open_contracts())
 
@@ -4075,10 +4085,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         #11218: whatever the verdict, the slate and open-contract reads ran and
         their working set is garbage once the inner call returns.
         """
+        verdict = None
         try:
-            return await _refresh_subscription_scope()
+            verdict = await _refresh_subscription_scope()
+            return verdict
         finally:
             release_free_heap("kalshi")
+            if verdict == "applied":
+                # #10090: the installed scope is long-lived; freeze it out of
+                # the full collections without paying one (`app/utils/ws_gc.py`).
+                from app.utils.ws_gc import refreeze_long_lived
+
+                refreeze_long_lived("kalshi", full=False)
 
     async def _refresh_subscription_scope():
         """``"keep"``, ``"applied"`` or ``"rebuild"`` (the old full recycle).

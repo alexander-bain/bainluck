@@ -8128,6 +8128,8 @@ class LiveBlendRefresher:
                     lambda row: self.current_primary_input(
                         row, self.held_quotes,
                         overlaid=getattr(row, "_primary_quote_overlaid", False),
+                        # #10090 DNPL: a row patched from a received quote.
+                        **({"receipt": True} if getattr(row, "_receipt_quote", False) else {}),
                     )
                 ) if getattr(self, "current_primary_input", None) is not None else None,
                 # Bound now: with a canary in the batch this
@@ -9465,6 +9467,7 @@ class LiveBlendRefresher:
                 outcomes.append(SimpleNamespace(**{
                     **vars(row), "current_probability": price,
                     "last_updated": datetime.fromtimestamp(at, timezone.utc),
+                    "_receipt_quote": True,
                 }))
                 overlaid.add(row.id)
                 changed = True

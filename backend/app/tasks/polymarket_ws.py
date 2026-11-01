@@ -8015,9 +8015,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
             # Installed: the live maps own the catalog now.
             fresh_slate = fresh_open = None
-            # #10090: the new catalog is the long-lived heap now; collect once
-            # and freeze it out of the full collections (`app/utils/ws_gc.py`).
-            refreeze_long_lived("polymarket")
+            # #10090: the new catalog is the long-lived heap now; freeze it out
+            # of the full collections (`app/utils/ws_gc.py`). The startup
+            # freeze collected everything; a handover pays no full collection.
+            refreeze_long_lived("polymarket", full=False)
             # #11218: the reads' freed working set goes back to the OS now,
             # instead of staying counted until the dyno's memory line.
             release_free_heap("polymarket")

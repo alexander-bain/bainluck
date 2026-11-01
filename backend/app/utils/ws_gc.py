@@ -43,8 +43,15 @@ def gc_freeze_enabled() -> bool:
     return os.getenv(GC_FREEZE_ENV, "1").strip() != "0"
 
 
-def refreeze_long_lived(arm: str) -> Optional[int]:
+def refreeze_long_lived(arm: str, *, full: bool = True) -> Optional[int]:
     """Collect everything once, then freeze what survived; the frozen count.
+
+    ``full=False`` collects only the young generations (milliseconds) before
+    the freeze: the full collection froze the venue's loop ~200-250 ms at
+    every 10-minute catalog handover (production 11/01 05:41:17Z Polymarket
+    238 ms), and a headline input waiting then waited that much longer. Cyclic
+    garbage already in the old generation stays frozen until the next full
+    call (each process start); ~0.3-6k objects a handover in production.
 
     ``None`` means no freeze is held afterwards: turned off (a freeze an
     earlier call held is released) or the collector failed.
@@ -56,8 +63,11 @@ def refreeze_long_lived(arm: str) -> Optional[int]:
                 logger.info("worker-ws gc freeze: arm=%s released (turned off)", arm)
             return None
         started = time.perf_counter()
-        gc.unfreeze()
-        collected = gc.collect()
+        if full:
+            gc.unfreeze()
+            collected = gc.collect()
+        else:
+            collected = gc.collect(1)
         gc.freeze()
         took_ms = (time.perf_counter() - started) * 1000
         frozen = gc.get_freeze_count()
@@ -65,7 +75,7 @@ def refreeze_long_lived(arm: str) -> Optional[int]:
         logger.warning("worker-ws gc freeze failed (arm=%s)", arm, exc_info=True)
         return None
     logger.info(
-        "worker-ws gc freeze: arm=%s frozen=%d collected=%d took=%.0fms",
-        arm, frozen, collected, took_ms,
+        "worker-ws gc freeze: arm=%s full=%s frozen=%d collected=%d took=%.0fms",
+        arm, int(full), frozen, collected, took_ms,
     )
     return frozen
