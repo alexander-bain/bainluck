@@ -1933,7 +1933,9 @@ class TestTheLabelArmReachesTheBoardTheValueArmsCannot9543:
 
 
 @pytest.fixture
-async def poll_db():
+async def poll_db(monkeypatch):
+    from contextlib import asynccontextmanager
+
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     import app.models.models  # noqa: F401
@@ -1959,6 +1961,17 @@ async def poll_db():
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=subset))
     maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    # #10090: the poll's extra writer sessions (`_write_jobs`) open through
+    # `get_task_session`, which in production is this same database.
+    @asynccontextmanager
+    async def task_session(**_kw):
+        async with maker() as extra:
+            yield extra
+
+    from app.tasks import base as tasks_base
+
+    monkeypatch.setattr(tasks_base, "get_task_session", task_session)
     async with maker() as session:
         yield session
     await engine.dispose()
@@ -2769,3 +2782,57 @@ async def test_tail_shadow_pass_writes_nothing_and_grades_against_the_fresh_row(
     # No 0.39 vs 0.40 agrees inside 0.01.
     assert stats["tail_disagree"] == 1 and stats["tail_agree"] == 1
     assert stats["tail_would_write"] == 2 and "rows_updated" not in stats
+
+
+async def test_polymarket_population_takes_the_socket_games_props_only_when_switched(
+        poll_db, monkeypatch):
+    """#10090 `PM_WS_PROPS_TO_POLL` (Alex 2026-11-01): a live game's
+    venue-labelled prop joins the population; its moneyline, an unlabelled
+    market and an old-version label stay with the socket."""
+    db = poll_db
+    live = await _vp_event(db, status="live", starts_in=timedelta(hours=-1))
+
+    def label(venue_type, v=1):
+        return {"content_understanding_v1": {"v": v, "semantic_type": venue_type,
+                                             "venue_type": venue_type},
+                "polymarket_event_id": "7001"}
+
+    await _vp_market(db, source="polymarket", ext="0xp01", event_id=live,
+                     legs=[("0xp01", False, None)], metadata=label("total"))
+    await _vp_market(db, source="polymarket", ext="0xm01", event_id=live,
+                     legs=[("0xm01", False, None)], metadata=label("moneyline"))
+    await _vp_market(db, source="polymarket", ext="0xu01", event_id=live,
+                     legs=[("0xu01", False, None)], metadata={"polymarket_event_id": "7001"})
+    await _vp_market(db, source="polymarket", ext="0xf01", event_id=live,
+                     legs=[("0xf01", False, None)], metadata=label("total", v=999))
+    await db.commit()
+
+    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    assert await _vp_population(db, "polymarket", open_arm=False) == set()
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    assert await _vp_population(db, "polymarket", open_arm=False) == {"0xp01"}
+
+
+async def test_the_props_arm_statements_run_on_postgres_and_agree(poll_db, monkeypatch):
+    """#10090: the open arm's slate seed (switch on) and the hot-props filter
+    are the same window and refusal, compiled by a real engine."""
+    from app.tasks import pm_hot_props
+    from app.tasks.polymarket_open_contracts import open_contract_scope_markets_stmt
+
+    db = poll_db
+    live = await _vp_event(db, status="live", starts_in=timedelta(hours=-1))
+    label = {"content_understanding_v1": {"v": 1, "semantic_type": "total",
+                                          "venue_type": "total"}}
+    win = {"content_understanding_v1": {"v": 1, "semantic_type": "moneyline",
+                                        "venue_type": "moneyline"}}
+    prop, _ = await _vp_market(db, source="polymarket", ext="0xq01", event_id=live,
+                               legs=[("0xq01", False, None)], metadata=label)
+    ml, _ = await _vp_market(db, source="polymarket", ext="0xq02", event_id=live,
+                             legs=[("0xq02", False, None)], metadata=win)
+    await db.commit()
+
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    seeds = {r[0] for r in (await db.execute(open_contract_scope_markets_stmt())).all()}
+    owned = {r[0] for r in (await db.execute(pm_hot_props.props_arm_stmt([prop, ml]))).all()}
+    assert prop not in seeds and ml in seeds
+    assert owned == {prop}

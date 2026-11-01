@@ -758,12 +758,65 @@ def _owns_kalshi_price_lifetime(consumer):
     return run
 
 
+#: The scheduled arm's upper bound, and its bounds when the env is set.
+KALSHI_WS_UPCOMING_HOURS_DEFAULT = 6
+KALSHI_WS_UPCOMING_HOURS_MIN = 1
+KALSHI_WS_UPCOMING_HOURS_MAX = 6
+
+
+def _kalshi_upcoming_hours_env() -> int:
+    """#10090 — env `KALSHI_WS_UPCOMING_HOURS`, read once at import, as
+    `polymarket_ws._upcoming_hours_env` reads `PM_WS_UPCOMING_HOURS`.
+
+    Missing or blank is the default, 6 (the window as it always was). A whole
+    number is clamped to 1..6 with one warning when it moves; anything else is
+    the default with one warning. It can narrow the window, never widen it.
+    A changed value reaches the socket on restart (a config change restarts
+    the dyno). 11/01: the Kalshi venue process ran at 83-89% of a core on a
+    Sunday slate; games hours away do not need a live book.
+    """
+    raw = os.environ.get("KALSHI_WS_UPCOMING_HOURS")
+    if raw is None or not raw.strip():
+        return KALSHI_WS_UPCOMING_HOURS_DEFAULT
+    try:
+        hours = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "Kalshi WS: KALSHI_WS_UPCOMING_HOURS=%r is not a whole number of "
+            "hours; using %d", raw, KALSHI_WS_UPCOMING_HOURS_DEFAULT,
+        )
+        return KALSHI_WS_UPCOMING_HOURS_DEFAULT
+    clamped = min(max(hours, KALSHI_WS_UPCOMING_HOURS_MIN), KALSHI_WS_UPCOMING_HOURS_MAX)
+    if clamped != hours:
+        logger.warning(
+            "Kalshi WS: KALSHI_WS_UPCOMING_HOURS=%r is outside %d..%d; using %d",
+            raw, KALSHI_WS_UPCOMING_HOURS_MIN, KALSHI_WS_UPCOMING_HOURS_MAX, clamped,
+        )
+    return clamped
+
+
+KALSHI_WS_UPCOMING_HOURS = _kalshi_upcoming_hours_env()
+#: #10090: a game contract's price is its last trade while that trade sits
+#: inside the live book (`handle_ticker`). "0" restores the midpoint.
+KALSHI_WS_GAME_LAST_TRADE = os.getenv("KALSHI_WS_GAME_LAST_TRADE", "1").strip() != "0"
+
+
+def _is_team_game_ticker(ticker: str) -> bool:
+    """A team-sport game contract (``KXNFLGAME-...``): its series ends in GAME.
+    Tennis matches (``...MATCH-``) are excluded: their bundled pairs need
+    current-book proof, which a trade price fails (11/01 20:34Z: 15-28 s
+    na_proof waits on Challenger matches; G4F76 rolled back)."""
+    series = ticker.split("-", 1)[0]
+    return series.endswith("GAME")
+
+
 def _kalshi_slate_event_window():
     """The events whose Kalshi markets the socket subscribes to.
 
-    Live, scheduled within 6 h, and (#9484) an open market on a recently
-    suspended event — see `app.tasks.ws_slate`. A function rather than inline
-    so the real-Postgres contract reads the shipped expression.
+    Live, scheduled within 6 h (``KALSHI_WS_UPCOMING_HOURS`` since #10090),
+    and (#9484) an open market on a recently suspended event — see
+    `app.tasks.ws_slate`. A function rather than inline so the real-Postgres
+    contract reads the shipped expression.
     """
     from sqlalchemy import and_, or_, text
 
@@ -775,7 +828,9 @@ def _kalshi_slate_event_window():
         and_(
             Event.status == "scheduled",
             Event.commence_time.isnot(None),
-            Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
+            Event.commence_time <= text(
+                f"NOW() + INTERVAL '{int(KALSHI_WS_UPCOMING_HOURS)} hours'"
+            ),
         ),
         suspended_open_market_arm(),
     )
@@ -3147,6 +3202,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # tight book → midpoint, else a trade the book does not refute, else a
         # longshot ask, else nothing (a wide book with no trade is not a price).
         prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
+        if (globals().get("KALSHI_WS_GAME_LAST_TRADE", False) and prob is not None
+                and ticker in ticker_to_ids and _is_team_game_ticker(ticker)
+                and last_price is not None
+                and yes_bid is not None and yes_ask is not None
+                and 0 < yes_bid <= last_price <= yes_ask < 1):
+            # #10090 (Alex 11/01 ~12:25 PM PT, watching Jets-Raiders in the
+            # Kalshi app, "moving constantly"): on a game's contracts the price
+            # is the last trade while it sits inside the live book, as Kalshi
+            # shows it and as a Polymarket trade already prices its leg. A
+            # trade the book has moved past is still refused (#8753's rule).
+            prob = last_price
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:

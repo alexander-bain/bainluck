@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from app.services.dnpl_authority import Authority
+from app.utils import dnpl_authority_fanout as fanout
 from app.utils.dnpl_authority_fanout import AuthorityFanout, PreviewReceipt
 
 pytestmark = pytest.mark.asyncio
@@ -118,7 +119,7 @@ async def test_overflow_invalidates_inflight_and_queue_without_replay():
         await r.gate.aclose()
 
 
-@pytest.mark.parametrize("failure", ["disabled", "new_domain", "redis", "timeout"])
+@pytest.mark.parametrize("failure", ["disabled", "new_domain", "redis"])
 async def test_uncertain_authority_reconnects_and_never_delivers(failure):
     r = Rig()
     try:
@@ -127,10 +128,8 @@ async def test_uncertain_authority_reconnects_and_never_delivers(failure):
             r.authority = replace(r.authority, state="disabled")
         elif failure == "new_domain":
             r.authority = replace(r.authority, incarnation=2, namespace=uuid4())
-        elif failure == "redis":
-            r.redis_ok = False
         else:
-            r.release_read.clear()
+            r.redis_ok = False
         r.gate.offer(record)
         await wait(r.changed)
         assert not r.delivered
@@ -143,8 +142,49 @@ async def test_expired_queue_budget_does_not_start_database_read():
     r = Rig()
     try:
         r.gate.offer(r.receipt(received_at=monotonic() - 0.151))
-        await wait(r.changed)
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if r.gate.stats["timeouts_skipped"]:
+                break
         assert r.reads == 0
+        assert not r.delivered
+        assert r.gate.stats["timeouts_skipped"] == 1
+    finally:
+        await r.gate.aclose()
+
+
+async def test_a_validation_that_runs_out_of_time_drops_its_batch_but_keeps_the_stream():
+    """11/01 19:45Z: reconnecting on every timed-out validation cut each live
+    reader's stream every 12-58 s on a busy Sunday."""
+    r = Rig()
+    try:
+        r.release_read.clear()
+        r.gate.offer(r.receipt(1))
+        for _ in range(60):
+            await asyncio.sleep(0.01)
+            if r.gate.stats["timeouts_skipped"]:
+                break
+        assert not r.delivered and not r.reconnections
+        assert r.gate.stats["timeouts_skipped"] == 1
+
+        r.release_read.set()
+        r.gate.offer(r.receipt(2))
+        await wait(r.changed)
+        assert [x.channel for x in r.delivered] == ["2"] and not r.reconnections
+    finally:
+        await r.gate.aclose()
+
+
+async def test_timeouts_in_a_row_still_reconnect():
+    r = Rig()
+    try:
+        r.release_read.clear()
+        for i in range(fanout.MAX_CONSECUTIVE_TIMEOUTS):
+            r.gate.offer(r.receipt(i))
+            for _ in range(60):
+                await asyncio.sleep(0.01)
+                if r.gate.stats["timeouts_skipped"] + len(r.reconnections) > i:
+                    break
         assert not r.delivered
         assert r.reconnections
     finally:
@@ -194,9 +234,59 @@ async def test_redis_verification_is_inside_same_operation_budget():
     try:
         r.gate.offer(r.receipt())
         await wait(entered)
-        await wait(r.changed)
-        assert cancelled.is_set()
+        await wait(cancelled)
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if r.gate.stats["timeouts_skipped"]:
+                break
         assert not r.delivered
-        assert r.reconnections == [frozenset(("0",))]
+        # A check that only ran out of time drops its batch and keeps the stream.
+        assert r.gate.stats["timeouts_skipped"] == 1 and not r.reconnections
     finally:
+        await r.gate.aclose()
+
+
+async def test_the_hub_validates_against_a_background_copy_not_a_read_per_batch():
+    """Alex 11/01: no database read between a venue's price and the screen."""
+    from app.utils.live_fanout import CachedPrimaryAuthority
+
+    r = Rig()
+    reads = []
+
+    async def primary():
+        reads.append(monotonic())
+        return r.authority
+
+    cache = CachedPrimaryAuthority(primary)
+    try:
+        first = await cache.read()
+        for _ in range(20):
+            assert await cache.read() == first
+        assert len(reads) <= 2, "one fresh read, the refresher's first at most"
+    finally:
+        cache._task.cancel()
+        await r.gate.aclose()
+
+
+async def test_a_stale_copy_is_never_used():
+    from app.utils.live_fanout import CachedPrimaryAuthority
+
+    r = Rig()
+    reads = []
+
+    async def primary():
+        reads.append(1)
+        return r.authority
+
+    cache = CachedPrimaryAuthority(primary)
+    try:
+        await cache.read()
+        cache._task.cancel()
+        cache._at -= CachedPrimaryAuthority.MAX_AGE_S + 1
+        before = len(reads)
+        await cache.read()
+        assert len(reads) == before + 1, "an old copy forces a fresh primary read"
+    finally:
+        if cache._task:
+            cache._task.cancel()
         await r.gate.aclose()

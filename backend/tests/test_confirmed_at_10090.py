@@ -331,7 +331,8 @@ class TestWriter:
         due = t.take_due()
         assert [eid for eid, _ in due] == [E]
         payload = json.loads(due[0][1])
-        assert payload == {"c": int(STAMP_WALL * 1000), "h": None, "w": int(clock.wall * 1000)}
+        assert payload == {"c": int(STAMP_WALL * 1000), "h": None, "w": int(clock.wall * 1000),
+                           "a": None}
         assert t.take_due() is None  # nothing changed, nothing held: the writer may stop
         clock.tick(1)
         t.note_input(E, HOME, 0.62, clock.wall)
@@ -377,8 +378,8 @@ class TestWriter:
 
 # ── the reader: combine venues, never past a live hold ──────────────────────
 
-def _entry(c=None, h=None, w=None):
-    return json.dumps({"c": c, "h": h, "w": w})
+def _entry(c=None, h=None, w=None, **extra):
+    return json.dumps({"c": c, "h": h, "w": w, **extra})
 
 
 class TestCombine:
@@ -452,15 +453,18 @@ def route_reads(monkeypatch):
     from tests._event_stream_legacy_view import install_legacy_view
 
     install_legacy_view(monkeypatch)
-    script = {"c": None, "step": 0.0, "calls": 0}
+    script = {"c": None, "step": 0.0, "calls": 0, "a": None}
 
     async def fetch(ids):
         script["calls"] += 1
+        extra = {}
+        if script["a"] is not None:
+            extra["a"] = int((script["a"] + script["step"] * (script["calls"] - 1)) * 1000)
         if script["c"] is None:
-            return {eid: [] for eid in ids}
+            return {eid: [_entry(**extra)] if extra else [] for eid in ids}
         c = script["c"] + script["step"] * (script["calls"] - 1)
         ms = int(c * 1000)
-        return {eid: [_entry(c=ms, w=ms)] for eid in ids}
+        return {eid: [_entry(c=ms, w=ms, **extra)] for eid in ids}
 
     monkeypatch.setattr(ca, "_READS", ConfirmedReads(fetch))
     return script
@@ -483,7 +487,7 @@ class TestRoute:
         names = [c.split("\n", 1)[0] for c in chunks if c.startswith("event: ")]
         assert names[:2] == ["event: open", "event: heartbeat"]
         (beat,) = _sse(chunks, "heartbeat")[:1]
-        assert set(beat) == {"t", "confirmed_at"}
+        assert set(beat) == {"t", "confirmed_at", "activity_at"}
         assert beat["confirmed_at"] == ca.iso(int(route_reads["c"] * 1000) / 1000)
 
     @pytest.mark.asyncio
@@ -510,8 +514,8 @@ class TestRoute:
         monkeypatch.setattr(mod, "HEARTBEAT_INTERVAL_S", 0.0)
         chunks = await _collect(5, FakePubSub(), monkeypatch, disconnect_after=2)
         beats = _sse(chunks, "heartbeat")
-        assert beats and all(set(b) == {"t", "confirmed_at"} for b in beats)
-        assert all(b["confirmed_at"] is None for b in beats)
+        assert beats and all(set(b) == {"t", "confirmed_at", "activity_at"} for b in beats)
+        assert all(b["confirmed_at"] is None and b["activity_at"] is None for b in beats)
 
     @pytest.mark.parametrize("min_gap,expect_more", [(0.0, True), (60.0, False)])
     @pytest.mark.asyncio
@@ -1285,3 +1289,65 @@ class TestR1BridgedLegsReachTheTracker:
     # in tests/test_ws_polymarket_open_contract_prices_9484.py, the file CI's
     # real-PostgreSQL gate runs (and fails on any skip):
     # TestTheBridgedLegFeedsConfirmedAt.
+
+
+# ── #10090 (Alex 2026-11-01): the EKG pulses on every venue report ──────────
+
+
+class TestActivityPulse:
+    NOW = 1_793_314_900.0
+    MS = int(NOW * 1000)
+
+    def test_a_disagreeing_input_is_written_as_activity_and_moves_no_agreement(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6)
+        first = json.loads(t.take_due()[0][1])
+        clock.tick(1)
+        t.note_input(E, HOME, 0.62, clock.wall)  # a newer, different price: a hold
+        held = json.loads(t.take_due()[0][1])
+        clock.tick(1)
+        t.note_input(E, HOME, 0.63, clock.wall)  # still held: only activity is new
+        due = t.take_due()
+        assert due, "an input during an unchanged hold is still written, as activity"
+        payload = json.loads(due[0][1])
+        assert (payload["c"], payload["h"]) == (held["c"], held["h"]) == (first["c"], held["h"])
+        assert payload["a"] == int(clock.wall * 1000) and first["a"] is None
+
+    def test_a_repeated_input_with_nothing_new_writes_nothing(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6)
+        t.take_due()
+        clock.tick(1)
+        t.note_input(E, HOME, 0.6, clock.wall)
+        assert t.take_due()
+        assert t.take_due() is None, "the same input is not written twice"
+
+    def test_activity_is_the_newest_input_across_venues_and_clamped(self):
+        entries = [_entry(c=self.MS - 9000, a=self.MS - 4000), _entry(a=self.MS - 1000),
+                   _entry(c=self.MS - 500), "not json", json.dumps(["x"])]
+        assert ca.activity(entries, self.NOW) == (self.MS - 1000) / 1000
+        assert ca.activity([_entry(a=self.MS + 5000)], self.NOW) == self.NOW
+        assert ca.activity([_entry(c=self.MS)], self.NOW) is None
+
+    def test_activity_never_dates_a_price(self):
+        """An input that disagreed counts as activity, never as agreement."""
+        entries = [_entry(c=self.MS - 9000, a=self.MS - 100)]
+        assert ca.combine(entries, self.NOW) == (self.MS - 9000) / 1000
+
+    @pytest.mark.asyncio
+    async def test_an_activity_advance_beats_with_the_agreement_unchanged(
+        self, route_reads, monkeypatch,
+    ):
+        from app.routes import event_stream as mod
+        from tests.test_live_push import FakePubSub, _collect
+
+        import time as _time
+        monkeypatch.setattr(mod, "CONFIRMED_BEAT_MIN_S", 0.0)
+        monkeypatch.setattr(mod, "FRAME_WAIT_S", 0.01)
+        monkeypatch.setattr(ca, "READ_TTL_S", 0.0)
+        route_reads["a"], route_reads["step"] = _time.time() - 30, 1.0
+        chunks = await _collect(5, FakePubSub(), monkeypatch, disconnect_after=8)
+        beats = _sse(chunks, "heartbeat")
+        pulses = [b["activity_at"] for b in beats if b["activity_at"] is not None]
+        assert len(pulses) > 1 and pulses == sorted(set(pulses))
+        assert all(b["confirmed_at"] is None for b in beats), "no agreement was claimed"

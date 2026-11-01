@@ -126,6 +126,7 @@ the next tick rather than overlapping it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -268,7 +269,7 @@ def _socket_game_sql(window_sql: str) -> str:
     )
 
 
-def _pool_sql(venue: str, window_sql: str) -> str:
+def _pool_sql(venue: str, window_sql: str, props_sql: str = "") -> str:
     """The shown markets of one venue the game socket does not carry.
 
     Two arms, each planned on its own driving index, because one predicate over
@@ -285,6 +286,8 @@ def _pool_sql(venue: str, window_sql: str) -> str:
     from app.tasks.futures_price_refresh import HIGH_VALUE_SQL
 
     valued = f"({HIGH_VALUE_SQL} OR fm.id = ANY(CAST(:shown_ids AS integer[])))"
+    # Production runs Python 3.11: no nested quotes inside an f-string field.
+    props_union = "\n            UNION\n            SELECT id FROM props" if props_sql else ""
     return f"""
         unlinked AS MATERIALIZED (
             SELECT fm.id
@@ -304,11 +307,11 @@ def _pool_sql(venue: str, window_sql: str) -> str:
                AND fm.source = '{venue}'
                AND e.commence_time <= NOW() + make_interval(hours => :game_horizon_hours)
                AND NOT {_socket_game_sql(window_sql)}
-        ),
+        ),{props_sql}
         pool AS (
             SELECT id FROM unlinked
             UNION
-            SELECT id FROM linked
+            SELECT id FROM linked{props_union}
         )
     """
 
@@ -363,7 +366,7 @@ def polymarket_population_sql(open_arm: bool) -> str:
         else ""
     )
     return f"""
-        WITH {_pool_sql("polymarket", window)}
+        WITH {_pool_sql("polymarket", window, _pm_props_sql(window))}
         SELECT fm.id, {GAMMA_EVENT_ID_EXPR} AS gamma_event_id, fo.id, fo.external_id
           FROM pool
           JOIN futures_markets fm ON fm.id = pool.id
@@ -376,6 +379,66 @@ def polymarket_population_sql(open_arm: bool) -> str:
     """
 
 
+def _pm_props_sql(window_sql: str) -> str:
+    """#10090 ``PM_WS_PROPS_TO_POLL``: the venue-labelled props of the games the
+    PM socket's window holds, which neither socket arm carries any more (a held
+    game's props are on the open arm as well: overlap, never a gap). The
+    window and the refusal are the sockets' own predicates, rendered. Empty
+    when the switch is off: the population is exactly what it was.
+    """
+    from app.tasks.polymarket_open_contracts import props_to_poll_enabled
+
+    if not props_to_poll_enabled():
+        return ""
+    # 11/01 17:35Z: planned from futures_markets this read took ~3 s (an index
+    # scan of every open Polymarket market under the JSON refusal). The window's
+    # events are a few hundred: a superset of them by index first, then the
+    # socket's exact predicate and the refusal on their markets only.
+    return f"""
+        props_events AS MATERIALIZED (
+            SELECT e.id
+              FROM events e
+             WHERE e.status IN ('live', 'suspended')
+                OR (e.status = 'scheduled'
+                    AND e.commence_time >= NOW() - INTERVAL '{int(SLATE_SUPERSET_PAST_HOURS)} hours'
+                    AND e.commence_time <= NOW() + INTERVAL '{int(SLATE_SUPERSET_AHEAD_HOURS)} hours')
+        ),
+        props AS MATERIALIZED (
+            SELECT fm.id
+              FROM props_events pe
+              JOIN events e ON e.id = pe.id
+              JOIN futures_markets fm ON fm.event_id = e.id
+             WHERE fm.status = 'open'
+               AND fm.source = 'polymarket'
+               AND COALESCE({window_sql}, FALSE)
+               AND {PM_VENUE_LABEL_REFUSAL_SQL}
+        ),"""
+
+
+#: The props arm's event superset bounds: at least the socket window's own
+#: (scheduled from 24 h ago — the slate floor — to at most 6 h ahead, the
+#: settings' ceiling). A guard test pins both against the window.
+SLATE_SUPERSET_PAST_HOURS = 24
+SLATE_SUPERSET_AHEAD_HOURS = 6
+
+
+#: ``polymarket_open_contracts.venue_label_refusal_clause`` written out with the
+#: ``->`` operators the rest of this module uses (an offline render picks
+#: subscript syntax, which needs Postgres 14). A guard test pins the two to the
+#: same answers.
+PM_VENUE_LABEL_REFUSAL_SQL = (
+    "COALESCE(jsonb_typeof(fm.market_metadata) = 'object'"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1') = 'object'"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1'->'v') = 'number'"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'v') = '1'"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1'->'semantic_type') = 'string'"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'semantic_type') <> ''"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1'->'venue_type') = 'string'"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'venue_type') <> ''"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'venue_type') <> 'moneyline', FALSE)"
+)
+
+
 def _kalshi_open_arm() -> bool:
     from app.tasks.ws_open_contracts import open_contract_prices_enabled
 
@@ -383,9 +446,22 @@ def _kalshi_open_arm() -> bool:
 
 
 def _polymarket_open_arm() -> bool:
-    from app.tasks.polymarket_open_contracts import open_contract_prices_enabled
+    """True when the open-contract socket streams every tokened market, so the
+    poll leaves them all to it.
 
-    return open_contract_prices_enabled()
+    #10090 (Alex 2026-11-01, "is there any opportunity to be smart about how we
+    handle this?"): under ``POLYMARKET_WS_OPEN_SCOPE=slate`` the socket keeps
+    only what a live or near-start game, a reader or a served page needs. Every
+    other tokened market had no 30 s writer at all and fell to the hourly
+    refresh. Those are polled here now; a market the socket still streams is
+    polled too, which the hand-off rules make safe (a newer socket write
+    always wins, and a poll write never waits on a row the socket holds).
+    """
+    from app.tasks.polymarket_open_contracts import (
+        OPEN_SCOPE_SLATE, open_contract_prices_enabled, open_contract_scope,
+    )
+
+    return open_contract_prices_enabled() and open_contract_scope() != OPEN_SCOPE_SLATE
 
 
 def shown_market_ids() -> list[int]:
@@ -505,6 +581,14 @@ async def load_population(
         sql = kalshi_population_sql(_kalshi_open_arm())
     else:
         sql = polymarket_population_sql(_polymarket_open_arm())
+    shared = _read_shared_population(venue, sql)
+    if shared is not None:
+        age, rows = shared
+        stats["population_cached"] = "shared"
+        stats["population_age_s"] = round(age, 1)
+        units = build_units(venue, rows)
+        _POPULATION[venue] = (now_mono - age, units)
+        return units
     started = time.monotonic()
     try:
         rows = (
@@ -528,7 +612,57 @@ async def load_population(
     _POPULATION_FAILS.pop(venue, None)
     units = build_units(venue, rows)
     _POPULATION[venue] = (now_mono, units)
+    _store_shared_population(venue, sql, rows)
     return units
+
+
+def _shared_population_key(venue: str, sql: str) -> str:
+    """Keyed by the statement itself: a changed scope (a switch, a window) is a
+    different statement and never reads another's population."""
+    import hashlib
+
+    return f"{_KEY_PREFIX}:{venue}:population:{hashlib.sha1(sql.encode()).hexdigest()[:16]}"
+
+
+def _read_shared_population(venue: str, sql: str):
+    """``(age_s, rows)`` another worker process read under this statement less
+    than ``POPULATION_TTL_S`` ago, else None.
+
+    #10090 (11/01 17:32-17:35Z): every pass re-ran the population read (6-12 s
+    of a 24 s pass, `population_cached` False on each): the prefork children
+    each held their own copy, and the 200 MB child recycle dropped it. Never
+    raises: anything unreadable is a miss.
+    """
+    try:
+        raw = _redis().get(_shared_population_key(venue, sql))
+        if raw is None:
+            return None
+        try:
+            import orjson
+
+            body = orjson.loads(raw)
+        except ImportError:
+            body = json.loads(raw)
+        age = time.time() - float(body["at"])
+        if not 0 <= age < POPULATION_TTL_S:
+            return None
+        return age, [tuple(row) for row in body["rows"]]
+    except Exception:  # noqa: BLE001 — a miss reads the database, as before
+        return None
+
+
+def _store_shared_population(venue: str, sql: str, rows) -> None:
+    try:
+        payload = {"at": time.time(), "rows": [list(row) for row in rows]}
+        try:
+            import orjson
+
+            raw = orjson.dumps(payload)
+        except ImportError:
+            raw = json.dumps(payload)
+        _redis().set(_shared_population_key(venue, sql), raw, ex=int(POPULATION_TTL_S))
+    except Exception as exc:  # noqa: BLE001 — the process copy still serves
+        logger.warning("venue_poll_30s: population not shared for %s: %s", venue, exc)
 
 
 def population_binds(shown_ids: list[int]) -> dict:
@@ -1168,6 +1302,8 @@ async def _write_group(
         return
     deferred = DeferredPoints.read(outcome_ids)
     now = datetime.now(timezone.utc)
+    moved: list[int] = []  # #10090 heat: markets sent to the writer
+    jobs: list[tuple[int, list, "PollWrite"]] = []
     for unit in group_units:
         unit_found = found if venue == "kalshi" else found.get(unit.key)
         if not unit_found:
@@ -1190,16 +1326,71 @@ async def _write_group(
             )
             if history is not None:
                 poll.min_interval_s, poll.big_move = history
-            try:
-                await write_market(
-                    session, venue=venue, market_id=market_id, priced=priced,
-                    poll=poll, deferred=deferred, stats=stats,
-                )
-            except Exception as exc:  # noqa: BLE001 — gotcha 42: one market, not the pass
-                await session.rollback()
-                stats["market_errors"] = stats.get("market_errors", 0) + 1
-                stats["errors"].append(f"market {market_id}: {str(exc)[:160]}")
+            jobs.append((market_id, priced, poll))
+
+    async def write(job_session, job) -> None:
+        market_id, priced, poll = job
+        try:
+            await write_market(
+                job_session, venue=venue, market_id=market_id, priced=priced,
+                poll=poll, deferred=deferred, stats=stats,
+            )
+            moved.append(market_id)
+        except Exception as exc:  # noqa: BLE001 — gotcha 42: one market, not the pass
+            await job_session.rollback()
+            stats["market_errors"] = stats.get("market_errors", 0) + 1
+            stats["errors"].append(f"market {market_id}: {str(exc)[:160]}")
+
+    await _write_jobs(session, jobs, write, stats)
     deferred.save()
+    if venue == "polymarket" and moved and history is None:
+        from app.tasks import pm_hot_props
+
+        if pm_hot_props.enabled():
+            stats["hot_moves_recorded"] = stats.get("hot_moves_recorded", 0) + (
+                await pm_hot_props.record_moved(session, moved))
+
+
+#: #10090 (11/01 17:41Z): each CLOB window priced ~3,500 legs and the pass spent
+#: the rest of its budget committing ~500 markets one after another (5-8 round
+#: trips each). Markets are independent (one commit each, SKIP LOCKED rerank,
+#: newer-writer guard), so this many sessions write them side by side. 1 is
+#: the old sequential writer.
+WRITERS = max(1, min(8, _env_int("VENUE_POLL_30S_WRITERS", 4)))
+
+
+async def _write_jobs(session, jobs, write, stats) -> None:
+    """Run ``write(session, job)`` for every job: on ``session`` alone when
+    ``WRITERS`` is 1 or there is one job, else on ``WRITERS`` sessions (the
+    caller's plus fresh task sessions) pulling from one queue. A writer
+    session that cannot open leaves its share to the others."""
+    if WRITERS <= 1 or len(jobs) < 2:
+        for job in jobs:
+            await write(session, job)
+        return
+    from collections import deque
+    from contextlib import AsyncExitStack
+
+    from app.tasks.base import get_task_session
+
+    queue = deque(jobs)
+
+    async def drain(job_session) -> None:
+        while queue:
+            await write(job_session, queue.popleft())
+
+    async with AsyncExitStack() as stack:
+        sessions = [session]
+        for _ in range(min(WRITERS, len(jobs)) - 1):
+            try:
+                sessions.append(await stack.enter_async_context(
+                    get_task_session(statement_timeout_ms=20_000, lock_timeout_ms=2_000)))
+            except Exception as exc:  # noqa: BLE001
+                stats["writer_open_errors"] = stats.get("writer_open_errors", 0) + 1
+                logger.warning("venue_poll_30s: extra writer not opened: %s", exc)
+                break
+        stats["writers"] = max(stats.get("writers", 0), len(sessions))
+        await asyncio.gather(*(drain(s) for s in sessions))
 
 
 _SECOND_LEG = re.compile(r"_(no|side1)$")

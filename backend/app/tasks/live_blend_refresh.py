@@ -151,6 +151,13 @@ BOOK_REFUSED_SWEEP_S = 10.0
 #: durable answer, only a cheap one that cannot be stale for long.
 DEFAULT_INVERSION_TTL_S = 150.0
 
+#: #10090: how long past its TTL a cached inversion verdict may still orient a
+#: receipt PREVIEW (never a stamp: the stamp re-derives it on expiry). The
+#: verdict is a property of the linkage, so it rarely changes; a quiet game's
+#: first input after the 150 s TTL otherwise waits for the stamp (11/01 17:49-
+#: 17:57Z: event 15339038 waited 4.5, 24 and 17 s as na_orientation>stamp_unobserved).
+ORIENTATION_PREVIEW_GRACE_S = 600.0
+
 #: When the recomputed value rounds to what is already stored, the write is
 #: still worth making occasionally — `updated_at` is what drives the hero's
 #: recency decay (#1829), so a source that goes quiet must still look ALIVE
@@ -586,6 +593,22 @@ def _prune_notes(notes: dict, now: float, noted_at) -> None:
         del notes[key]
 
 
+_TRACE_CACHE: list = [None, frozenset()]
+
+
+def _receipt_trace_events() -> frozenset:
+    """`RECEIPT_TRACE_EVENTS` (comma-separated event ids), read once per value."""
+    raw = os.environ.get("RECEIPT_TRACE_EVENTS", "14781143,14969868,15184630")
+    if raw != _TRACE_CACHE[0]:
+        ids = set()
+        for part in raw.split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.add(int(part))
+        _TRACE_CACHE[0], _TRACE_CACHE[1] = raw, frozenset(ids)
+    return _TRACE_CACHE[1]
+
+
 def forget_preview_outcomes(refresher, outcome_ids) -> None:
     """`LiveBlendRefresher.forget_preview_outcomes` on the refresher a writer
     holds, for rows it changed outside a price write. Nothing for a refresher
@@ -654,6 +677,13 @@ def _receipt_graph_max_age() -> float:
     except (KeyError, ValueError):
         return RECEIPT_GRAPH_MAX_AGE_S
     return value if 3.0 <= value <= 900.0 else RECEIPT_GRAPH_MAX_AGE_S
+
+
+def _new_claim_lock():
+    """The preview claim lock (#10090): receipt publications go first."""
+    from app.utils.priority_lock import PriorityLock
+
+    return PriorityLock()
 
 
 def _receipt_interval() -> float:
@@ -3927,7 +3957,7 @@ class LiveBlendRefresher:
         #: market is found by the next tick's composition.
         self._receipt_speaking: dict[int, frozenset] = {}
         #: event id -> (`_mono` of its last receipt composition, the ledger seq
-        #: of the receipt proposal still pending or None, its whole-percent blend).
+        #: of the receipt proposal still pending or None, its blend in tenths).
         self._receipt_last: dict[int, tuple] = {}
         self._receipt_task: Optional[asyncio.Task] = None
         self._receipt_wake: Optional[asyncio.Event] = None
@@ -3941,6 +3971,8 @@ class LiveBlendRefresher:
             # Skips before composition (counted only; same returns as before):
             "no_bound": 0, "routing": 0, "kept_no_graph": 0, "not_speaking": 0,
             "own_write": 0, "superseded": 0, "overwritten": 0,
+            # Unproven readings oriented by the stamp's live verdict (`_live_orientation`):
+            "verdict_oriented": 0,
         }
         #: Wall seconds spent composing receipt previews (local CPU, no await).
         self.receipt_compose_s = 0.0
@@ -3972,6 +4004,12 @@ class LiveBlendRefresher:
         self._graph_refetch: dict[int, float] = {}
         self._graph_lost_at: dict[int, float] = {}
         self._graph_refetch_task: Optional[asyncio.Task] = None
+        #: #10090: kept graphs whose read TICKET a ledger refusal staled
+        #: (`read_required` / `stale_context`, or a retirement's barrier) while
+        #: their rows still stand: event id -> `_mono` queued. One worker
+        #: re-reads only their event rows (`_drain_context_refresh`).
+        self._context_refresh: dict[int, float] = {}
+        self._context_refresh_task: Optional[asyncio.Task] = None
         #: event id -> `_mono` this process committed the received price of one
         #: of its waiting headline legs: a stamp whose read began after it
         #: publishes a committed frame that carries that input.
@@ -4010,6 +4048,11 @@ class LiveBlendRefresher:
         self._ambiguous_logged = 0
         #: `na_proof` attribution lines used this minute.
         self._na_proof_logged = 0
+        #: #10090: per-minute budget of `receipt-revoke` diagnosis lines, and the
+        #: legs each pending withdrawal named (event id -> outcome ids).
+        self._revoke_logged = 0
+        self._noop_logged = 0
+        self._withdrawn_why: dict[int, tuple] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -4264,6 +4307,24 @@ class LiveBlendRefresher:
         flipped = not math.isclose(corrected, home_prob, rel_tol=0.0, abs_tol=1e-9)
         self._inversion[event_id] = (now + self.inversion_ttl_s, flipped)
         return corrected
+
+    def _live_orientation(self, event_id: int, reading):
+        """#10090: an unproven reading oriented as the stamp would orient it
+        now — `_oriented`'s cached verdict while it is live, or expired by at
+        most ``ORIENTATION_PREVIEW_GRACE_S`` — never a read. None when there is
+        no such verdict (the stamp's path computes one).
+
+        11/01 16:44Z: every Polymarket input on a live NCAAB game (event
+        15334892, two same-named duel markets) waited 5-18 s as na_orientation
+        for a stamp that applied this same cached verdict to the same reading;
+        at 16:55Z a Kalshi input waited 80 s the same way (event 15340110).
+        """
+        cached = self._inversion.get(event_id)
+        if cached is None or time.monotonic() >= cached[0] + ORIENTATION_PREVIEW_GRACE_S:
+            return None
+        if not cached[1]:
+            return reading
+        return _replace(reading, home_probability=1.0 - reading.home_probability)
 
     # ── the refresh itself ───────────────────────────────────────────────────
 
@@ -8601,7 +8662,8 @@ class LiveBlendRefresher:
                 kept = graphs.get(event_id)
                 at = getattr(event, "preview_context_at", None)
                 if kept is not None:
-                    kept_at = getattr(kept[1], "preview_context_at", None)
+                    kept_at = getattr(kept[1], "rows_context_at", None) or getattr(
+                        kept[1], "preview_context_at", None)
                     if isinstance(kept_at, datetime) and (
                             not isinstance(at, datetime) or at < kept_at):
                         continue
@@ -8632,7 +8694,13 @@ class LiveBlendRefresher:
                 forgotten = self._forgotten_outcomes
                 if any(forgotten.get(row.id, -math.inf) >= read_started
                        for entry in group for row in entry.outcomes):
-                    self._forget_preview_graph(event_id)
+                    # A read older than a change it carries. A kept graph that
+                    # holds none of the rows changed since this read began
+                    # (pruned by `_prune_preview_graph`) stays; else none does.
+                    if kept is None or any(
+                            forgotten.get(row.id, -math.inf) >= read_started
+                            for entry in kept[2] for row in entry.outcomes):
+                        self._forget_preview_graph(event_id)
                     continue
                 noted = self._noted_commits
                 patched = _patched_group(group, {
@@ -8658,7 +8726,10 @@ class LiveBlendRefresher:
                            exc_info=True)
 
     def _install_preview_graph(self, event_id: int, entry: tuple) -> None:
+        speaking = self._carried_speaking(event_id, entry[2])
         self._forget_preview_graph(event_id)
+        if speaking:
+            self._receipt_speaking[event_id] = speaking
         self._preview_graphs[event_id] = entry
         lost = getattr(self, "_graph_lost_at", None)
         if lost is not None:
@@ -8666,6 +8737,36 @@ class LiveBlendRefresher:
         for market in entry[2]:
             for row in market.outcomes:
                 self._preview_graph_outcomes[row.id] = event_id
+
+    def _carried_speaking(self, event_id: int, group) -> Optional[frozenset]:
+        """#10090: the legs that spoke this event's headline, kept across a new
+        graph for the SAME event when the markets holding them are unchanged
+        (the same legs, the same market status, every leg priced). Dropping them at every stamp
+        read left a window in which a prop withdrawal took back the headline
+        preview and dropped the whole graph (11/01 20:50-22:08Z, Magic-Celtics:
+        five ~0.65-1.05 s waits as `refetch`). None when anything differs: the
+        next composition finds them again. Never raises."""
+        try:
+            speaking = self._receipt_speaking.get(event_id)
+            old = self._preview_graphs.get(event_id)
+            if not speaking or old is None:
+                return None
+            def holding(markets):
+                return {getattr(m.market, "id", None): (getattr(m.market, "status", None),
+                                                        frozenset(row.id for row in m.outcomes))
+                        for m in markets
+                        if any(row.id in speaking for row in m.outcomes)}
+            before, after = holding(old[2]), holding(group)
+            if not before or before != after:
+                return None
+            if frozenset().union(*(ids for _status, ids in after.values())) != speaking:
+                return None
+            if any(row.id in speaking and getattr(row, "current_probability", None) is None
+                   for m in group for row in m.outcomes):
+                return None  # a speaker priced out: another market may speak now
+            return speaking
+        except Exception:
+            return None
 
     def _forget_preview_graph(self, event_id: int) -> None:
         self._receipt_speaking.pop(event_id, None)
@@ -8678,11 +8779,12 @@ class LiveBlendRefresher:
                     del self._preview_graph_outcomes[row.id]
 
     def _refetch_all_graphs(self) -> None:
-        """#10090: re-read every kept live graph (a retirement staled their tickets). Never raises."""
+        """#10090: refresh every kept live graph's ticket (a retirement staled
+        them; their rows still stand: `_schedule_context_refresh`). Never raises."""
         try:
             if _preview_at_receipt_possible(getattr(self, "source", None)) and self._preview_graphs:
                 self.graph_refetch_stats["barrier"] = self.graph_refetch_stats.get("barrier", 0) + 1
-                self._schedule_graph_refetch(list(self._preview_graphs), lost=False)
+                self._schedule_context_refresh(list(self._preview_graphs))
         except Exception:
             self.graph_refetch_stats["errors"] += 1
 
@@ -8753,8 +8855,159 @@ class LiveBlendRefresher:
                         if quote[3] in self._hl_pending:
                             self._receipt_now.add(quote[3])
                         queued = True
+                # 11/01 18:03Z: a Polymarket input waited 53.8 s as old_graph
+                # after its graph was re-read: no received quote was left to
+                # queue, so nothing composed it and the clock stayed open until
+                # a later read. A waiting event is composed on the fresh graph
+                # anyway; with nothing received since, that ends in_graph.
+                for event_id in kept:
+                    if event_id in self._hl_pending and event_id not in self._receipt_due:
+                        self._receipt_due[event_id] = None
+                        self._receipt_now.add(event_id)
+                        queued = True
             if queued:
                 self._wake_receipt(True)
+
+    def _schedule_context_refresh(self, event_ids) -> None:
+        """#10090: these kept graphs' read ticket is stale, their rows are not
+        (a retirement moved the global barrier, or another venue's stamp moved
+        the event's context). Re-read only their event rows under a fresh
+        ticket (`_drain_context_refresh`), not every market and leg: 11/01
+        20:5xZ a Polymarket input waited 0.6-2 s as `mutate_read_required`
+        behind full NFL graph re-reads (~370 markets). Anything it cannot do
+        falls back to the full re-read. Never raises."""
+        try:
+            pending = self._context_refresh
+            graphs = self._preview_graphs
+            now = _mono()
+            for event_id in event_ids:
+                if event_id is not None and event_id in graphs:
+                    pending.setdefault(event_id, now)
+            if not pending:
+                return
+            task = self._context_refresh_task
+            if task is None or task.done():
+                self._context_refresh_task = asyncio.get_running_loop().create_task(
+                    self._drain_context_refresh(), name=f"context-refresh-{self.source}",
+                )
+        except Exception:
+            self.graph_refetch_stats["errors"] += 1
+            self._schedule_graph_refetch(event_ids, lost=False)
+
+    async def _drain_context_refresh(self) -> None:
+        """The one context re-read worker: a fresh ticket, captured BEFORE one
+        READ COMMITTED statement over the queued events' rows (their bag,
+        revision, status and statement time), patched into each kept graph's
+        event (`_patch_graph_context`) with its rows and read age unchanged.
+        A retirement commits its revision increment before it moves the
+        barrier, so this statement sees every retirement the ticket admits,
+        exactly as a full read's event columns do. Each patched event that
+        waits or holds received quotes is then queued for a composition."""
+        from sqlalchemy import ARRAY, Integer, any_, bindparam, func, select
+        from app.models.models import Event
+        from app.tasks.base import get_task_session
+
+        factory = self._session_factory or get_task_session
+        stats = self.graph_refetch_stats
+        while self._context_refresh:
+            batch = list(self._context_refresh)[:64]
+            for event_id in batch:
+                self._context_refresh.pop(event_id, None)
+            batch = [event_id for event_id in batch if event_id in self._preview_graphs]
+            if not batch:
+                continue
+            started = _mono()
+            try:
+                ticket = await self._preview_admission_read()
+                if ticket is None:
+                    raise RuntimeError("no read ticket")
+                async with factory() as session:
+                    rows = (await session.execute(
+                        select(Event.id, Event.status, Event.completed_at, Event.commence_time,
+                               Event.win_probability_sources,
+                               Event.win_probability_sources_rev,
+                               func.statement_timestamp())
+                        .where(Event.id == any_(bindparam(
+                            "event_ids", list(batch), type_=ARRAY(Integer))))
+                    )).all()
+                stats["ctx_reads"] = stats.get("ctx_reads", 0) + 1
+                took = int((_mono() - started) * 1000)
+                stats["ctx_ms"] = stats.get("ctx_ms", 0) + took
+                stats["ctx_max_ms"] = max(stats.get("ctx_max_ms", 0), took)
+            except Exception:
+                stats["errors"] += 1
+                logger.warning("live_blend_refresh[%s]: graph context re-read failed", self.source,
+                               exc_info=True)
+                self._schedule_graph_refetch(batch, lost=False)
+                continue
+            patched = set()
+            for row in rows:
+                if self._patch_graph_context(tuple(row), ticket):
+                    patched.add(row[0])
+            stats["ctx_patched"] = stats.get("ctx_patched", 0) + len(patched)
+            rest = [event_id for event_id in batch if event_id not in patched]
+            if rest:
+                # Finished, no longer live, absent or a graph it may not patch:
+                # the full read decides (it forgets and retires as a stamp does).
+                self._schedule_graph_refetch(rest, lost=False)
+            queued = False
+            for quote in list(self._receipt_quotes.values()):
+                if quote[3] in patched and self._preview_graph_outcomes.get(
+                        getattr(quote[2], "outcome_id", None)) == quote[3]:
+                    self._receipt_due[quote[3]] = None
+                    if quote[3] in self._hl_pending:
+                        self._receipt_now.add(quote[3])
+                    queued = True
+            for event_id in patched:
+                if event_id in self._hl_pending and event_id not in self._receipt_due:
+                    self._receipt_due[event_id] = None
+                    self._receipt_now.add(event_id)
+                    queued = True
+            if queued:
+                self._wake_receipt(True)
+
+    def _patch_graph_context(self, row, ticket: int) -> bool:
+        """One event row of `_drain_context_refresh` into its kept graph: the
+        bag, revision, statement time and ticket a full read would carry, the
+        markets and the graph's age (``read_at``) as kept, so the receipt
+        graph-age window still bounds the rows. False (unpatched) for a graph
+        gone or a newer context already kept, and for an event no longer live:
+        the full read handles those. Never raises."""
+        from copy import deepcopy
+        from types import SimpleNamespace
+
+        try:
+            event_id, status, completed_at, commence_time, sources, rev, context_at = row
+            entry = self._preview_graphs.get(event_id)
+            if (entry is None or status != "live" or completed_at is not None
+                    or type(rev) is not int or not isinstance(context_at, datetime)
+                    or not (sources is None or isinstance(sources, dict))):
+                return False
+            read_at, event, group = entry
+            kept_at = getattr(event, "preview_context_at", None)
+            current = getattr(event, "preview_rev", None)
+            if ((isinstance(kept_at, datetime) and context_at <= kept_at)
+                    or (type(current) is int and current > rev)):
+                return False  # a newer context or committed revision is kept
+            sources = {} if sources is None else sources
+            self._preview_graphs[event_id] = (read_at, SimpleNamespace(**{
+                **vars(event),
+                "status": status,
+                "completed_at": completed_at,
+                "commence_time": commence_time,
+                "preview_sources": sources,
+                "preview_rev": rev,
+                "preview_context_at": context_at,
+                "preview_read_ticket": ticket,
+                "win_probability_sources": {self.source: deepcopy(sources.get(self.source))},
+                # The rows' own read: a full read newer than THEM replaces this
+                # graph even when its event context is older than the patch.
+                "rows_context_at": getattr(event, "rows_context_at", kept_at),
+            }), group)
+            return True
+        except Exception:
+            self.graph_refetch_stats["errors"] += 1
+            return False
 
     def note_committed_rows(self, rows, marks=None) -> None:
         """A committed price write's RETURNING rows. Never raises.
@@ -8872,22 +9125,54 @@ class LiveBlendRefresher:
             now = _mono()
             forgotten = self._forgotten_outcomes
             outcome_ids = list(outcome_ids)
-            events = []
+            by_event: dict[int, set] = {}
             for oid in outcome_ids:
                 forgotten.pop(oid, None)
                 forgotten[oid] = now
                 event_id = self._preview_graph_outcomes.get(oid)
                 if event_id is not None:
+                    by_event.setdefault(event_id, set()).add(oid)
+            events, pruned = [], []
+            for event_id, oids in by_event.items():
+                if receipt and self._prune_preview_graph(event_id, oids):
+                    pruned.append(event_id)
+                else:
                     events.append(event_id)
                     self._forget_preview_graph(event_id)
             _prune_notes(forgotten, now, lambda at: at)
             if receipt:
-                self.note_receipt_withdrawn(outcome_ids, events)
+                self.note_receipt_withdrawn(outcome_ids, events, spare=pruned)
                 self._schedule_graph_refetch(events)
+                self._schedule_graph_refetch(pruned, lost=False)
         except Exception:
             self.commit_preview_stats["errors"] += 1
             logger.warning("live_blend_refresh[%s]: changed rows not forgotten", self.source,
                            exc_info=True)
+
+    def _prune_preview_graph(self, event_id: int, oids) -> bool:
+        """#10090: ``oids`` (a settlement or withdrawal) are rows of markets that
+        do not speak this event's headline: drop just their markets from the
+        cached graph and keep it, so the next headline input composes at once
+        instead of waiting for a re-read of every market. False (the caller
+        drops the graph) when the speaking legs are unknown or among ``oids``.
+
+        11/01 18:19-18:24Z: live NFL games (~370 markets, ~1,800 legs) re-read
+        their whole graph for every prop leg the book priced out; a headline
+        input arriving meanwhile waited 0.5-1.4 s as refetch/no_graph.
+        """
+        speaking = self._receipt_speaking.get(event_id)
+        entry = self._preview_graphs.get(event_id)
+        if not speaking or entry is None or not speaking.isdisjoint(oids):
+            return False
+        read_at, event, group = entry
+        kept = [market for market in group
+                if not any(row.id in oids for row in market.outcomes)]
+        if not kept or len(kept) == len(group):
+            return False
+        self._install_preview_graph(event_id, (read_at, event, kept))
+        self._receipt_speaking[event_id] = speaking
+        self.graph_refetch_stats["pruned"] = self.graph_refetch_stats.get("pruned", 0) + 1
+        return True
 
     def _preview_graph_committed(self, event_id: int, sources, rev) -> None:
         """A stamp committed this event's bag at ``rev``: the cached graph's
@@ -9107,22 +9392,42 @@ class LiveBlendRefresher:
         last = self._receipt_last.get(event_id)
         self._wake_receipt(last is None or now - last[0] >= _receipt_interval())
 
-    def note_receipt_withdrawn(self, outcome_ids, event_ids=()) -> None:
+    def note_receipt_withdrawn(self, outcome_ids, event_ids=(), spare=()) -> None:
         """Legs a withdrawal (a book that prices them out) or a settlement took
         away: their received quotes are dropped and a receipt preview still
-        pending for their events is revoked by the worker. Never raises."""
+        pending for their events is revoked by the worker. ``spare``: events
+        whose headline those legs do not speak (`_prune_preview_graph`); their
+        preview stands. Never raises."""
         if not _preview_at_receipt_possible(self.source):
             return
         try:
             events = dict.fromkeys(event_ids)
+            legs_of: dict = {}
+            outcome_ids = list(outcome_ids)
             for oid in outcome_ids:
                 quote = self._receipt_quotes.pop(oid, None)
-                if quote is not None:
-                    events[quote[3]] = None
                 event_id = self._preview_graph_outcomes.get(oid)
+                if event_id is None and quote is not None:
+                    event_id = quote[3]
                 if event_id is not None:
-                    events[event_id] = None
+                    legs_of.setdefault(event_id, set()).add(oid)
+            for event_id, oids in legs_of.items():
+                speaking = self._receipt_speaking.get(event_id)
+                if speaking and speaking.isdisjoint(oids) and event_id not in events:
+                    # 11/01 18:50Z: every wide book on a PROP leg (common in a
+                    # live game) took back its game's headline preview, so the
+                    # screen fell back to the stored number until the next stamp
+                    # (Bills-Ravens: 13.9 s). A leg the headline does not speak
+                    # leaves the headline as it is.
+                    self.receipt_preview_stats["withdrawn_spared"] = (
+                        self.receipt_preview_stats.get("withdrawn_spared", 0) + 1)
+                    continue
+                events[event_id] = None
             events.pop(None, None)
+            for event_id in spare:
+                events.pop(event_id, None)
+            for event_id in events:
+                self._withdrawn_why[event_id] = tuple(sorted(outcome_ids))[:6]
             if events:
                 self._receipt_withdrawn.update(events)
                 self._wake_receipt(True)
@@ -9173,6 +9478,8 @@ class LiveBlendRefresher:
                     del self._hl_commit_at[eid]
                 self._ambiguous_logged = 0
                 self._na_proof_logged = 0
+                self._revoke_logged = 0
+                self._noop_logged = 0
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -9425,9 +9732,62 @@ class LiveBlendRefresher:
                 return
             self._hl_mark(event_id, "mutate_" + status)
             if status in ("read_required", "stale_context") and event_id in self._preview_graphs:
-                self._schedule_graph_refetch((event_id,), lost=False)
+                ids = [event_id]
+                if status == "read_required":
+                    # The barrier is global: every kept graph's ticket is now
+                    # refused at its next open. Refresh them all in the same
+                    # batch, this event first, instead of one refusal (~0.6-0.8 s
+                    # each, 11/01 21:41Z) per game.
+                    ids.extend(eid for eid in self._preview_graphs if eid != event_id)
+                self._schedule_context_refresh(ids)
         except Exception:
             self.receipt_preview_stats["errors"] += 1
+
+    def _log_drop_noop(self, preview, event_id, value, event, contributing=()) -> None:
+        """#10090 diagnosis: a receipt proposal the ledger answered with no
+        frame and no refusal (11/01 21:32Z: a Polymarket input waited 3.0 s as
+        `drop_noop`). At most 20 a minute. Never raises."""
+        try:
+            if self._noop_logged >= 20:
+                return
+            self._noop_logged += 1
+            state = getattr(preview, "_events", {}).get(event_id)
+            pending = None if state is None else state.pending.get(self.source)
+            logger.info(
+                "live_blend_refresh[%s]: drop-noop event=%s value=%s ticket=%s status=%s "
+                "pending=%s expired=%s base_rev=%s stored=%s stored_basis=%s contrib=%s",
+                self.source, event_id, value, getattr(event, "preview_read_ticket", None),
+                None if state is None else state.status,
+                None if pending is None else (pending.value, pending.at_receipt, pending.seq),
+                None if state is None else state.expired.get(self.source),
+                None if state is None else getattr(state, "base_rev", None),
+                None if state is None else ((state.base_sources or {}).get(self.source) or {}).get("value"),
+                None if state is None else ((state.base_sources or {}).get(self.source) or {}).get("observed_basis"),
+                [(getattr(o, "id", None), str(getattr(o, "current_probability", None)),
+                  str(getattr(o, "last_updated", None))[11:23]) for o in (contributing or ())][:6],
+            )
+        except Exception:
+            pass
+
+    def _log_receipt_revoke(self, event_id, reason, entry, *, oids=(), value=()) -> None:
+        """#10090 diagnosis: a receipt preview a reader saw is taken back. The
+        venue-to-screen probe (11/01 18:43Z, Bills-Ravens) saw a Polymarket
+        number shown for 100 ms, then the stored one for 13.9 s. At most 40 a
+        minute. Never raises."""
+        try:
+            if self._revoke_logged >= 40:
+                return
+            self._revoke_logged += 1
+            speaking = self._receipt_speaking.get(event_id) or frozenset()
+            logger.info(
+                "live_blend_refresh[%s]: receipt-revoke event=%s reason=%s pending=%s "
+                "detail=%s oids=%s speaking_hit=%s graph=%s",
+                self.source, event_id, reason, getattr(entry, "value", None), value,
+                ",".join(str(o) for o in oids), any(o in speaking for o in oids),
+                event_id in self._preview_graphs,
+            )
+        except Exception:
+            pass
 
     def _hl_summary(self) -> str:
         """The minute's headline clock: n, p50/p90/max, worst ids with how, fallbacks, late."""
@@ -9461,6 +9821,25 @@ class LiveBlendRefresher:
         """Count one receipt composition outcome against its event (stats line)."""
         events = self._receipt_class_events.setdefault(kind, {})
         events[event_id] = events.get(event_id, 0) + 1
+        if event_id in _receipt_trace_events():
+            self._receipt_trace(event_id, "class", kind)
+
+    def _receipt_trace(self, event_id, what, *detail) -> None:
+        """#10090 diagnosis (`RECEIPT_TRACE_EVENTS`): one line per receipt step
+        of a traced event, so a venue move the screen never showed (11/01
+        venue-to-screen probe: Bills-Ravens held 0.835 on Polymarket for 6.9 s,
+        the screen kept 0.845) can be followed. At most 3000 lines a minute."""
+        try:
+            minute = int(time.time() // 60)
+            if getattr(self, "_trace_minute", None) != minute:
+                self._trace_minute, self._trace_lines = minute, 0
+            if self._trace_lines >= 3000:
+                return
+            self._trace_lines += 1
+            logger.info("live_blend_refresh[%s]: receipt-trace event=%s %s %s",
+                        self.source, event_id, what, " ".join(str(d) for d in detail))
+        except Exception:
+            pass
 
     def _receipt_class_summary(self) -> str:
         """``kind:event/count,...`` (top 6 per kind) since the last call; resets."""
@@ -9490,9 +9869,16 @@ class LiveBlendRefresher:
             del last[event_id]
 
     def _receipt_blend(self, event, source_value, eligibility, basis) -> Optional[int]:
-        """The whole-percent blend ``event``'s committed bag composes to with
-        this source at ``source_value`` (None: the committed value), as the
-        preview composer does; None when there is none."""
+        """The blend ``event``'s committed bag composes to with this source at
+        ``source_value`` (None: the committed value), as the preview composer
+        does, in TENTHS of a percent (the event page shows 81.4%); None when
+        there is none.
+
+        11/01 19:07Z: in whole percent, Polymarket's Bills 0.78 -> 0.785 (the
+        blend 0.1 point higher) read as "unchanged" and was never proposed;
+        Polymarket held 0.785 for 5.7 s and the screen never showed it (the
+        venue-to-screen probe, with the receipt trace).
+        """
         from types import SimpleNamespace
 
         from app.utils.aggregation import compute_aggregate_probability, stamp_source_reading
@@ -9508,7 +9894,7 @@ class LiveBlendRefresher:
             espn_win_prob_home=getattr(event, "espn_win_prob_home", None),
             opening_home_probability=getattr(event, "opening_home_probability", None),
         ), event.status)
-        return None if probability is None else round(float(probability) * 100)
+        return None if probability is None else round(float(probability) * 1000)
 
     def _receipt_preview_plan(self, event_id: int, now: float, preview):
         """What a receipt composition does for this event: None (nothing),
@@ -9526,7 +9912,8 @@ class LiveBlendRefresher:
         event waits for its stamp, as `HeldRowQuotes.overlay_event` does.
         Then `_commit_preview_plan`'s checks: a proven orientation, every
         contributor read, an overlaid one among them, open unsettled markets.
-        Skipped when the whole-percent blend is what the event already shows.
+        Skipped when the blend, in tenths of a percent, is what the event
+        already shows.
         """
         from types import SimpleNamespace
 
@@ -9550,6 +9937,11 @@ class LiveBlendRefresher:
             stats["old_graph"] += 1
             self._note_receipt_class("old_graph", event_id)
             self._hl_mark(event_id, "old_graph")
+            # 11/01 13:50Z: a Polymarket input waited 98.7 s as late:old_graph.
+            # Its live game's graph had aged out and nothing re-read it until
+            # a stamp did. Re-read it now, as a read_required refusal does;
+            # the re-read queues this event's held quotes for composition.
+            self._schedule_graph_refetch((event_id,), lost=False)
             return None
         commit_patched = False
         waiting = self._hl_pending.get(event_id)
@@ -9696,10 +10088,26 @@ class LiveBlendRefresher:
         )
         if reading is None and not proof_kwargs:
             self._receipt_speaking[event_id] = frozenset()
-        if reading is None or not has_proven_home_orientation(reading):
+        oriented = reading
+        if reading is not None and not has_proven_home_orientation(reading):
+            # The stamp applies its live inversion verdict to this reading
+            # without a read (`_oriented`): show now what it will write.
+            oriented = None if proof_kwargs else self._live_orientation(event_id, reading)
+            if oriented is not None:
+                stats["verdict_oriented"] += 1
+        if oriented is None:
             stats["not_admitted"] += 1
             if proof_kwargs and self._home_book_empty(event, patched):
                 self._note_receipt_class("na_nobook", event_id)
+                self._hl_no_price(event_id)
+                return None
+            if reading is None and not proof_kwargs:
+                # No valid reading at all from the rows the page shows plus
+                # every leg received since: the stamp reads the same rows, so
+                # there is no price to show (Alex 10/31: not a miss). 11/01
+                # 17:50Z: a Latina-Pianese input with an unpriced home leg sat
+                # 94 s as late:na_orientation, owed no stamp.
+                self._note_receipt_class("na_noreading", event_id)
                 self._hl_no_price(event_id)
                 return None
             self._note_receipt_class("not_admitted", event_id)
@@ -9711,6 +10119,7 @@ class LiveBlendRefresher:
                 else:
                     self._log_na_orientation(event_id, patched, overlaid, reading)
             return None
+        reading = oriented
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
         ids = {getattr(row, "id", None) for row in contributing}
@@ -9733,12 +10142,19 @@ class LiveBlendRefresher:
             self._hl_mark(event_id, "na_settled")
             return None
         value = round(reading.home_probability, 4)
-        if self._last_written_value.get(event_id) == value:
+        bag = (getattr(event, "win_probability_sources", None) or {}).get(self.source)
+        stored = bag.get("value") if isinstance(bag, dict) else None
+        if self._last_written_value.get(event_id) == value or (
+                isinstance(stored, (int, float)) and round(stored, 4) == value):
             # Back at the stored value: retire any receipt preview so the page
             # shows the committed one. Records nothing, so the #5661 restamp
             # gate below (which refuses re-dating an unchanged value) does not
             # apply; checked first so a stale receipt preview never outlives it.
-            return ("returned",)
+            # #10090 11/01 18:50Z: also the graph's committed bag, not only this
+            # process's memory of its own writes, which a restart empties: after
+            # one, Villanova's inputs that composed to the stored number waited
+            # 26-29 s as na_basis for a stamp that wrote nothing.
+            return ("returned", value, stored, getattr(event, "preview_rev", None))
         basis = observation_basis(contributing)
         if not basis or restamp_records_no_observation(
                 value, oldest_observation_time(contributing),
@@ -9804,6 +10220,18 @@ class LiveBlendRefresher:
                 logger.warning("live_blend_refresh[%s]: receipt preview for event %s not composed",
                                self.source, event_id, exc_info=True)
                 continue
+            if event_id in _receipt_trace_events():
+                pending_now = preview.pending_entry(event_id, self.source)
+                quotes = sorted((oid, getattr(q[2], "probability", None))
+                                for oid, q in self._receipt_quotes.items() if q[3] == event_id)
+                graph = self._preview_graphs.get(event_id)
+                self._receipt_trace(
+                    event_id, "plan", None if plan is None else plan[0],
+                    None if plan is None or len(plan) < 4 else plan[3],
+                    "pending=%s" % getattr(pending_now, "value", None),
+                    "quotes=%s" % quotes[:6],
+                    "graph_age=%s" % (None if graph is None else round(_mono() - graph[0], 1)),
+                    "hl=%s" % (self._hl_pending.get(event_id),))
             if plan is not None:
                 plans.append((event_id, plan))
         self.receipt_compose_s += time.perf_counter() - started
@@ -9825,9 +10253,11 @@ class LiveBlendRefresher:
             stats = self.receipt_preview_stats
             for event_id in withdrawn:
                 entry = preview.pending_entry(event_id, self.source)
+                why = self._withdrawn_why.pop(event_id, ())
                 if entry is not None and entry.at_receipt:
                     frames.extend(preview.refused(event_id, self.source, "withdrawn"))
                     stats["withdrawn"] += 1
+                    self._log_receipt_revoke(event_id, "withdrawn", entry, oids=why)
             for event_id, plan in plans:
                 entry = preview.pending_entry(event_id, self.source)
                 if plan[0] == "returned":
@@ -9835,6 +10265,7 @@ class LiveBlendRefresher:
                     if entry is not None and entry.at_receipt:
                         frames.extend(preview.refused(event_id, self.source, "returned"))
                         stats["returned"] += 1
+                        self._log_receipt_revoke(event_id, "returned", entry, value=plan[1:])
                     continue
                 _kind, event, reading, value, contributing, newest, patched, proof_kwargs = plan
                 if proof_kwargs:
@@ -9872,8 +10303,10 @@ class LiveBlendRefresher:
                                     and n != before.get(key)), "noop")
                     self._note_receipt_class("drop_" + why[:24], event_id)
                     self._hl_mark(event_id, "drop_" + why[:24])
+                    if why == "noop":
+                        self._log_drop_noop(preview, event_id, value, event, contributing)
                     if why == "local_ticket" and event_id in self._preview_graphs:
-                        self._schedule_graph_refetch((event_id,), lost=False)
+                        self._schedule_context_refresh((event_id,))
                     continue
                 if pending is None or not pending.at_receipt or pending.value != value:
                     self._hl_mark(event_id, "refused_local")
@@ -10138,7 +10571,7 @@ class LiveBlendRefresher:
             preview = registry()
             async with asyncio.timeout(1):
                 if preview.claim_lock is None:
-                    preview.claim_lock = asyncio.Lock()
+                    preview.claim_lock = _new_claim_lock()
                 async with preview.claim_lock:
                     if preview.unclaimed(self.source):
                         pool = self._client().connection_pool
@@ -10166,7 +10599,7 @@ class LiveBlendRefresher:
 
         preview = registry()
         if preview.claim_lock is None:
-            preview.claim_lock = asyncio.Lock()
+            preview.claim_lock = _new_claim_lock()
         pool = self._client().connection_pool
         # An established claim/authority is stable for this registry. Reading
         # its ticket uses a separate socket and Redis still checks the owner
@@ -10732,7 +11165,7 @@ class LiveBlendRefresher:
             preview = registry()
             async with asyncio.timeout(1):
                 if preview.claim_lock is None:
-                    preview.claim_lock = asyncio.Lock()
+                    preview.claim_lock = _new_claim_lock()
                 pool = self._client().connection_pool
                 async with preview.claim_lock:
                     held_from = _mono()
@@ -10836,10 +11269,14 @@ class LiveBlendRefresher:
             owner_key = fence_owner_key(self.source)
             async with asyncio.timeout(1):
                 if preview.claim_lock is None:
-                    preview.claim_lock = asyncio.Lock()
+                    preview.claim_lock = _new_claim_lock()
                 pool = self._client().connection_pool
                 lock_asked = _mono()
-                async with preview.claim_lock:
+                # #10090: a receipt preview (the price a reader waits for) is
+                # handed the lock before stamp work (`PriorityLock`).
+                urgent = getattr(preview.claim_lock, "urgent", None)
+                async with (urgent() if refused is not None and urgent is not None
+                            else preview.claim_lock):
                     if prepare_frames is not None:
                         waited = _mono() - lock_asked
                         lw = self._receipt_lock_wait

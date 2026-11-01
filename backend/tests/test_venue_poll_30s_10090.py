@@ -585,3 +585,31 @@ async def test_the_local_clock_is_read_after_the_database_clock_answers(monkeypa
 
 async def _noop():
     return None
+
+
+@pytest.mark.parametrize("scope, leaves_tokened_to_socket", [
+    (None, True), ("all", True), ("slate", False), ("SLATE", False),
+])
+def test_under_the_slate_scope_tokened_markets_are_polled(monkeypatch, scope, leaves_tokened_to_socket):
+    """#10090 (Alex 11/01): the slate scope drops most tokened markets from the
+    open socket, and the poll excluded every tokened market, so those fell to
+    the hourly refresh. Under slate the poll covers them (overlap with a seed
+    the socket still streams is safe by the hand-off rules)."""
+    from app.tasks import polymarket_open_contracts as poc
+
+    monkeypatch.setattr(poc, "open_contract_prices_enabled", lambda: True)
+    if scope is None:
+        monkeypatch.delenv("POLYMARKET_WS_OPEN_SCOPE", raising=False)
+    else:
+        monkeypatch.setenv("POLYMARKET_WS_OPEN_SCOPE", scope)
+    assert v._polymarket_open_arm() is leaves_tokened_to_socket
+    sql = v.polymarket_population_sql(v._polymarket_open_arm())
+    assert ("clob_token_ids" in sql) is leaves_tokened_to_socket
+
+
+def test_with_the_open_arm_off_every_tokened_market_is_polled(monkeypatch):
+    from app.tasks import polymarket_open_contracts as poc
+
+    monkeypatch.setattr(poc, "open_contract_prices_enabled", lambda: False)
+    monkeypatch.setenv("POLYMARKET_WS_OPEN_SCOPE", "all")
+    assert v._polymarket_open_arm() is False

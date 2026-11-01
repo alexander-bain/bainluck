@@ -147,7 +147,8 @@ class _Event:
     __slots__ = ("pub", "latest", "confirmed", "held_since", "unknown_since",
                  "busy_until", "previewing", "frozen_until", "touched",
                  "written", "written_at", "awaiting", "awaiting_until",
-                 "awaiting_wall", "last_input", "begun", "outside", "outside_until")
+                 "awaiting_wall", "last_input", "begun", "outside", "outside_until",
+                 "written_input")
 
     def __init__(self) -> None:
         #: None = this run has not published a reading; `_SILENT` = the last
@@ -178,6 +179,8 @@ class _Event:
         self.begun: Optional[int] = None
         self.outside: Optional[int] = None
         self.outside_until: Optional[float] = None
+        #: The `last_input` the last write carried (the activity pulse, ``a``).
+        self.written_input: Optional[float] = None
 
 
 class ConfirmedAt:
@@ -239,6 +242,12 @@ class ConfirmedAt:
         state.latest[outcome_id] = (p, recv_wall)
         if state.last_input is None or recv_wall > state.last_input:
             state.last_input = recv_wall
+            # #10090 (Alex 2026-11-01): the page's EKG pulses on every venue
+            # report, whatever it agreed with. Written as ``a`` on the advance
+            # throttle's tick (at most once a second per event per venue).
+            if state.written_input != recv_wall:
+                self._dirty.add(event_id)
+                self._kick()
         agreed = (isinstance(state.pub, dict) and state.pub.get(outcome_id) == p)
         self._settle(event_id, state, recv_wall if agreed else None, recv_wall)
 
@@ -595,9 +604,7 @@ class ConfirmedAt:
                     # the tick like any advance.
                     state.written, state.written_at = report, wall
                     self._dirty.discard(event_id)
-                    due.append((event_id, json.dumps(
-                        {"c": report[0], "h": report[1], "w": _ms(wall)},
-                        separators=(",", ":"))))
+                    due.append((event_id, self._payload(state, report, wall)))
             return due
         for event_id, state in self._events.items():
             report = self.report(state, wall)
@@ -608,13 +615,21 @@ class ConfirmedAt:
                     or held and (state.written_at is None
                                  or wall - state.written_at >= HELD_REFRESH_S)):
                 state.written, state.written_at = report, wall
-                due.append((event_id, json.dumps(
-                    {"c": report[0], "h": report[1], "w": _ms(wall)},
-                    separators=(",", ":"))))
+                due.append((event_id, self._payload(state, report, wall)))
         self._dirty.clear()
         if not due and not live:
             return None
         return due
+
+    @staticmethod
+    def _payload(state: _Event, report: tuple, wall: float) -> str:
+        """One venue entry: ``c``/``h`` (the agreement and the hold, the truth
+        the age label reads), ``w`` (written) and ``a``: the newest input's
+        receipt, whatever it agreed with. ``a`` is activity only, for the EKG
+        pulse; it never dates a price (`combine` does not read it)."""
+        state.written_input = state.last_input
+        return json.dumps({"c": report[0], "h": report[1], "w": _ms(wall),
+                           "a": _ms(state.last_input)}, separators=(",", ":"))
 
     def _kick(self) -> None:
         if self._task is not None or self._closed or self._client is None:
@@ -683,7 +698,7 @@ class ConfirmedAt:
             for event_id, _payload in due:
                 state = self._events.get(event_id)
                 if state is not None:
-                    state.written = state.written_at = None
+                    state.written = state.written_at = state.written_input = None
                     self._dirty.add(event_id)
             if self.stats["write_errors"] in (1, 10) or self.stats["write_errors"] % 1000 == 0:
                 logger.warning("confirmed_at[%s]: write failed (errors=%d)",
@@ -723,6 +738,27 @@ def combine(entries: Iterable[Any], now_wall: float) -> Optional[float]:
     if not agreed:
         return None
     return min(max(agreed), now_ms) / 1000.0
+
+
+def activity(entries: Iterable[Any], now_wall: float) -> Optional[float]:
+    """The newest venue input any entry reports (``a``, epoch s), or None.
+
+    Evidence that the markets reported in, for the EKG pulse only: unlike
+    `combine` it says nothing about the published price (an input that
+    disagreed counts), so it must never age or date a number. Clamped to
+    the reader's clock."""
+    newest = None
+    for raw in entries:
+        try:
+            entry = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        except (TypeError, ValueError):
+            continue
+        a = entry.get("a") if isinstance(entry, dict) else None
+        if type(a) is int and (newest is None or a > newest):
+            newest = a
+    if newest is None:
+        return None
+    return min(newest, int(now_wall * 1000)) / 1000.0
 
 
 async def _fetch(event_ids: list[int]) -> Optional[dict[int, list]]:
@@ -835,6 +871,21 @@ class ConfirmedReads:
             if cached is not None:
                 entries.extend(cached[1])
         return combine(entries, self._wall())
+
+    def activity(self, event_ids) -> Optional[float]:
+        """The cached newest venue input across ``event_ids`` (`activity`),
+        None unless every member was read within ``READ_FRESH_S``. Rides the
+        same shared reads as `value`: no read of its own."""
+        now = self._mono()
+        if any(now - self._fetched.get(eid, -math.inf) >= READ_FRESH_S
+               for eid in event_ids):
+            return None
+        entries = []
+        for eid in event_ids:
+            cached = self._entries.get(eid)
+            if cached is not None:
+                entries.extend(cached[1])
+        return activity(entries, self._wall())
 
     def peek(self, event_ids) -> Optional[float]:
         """The cached value now; a stale entry starts one shared re-read."""
