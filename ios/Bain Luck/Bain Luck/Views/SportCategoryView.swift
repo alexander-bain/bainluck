@@ -143,6 +143,7 @@ struct SportCategoryView: View {
                                 NavigationLink(value: Route.futuresDetail(id: market.id)) {
                                     leagueMarketRow(market)
                                 }
+                                .macBrowseRowMenu(.futuresDetail(id: market.id), pinManager: pinManager)
                             }
                             if markets.count > 6 {
                                 Text("+\(markets.count - 6) more")
@@ -303,11 +304,13 @@ struct SportCategoryView: View {
                 )
             }
             .buttonStyle(.plain)
+            .macBrowseRowMenu(.eventDetail(id: event.id), pinManager: pinManager)
         } else if item.type == "futures", let futures = item.futures {
             NavigationLink(value: Route.futuresDetail(id: futures.id)) {
                 FuturesCardView(futures: futures)
             }
             .buttonStyle(.plain)
+            .macBrowseRowMenu(.futuresDetail(id: futures.id), pinManager: pinManager)
         } else if let tournament = item.tournament {
             // #1471. A tournament has a real destination when it carries a slug;
             // without one there is nowhere to go, so the row is plain rather
