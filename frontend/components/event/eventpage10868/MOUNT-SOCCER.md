@@ -106,8 +106,10 @@ const soccerMatch = soccerMatchApplies(event.sport)
    `deliveryInterrupted: false`, and only the stale window on the quote's own clock demotes the
    home chance to "Last recorded win chance".
 6. **Held choices.** The stream's shown story and each card's choice are held inside
-   `SoccerMatchStories` for the life of the mounted section. Never give the section a `key` that
-   changes per refresh.
+   `SoccerMatchStories` for the life of the mounted section, within the stream's reading scope
+   (`stories.scope`, one per event and phase). Each choice resolves by its exact id, exactly once:
+   a withdrawn or duplicated id says "Selected … unavailable." and is kept, so the same identity
+   returns; nothing is substituted. Never give the section a `key` that changes per refresh.
 7. **Census enrolment (approved by the user, applied append-only).** `SoccerMatchStories.tsx` and
    `SoccerMatchPage.tsx` reach `lib/propGrade.ts` and are enrolled at the end of
    `__tests__/lib/settledVocabulary.test.tsx` `SURFACES` (soccer imports, one CONSTRUCTED forced

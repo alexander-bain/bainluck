@@ -126,6 +126,7 @@ import {
   soccerGoalsCard,
   soccerHalvesCard,
   soccerPin,
+  soccerStoryScope,
   type SoccerHalvesAdmission,
   type SoccerMatchAdmission,
 } from "./soccerMatchStories";
@@ -915,6 +916,7 @@ export function buildSoccerMatch(inputs: SoccerMatchInputs): SoccerMatchViewMode
     .map((id) => built[id])
     .filter((card): card is SoccerStoryCard => card !== null);
   const stories: SoccerStoryStream = {
+    scope: soccerStoryScope(event.id, phase),
     heading: STORY_WORDS.streamHeading,
     cards,
     manualStatus: cards.length > 1 ? STORY_WORDS.manualStatus : null,

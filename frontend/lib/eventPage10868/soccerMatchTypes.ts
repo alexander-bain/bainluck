@@ -195,6 +195,8 @@ export interface SoccerGoalsCard {
   milestones: SoccerGoalsMilestone[];
   /** The opening milestone: nearest even odds among printed pre-match chances. */
   defaultId: string | null;
+  /** "Selected milestone unavailable." — a held milestone no longer named exactly once. */
+  selectionUnavailable: string;
   actual: SoccerGoalsActual | null;
 }
 
@@ -215,6 +217,8 @@ export interface SoccerBothCard {
   beforeContext: string | null;
   outcomes: SoccerReadingRow[];
   defaultId: string | null;
+  /** "Selected outcome unavailable." — a held outcome no longer named exactly once. */
+  selectionUnavailable: string;
   scoring: { title: string; home: SoccerTeamGoals; away: SoccerTeamGoals; clock: string | null; detail: string | null };
 }
 
@@ -236,6 +240,8 @@ export interface SoccerFirstCard {
   context: string | null;
   rows: SoccerReadingRow[];
   defaultId: string | null;
+  /** "Selected outcome unavailable." — a held outcome no longer named exactly once. */
+  selectionUnavailable: string;
   /** During play only: the served score checkpoints, each with its own clock. */
   scorePath: { title: string; note: string; observations: SoccerScoreCheckpoint[] } | null;
 }
@@ -264,6 +270,8 @@ export interface SoccerHalvesCard {
   periods: Array<{ id: string; label: string }>;
   series: SoccerHalfSeries[];
   defaultId: string | null;
+  /** "Selected outcome unavailable." — a held series no longer named exactly once. */
+  selectionUnavailable: string;
   /** "Results so far · Valladolid" / "Final results · Valladolid" for the default series; null before kickoff. */
   resultsTitle: string | null;
   /** The results heading's lead, joined to the chosen series' label by the card; null before kickoff. */
@@ -308,6 +316,10 @@ export interface SoccerExactCard {
   legend: { scaleTitle: string; offScale: string; notListed: string; unavailable: string; result: string; selection: string };
   /** "Choose a score to compare." */
   noSelection: string;
+  /** "Selected market unavailable." — a held scope no longer named exactly once. */
+  scopeUnavailable: string;
+  /** "Selected score unavailable." — a held score no longer named exactly once in its scope. */
+  selectionUnavailable: string;
   /** "Pre-match scale unavailable. Cells are not shaded." */
   scaleUnavailable: string;
   /** "—": a listed score with no pre-match chance. */
@@ -326,6 +338,14 @@ export interface SoccerExactCard {
 export type SoccerStoryCard = SoccerGoalsCard | SoccerExactCard | SoccerBothCard | SoccerFirstCard | SoccerHalvesCard;
 
 export interface SoccerStoryStream {
+  /**
+   * The reading's scope, one per event and phase (native
+   * `SoccerPageInputAdapter10868.scope`, "soccer:<event id>:<phase>"). The
+   * reader's shown story and held choices belong to it: a refresh in the same
+   * scope keeps them, even while a held id is unavailable; a new event or phase
+   * is a new reading.
+   */
+  scope: string;
   heading: string;
   /** The offered cards, in the screen's fixed order: goals, exact score, both teams, first team, halves. */
   cards: SoccerStoryCard[];

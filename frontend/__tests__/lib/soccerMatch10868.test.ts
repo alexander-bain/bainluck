@@ -878,6 +878,29 @@ describe("#10868 soccer — the composed page (`buildSoccerMatch`)", () => {
     expect(explicit.stories.cards.map((c) => c.id)).toEqual(["goals", "both", "first", "halves"]);
   });
 
+  it("the stories carry one reading scope per event and phase, and each card its own unavailable-choice words (native)", () => {
+    const during = build(live, history("liveHistory"), markets("liveMarkets"), LIVE_NOW, LIVE_ADMISSION, { halvesAdmission: "explicit" });
+    const after = build(final, history("finalHistory"), markets("finalMarkets"), FINAL_NOW, LIVE_ADMISSION);
+    const before = build(hull, history("hullHistory"), markets("hullExactMarkets"), EXACT_PRE_NOW, HULL_BEFORE_ADMISSION);
+    // SoccerPageInputAdapter10868.scope: "soccer:<event id>:<phase>".
+    expect(during.stories.scope).toBe(`soccer:${live.id}:live`);
+    expect(after.stories.scope).toBe(`soccer:${final.id}:final`);
+    expect(before.stories.scope).toBe(`soccer:${hull.id}:before`);
+    expect(build(live, history("liveHistory"), markets("liveMarkets"), LIVE_NOW).stories.scope).toBe(during.stories.scope);
+    const words = (page: typeof during) =>
+      page.stories.cards.map((c) => [c.id, c.id === "exact" ? [c.scopeUnavailable, c.selectionUnavailable] : c.selectionUnavailable]);
+    expect(words(during)).toEqual([
+      ["goals", "Selected milestone unavailable."],
+      ["both", "Selected outcome unavailable."],
+      ["first", "Selected outcome unavailable."],
+      ["halves", "Selected outcome unavailable."],
+    ]);
+    expect(words(before)).toEqual([
+      ["goals", "Selected milestone unavailable."],
+      ["exact", ["Selected market unavailable.", "Selected score unavailable."]],
+    ]);
+  });
+
   it("CONSTRUCTED admission, after the final: no goal rows kept, so both, first, halves", () => {
     const page = build(final, history("finalHistory"), markets("finalMarkets"), FINAL_NOW, LIVE_ADMISSION);
     expect(page.stories.cards.map((c) => c.id)).toEqual(["both", "first", "halves"]);

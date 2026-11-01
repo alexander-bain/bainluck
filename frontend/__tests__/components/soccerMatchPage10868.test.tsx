@@ -37,7 +37,9 @@ import {
   type SoccerMatchViewModel,
 } from "@/lib/eventPage10868/soccerMatch";
 import type {
+  SoccerBothCard,
   SoccerExactCard,
+  SoccerFirstCard,
   SoccerGoalsCard,
   SoccerHalvesCard,
   SoccerStoryCard,
@@ -645,5 +647,276 @@ describe("EXACT — the heat map (ExactScoreMapPresentation10868)", () => {
     const names = soccerNames(event);
     expect(text("[data-exact-actual]")).toBe(`${EXACT_WORDS.finalScore}: ${names.home} 2–2 ${names.away}`);
     expect(text("[data-exact-legend]")).toContain(EXACT_WORDS.legend.result);
+  });
+});
+
+// ─── Held selections across refresh (Design correction on 8c2ab49c) ─────────
+//
+// Native: a choice resolves by its exact id, exactly once; a withdrawn or
+// duplicated id is unavailable with no substitute, and the held id is kept so
+// the same identity returns (`TotalMilestoneInput10868.selection`,
+// `ExactScoreMapInput10868.scopeSelection` / `originalSelection`,
+// ExactScoreMapPresentation10868.swift:384-405). Every refresh below re-renders
+// the SAME mounted stream with a new payload — no key, no remount — exactly as
+// page.tsx would on a poll. Each payload edit is CONSTRUCTED and says so.
+
+describe("held selections: exact id, exactly once, no substitute, kept across refresh", () => {
+  const livePage = page(detail("liveDetail"), history("liveHistory"), markets("liveMarkets"), LIVE_NOW, C.liveAdmission, { halvesAdmission: "explicit" });
+  const finalPage = page(detail("finalDetail"), history("finalHistory"), markets("finalMarkets"), FINAL_NOW, C.liveAdmission);
+  const hullPage = page(detail("hullDetail"), history("hullHistory"), markets("hullExactMarkets"), EXACT_PRE_NOW, HULL_BEFORE_ADMISSION);
+
+  const show = (stream: SoccerStoryStream) => act(() => root.render(<SoccerMatchStories stream={stream} />));
+  /** A refresh: the same stream with one card's payload edited (CONSTRUCTED at each call site). */
+  function edited<T extends SoccerStoryCard>(stream: SoccerStoryStream, id: T["id"], edit: (card: T) => void): SoccerStoryStream {
+    const next = clone(stream);
+    edit(next.cards.find((c) => c.id === id) as T);
+    return next;
+  }
+  const card = (id: string) => host.querySelector(`[data-soccer-card="${id}"]`)!;
+  const notice = (id: string) => card(id).querySelector("[data-soccer-selection-unavailable]");
+  const readout = (id: string) => card(id).querySelector("[data-soccer-chosen], [data-soccer-exact-chosen]");
+  const pressed = (id: string) => Array.from(card(id).querySelectorAll('button[aria-pressed="true"]'));
+  const timingButtons = (id: string) => Array.from(card(id).querySelectorAll("button[aria-controls]"));
+  const chip = (id: string, label: string) => button(label, card(id));
+  const goalChip = (label: string) => Array.from(card("goals").querySelectorAll("li > button")).find((b) => b.querySelector("span")?.textContent === label)!;
+
+  describe("GOALS milestones", () => {
+    it("a removed held milestone says so, shows no other milestone, and the reader can choose another", () => {
+      show(livePage.stories);
+      click(goalChip("5+ goals"));
+      expect(readout("goals")?.getAttribute("data-soccer-chosen")).toBe("242143187");
+      // CONSTRUCTED refresh: the 5+ market is withdrawn.
+      show(edited<SoccerGoalsCard>(livePage.stories, "goals", (c) => (c.milestones = c.milestones.filter((m) => m.id !== "242143187"))));
+      expect(notice("goals")?.textContent).toBe("Selected milestone unavailable.");
+      expect(notice("goals")?.getAttribute("data-soccer-selection-unavailable")).toBe("missing");
+      // No substitute: not the default (3+), not a neighbour — no readout, timing, pressed chip or emphasis.
+      expect(readout("goals")).toBeNull();
+      expect(timingButtons("goals")).toHaveLength(0);
+      expect(pressed("goals")).toHaveLength(0);
+      expect(card("goals").querySelector(".ring-2")).toBeNull();
+      expect(card("goals").textContent).not.toContain("Pregame chance");
+      // The other milestones stay choosable; a deliberate choice resolves.
+      click(goalChip("6+ goals"));
+      expect(readout("goals")?.getAttribute("data-soccer-chosen")).toBe("242765587");
+      expect(notice("goals")).toBeNull();
+    });
+
+    it("the same identity returns to the held milestone without the reader choosing again", () => {
+      show(livePage.stories);
+      click(goalChip("5+ goals"));
+      // CONSTRUCTED refresh: withdrawn, then served again with the same id.
+      show(edited<SoccerGoalsCard>(livePage.stories, "goals", (c) => (c.milestones = c.milestones.filter((m) => m.id !== "242143187"))));
+      expect(readout("goals")).toBeNull();
+      show(livePage.stories);
+      expect(readout("goals")?.getAttribute("data-soccer-chosen")).toBe("242143187");
+      expect(goalChip("5+ goals").getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("unchanged values under a changed id are not the held milestone: unavailable, no substitute", () => {
+      show(livePage.stories);
+      click(goalChip("5+ goals"));
+      // CONSTRUCTED refresh: the 5+ row re-served under a new id, every value identical.
+      show(edited<SoccerGoalsCard>(livePage.stories, "goals", (c) => (c.milestones[1].id = "242143187-reissued")));
+      expect(notice("goals")?.textContent).toBe("Selected milestone unavailable.");
+      expect(readout("goals")).toBeNull();
+      expect(goalChip("5+ goals").getAttribute("aria-pressed")).toBe("false");
+      expect(goalChip("5+ goals").disabled).toBe(false);
+    });
+
+    it("a held id now carried by two milestones picks neither; both offer no action", () => {
+      show(livePage.stories);
+      click(goalChip("5+ goals"));
+      // CONSTRUCTED refresh: the 6+ row also carries the 5+ id.
+      show(edited<SoccerGoalsCard>(livePage.stories, "goals", (c) => (c.milestones[2].id = "242143187")));
+      expect(notice("goals")?.getAttribute("data-soccer-selection-unavailable")).toBe("duplicate");
+      expect(readout("goals")).toBeNull();
+      expect(goalChip("5+ goals").disabled).toBe(true);
+      expect(goalChip("6+ goals").disabled).toBe(true);
+      expect(goalChip("3+ goals").disabled).toBe(false);
+      expect(pressed("goals")).toHaveLength(0);
+    });
+
+    it("a normal refresh keeps the held milestone and shows its new values", () => {
+      show(livePage.stories);
+      click(goalChip("6+ goals"));
+      // CONSTRUCTED refresh: the 6+ pre-match pin re-read at a new value, same id.
+      show(
+        edited<SoccerGoalsCard>(livePage.stories, "goals", (c) => {
+          c.milestones[2].pregame = { kind: "value", observation: { probability: 0.08, text: pct(0.08), clock: null, detail: "CONSTRUCTED" } };
+        }),
+      );
+      expect(readout("goals")?.getAttribute("data-soccer-chosen")).toBe("242765587");
+      expect(Array.from(readout("goals")!.querySelectorAll("dd")).map((dd) => dd.textContent)[0]).toBe(pct(0.08));
+    });
+  });
+
+  describe("BOTH, FIRST and HALVES outcomes", () => {
+    it("both teams: a removed held outcome empties the ring with its words; the other outcome is a deliberate choice", () => {
+      show(livePage.stories);
+      click(button("Next"));
+      click(chip("both", "No"));
+      expect(readout("both")?.getAttribute("data-soccer-chosen")).toBe("242143190");
+      // CONSTRUCTED refresh: the No outcome is withdrawn.
+      show(edited<SoccerBothCard>(livePage.stories, "both", (c) => (c.outcomes = c.outcomes.filter((o) => o.id !== "242143190"))));
+      expect(card("both").querySelector('[data-mark="ring-arc"]')).toBeNull();
+      expect(card("both").querySelector("[data-ring]")?.getAttribute("aria-label")).toBe("Selected outcome unavailable.");
+      expect(notice("both")?.textContent).toBe("Selected outcome unavailable.");
+      expect(readout("both")).toBeNull();
+      expect(card("both").textContent).not.toContain("Pregame chance");
+      expect(pressed("both")).toHaveLength(0);
+      click(chip("both", "Yes"));
+      expect(readout("both")?.getAttribute("data-soccer-chosen")).toBe("242143189");
+      expect(card("both").querySelector('[data-mark="ring-arc"]')).not.toBeNull();
+    });
+
+    it("first team: a removed held outcome shows no other outcome's readout or timing, and returns when served again", () => {
+      show(livePage.stories);
+      click(button("Next"));
+      click(button("Next"));
+      click(chip("first", "Albacete"));
+      const without = edited<SoccerFirstCard>(livePage.stories, "first", (c) => (c.rows = c.rows.filter((r) => r.id !== "244237964")));
+      // CONSTRUCTED refresh: withdrawn.
+      show(without);
+      expect(notice("first")?.textContent).toBe("Selected outcome unavailable.");
+      expect(readout("first")).toBeNull();
+      expect(timingButtons("first")).toHaveLength(0);
+      expect(card("first").querySelector(".ring-2")).toBeNull();
+      // CONSTRUCTED refresh: served again with the same id.
+      show(livePage.stories);
+      expect(readout("first")?.getAttribute("data-soccer-chosen")).toBe("244237964");
+    });
+
+    it("first team, no explicit choice: a duplicated default picks neither row, never the first", () => {
+      // CONSTRUCTED payload: Neither re-served under the default (Valladolid) id.
+      show(edited<SoccerFirstCard>(livePage.stories, "first", (c) => (c.rows[1].id = c.rows[0].id)));
+      click(button("Next"));
+      click(button("Next"));
+      expect(notice("first")?.getAttribute("data-soccer-selection-unavailable")).toBe("duplicate");
+      expect(readout("first")).toBeNull();
+      expect(button("Real Valladolid CF", card("first")).disabled).toBe(true);
+      expect(button("Albacete", card("first")).disabled).toBe(false);
+    });
+
+    it("half by half: a removed held series dims nothing and shows no tiles; another series is a deliberate choice", () => {
+      const halves = oneCard(livePage.stories.cards.find((c) => c.id === "halves")!);
+      show(halves);
+      click(chip("halves", "Draw"));
+      expect(readout("halves")?.getAttribute("data-soccer-chosen")).toBe("draw");
+      // CONSTRUCTED refresh: the Draw series is withdrawn.
+      show(edited<SoccerHalvesCard>(halves, "halves", (c) => (c.series = c.series.filter((s) => s.id !== "draw"))));
+      expect(notice("halves")?.textContent).toBe("Selected outcome unavailable.");
+      expect(readout("halves")).toBeNull();
+      expect(card("halves").querySelector(".opacity-40")).toBeNull();
+      expect(pressed("halves")).toHaveLength(0);
+      click(chip("halves", livePage.header.away));
+      expect(readout("halves")?.getAttribute("data-soccer-chosen")).toBe("away");
+    });
+  });
+
+  describe("EXACT scopes and scores", () => {
+    const exact = () => oneCard(hullPage.stories.cards.find((c) => c.id === "exact")!);
+    const cell = (id: string) => card("exact").querySelector(`td[data-cell="${id}"] button`) as HTMLButtonElement;
+
+    it("a removed held scope says so, draws no map, and keeps the scope choices reachable", () => {
+      show(exact());
+      click(chip("exact", "First half"));
+      expect(card("exact").querySelector("[data-exact-map]")?.getAttribute("data-exact-map")).toBe("first");
+      // CONSTRUCTED refresh: the first-half market is withdrawn; one scope is left.
+      show(edited<SoccerExactCard>(exact(), "exact", (c) => (c.scopes = c.scopes.filter((s) => s.id !== "first"))));
+      expect(notice("exact")?.textContent).toBe("Selected market unavailable.");
+      expect(card("exact").querySelector("[data-exact-map]")).toBeNull();
+      expect(readout("exact")).toBeNull();
+      const full = chip("exact", "Full match");
+      expect(full.getAttribute("aria-pressed")).toBe("false");
+      click(full);
+      expect(card("exact").querySelector("[data-exact-map]")?.getAttribute("data-exact-map")).toBe("full");
+    });
+
+    it("duplicated scope ids resolve nobody, with or without an explicit choice", () => {
+      // CONSTRUCTED payload: both scopes carry the default id.
+      const twice = edited<SoccerExactCard>(exact(), "exact", (c) => (c.scopes[1].id = "full"));
+      show(twice);
+      expect(notice("exact")?.getAttribute("data-soccer-selection-unavailable")).toBe("duplicate");
+      expect(card("exact").querySelector("[data-exact-map]")).toBeNull();
+      expect(chip("exact", "Full match").disabled).toBe(true);
+      expect(chip("exact", "First half").disabled).toBe(true);
+    });
+
+    it("a removed held score says so with no corner marks or readout; another score is a deliberate choice; the same identity returns", () => {
+      show(exact());
+      click(cell("238846934"));
+      expect(readout("exact")?.getAttribute("data-soccer-exact-chosen")).toBe("238846934");
+      // CONSTRUCTED refresh: the 0–0 market is withdrawn from the full match.
+      const without = edited<SoccerExactCard>(exact(), "exact", (c) => (c.scopes[0].originals = c.scopes[0].originals.filter((o) => o.id !== "238846934")));
+      show(without);
+      expect(notice("exact")?.textContent).toBe("Selected score unavailable.");
+      expect(readout("exact")).toBeNull();
+      expect(card("exact").querySelectorAll('td [data-mark="selected"]')).toHaveLength(0);
+      expect(card("exact").textContent).not.toContain(EXACT_WORDS.noSelection);
+      // CONSTRUCTED refresh: served again — the held score is back without a new choice.
+      show(exact());
+      expect(readout("exact")?.getAttribute("data-soccer-exact-chosen")).toBe("238846934");
+      // Withdrawn again, and this time the reader chooses 1–1 deliberately; the return of 0–0 does not retake it.
+      show(without);
+      click(cell("238846931"));
+      show(exact());
+      expect(readout("exact")?.getAttribute("data-soccer-exact-chosen")).toBe("238846931");
+    });
+
+    it("a held score id now carried by two listed scores picks neither; both offer no action", () => {
+      show(exact());
+      click(cell("238846934"));
+      // CONSTRUCTED refresh: the 1–1 original also carries the 0–0 id.
+      show(edited<SoccerExactCard>(exact(), "exact", (c) => (c.scopes[0].originals.find((o) => o.id === "238846931")!.id = "238846934")));
+      expect(notice("exact")?.getAttribute("data-soccer-selection-unavailable")).toBe("duplicate");
+      expect(card("exact").querySelectorAll('td [data-mark="selected"]')).toHaveLength(0);
+      const shared = Array.from(card("exact").querySelectorAll('td[data-cell="238846934"] button')) as HTMLButtonElement[];
+      expect(shared).toHaveLength(2);
+      expect(shared.every((b) => b.disabled)).toBe(true);
+    });
+
+    it("CONSTRUCTED shared coordinate: the cell is ambiguous, not 'not listed', and each original is a named choice", () => {
+      // CONSTRUCTED payload: the 1–1 original placed on 0–0's coordinate.
+      show(
+        edited<SoccerExactCard>(exact(), "exact", (c) => {
+          c.scopes[0].originals.find((o) => o.id === "238846931")!.placement = { kind: "grid", home: 0, away: 0 };
+        }),
+      );
+      const ambiguous = card("exact").querySelector('td[data-cell="ambiguous"]')!;
+      expect(ambiguous.textContent).toBe(EXACT_WORDS.unavailableMark);
+      expect(ambiguous.className).not.toContain("border-dashed");
+      expect(ambiguous.querySelector("button")).toBeNull();
+      expect(button("Hull City AFC 0 - 0 Everton FC", card("exact"))).toBeDefined();
+      click(button("Hull City AFC 1 - 1 Everton FC", card("exact")));
+      expect(readout("exact")?.getAttribute("data-soccer-exact-chosen")).toBe("238846931");
+    });
+  });
+
+  describe("the reading scope: a refresh keeps choices; a new event or phase is a new reading", () => {
+    it("CONSTRUCTED another event's stream with the same cards starts with the owner's defaults, no unavailable notice", () => {
+      show(livePage.stories);
+      click(goalChip("6+ goals"));
+      // The same event's refresh keeps the choice.
+      show(clone(livePage.stories));
+      expect(readout("goals")?.getAttribute("data-soccer-chosen")).toBe("242765587");
+      // CONSTRUCTED: the same cards under another event's scope.
+      show({ ...clone(livePage.stories), scope: "soccer:999999:live" });
+      expect(readout("goals")?.getAttribute("data-soccer-chosen")).toBe("242143183");
+      expect(notice("goals")).toBeNull();
+    });
+
+    it("kickoff-to-final is a new reading: the shown story and every choice start again", () => {
+      expect(livePage.stories.scope).not.toBe(finalPage.stories.scope);
+      show(livePage.stories);
+      click(button("Next"));
+      click(chip("both", "No"));
+      click(button("Next"));
+      expect(host.querySelector("[data-soccer-card]")?.getAttribute("data-soccer-card")).toBe("first");
+      // The final's own stream (same event, new phase): first story, the owner's default outcome.
+      show(finalPage.stories);
+      expect(host.querySelector("[data-soccer-card]")?.getAttribute("data-soccer-card")).toBe("both");
+      expect(readout("both")?.getAttribute("data-soccer-chosen")).toBe("242143189");
+      expect(notice("both")).toBeNull();
+    });
   });
 });

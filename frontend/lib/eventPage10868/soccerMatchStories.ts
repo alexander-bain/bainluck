@@ -488,6 +488,8 @@ export const GOALS_WORDS = {
   resultTitle: "Final result",
   countSoFarTitle: "Count so far",
   finalCountTitle: "Final count",
+  /** `TotalMilestoneInput10868.milestoneUnavailable` (TotalMilestonePresentation10868.swift:443). */
+  selectionUnavailable: "Selected milestone unavailable.",
 } as const;
 
 const unit = (count: number) => (count === 1 ? "goal" : "goals");
@@ -569,6 +571,7 @@ export function soccerGoalsCard(
     title: phase === "before" ? GOALS_WORDS.beforeTitle : phase === "live" ? GOALS_WORDS.liveTitle : GOALS_WORDS.finalTitle,
     milestones,
     defaultId: opening === null ? null : milestones[opening].id,
+    selectionUnavailable: GOALS_WORDS.selectionUnavailable,
     actual,
   };
 }
@@ -635,6 +638,8 @@ export const BOTH_WORDS = {
   pregameTitle: "Pregame chance",
   currentTitle: "Current chance",
   resultTitle: "Result",
+  /** `BothTeamsScoreInput10868.selectionUnavailable` (BothTeamsScorePresentation10868.swift:221). */
+  selectionUnavailable: "Selected outcome unavailable.",
 } as const;
 
 /** The reading row every card shares: pre-match, in-play (live) and result (after the final). */
@@ -701,6 +706,7 @@ export function soccerBothCard(
     beforeContext: phase === "before" ? BOTH_WORDS.beforeContext : null,
     outcomes,
     defaultId: fallback.id,
+    selectionUnavailable: BOTH_WORDS.selectionUnavailable,
     scoring,
   };
 }
@@ -717,6 +723,8 @@ export const FIRST_WORDS = {
   currentTitle: "Current chance",
   liveResultTitle: "Result",
   finalResultTitle: "Final result",
+  /** The soccer adapter's own word (SoccerFirstTeamAdapter10868.swift:46). */
+  selectionUnavailable: "Selected outcome unavailable.",
 } as const;
 
 export function soccerFirstCard(
@@ -758,6 +766,7 @@ export function soccerFirstCard(
     context: sourceLabel(legs[0].row.source),
     rows,
     defaultId: rows[0].id,
+    selectionUnavailable: FIRST_WORDS.selectionUnavailable,
     scorePath: phase === "live" ? checkpoints(event, history, names, nowMs) : null,
   };
 }
@@ -805,6 +814,8 @@ export const HALVES_WORDS = {
   liveResultTitle: "Half result",
   finalResultTitle: "Final result",
   cellUnavailable: "Chance unavailable for this half",
+  /** The soccer adapter's own word (SoccerHalvesAdapter10868.swift:54). */
+  selectionUnavailable: "Selected outcome unavailable.",
 } as const;
 
 /** The three sides a series may be, in the card's order. */
@@ -866,6 +877,7 @@ export function soccerHalvesCard(
     periods: admission.halves.map((half) => ({ id: half.periodId, label: half.label })),
     series,
     defaultId: series[0].id,
+    selectionUnavailable: HALVES_WORDS.selectionUnavailable,
     resultsTitle: resultsLead === null ? null : `${resultsLead} · ${chosenLabel}`,
     resultsLead,
     resultTitle: phase === "final" ? HALVES_WORDS.finalResultTitle : HALVES_WORDS.liveResultTitle,
@@ -889,6 +901,9 @@ export const EXACT_WORDS = {
   otherChoicesTitle: "Other listed outcomes",
   notListed: "Not separately listed",
   noSelection: "Choose a score to compare.",
+  /** `SoccerExactScoreAdapter10868` words (L149-151): a held scope, then a held score, not named exactly once. */
+  scopeUnavailable: "Selected market unavailable.",
+  selectionUnavailable: "Selected score unavailable.",
   scaleUnavailable: "Pre-match scale unavailable. Cells are not shaded.",
   unavailableMark: "—",
   /** `SoccerExactScoreAdapter10868.Words.legend` (L167-173). */
@@ -940,6 +955,8 @@ export function soccerExactCard(
     titles: { pregame: EXACT_WORDS.pregameTitle, current: EXACT_WORDS.currentTitle, result: EXACT_WORDS.finalResultTitle },
     legend: EXACT_WORDS.legend,
     noSelection: EXACT_WORDS.noSelection,
+    scopeUnavailable: EXACT_WORDS.scopeUnavailable,
+    selectionUnavailable: EXACT_WORDS.selectionUnavailable,
     scaleUnavailable: EXACT_WORDS.scaleUnavailable,
     unavailableMark: EXACT_WORDS.unavailableMark,
     intro: phase === "before" ? EXACT_WORDS.beforeIntro : phase === "live" ? EXACT_WORDS.liveIntro : EXACT_WORDS.finalIntro,
@@ -1062,6 +1079,15 @@ export const STORY_WORDS = {
   first: "First team to score",
   halves: "Half-by-half expectations",
 } as const;
+
+/**
+ * The reading's scope: one per event and phase (native
+ * `SoccerPageInputAdapter10868.scope`, SoccerPageInputAdapter10868.swift:163-165).
+ * The reader's held story and choices belong to it.
+ */
+export function soccerStoryScope(eventId: number, phase: SoccerMatchPhase): string {
+  return `soccer:${eventId}:${phase}`;
+}
 
 /** The card's name in `phase`: before kickoff the goal card is the outlook. */
 export function storyName(card: SoccerStoryId, phase: SoccerMatchPhase): string {

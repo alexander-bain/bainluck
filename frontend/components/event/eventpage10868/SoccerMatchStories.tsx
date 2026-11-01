@@ -44,6 +44,21 @@
  * and refreshes; each card's chance-timing disclosure lists the chosen row's
  * readings with their full clocks and venues.
  *
+ * HELD SELECTION (native `TotalMilestoneInput10868.selection`,
+ * `BothTeamsScoreInput10868.selection`, `FirstScorerComparisonInput10868`,
+ * `PeriodOutcomeComparisonInput10868`, `ExactScoreMapInput10868.scopeSelection`
+ * / `originalSelection`, ExactScoreMapPresentation10868.swift:384-405): a choice
+ * resolves by its exact id, EXACTLY ONCE. With no explicit choice the card opens
+ * on the owner's default (else its first row). An explicit choice the payload no
+ * longer names, or names more than once, is UNAVAILABLE: the card says so in the
+ * leaf's own words and shows no other row's reading, chance, result or timing,
+ * never the default or the first of the duplicates. The held id is kept, so the
+ * same identity is shown again when it returns; every other row stays choosable
+ * (a row whose id is not unique offers no action — it could resolve nobody).
+ * The choices belong to the stream's reading scope (`stream.scope`, one per
+ * event and phase): a refresh in that scope keeps them; a new event or phase
+ * starts a new reading. No timer, no subscription, no key on the payload.
+ *
  * Card-level Details is not in this increment: every original's exact Details
  * is in All props.
  */
@@ -190,8 +205,43 @@ function Timing({ timing }: { timing: SoccerTiming }) {
   );
 }
 
-function pick<T extends { id: string }>(rows: T[], held: string | undefined, fallback: string | null): T | null {
-  return rows.find((r) => r.id === held) ?? rows.find((r) => r.id === fallback) ?? rows[0] ?? null;
+/** How a card's choice resolves against this pass's rows. */
+export type SoccerSelection<T> =
+  | { kind: "none" }
+  | { kind: "selected"; row: T }
+  /** The id names no row (withdrawn, or re-identified) or more than one row: nothing is substituted. */
+  | { kind: "unavailable"; id: string; reason: "missing" | "duplicate" };
+
+/** Exact id only, exactly once; a missing or duplicated id gets no substitute. */
+export function selectExactlyOnce<T extends { id: string }>(rows: readonly T[], id: string | null): SoccerSelection<T> {
+  if (id === null) return { kind: "none" };
+  const matches = rows.filter((r) => r.id === id);
+  if (matches.length === 1) return { kind: "selected", row: matches[0] };
+  return { kind: "unavailable", id, reason: matches.length === 0 ? "missing" : "duplicate" };
+}
+
+/**
+ * The id a card resolves: the reader's explicit held id whenever there is one
+ * (kept even while unavailable), else — only with no explicit choice — the
+ * owner's opening default, else its first row.
+ */
+export function soccerRequestedId(held: string | undefined, fallback: string | null, rows: readonly { id: string }[]): string | null {
+  if (held !== undefined) return held;
+  return fallback ?? rows[0]?.id ?? null;
+}
+
+/** A row can be chosen only when its id names exactly one row. */
+const isUnique = (rows: readonly { id: string }[], id: string) => rows.filter((r) => r.id === id).length === 1;
+const chosenRow = <T,>(selection: SoccerSelection<T>): T | null => (selection.kind === "selected" ? selection.row : null);
+
+/** In place of a chosen row's readout: the leaf's own words, and nothing of any other row. */
+function SelectionUnavailable({ selection, words }: { selection: SoccerSelection<unknown>; words: string }) {
+  if (selection.kind !== "unavailable") return null;
+  return (
+    <p className="rounded-md bg-surface-deep p-2 text-sm font-semibold text-text-primary" data-soccer-selection-unavailable={selection.reason}>
+      {words}
+    </p>
+  );
 }
 
 const CHOICE =
@@ -227,7 +277,8 @@ function ChanceGrid() {
 // ─── Goals: the milestone profile (TotalMilestonePresentation10868) ────────
 
 function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; hold: Hold }) {
-  const chosen = pick(card.milestones, held.goals, card.defaultId);
+  const selection = selectExactlyOnce(card.milestones, soccerRequestedId(held.goals, card.defaultId, card.milestones));
+  const chosen = chosenRow(selection);
   const count = card.actual?.kind === "count" ? card.actual : null;
   // The axis domain is the milestones and the visible count, never the selection (native).
   const top = Math.max(0, ...card.milestones.map((m) => m.quantity), count?.quantity ?? 0) + 1;
@@ -257,12 +308,12 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
           <div className={`relative ${drawable ? "h-36" : "h-6"} ${count ? "mt-5" : ""}`} role="img" aria-label={`${card.chartTitle}. ${summary}`}>
             {drawable && <ChanceGrid />}
             {drawable &&
-              card.milestones.map((m) => {
+              card.milestones.map((m, i) => {
                 const before = pregameValue(m.pregame);
                 const now = currentValue(m.current);
-                const isChosen = chosen?.id === m.id;
+                const isChosen = chosen === m;
                 return (
-                  <div key={m.id} className="absolute inset-y-0" style={{ left: x(m.quantity) }} data-milestone={m.id}>
+                  <div key={`${i}:${m.id}`} className="absolute inset-y-0" style={{ left: x(m.quantity) }} data-milestone={m.id}>
                     {before !== null && (
                       <>
                         <span
@@ -291,10 +342,10 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
             )}
           </div>
           <div className="relative mt-1 h-5">
-            {card.milestones.map((m) => (
+            {card.milestones.map((m, i) => (
               <span
-                key={m.id}
-                className={`absolute -translate-x-1/2 whitespace-nowrap text-xs tabular-nums ${chosen?.id === m.id ? "font-bold text-text-primary" : "text-text-secondary"}`}
+                key={`${i}:${m.id}`}
+                className={`absolute -translate-x-1/2 whitespace-nowrap text-xs tabular-nums ${chosen === m ? "font-bold text-text-primary" : "text-text-secondary"}`}
                 style={{ left: x(m.quantity) }}
               >
                 {m.quantityLabel}
@@ -307,10 +358,17 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
 
       {/* The strip: every original milestone, in owner order, with its own phase reading. */}
       <ul className="flex flex-wrap gap-2" aria-label={card.name}>
-        {card.milestones.map((m) => (
-          <MilestoneChip key={m.id} milestone={m} chosen={chosen?.id === m.id} onChoose={() => hold("goals", m.id)} />
+        {card.milestones.map((m, i) => (
+          <MilestoneChip
+            key={`${i}:${m.id}`}
+            milestone={m}
+            chosen={chosen === m}
+            choosable={isUnique(card.milestones, m.id)}
+            onChoose={() => hold("goals", m.id)}
+          />
         ))}
       </ul>
+      <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
       {chosen && (
         <div className="space-y-1 rounded-md bg-surface-deep p-2" data-soccer-chosen={chosen.id}>
           <p className="text-sm font-semibold">{chosen.label}</p>
@@ -322,11 +380,21 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
   );
 }
 
-function MilestoneChip({ milestone, chosen, onChoose }: { milestone: SoccerGoalsMilestone; chosen: boolean; onChoose: () => void }) {
+function MilestoneChip({
+  milestone,
+  chosen,
+  choosable,
+  onChoose,
+}: {
+  milestone: SoccerGoalsMilestone;
+  chosen: boolean;
+  choosable: boolean;
+  onChoose: () => void;
+}) {
   const before = pregameText(milestone.pregame);
   return (
     <li>
-      <button type="button" aria-pressed={chosen} onClick={onChoose} className={`${CHOICE} ${chosenClass(chosen)}`}>
+      <button type="button" aria-pressed={chosen} disabled={!choosable} onClick={onChoose} className={`${CHOICE} ${chosenClass(chosen)}`}>
         <span className="block font-semibold">{milestone.label}</span>
         <span className={`block ${before.value ? "tabular-nums" : "text-text-secondary"}`}>{before.text}</span>
         {milestone.current && <span className="block text-text-secondary">{currentText(milestone.current).text}</span>}
@@ -364,7 +432,8 @@ function Ring({ value, label }: { value: number | null; label: string }) {
 }
 
 function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold: Hold }) {
-  const chosen = pick(card.outcomes, held.both, card.defaultId);
+  const selection = selectExactlyOnce(card.outcomes, soccerRequestedId(held.both, card.defaultId, card.outcomes));
+  const chosen = chosenRow(selection);
   const before = chosen ? pregameText(chosen.pregame) : null;
   const team = (t: SoccerBothCard["scoring"]["home"]) => (
     <div className="min-w-0">
@@ -397,6 +466,13 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
             </div>
           </div>
         )}
+        {/* An unavailable choice: the ring holds no number and says why (native `ring` → `.unselected`). */}
+        {selection.kind === "unavailable" && (
+          <div className="flex items-center gap-3">
+            <Ring value={null} label={card.selectionUnavailable} />
+            <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
+          </div>
+        )}
         <div>
           <p className="text-xs text-text-secondary">{card.scoring.title}</p>
           <dl className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
@@ -408,15 +484,16 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
       </div>
       {/* Each outcome keeps its own figure in its own tile: never a complement of the other. */}
       <ul className="grid grid-cols-2 gap-2" aria-label={card.name}>
-        {card.outcomes.map((o) => {
+        {card.outcomes.map((o, i) => {
           const own = pregameText(o.pregame);
           return (
-            <li key={o.id}>
+            <li key={`${i}:${o.id}`}>
               <button
                 type="button"
-                aria-pressed={chosen?.id === o.id}
+                aria-pressed={chosen === o}
+                disabled={!isUnique(card.outcomes, o.id)}
                 onClick={() => hold("both", o.id)}
-                className={`${CHOICE} w-full ${chosenClass(chosen?.id === o.id)}`}
+                className={`${CHOICE} w-full ${chosenClass(chosen === o)}`}
               >
                 <span className="block font-semibold">{o.label}</span>
                 <span className={`block ${own.value ? "text-base font-bold tabular-nums" : "text-text-secondary"}`}>{own.text}</span>
@@ -438,7 +515,8 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
 // ─── First team: the lollipop plot (FirstScorerComparisonPresentation10868) ─
 
 function FirstCard({ card, held, hold }: { card: SoccerFirstCard; held: Held; hold: Hold }) {
-  const chosen = pick(card.rows, held.first, card.defaultId);
+  const selection = selectExactlyOnce(card.rows, soccerRequestedId(held.first, card.defaultId, card.rows));
+  const chosen = chosenRow(selection);
   return (
     <article className="space-y-3" data-soccer-card="first">
       <div>
@@ -451,18 +529,20 @@ function FirstCard({ card, held, hold }: { card: SoccerFirstCard; held: Held; ho
           <Readout row={chosen} titles={card.titles} />
         </div>
       )}
+      <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
       <figure className="space-y-2" data-first-plot="">
         <figcaption className="text-xs text-text-secondary">{card.plotTitle}</figcaption>
         <ul className="space-y-2" aria-label={card.name}>
-          {card.rows.map((row) => {
+          {card.rows.map((row, i) => {
             const before = pregameValue(row.pregame);
             const own = pregameText(row.pregame);
-            const isChosen = chosen?.id === row.id;
+            const isChosen = chosen === row;
             return (
-              <li key={row.id} data-first-row={row.id}>
+              <li key={`${i}:${row.id}`} data-first-row={row.id}>
                 <button
                   type="button"
                   aria-pressed={isChosen}
+                  disabled={!isUnique(card.rows, row.id)}
                   onClick={() => hold("first", row.id)}
                   className="block min-h-11 w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
                 >
@@ -541,7 +621,10 @@ function ShapeMark({ shape, color, dim, mark }: { shape: Shape; color: string; d
 }
 
 function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held: Held; hold: Hold; colors: SoccerStoryColors }) {
-  const series = card.series.find((s) => s.id === held.halves) ?? card.series.find((s) => s.id === card.defaultId) ?? card.series[0];
+  const selection = selectExactlyOnce(card.series, soccerRequestedId(held.halves, card.defaultId, card.series));
+  const series = chosenRow(selection);
+  /** Only a resolved series dims the others; an unavailable choice dims nothing. */
+  const dimmed = (s: SoccerHalfSeries) => series !== null && s !== series;
   const colorOf = (s: SoccerHalfSeries) => (s.id === "home" ? colors.home : s.id === "away" ? colors.away : "var(--series-3)");
   const n = card.periods.length;
   const px = (i: number) => ((i + 0.5) / n) * 100;
@@ -560,14 +643,14 @@ function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held
             <ChanceGrid />
             {/* Lines join one outcome's chances in neighbouring halves; a missing chance breaks the line. */}
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
-              {card.series.flatMap((s) =>
+              {card.series.flatMap((s, si) =>
                 card.periods.slice(1).flatMap((p, i) => {
                   const a = valueAt(s, card.periods[i].id);
                   const b = valueAt(s, p.id);
                   if (a === null || b === null) return [];
                   return [
                     <line
-                      key={`${s.id}:${p.id}`}
+                      key={`${si}:${s.id}:${p.id}`}
                       data-mark="half-line"
                       x1={px(i)}
                       x2={px(i + 1)}
@@ -575,25 +658,25 @@ function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held
                       y2={100 - b * 100}
                       vectorEffect="non-scaling-stroke"
                       strokeWidth={2}
-                      opacity={series && s.id !== series.id ? 0.3 : 1}
+                      opacity={dimmed(s) ? 0.3 : 1}
                       style={{ stroke: colorOf(s) }}
                     />,
                   ];
                 }),
               )}
             </svg>
-            {card.series.flatMap((s) =>
+            {card.series.flatMap((s, si) =>
               card.periods.flatMap((p, i) => {
                 const v = valueAt(s, p.id);
                 if (v === null) return [];
                 return [
                   <span
-                    key={`${s.id}:${p.id}`}
+                    key={`${si}:${s.id}:${p.id}`}
                     className="absolute block -translate-x-1/2 translate-y-1/2"
                     style={{ left: `${px(i)}%`, bottom: at(v) }}
                     data-half-point={`${s.id}:${p.id}`}
                   >
-                    <ShapeMark shape={SHAPES[s.id] ?? "circle"} color={colorOf(s)} dim={!!series && s.id !== series.id} mark="pregame" />
+                    <ShapeMark shape={SHAPES[s.id] ?? "circle"} color={colorOf(s)} dim={dimmed(s)} mark="pregame" />
                   </span>,
                 ];
               }),
@@ -611,19 +694,21 @@ function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held
         <p className="text-xs text-text-secondary">{card.lineExplanation}</p>
       </figure>
       <div className="flex flex-wrap gap-2" role="group" aria-label={card.name}>
-        {card.series.map((s) => (
+        {card.series.map((s, si) => (
           <button
-            key={s.id}
+            key={`${si}:${s.id}`}
             type="button"
-            aria-pressed={series?.id === s.id}
+            aria-pressed={series === s}
+            disabled={!isUnique(card.series, s.id)}
             onClick={() => hold("halves", s.id)}
-            className={`${CHOICE} inline-flex items-center gap-2 ${chosenClass(series?.id === s.id)}`}
+            className={`${CHOICE} inline-flex items-center gap-2 ${chosenClass(series === s)}`}
           >
             <ShapeMark shape={SHAPES[s.id] ?? "circle"} color={colorOf(s)} dim={false} />
             <span className="font-semibold">{s.label}</span>
           </button>
         ))}
       </div>
+      <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
       {series && (
         <div className="space-y-2" data-soccer-chosen={series.id}>
           {card.resultsLead && <p className="text-sm font-semibold">{`${card.resultsLead} · ${series.label}`}</p>}
@@ -704,22 +789,68 @@ function Corners() {
   );
 }
 
+/** What occupies one grid coordinate (native `ExactScoreMapSlot10868`). */
+type ExactSlot = { kind: "original"; original: SoccerExactOriginal } | { kind: "notListed" } | { kind: "ambiguous" };
+
 function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; hold: Hold }) {
-  const scope = card.scopes.find((s) => s.id === held.exactScope) ?? card.scopes.find((s) => s.id === card.defaultScopeId) ?? card.scopes[0];
-  if (!scope) return null;
+  if (card.scopes.length === 0) return null;
+  // Native `scopeSelection` (ExactScoreMapPresentation10868.swift:384-394): exact id, exactly once.
+  const scopeSelection = selectExactlyOnce(card.scopes, soccerRequestedId(held.exactScope, card.defaultScopeId, card.scopes));
+  const scope = chosenRow(scopeSelection);
+  return (
+    <article className="space-y-3" data-soccer-card="exact">
+      <h4 className="text-base font-semibold">{card.title}</h4>
+      <p className="text-sm text-text-secondary">{card.intro}</p>
+      {/* The scope choices stay reachable whenever there is another to choose, or the held one is unavailable. */}
+      {(card.scopes.length > 1 || scope === null) && (
+        <div className="flex flex-wrap gap-2" role="group" aria-label={card.title}>
+          {card.scopes.map((s, i) => (
+            <button
+              key={`${i}:${s.id}`}
+              type="button"
+              aria-pressed={s === scope}
+              disabled={!isUnique(card.scopes, s.id)}
+              onClick={() => hold("exactScope", s.id)}
+              className={`${CHOICE} ${chosenClass(s === scope)} font-semibold`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {scope ? (
+        <ExactScopeMap card={card} scope={scope} held={held} hold={hold} />
+      ) : (
+        <SelectionUnavailable selection={scopeSelection} words={card.scopeUnavailable} />
+      )}
+    </article>
+  );
+}
+
+function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; scope: SoccerExactScope; held: Held; hold: Hold }) {
   const heldKey = `exact:${scope.id}`;
-  const chosen: SoccerExactOriginal | null = scope.originals.find((o) => o.id === held[heldKey]) ?? null;
-  // A coordinate claimed by exactly one original; a shared one chooses nothing (native).
-  const cellAt = (home: number, away: number) => {
+  // Native `originalSelection` (L396-405): exact id within this scope, exactly once; no default score.
+  const selection = selectExactlyOnce(scope.originals, held[heldKey] ?? null);
+  const chosen = chosenRow(selection);
+  const slotAt = (home: number, away: number): ExactSlot => {
     const found = scope.originals.filter((o) => o.placement.kind === "grid" && o.placement.home === home && o.placement.away === away);
-    return found.length === 1 ? found[0] : null;
+    if (found.length === 0) return { kind: "notListed" };
+    return found.length === 1 ? { kind: "original", original: found[0] } : { kind: "ambiguous" };
   };
-  const offGrid = scope.originals.filter((o) => o.placement.kind === "nonGrid");
+  // Named choices: every original the grid cannot place exactly (non-grid, off the axes, or a shared coordinate).
+  const named = scope.originals.filter(
+    (o) =>
+      o.placement.kind === "nonGrid" ||
+      !scope.rows.includes(o.placement.home) ||
+      !scope.columns.includes(o.placement.away) ||
+      slotAt(o.placement.home, o.placement.away).kind === "ambiguous",
+  );
+  const slots = scope.rows.flatMap((h) => scope.columns.map((a) => slotAt(h, a)));
   const fills = scope.originals.map((o) => exactCellFill(o.pregame, scope.scale));
   const use = {
     offScale: fills.some((f) => f.kind === "offScale"),
-    notListed: scope.rows.some((h) => scope.columns.some((a) => cellAt(h, a) === null)),
-    unavailable: scope.originals.some((o) => o.placement.kind === "grid" && pregameValue(o.pregame) === null),
+    notListed: slots.some((s) => s.kind === "notListed"),
+    unavailable: slots.some((s) => s.kind === "ambiguous" || (s.kind === "original" && pregameValue(s.original.pregame) === null)),
     result: scope.originals.some((o) => o.result?.kind === "won"),
   };
   const spoken = (o: SoccerExactOriginal) =>
@@ -730,24 +861,7 @@ function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; ho
     <span className={`relative inline-block h-4 w-4 shrink-0 overflow-hidden rounded-sm border border-surface-border bg-surface-card ${extra}`}>{children}</span>
   );
   return (
-    <article className="space-y-3" data-soccer-card="exact">
-      <h4 className="text-base font-semibold">{card.title}</h4>
-      <p className="text-sm text-text-secondary">{card.intro}</p>
-      {card.scopes.length > 1 && (
-        <div className="flex flex-wrap gap-2" role="group" aria-label={card.title}>
-          {card.scopes.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              aria-pressed={s.id === scope.id}
-              onClick={() => hold("exactScope", s.id)}
-              className={`${CHOICE} ${chosenClass(s.id === scope.id)} font-semibold`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      )}
+    <>
       {scope.actual && (
         <p className="text-sm" data-exact-actual="">
           <span className="text-text-secondary">{`${scope.actual.title}: `}</span>
@@ -778,16 +892,25 @@ function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; ho
                   {home}
                 </th>
                 {scope.columns.map((away) => {
-                  const original = cellAt(home, away);
-                  if (!original) {
+                  const slot = slotAt(home, away);
+                  if (slot.kind === "notListed") {
                     return (
                       <td key={away} data-cell="notListed" className="h-10 w-10 rounded border border-dashed border-surface-border">
                         <span className="sr-only">{card.notListed}</span>
                       </td>
                     );
                   }
+                  if (slot.kind === "ambiguous") {
+                    // More than one original names it: nothing is chosen here; each is a named choice below.
+                    return (
+                      <td key={away} data-cell="ambiguous" className="h-10 w-10 rounded border border-surface-border text-center text-xs text-text-secondary">
+                        {card.unavailableMark}
+                      </td>
+                    );
+                  }
+                  const original = slot.original;
                   const fill = exactCellFill(original.pregame, scope.scale);
-                  const isChosen = chosen?.id === original.id;
+                  const isChosen = chosen === original;
                   const confirmed = original.result?.kind === "won";
                   return (
                     <td key={away} className="h-10 w-10 p-0" data-cell={original.id}>
@@ -795,6 +918,7 @@ function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; ho
                         type="button"
                         aria-pressed={isChosen}
                         aria-label={spoken(original)}
+                        disabled={!isUnique(scope.originals, original.id)}
                         onClick={() => hold(heldKey, original.id)}
                         data-confirmed={confirmed ? "" : undefined}
                         className={`relative block h-10 w-10 overflow-hidden rounded border bg-surface-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand ${
@@ -856,19 +980,20 @@ function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; ho
         </li>
       </ul>
 
-      {offGrid.length > 0 && (
+      {named.length > 0 && (
         <div>
           <p className="text-sm font-semibold">{card.otherChoicesTitle}</p>
           <ul className="mt-1 flex flex-wrap gap-2">
-            {offGrid.map((o) => {
+            {named.map((o, i) => {
               const own = pregameText(o.pregame);
               return (
-                <li key={o.id}>
+                <li key={`${i}:${o.id}`}>
                   <button
                     type="button"
-                    aria-pressed={chosen?.id === o.id}
+                    aria-pressed={chosen === o}
+                    disabled={!isUnique(scope.originals, o.id)}
                     onClick={() => hold(heldKey, o.id)}
-                    className={`${CHOICE} ${chosenClass(chosen?.id === o.id)}`}
+                    className={`${CHOICE} ${chosenClass(chosen === o)}`}
                   >
                     <span className="block font-semibold">{o.label}</span>
                     <span className={`block ${own.value ? "tabular-nums" : "text-text-secondary"}`}>{own.text}</span>
@@ -887,10 +1012,12 @@ function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; ho
           <Readout row={chosen} titles={card.titles} />
           <Timing key={chosen.id} timing={chosen.timing} />
         </div>
+      ) : selection.kind === "unavailable" ? (
+        <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
       ) : (
         <p className="text-sm text-text-secondary">{card.noSelection}</p>
       )}
-    </article>
+    </>
   );
 }
 
@@ -913,10 +1040,29 @@ function CardBody({ card, held, hold, colors }: { card: SoccerStoryCard; held: H
   }
 }
 
+/** The reader's place in one reading scope: the story they moved to and their held choices. */
+interface SoccerReading {
+  scope: string;
+  shownId: string | null;
+  held: Held;
+}
+
+const freshReading = (scope: string): SoccerReading => ({ scope, shownId: null, held: {} });
+
 export default function SoccerMatchStories({ stream, colors = DEFAULT_COLORS }: { stream: SoccerStoryStream; colors?: SoccerStoryColors }) {
   const headingId = useId();
-  const [shownId, setShownId] = useState<string | null>(null);
-  const [held, setHeld] = useState<Held>({});
+  const [stored, setStored] = useState<SoccerReading>(() => freshReading(stream.scope));
+  // A new event or phase is a new reading: nothing of the old scope's story or
+  // choices survives (native stream scope, "soccer:<event id>:<phase>"). A
+  // refresh in the same scope keeps every held id, available or not. Adjusted
+  // while rendering, so no frame shows the old scope's choices; no effect,
+  // timer or key.
+  if (stored.scope !== stream.scope) setStored(freshReading(stream.scope));
+  const reading = stored.scope === stream.scope ? stored : freshReading(stream.scope);
+  const { shownId, held } = reading;
+  const write = (change: (current: SoccerReading) => SoccerReading) =>
+    setStored((prev) => change(prev.scope === stream.scope ? prev : freshReading(stream.scope)));
+  const setShownId = (id: string) => write((current) => ({ ...current, shownId: id }));
   const cards = stream.cards;
   const count = cards.length;
   // The card the reader moved to, while it is still offered; else the first.
@@ -924,7 +1070,7 @@ export default function SoccerMatchStories({ stream, colors = DEFAULT_COLORS }: 
   const card = cards[index] ?? null;
   const previous = count > 1 ? cards[(index + count - 1) % count] : null;
   const next = count > 1 ? cards[(index + 1) % count] : null;
-  const hold: Hold = (key, value) => setHeld((prev) => ({ ...prev, [key]: value }));
+  const hold: Hold = (key, value) => write((current) => ({ ...current, held: { ...current.held, [key]: value } }));
 
   return (
     <section aria-labelledby={headingId} aria-roledescription="story stream" className="space-y-3" data-soccer-stories={count}>
