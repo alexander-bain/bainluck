@@ -34,13 +34,15 @@ interface EkgTimesButtonProps extends ConnectionTimes {
   now?: number;
   /** #10090 (Alex 2026-11-01): the venue updates feeding the number, newest first. */
   updates?: LiveUpdate[];
+  /** The team whose chance each update row prints (the venues' home side). */
+  homeTeam?: string;
 }
 
 const EDGE_PX = 12;
 const PANEL_MAX_PX = 320;
 const GAP_PX = 4;
 
-export default function EkgTimesButton({ children, now = Date.now(), updates, ...times }: EkgTimesButtonProps) {
+export default function EkgTimesButton({ children, now = Date.now(), updates, homeTeam, ...times }: EkgTimesButtonProps) {
   const { open, id, root, button, toggle, close } = useTimesDisclosure();
   const [place, setPlace] = useState<{ top: number; left: number; width: number } | null>(null);
 
@@ -81,7 +83,7 @@ export default function EkgTimesButton({ children, now = Date.now(), updates, ..
         <span className="sr-only">, show update times</span>
       </button>
       <ConnectionTimesPanel id={id} open={open} now={now} placement="fixed" style={place ?? undefined} {...times}>
-        {updates ? <LiveUpdateList updates={updates} /> : null}
+        {updates ? <LiveUpdateList updates={updates} homeTeam={homeTeam} /> : null}
       </ConnectionTimesPanel>
     </div>
   );

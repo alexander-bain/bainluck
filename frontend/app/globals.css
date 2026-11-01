@@ -316,3 +316,13 @@ body {
     --chart-5: 340 75% 55%;
   }
 }
+
+/* #10090: a new row in the EKG's update list slides in from the top. */
+@keyframes update-row-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-update-row-in { animation: update-row-in 0.18s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-update-row-in { animation: fade-in 0.18s ease-out; }
+}

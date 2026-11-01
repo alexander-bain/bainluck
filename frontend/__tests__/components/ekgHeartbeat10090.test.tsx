@@ -100,7 +100,7 @@ describe("#10090 the page wiring (pinned by text)", () => {
     expect(PAGE).toContain('const isLive = event?.status === "live" && hasStarted;');
     expect(PAGE).toContain("const ekgShowing = ekgVisible && !isFinished;");
     // Alex 67: the heartbeat sits inside the tap-for-times button.
-    expect(PAGE).toMatch(/\{ekgShowing \? \(\s*<div[^>]*data-testid="ekg-row">\s*<EkgTimesButton \{\.\.\.connectionTimes\} updates=\{streamUpdates\}>\s*<EkgHeartbeat tracker=\{ekgTrackerRef\.current\} status=\{streamStatus\} \/>/);
+    expect(PAGE).toMatch(/\{ekgShowing \? \(\s*<div[^>]*data-testid="ekg-row">\s*<EkgTimesButton \{\.\.\.connectionTimes\} updates=\{streamUpdates\}\s*homeTeam=\{heroShortNames\.home\}>\s*<EkgHeartbeat tracker=\{ekgTrackerRef\.current\} status=\{streamStatus\} \/>/);
   });
   test("the tracker is fed the hook's confirmedAt, the ACCEPTED price clock and activityAt", () => {
     expect(PAGE).toContain(

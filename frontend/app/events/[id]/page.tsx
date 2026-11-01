@@ -3262,7 +3262,8 @@ export default function EventPage({ params }: EventPageProps) {
                   clips, see `EkgTimesButton`). */}
               {ekgShowing ? (
                 <div className="mt-0.5 flex justify-center" data-testid="ekg-row">
-                  <EkgTimesButton {...connectionTimes} updates={streamUpdates}>
+                  <EkgTimesButton {...connectionTimes} updates={streamUpdates}
+                    homeTeam={heroShortNames.home}>
                     <EkgHeartbeat tracker={ekgTrackerRef.current} status={streamStatus} />
                   </EkgTimesButton>
                 </div>

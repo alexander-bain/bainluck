@@ -46,7 +46,7 @@
  * one. No test in here branches on the wall clock (gotcha #44).
  */
 
-import { heartbeatUpdates } from '@/lib/event/liveUpdateStream';
+import { heartbeatUpdates, type IncomingUpdate } from "@/lib/event/liveUpdateStream";
 import { parseReconcileControl, type ReconcileControl } from "./reconcileControl";
 import { snapshotFrameIsOversize } from "./sourceSnapshot";
 
@@ -161,7 +161,7 @@ export interface LiveStreamDeps {
    */
   onActivityAt?: (activityAt: string) => void;
   /** #10090 (Alex 2026-11-01) — the heartbeat's `updates`, for the EKG's list. Activity only. */
-  onUpdates?: (updates: { source: string; at: number }[]) => void;
+  onUpdates?: (updates: IncomingUpdate[]) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *

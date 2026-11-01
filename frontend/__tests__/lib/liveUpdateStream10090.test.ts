@@ -5,8 +5,13 @@
  */
 import {
   addUpdates,
+  EMPTY_PLAYBACK,
   EMPTY_UPDATE_LIST,
   heartbeatUpdates,
+  PLAYBACK_SPREAD_MS,
+  revealUpdates,
+  scheduleUpdates,
+  updateProbabilityText,
   UPDATE_LIST_CAPACITY,
   updateTimeText,
   venueName,
@@ -21,7 +26,7 @@ describe('#10090 heartbeat updates', () => {
       t: 'x',
       updates: [['kalshi', new Date(T0).toISOString()], ['polymarket', 'soon'], ['', new Date(T0).toISOString()], 'junk'],
     });
-    expect(heartbeatUpdates(raw)).toEqual([{ source: 'kalshi', at: T0 }]);
+    expect(heartbeatUpdates(raw)).toEqual([{ source: 'kalshi', at: T0, p: null }]);
     expect(heartbeatUpdates(JSON.stringify({ t: 'x' }))).toEqual([]);
     expect(heartbeatUpdates('not json')).toEqual([]);
   });
@@ -29,13 +34,13 @@ describe('#10090 heartbeat updates', () => {
 
 describe('#10090 the update list', () => {
   test('newest first, same-time duplicates kept, a repeated batch dropped, bounded', () => {
-    const a = { source: 'kalshi', at: T0 };
-    const b = { source: 'polymarket', at: T0 + 100 };
+    const a = { source: 'kalshi', at: T0, p: 0.36 };
+    const b = { source: 'polymarket', at: T0 + 100, p: null };
     let list = addUpdates(EMPTY_UPDATE_LIST, [a, a, b]);
     expect(list.updates.map((u) => u.source)).toEqual(['polymarket', 'kalshi', 'kalshi']);
     expect(new Set(list.updates.map((u) => u.seq)).size).toBe(3);
     expect(addUpdates(list, [a, b])).toBe(list);
-    list = addUpdates(list, Array.from({ length: 150 }, (_, i) => ({ source: 'kalshi', at: T0 + 1000 + i })));
+    list = addUpdates(list, Array.from({ length: 150 }, (_, i) => ({ source: 'kalshi', at: T0 + 1000 + i, p: null })));
     expect(list.updates).toHaveLength(UPDATE_LIST_CAPACITY);
     expect(list.updates[0].at).toBe(T0 + 1149);
   });
@@ -75,7 +80,60 @@ test('#10090 the controller hands the heartbeat updates on, and nothing else', (
   source.emit('open');
   source.emit('heartbeat', JSON.stringify({ t: 1, updates: [['kalshi', new Date(T0).toISOString()]] }));
   source.emit('heartbeat', JSON.stringify({ t: 2 }));
-  expect(got).toEqual([[{ source: 'kalshi', at: T0 }]]);
+  expect(got).toEqual([[{ source: 'kalshi', at: T0, p: null }]]);
   expect(frames).toEqual([]);
   controller.stop();
+});
+
+// Alex 2026-11-01: "just shows the source and timestamp, but not a probability.
+// that was kinda the whole point. it's also not a scrolling stream. it just
+// arrives in batches".
+describe('#10090 each update carries its probability', () => {
+  test('update_p sits beside the two-item rows, same order; a bad or misaligned one is unknown', () => {
+    const iso = new Date(T0).toISOString();
+    expect(heartbeatUpdates(JSON.stringify({ updates: [['kalshi', iso], ['polymarket', iso]], update_p: [0.36, 1.7] })))
+      .toEqual([{ source: 'kalshi', at: T0, p: 0.36 }, { source: 'polymarket', at: T0, p: null }]);
+    expect(heartbeatUpdates(JSON.stringify({ updates: [['kalshi', iso]], update_p: [0.36, 0.4] })))
+      .toEqual([{ source: 'kalshi', at: T0, p: null }]);
+  });
+
+  test('the row prints it to a tenth, or a dash when unknown', () => {
+    expect(updateProbabilityText(0.8125)).toBe('81.3%');
+    expect(updateProbabilityText(0.36)).toBe('36.0%');
+    expect(updateProbabilityText(null)).toBe('—');
+  });
+});
+
+describe('#10090 the list streams at the venues pace, not in batches', () => {
+  const batch = (list: typeof EMPTY_UPDATE_LIST, offsets: number[]) =>
+    addUpdates(list, offsets.map(ms => ({ source: 'kalshi', at: T0 + ms, p: 0.5 })));
+
+  test('a batch is replayed by its own receipt gaps from its arrival', () => {
+    const list = batch(EMPTY_UPDATE_LIST, [0, 300, 700]);
+    let play = scheduleUpdates(EMPTY_PLAYBACK, list.updates, 1000);
+    expect(play.queue.map(([, at]) => at)).toEqual([1000, 1300, 1700]);
+    play = revealUpdates(play, 1000);
+    expect(play.shown).toBe(0);
+    play = revealUpdates(play, 1299);
+    expect(play.shown).toBe(0);
+    play = revealUpdates(play, 1300);
+    expect(play.shown).toBe(1);
+    expect(revealUpdates(play, 1301)).toBe(play);
+  });
+
+  test('a long batch is squeezed into one spread; the next batch first shows what is left', () => {
+    let list = batch(EMPTY_UPDATE_LIST, [0, 5000]);
+    let play = scheduleUpdates(EMPTY_PLAYBACK, list.updates, 0);
+    expect(play.queue[1][1]).toBe(PLAYBACK_SPREAD_MS);
+    list = batch(list, [6000]);
+    play = scheduleUpdates(play, list.updates, 10);
+    expect(play.shown).toBe(1);
+    expect(play.queue).toEqual([[2, 10]]);
+  });
+
+  test('nothing new schedules nothing', () => {
+    const list = batch(EMPTY_UPDATE_LIST, [0]);
+    const play = scheduleUpdates(EMPTY_PLAYBACK, list.updates, 0);
+    expect(scheduleUpdates(play, list.updates, 50)).toBe(play);
+  });
 });
