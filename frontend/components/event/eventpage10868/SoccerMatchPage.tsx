@@ -61,7 +61,9 @@ export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel
     <section
       aria-labelledby={headingId}
       data-soccer-match={match.phase}
-      className="space-y-6 rounded-xl border border-surface-border bg-surface-card p-4 text-text-primary sm:p-5"
+      // Pixel padding: identical to p-4 / sm:p-5 at normal text, and not doubled at
+      // enlarged text, so a long team name keeps the room (#10868 P2).
+      className="space-y-6 rounded-xl border border-surface-border bg-surface-card p-[16px] text-text-primary sm:p-[20px]"
       style={style}
     >
       <header className="space-y-3">

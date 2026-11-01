@@ -63,9 +63,10 @@
  * is in All props.
  */
 
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { propVerdictLabel } from "@/lib/propGrade";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { useFrameMeasure, useIsomorphicLayoutEffect } from "./useFrameMeasure";
 import type {
   SoccerBothCard,
   SoccerCurrent,
@@ -169,11 +170,20 @@ function ResultBadge({ title, result }: { title: string; result: SoccerResult })
 }
 
 /** The chosen row's readings for its phase, side by side at the same size. */
-function Readout({ row, titles }: { row: SoccerReadingRow; titles: SoccerLeafTitles }) {
+function Readout({
+  row,
+  titles,
+  currentTitle,
+}: {
+  row: SoccerReadingRow;
+  titles: SoccerLeafTitles;
+  /** A card whose in-game slot is titled by its kind (goals: recorded, status, reached). */
+  currentTitle?: (current: SoccerCurrent) => string;
+}) {
   return (
     <dl className="flex flex-wrap gap-x-6 gap-y-2" data-readout={row.id}>
       <Figure title={titles.pregame} reading={pregameText(row.pregame)} large />
-      {row.current && <Figure title={titles.current} reading={currentText(row.current)} large />}
+      {row.current && <Figure title={currentTitle ? currentTitle(row.current) : titles.current} reading={currentText(row.current)} large />}
       {row.result && !row.current && <ResultBadge title={titles.result} result={row.result} />}
     </dl>
   );
@@ -274,19 +284,216 @@ function ChanceGrid() {
   );
 }
 
+// ─── Axis labels: measured, anchored inward, staggered — never overlapping ──
+
+export interface SoccerPlacedLabel {
+  /** Left edge in px from the label row's left edge. */
+  left: number;
+  /** 0 = the first line under (or over) the plot; a collision moves a label to the next line. */
+  row: number;
+  /** Wider than the whole row: it wraps between words on a line of its own. */
+  wrap: boolean;
+}
+
+/**
+ * Where each axis label goes (pure, so it is testable without layout): centred
+ * on its own position, then pulled inward so it never leaves the row, then put
+ * on the first line where it clears every label already there by `gap`. Labels
+ * are only moved, never dropped, merged or shortened, and a position is never
+ * inferred from the text. Returned in input order.
+ */
+export function placeAxisLabels(rowWidth: number, labels: ReadonlyArray<{ center: number; width: number }>, gap = 4): SoccerPlacedLabel[] {
+  const order = labels.map((_, i) => i).sort((a, b) => labels[a].center - labels[b].center || a - b);
+  const lineEnds: number[] = [];
+  const out: SoccerPlacedLabel[] = new Array(labels.length);
+  for (const i of order) {
+    const { center, width } = labels[i];
+    if (width > rowWidth) {
+      out[i] = { left: 0, row: lineEnds.length, wrap: true };
+      lineEnds.push(Number.POSITIVE_INFINITY);
+      continue;
+    }
+    const left = Math.min(Math.max(center - width / 2, 0), rowWidth - width);
+    let row = lineEnds.findIndex((end) => left >= end + gap);
+    if (row === -1) {
+      row = lineEnds.length;
+      lineEnds.push(left + width);
+    } else {
+      lineEnds[row] = left + width;
+    }
+    out[i] = { left, row, wrap: false };
+  }
+  return out;
+}
+
+interface AxisLabel {
+  key: string;
+  /** Position on the plot's own width, 0…1. */
+  fraction: number;
+  text: string;
+  strong?: boolean;
+}
+
+/**
+ * One axis's labels in a row as wide as the whole figure (the plot plus its
+ * label gutter), so a label near an edge can use that room. Before layout is
+ * measured (and in jsdom) each label is centred on its position over the plot;
+ * once measured, `placeAxisLabels` anchors and staggers them. Re-measured when
+ * the labels, the row's width or the reader's text size change.
+ */
+function AxisLabels({
+  plot,
+  inset,
+  labels,
+  className = "",
+  name,
+}: {
+  /** The plot element (held in state by its owner, so a label row drawn before it still measures it). */
+  plot: HTMLElement | null;
+  /** The plot's own horizontal padding classes, for the unmeasured layout. */
+  inset: string;
+  labels: AxisLabel[];
+  className?: string;
+  name: string;
+}) {
+  const row = useRef<HTMLDivElement>(null);
+  const { width, rootFontPx } = useFrameMeasure(row);
+  const signature = `${JSON.stringify(labels)}|${width}|${rootFontPx}`;
+  const [placed, setPlaced] = useState<{ signature: string; at: SoccerPlacedLabel[] } | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    const el = row.current;
+    const area = plot;
+    if (!el || !area) return;
+    const rowBox = el.getBoundingClientRect();
+    const plotBox = area.getBoundingClientRect();
+    if (rowBox.width <= 0 || plotBox.width <= 0) return;
+    const measured = labels.map((label) => {
+      const span = Array.from(el.querySelectorAll<HTMLElement>("[data-axis-label]")).find((node) => node.getAttribute("data-axis-label") === label.key);
+      let natural = 0;
+      if (span) {
+        // The label's own unwrapped width, whatever it is drawn as now.
+        const { whiteSpace, maxWidth } = span.style;
+        span.style.whiteSpace = "nowrap";
+        span.style.maxWidth = "none";
+        natural = span.getBoundingClientRect().width;
+        span.style.whiteSpace = whiteSpace;
+        span.style.maxWidth = maxWidth;
+      }
+      return { center: plotBox.left - rowBox.left + label.fraction * plotBox.width, width: natural };
+    });
+    const at = placeAxisLabels(rowBox.width, measured);
+    setPlaced((prev) => (prev && prev.signature === signature && JSON.stringify(prev.at) === JSON.stringify(at) ? prev : { signature, at }));
+  }, [signature, plot]);
+
+  const text = (label: AxisLabel) => (label.strong ? "font-bold text-text-primary" : "text-text-secondary");
+  const at = placed?.signature === signature ? placed.at : null;
+  if (!at) {
+    return (
+      <div ref={row} className={`text-xs ${className}`} data-axis-labels={name} data-axis-rows={1}>
+        <div className={inset}>
+          <div className="relative">
+            <span aria-hidden="true" className="invisible">
+              0
+            </span>
+            {labels.map((label) => (
+              <span
+                key={label.key}
+                data-axis-label={label.key}
+                className={`absolute top-0 -translate-x-1/2 whitespace-nowrap tabular-nums ${text(label)}`}
+                style={{ left: `${label.fraction * 100}%` }}
+              >
+                {label.text}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const rows = Math.max(1, ...at.map((p) => p.row + 1));
+  return (
+    <div ref={row} className={`text-xs ${className}`} data-axis-labels={name} data-axis-rows={rows}>
+      {Array.from({ length: rows }, (_, r) => {
+        const here = labels.map((label, i) => ({ label, p: at[i] })).filter(({ p }) => p.row === r);
+        const wrapped = here.find(({ p }) => p.wrap);
+        return (
+          <div key={r} className="relative">
+            {wrapped ? (
+              <span data-axis-label={wrapped.label.key} className={`block whitespace-normal tabular-nums ${text(wrapped.label)}`}>
+                {wrapped.label.text}
+              </span>
+            ) : (
+              <>
+                <span aria-hidden="true" className="invisible">
+                  0
+                </span>
+                {here.map(({ label, p }) => (
+                  <span
+                    key={label.key}
+                    data-axis-label={label.key}
+                    data-axis-row={p.row}
+                    className={`absolute top-0 whitespace-nowrap tabular-nums ${text(label)}`}
+                    style={{ left: p.left }}
+                  >
+                    {label.text}
+                  </span>
+                ))}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A key swatch: the plot's own mark shapes, so the key reads like the marks. */
+function KeyMark({ kind }: { kind: "hollow" | "filled" | "rule" }) {
+  if (kind === "rule") return <span aria-hidden="true" data-key-mark="rule" className="inline-block h-3.5 w-0.5 shrink-0 bg-text-primary" />;
+  return (
+    <span
+      aria-hidden="true"
+      data-key-mark={kind}
+      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${kind === "hollow" ? "bg-surface-card" : ""}`}
+      style={{ border: `2px solid ${CHANCE}`, background: kind === "filled" ? CHANCE : undefined }}
+    />
+  );
+}
+
 // ─── Goals: the milestone profile (TotalMilestonePresentation10868) ────────
 
 function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; hold: Hold }) {
   const selection = selectExactlyOnce(card.milestones, soccerRequestedId(held.goals, card.defaultId, card.milestones));
   const chosen = chosenRow(selection);
+  const [plot, setPlot] = useState<HTMLDivElement | null>(null);
   const count = card.actual?.kind === "count" ? card.actual : null;
   // The axis domain is the milestones and the visible count, never the selection (native).
   const top = Math.max(0, ...card.milestones.map((m) => m.quantity), count?.quantity ?? 0) + 1;
   const x = (q: number) => `${(q / top) * 100}%`;
-  const drawable = card.milestones.some((m) => pregameValue(m.pregame) !== null || currentValue(m.current) !== null);
-  const summary = card.milestones
-    .map((m) => `${m.label}: ${pregameText(m.pregame).text}${m.current ? `, ${currentText(m.current).text}` : ""}`)
-    .join("; ");
+  const drawsPregame = card.milestones.some((m) => pregameValue(m.pregame) !== null);
+  const drawsCurrent = card.milestones.some((m) => currentValue(m.current) !== null);
+  const drawable = drawsPregame || drawsCurrent;
+  // The in-game slot's title by its kind: a reached milestone is performance, never a chance.
+  const currentTitle = (c: SoccerCurrent) =>
+    c.kind === "recorded" ? card.currentTitles.recorded : c.kind === "reached" ? card.currentTitles.reached : card.currentTitles.status;
+  const spokenRow = (m: SoccerGoalsMilestone) =>
+    [
+      `${m.label}: ${card.titles.pregame} ${pregameText(m.pregame).text}`,
+      m.current ? `${currentTitle(m.current)} ${currentText(m.current).text}` : null,
+      m.result ? `${card.titles.result} ${resultText(m.result)}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  const spoken = [
+    drawable ? card.chartTitle : null,
+    drawable ? (drawsPregame ? card.spoken.hollow : null) : card.spoken.strip,
+    drawsCurrent ? card.spoken.filled : null,
+    count ? card.spoken.rule : null,
+    card.milestones.map(spokenRow).join(". "),
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <article className="space-y-3" data-soccer-card="goals">
       <p className="text-xs font-semibold tracking-wide text-text-secondary">{card.eyebrow}</p>
@@ -304,8 +511,17 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
 
       <figure className="space-y-1" data-goals-plot={drawable ? "chart" : "strip"}>
         {drawable && <figcaption className="text-xs text-text-secondary">{card.chartTitle}</figcaption>}
+        {/* The count's own words over its rule, anchored inward so they never leave the card. */}
+        {count && (
+          <AxisLabels
+            plot={plot}
+            inset="pl-10 pr-2"
+            name="actual"
+            labels={[{ key: "actual", fraction: count.quantity / top, text: count.ruleLabel, strong: true }]}
+          />
+        )}
         <div className="pl-10 pr-2">
-          <div className={`relative ${drawable ? "h-36" : "h-6"} ${count ? "mt-5" : ""}`} role="img" aria-label={`${card.chartTitle}. ${summary}`}>
+          <div ref={setPlot} className={`relative ${drawable ? "mt-2 h-36" : "h-6"}`} role="img" aria-label={spoken}>
             {drawable && <ChanceGrid />}
             {drawable &&
               card.milestones.map((m, i) => {
@@ -337,31 +553,51 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
             {count && (
               <div className="absolute inset-y-0" style={{ left: x(count.quantity) }} data-mark="actual-rule">
                 <span className="absolute inset-y-0 block w-0.5 -translate-x-1/2 bg-text-primary" />
-                <span className="absolute -top-1 left-1 -translate-y-full whitespace-nowrap text-xs font-semibold">{count.ruleLabel}</span>
               </div>
             )}
           </div>
-          <div className="relative mt-1 h-5">
-            {card.milestones.map((m, i) => (
-              <span
-                key={`${i}:${m.id}`}
-                className={`absolute -translate-x-1/2 whitespace-nowrap text-xs tabular-nums ${chosen === m ? "font-bold text-text-primary" : "text-text-secondary"}`}
-                style={{ left: x(m.quantity) }}
-              >
-                {m.quantityLabel}
-              </span>
-            ))}
-          </div>
         </div>
-        <figcaption className="text-xs text-text-secondary">{card.quantityAxisTitle}</figcaption>
+        <AxisLabels
+          plot={plot}
+          inset="pl-10 pr-2"
+          name="quantity"
+          className="mt-2"
+          labels={card.milestones.map((m, i) => ({ key: `${i}:${m.id}`, fraction: m.quantity / top, text: m.quantityLabel, strong: chosen === m }))}
+        />
+        <p className="text-xs text-text-secondary">{card.quantityAxisTitle}</p>
+        {/* The phase key: only the marks this plot draws, each in its phase's words. */}
+        {(drawable || count) && (
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs text-text-secondary" data-goals-key="">
+            {drawsPregame && (
+              <li className="flex items-center gap-1.5" data-goals-key-item="pregame">
+                <KeyMark kind="hollow" />
+                {card.titles.pregame}
+              </li>
+            )}
+            {drawsCurrent && (
+              <li className="flex items-center gap-1.5" data-goals-key-item="current">
+                <KeyMark kind="filled" />
+                {card.currentTitles.recorded}
+              </li>
+            )}
+            {count && (
+              <li className="flex items-center gap-1.5" data-goals-key-item="actual">
+                <KeyMark kind="rule" />
+                {count.title}
+              </li>
+            )}
+          </ul>
+        )}
       </figure>
 
-      {/* The strip: every original milestone, in owner order, with its own phase reading. */}
+      {/* The strip: every original milestone, in owner order, each reading under its own phase title. */}
       <ul className="flex flex-wrap gap-2" aria-label={card.name}>
         {card.milestones.map((m, i) => (
           <MilestoneChip
             key={`${i}:${m.id}`}
             milestone={m}
+            card={card}
+            currentTitle={currentTitle}
             chosen={chosen === m}
             choosable={isUnique(card.milestones, m.id)}
             onChoose={() => hold("goals", m.id)}
@@ -372,7 +608,7 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
       {chosen && (
         <div className="space-y-1 rounded-md bg-surface-deep p-2" data-soccer-chosen={chosen.id}>
           <p className="text-sm font-semibold">{chosen.label}</p>
-          <Readout row={chosen} titles={card.titles} />
+          <Readout row={chosen} titles={card.titles} currentTitle={currentTitle} />
           <Timing key={chosen.id} timing={chosen.timing} />
         </div>
       )}
@@ -380,26 +616,53 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
   );
 }
 
+/**
+ * Native `stripCell` (TotalMilestonePresentation10868.swift:1711-1760): the
+ * title, then each reading with its phase title under it — so no figure in the
+ * strip reads as a current chance unless it is one. During play a drawn
+ * pre-match figure wears the hollow key and a drawn recorded one the filled key.
+ */
 function MilestoneChip({
   milestone,
+  card,
+  currentTitle,
   chosen,
   choosable,
   onChoose,
 }: {
   milestone: SoccerGoalsMilestone;
+  card: SoccerGoalsCard;
+  currentTitle: (current: SoccerCurrent) => string;
   chosen: boolean;
   choosable: boolean;
   onChoose: () => void;
 }) {
   const before = pregameText(milestone.pregame);
+  const live = milestone.current !== null;
+  const reading = (text: { text: string; value: boolean }, title: string, mark: "hollow" | "filled" | null, slot: string) => (
+    <span className="block" data-chip-reading={slot}>
+      <span className="flex items-center gap-1.5">
+        {mark && <KeyMark kind={mark} />}
+        <span className={text.value ? "font-bold tabular-nums text-text-primary" : "text-text-secondary"}>{text.text}</span>
+      </span>
+      <span className="block text-xs text-text-secondary">{title}</span>
+    </span>
+  );
   return (
     <li>
-      <button type="button" aria-pressed={chosen} disabled={!choosable} onClick={onChoose} className={`${CHOICE} ${chosenClass(chosen)}`}>
+      <button
+        type="button"
+        aria-pressed={chosen}
+        disabled={!choosable}
+        onClick={onChoose}
+        className={`${CHOICE} space-y-1 ${chosenClass(chosen)}`}
+      >
         <span className="block font-semibold">{milestone.label}</span>
-        <span className={`block ${before.value ? "tabular-nums" : "text-text-secondary"}`}>{before.text}</span>
-        {milestone.current && <span className="block text-text-secondary">{currentText(milestone.current).text}</span>}
+        {reading(before, card.titles.pregame, live && pregameValue(milestone.pregame) !== null ? "hollow" : null, "pregame")}
+        {milestone.current &&
+          reading(currentText(milestone.current), currentTitle(milestone.current), currentValue(milestone.current) !== null ? "filled" : null, "current")}
+        {milestone.result && reading({ text: resultText(milestone.result), value: milestone.result.kind !== "unconfirmed" }, card.titles.result, null, "result")}
         {milestone.performance && <span className="block text-text-secondary">{milestone.performance}</span>}
-        {milestone.result && <span className="block font-semibold">{resultText(milestone.result)}</span>}
       </button>
     </li>
   );
@@ -448,10 +711,11 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
     <article className="space-y-3" data-soccer-card="both">
       <p className="text-xs font-semibold tracking-wide text-text-secondary">{card.eyebrow}</p>
       {card.beforeContext && <p className="text-sm text-text-secondary">{card.beforeContext}</p>}
+      {/* Each group wraps under the one before it when the card is too narrow (enlarged text), never past its edge. */}
       <div className="flex flex-wrap items-center gap-4">
         {chosen && before && (
-          <div className="flex items-center gap-3">
-            <div className="relative">
+          <div className="flex min-w-0 flex-wrap items-center gap-3" data-both-ring-group="">
+            <div className="relative shrink-0">
               <Ring value={pregameValue(chosen.pregame)} label={`${chosen.label} · ${card.titles.pregame}: ${before.text}`} />
               {before.value && (
                 <span className="absolute inset-0 flex items-center justify-center text-base font-bold tabular-nums" aria-hidden="true">
@@ -468,12 +732,12 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
         )}
         {/* An unavailable choice: the ring holds no number and says why (native `ring` → `.unselected`). */}
         {selection.kind === "unavailable" && (
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-3" data-both-ring-group="">
             <Ring value={null} label={card.selectionUnavailable} />
             <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
           </div>
         )}
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-text-secondary">{card.scoring.title}</p>
           <dl className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
             {team(card.scoring.home)}
@@ -482,21 +746,37 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
           {card.scoring.clock && <p className="text-xs text-text-secondary">{card.scoring.clock}</p>}
         </div>
       </div>
-      {/* Each outcome keeps its own figure in its own tile: never a complement of the other. */}
-      <ul className="grid grid-cols-2 gap-2" aria-label={card.name}>
+      {/*
+        Each outcome keeps its own figures in its own tile, never a complement of
+        the other, each under its phase caption (native `optionTile`,
+        BothTeamsScorePresentation10868.swift:973-1031). Side by side while two
+        tiles fit (the minimum is in rem, so it grows with the reader's text);
+        one full-width tile per row when they do not.
+      */}
+      <ul className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(8rem, 1fr))" }} aria-label={card.name}>
         {card.outcomes.map((o, i) => {
           const own = pregameText(o.pregame);
+          const now = o.current ? currentText(o.current) : null;
           return (
-            <li key={`${i}:${o.id}`}>
+            <li key={`${i}:${o.id}`} className="min-w-0">
               <button
                 type="button"
                 aria-pressed={chosen === o}
                 disabled={!isUnique(card.outcomes, o.id)}
                 onClick={() => hold("both", o.id)}
-                className={`${CHOICE} w-full ${chosenClass(chosen === o)}`}
+                className={`${CHOICE} h-full w-full space-y-1 ${chosenClass(chosen === o)}`}
               >
                 <span className="block font-semibold">{o.label}</span>
-                <span className={`block ${own.value ? "text-base font-bold tabular-nums" : "text-text-secondary"}`}>{own.text}</span>
+                <span className="block" data-tile-reading="pregame">
+                  <span className={`block ${own.value ? "text-base font-bold tabular-nums" : "text-text-secondary"}`}>{own.text}</span>
+                  <span className="block text-xs text-text-secondary">{card.shortTitles.pregame}</span>
+                </span>
+                {now && (
+                  <span className="block" data-tile-reading="current">
+                    <span className={`block ${now.value ? "text-base font-bold tabular-nums" : "text-text-secondary"}`}>{now.text}</span>
+                    <span className="block text-xs text-text-secondary">{card.shortTitles.current}</span>
+                  </span>
+                )}
               </button>
             </li>
           );
@@ -546,7 +826,8 @@ function FirstCard({ card, held, hold }: { card: SoccerFirstCard; held: Held; ho
                   onClick={() => hold("first", row.id)}
                   className="block min-h-11 w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
                 >
-                  <span className="flex items-baseline justify-between gap-2 text-sm">
+                  {/* Name and value share a line while both fit whole; otherwise the value moves under the name, which keeps the full width. */}
+                  <span className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-sm" data-first-row-line="">
                     <span className={`min-w-0 break-words ${isChosen ? "font-bold" : "font-medium"}`}>{row.label}</span>
                     <span className={own.value ? "whitespace-nowrap font-bold tabular-nums" : "text-text-secondary"}>{own.text}</span>
                   </span>
@@ -623,6 +904,7 @@ function ShapeMark({ shape, color, dim, mark }: { shape: Shape; color: string; d
 function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held: Held; hold: Hold; colors: SoccerStoryColors }) {
   const selection = selectExactlyOnce(card.series, soccerRequestedId(held.halves, card.defaultId, card.series));
   const series = chosenRow(selection);
+  const [plot, setPlot] = useState<HTMLDivElement | null>(null);
   /** Only a resolved series dims the others; an unavailable choice dims nothing. */
   const dimmed = (s: SoccerHalfSeries) => series !== null && s !== series;
   const colorOf = (s: SoccerHalfSeries) => (s.id === "home" ? colors.home : s.id === "away" ? colors.away : "var(--series-3)");
@@ -639,7 +921,7 @@ function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held
       <figure className="space-y-1" data-halves-plot="">
         <figcaption className="text-xs text-text-secondary">{`${card.plotTitle} · ${card.scaleCaption}`}</figcaption>
         <div className="pl-10 pr-2">
-          <div className="relative h-36" role="img" aria-label={`${card.plotTitle}. ${card.pointExplanation} ${card.lineExplanation}`}>
+          <div ref={setPlot} className="relative mt-2 h-36" role="img" aria-label={`${card.plotTitle}. ${card.pointExplanation} ${card.lineExplanation}`}>
             <ChanceGrid />
             {/* Lines join one outcome's chances in neighbouring halves; a missing chance breaks the line. */}
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
@@ -682,14 +964,15 @@ function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held
               }),
             )}
           </div>
-          <div className="relative mt-1 h-5">
-            {card.periods.map((p, i) => (
-              <span key={p.id} className="absolute -translate-x-1/2 whitespace-nowrap text-xs text-text-secondary" style={{ left: `${px(i)}%` }}>
-                {p.label}
-              </span>
-            ))}
-          </div>
         </div>
+        {/* The halves are categories: each label stays whole, staggered onto a second line rather than overlapping. */}
+        <AxisLabels
+          plot={plot}
+          inset="pl-10 pr-2"
+          name="periods"
+          className="mt-2"
+          labels={card.periods.map((p, i) => ({ key: `${i}:${p.id}`, fraction: px(i) / 100, text: p.label }))}
+        />
         <p className="text-xs text-text-secondary">{card.pointExplanation}</p>
         <p className="text-xs text-text-secondary">{card.lineExplanation}</p>
       </figure>
@@ -832,6 +1115,20 @@ function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; sco
   // Native `originalSelection` (L396-405): exact id within this scope, exactly once; no default score.
   const selection = selectExactlyOnce(scope.originals, held[heldKey] ?? null);
   const chosen = chosenRow(selection);
+  const captionId = useId();
+  const hintId = useId();
+  const scroller = useRef<HTMLDivElement>(null);
+  const { width: scrollerWidth, rootFontPx } = useFrameMeasure(scroller);
+  const [overflows, setOverflows] = useState(false);
+  // The map keeps its cell size; when it is wider than its card it scrolls INSIDE
+  // the card (native horizontal ScrollView, ExactScoreMapPresentation10868.swift:1167),
+  // never the page, and says so.
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const wider = el.scrollWidth > el.clientWidth + 1;
+    setOverflows((prev) => (prev === wider ? prev : wider));
+  }, [scrollerWidth, rootFontPx, scope.id, scope.columns.length, scope.rows.length]);
   const slotAt = (home: number, away: number): ExactSlot => {
     const found = scope.originals.filter((o) => o.placement.kind === "grid" && o.placement.home === home && o.placement.away === away);
     if (found.length === 0) return { kind: "notListed" };
@@ -870,12 +1167,26 @@ function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; sco
       )}
       {!scope.scale && <p className="text-sm text-text-secondary">{card.scaleUnavailable}</p>}
 
-      <div className="overflow-x-auto">
-        <table className="border-separate" style={{ borderSpacing: 3 }} data-exact-map={scope.id}>
-          <caption className="pb-1 text-left text-xs text-text-secondary">{`${card.rowsTitle} · ${card.columnsTitle}`}</caption>
+      {/* The axes' names stay outside the scroller, so they are never scrolled out of sight. */}
+      <p id={captionId} className="text-xs text-text-secondary">{`${card.rowsTitle} · ${card.columnsTitle}`}</p>
+      {overflows && (
+        <p id={hintId} className="text-xs font-semibold text-text-primary" data-exact-pan-hint="">
+          {card.panHint}
+        </p>
+      )}
+      <div
+        ref={scroller}
+        role="region"
+        aria-labelledby={captionId}
+        aria-describedby={overflows ? hintId : undefined}
+        tabIndex={0}
+        data-exact-scroller={overflows ? "overflows" : "fits"}
+        className="max-w-full overflow-x-auto rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
+      >
+        <table className="border-separate" style={{ borderSpacing: 3 }} aria-labelledby={captionId} data-exact-map={scope.id}>
           <thead>
             <tr>
-              <th scope="col">
+              <th scope="col" className="sticky left-0 z-10 bg-surface-card">
                 <span className="sr-only">{card.rowsTitle}</span>
               </th>
               {scope.columns.map((away) => (
@@ -888,7 +1199,8 @@ function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; sco
           <tbody>
             {scope.rows.map((home) => (
               <tr key={home}>
-                <th scope="row" className="pr-1 text-xs font-semibold tabular-nums text-text-secondary">
+                {/* Row numbers stay in view while the columns scroll. */}
+                <th scope="row" className="sticky left-0 z-10 bg-surface-card pr-1 text-xs font-semibold tabular-nums text-text-secondary">
                   {home}
                 </th>
                 {scope.columns.map((away) => {
@@ -1088,7 +1400,8 @@ export default function SoccerMatchStories({ stream, colors = DEFAULT_COLORS }: 
       {stream.manualStatus && <p className="text-sm text-text-secondary">{stream.manualStatus}</p>}
 
       {card ? (
-        <div className="rounded-lg border border-surface-border p-3">
+        // Pixel padding: the same 12 px as before at normal text, and no wider at enlarged text, so the words keep the room.
+        <div className="rounded-lg border border-surface-border p-[12px]">
           <CardBody card={card} held={held} hold={hold} colors={colors} />
         </div>
       ) : (

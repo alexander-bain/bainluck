@@ -191,6 +191,14 @@ export interface SoccerGoalsCard {
   /** "Total goals in the match" (the x axis: the milestones' own quantities). */
   quantityAxisTitle: string;
   titles: SoccerLeafTitles;
+  /**
+   * The in-game slot's title by its kind (native `TotalMilestoneCurrentReading10868.title`):
+   * a recorded chance ("Recorded in-game"), a chance status ("In-game chance") or
+   * a reached milestone ("Actual so far" — performance, never a chance).
+   */
+  currentTitles: { recorded: string; status: string; reached: string };
+  /** Native spoken key sentences (TotalMilestonePresentation10868.swift:454-458). */
+  spoken: { hollow: string; filled: string; rule: string; strip: string };
   title: string;
   milestones: SoccerGoalsMilestone[];
   /** The opening milestone: nearest even odds among printed pre-match chances. */
@@ -213,6 +221,8 @@ export interface SoccerBothCard {
   name: string;
   eyebrow: string;
   titles: SoccerLeafTitles;
+  /** Each outcome tile's reading captions (native `pregameShort` / `currentShort`): "Pregame", "Current". */
+  shortTitles: { pregame: string; current: string };
   /** Before play only, beside the outcomes. */
   beforeContext: string | null;
   outcomes: SoccerReadingRow[];
@@ -324,6 +334,8 @@ export interface SoccerExactCard {
   scaleUnavailable: string;
   /** "—": a listed score with no pre-match chance. */
   unavailableMark: string;
+  /** Shown only when the map is wider than its card and scrolls inside it (native `panHint`). */
+  panHint: string;
   intro: string;
   homeLabel: string;
   awayLabel: string;

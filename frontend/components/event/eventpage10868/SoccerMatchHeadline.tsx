@@ -203,7 +203,9 @@ export default function SoccerMatchHeadline({ headline }: { headline: Headline }
   ];
 
   return (
-    <div className="rounded-lg bg-surface-deep p-3" data-soccer-headline="">
+    // Pixel padding: 12 px as before for the columns; the blocks (enlarged text or
+    // long names) keep 8 px at the sides so a long single word keeps the room.
+    <div className={`rounded-lg bg-surface-deep ${arrangement === "blocks" ? "px-[8px] py-[12px]" : "p-[12px]"}`} data-soccer-headline="">
       <div ref={frame} className="w-full overflow-hidden" data-arrangement={arrangement}>
         {arrangement === "columns" ? <Columns headline={headline} rows={rows} ids={ids} /> : <Blocks headline={headline} rows={rows} />}
       </div>

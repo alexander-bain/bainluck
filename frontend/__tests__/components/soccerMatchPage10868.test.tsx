@@ -50,7 +50,7 @@ import SoccerMatchHeadline, {
   soccerHeadlineArrangements,
   soccerHeadlineFitContent,
 } from "@/components/event/eventpage10868/SoccerMatchHeadline";
-import SoccerMatchStories, { exactCellFill } from "@/components/event/eventpage10868/SoccerMatchStories";
+import SoccerMatchStories, { exactCellFill, placeAxisLabels } from "@/components/event/eventpage10868/SoccerMatchStories";
 
 type BodyKey = keyof typeof fixtures.bodies;
 type Json = Record<string, unknown>;
@@ -362,7 +362,9 @@ describe("GOALS — the milestone profile (TotalMilestonePresentation10868)", ()
     // The count (4) is a solid rule on the quantity axis (domain 0…6+1), labelled in its own words.
     const rule = card().querySelector('[data-mark="actual-rule"]')!;
     expect(percentOf(rule, "left")).toBeCloseTo((4 / 7) * 100, 6);
-    expect(rule.textContent).toBe("4 so far");
+    // Its words sit over it in their own row (anchored inward when measured), never inside the plot as a chance.
+    expect(rule.textContent).toBe("");
+    expect(text('[data-axis-labels="actual"] [data-axis-label="actual"]', card())).toBe("4 so far");
     expect(rule.querySelector('[data-mark="pregame"], [data-mark="current"]')).toBeNull();
     // The strip lists every milestone with its own phase reading.
     expect(chips().map((b) => b.querySelector("span")?.textContent)).toEqual(["3+ goals", "5+ goals", "6+ goals"]);
@@ -375,7 +377,8 @@ describe("GOALS — the milestone profile (TotalMilestonePresentation10868)", ()
     expect(chips()[0].getAttribute("aria-pressed")).toBe("true");
     const readout = () => card().querySelector("[data-soccer-chosen]")!;
     expect(readout().getAttribute("data-soccer-chosen")).toBe("242143183");
-    expect(Array.from(readout().querySelectorAll("dt")).map((dt) => dt.textContent)).toEqual(["Pregame chance", "In-game chance"]);
+    // A reached milestone is titled as what happened (native "Actual so far"), never as an in-game chance.
+    expect(Array.from(readout().querySelectorAll("dt")).map((dt) => dt.textContent)).toEqual(["Pregame chance", "Actual so far"]);
     expect(Array.from(readout().querySelectorAll("dd")).map((dd) => dd.textContent)).toEqual([pct(0.5), "Reached so far"]);
     const timing = button("3+ goals · chance timing", card());
     const region = document.getElementById(timing.getAttribute("aria-controls") ?? "");
@@ -386,6 +389,7 @@ describe("GOALS — the milestone profile (TotalMilestonePresentation10868)", ()
     click(chips()[1]);
     expect(chips()[1].getAttribute("aria-pressed")).toBe("true");
     expect(Array.from(readout().querySelectorAll("dd")).map((dd) => dd.textContent)).toEqual([pct(0.13), "No recent probability update"]);
+    expect(Array.from(readout().querySelectorAll("dt")).map((dt) => dt.textContent)).toEqual(["Pregame chance", "In-game chance"]);
     // The chosen milestone's marks are emphasised; the others are not.
     expect(card().querySelector('[data-milestone="242143187"] [data-mark="pregame"]')?.className).toContain("ring-2");
     expect(card().querySelector('[data-milestone="242143183"] [data-mark="pregame"]')?.className).not.toContain("ring-2");
@@ -694,7 +698,7 @@ describe("held selections: exact id, exactly once, no substitute, kept across re
       expect(timingButtons("goals")).toHaveLength(0);
       expect(pressed("goals")).toHaveLength(0);
       expect(card("goals").querySelector(".ring-2")).toBeNull();
-      expect(card("goals").textContent).not.toContain("Pregame chance");
+      expect(card("goals").querySelector("[data-readout]")).toBeNull();
       // The other milestones stay choosable; a deliberate choice resolves.
       click(goalChip("6+ goals"));
       expect(readout("goals")?.getAttribute("data-soccer-chosen")).toBe("242765587");
@@ -762,7 +766,7 @@ describe("held selections: exact id, exactly once, no substitute, kept across re
       expect(card("both").querySelector("[data-ring]")?.getAttribute("aria-label")).toBe("Selected outcome unavailable.");
       expect(notice("both")?.textContent).toBe("Selected outcome unavailable.");
       expect(readout("both")).toBeNull();
-      expect(card("both").textContent).not.toContain("Pregame chance");
+      expect(card("both").querySelector("[data-readout]")).toBeNull();
       expect(pressed("both")).toHaveLength(0);
       click(chip("both", "Yes"));
       expect(readout("both")?.getAttribute("data-soccer-chosen")).toBe("242143189");
@@ -918,5 +922,263 @@ describe("held selections: exact id, exactly once, no substitute, kept across re
       expect(readout("both")?.getAttribute("data-soccer-chosen")).toBe("242143189");
       expect(notice("both")).toBeNull();
     });
+  });
+});
+
+// ─── Captured visual corrections (Design on the 8c2ab49c browser lab) ───────
+//
+// jsdom lays nothing out, so these prove what is drawn and labelled, the
+// arrangement rules and the placement arithmetic — not real fit at 375/393 px
+// with 200% text, which only the browser delta proves. Layout boxes below are
+// CONSTRUCTED where a test fakes them, and say so.
+
+describe("P1 — the goal milestones say which phase every mark and figure is", () => {
+  const livePage = page(detail("liveDetail"), history("liveHistory"), markets("liveMarkets"), LIVE_NOW, C.liveAdmission);
+  const card = () => host.querySelector('[data-soccer-card="goals"]')!;
+  const keyItems = () => Array.from(card().querySelectorAll("[data-goals-key] li")).map((li) => [li.getAttribute("data-goals-key-item"), li.textContent]);
+  const chipReading = (label: string, slot: string) => {
+    const chip = Array.from(card().querySelectorAll<HTMLButtonElement>("li > button")).find((b) => b.querySelector("span")?.textContent === label)!;
+    return chip.querySelector(`[data-chip-reading="${slot}"]`);
+  };
+  const plotName = () => card().querySelector('[role="img"]')?.getAttribute("aria-label") ?? "";
+
+  it("all current quotes withheld: the key names the hollow pregame marks and the count rule, and no filled mark", () => {
+    act(() => root.render(<SoccerMatchStories stream={livePage.stories} />));
+    expect(keyItems()).toEqual([
+      ["pregame", "Pregame chance"],
+      ["actual", "Count so far"],
+    ]);
+    expect(card().querySelector('[data-goals-key] [data-key-mark="hollow"]')).not.toBeNull();
+    expect(card().querySelector('[data-goals-key] [data-key-mark="rule"]')).not.toBeNull();
+    expect(card().querySelector('[data-goals-key] [data-key-mark="filled"]')).toBeNull();
+    // Every strip figure sits over its own phase title: 13% and 6% are pregame chances, not current ones.
+    expect(chipReading("5+ goals", "pregame")?.textContent).toBe(`${pct(0.13)}Pregame chance`);
+    expect(chipReading("6+ goals", "pregame")?.textContent).toBe(`${pct(0.06)}Pregame chance`);
+    expect(chipReading("5+ goals", "current")?.textContent).toBe("No recent probability updateIn-game chance");
+    // Reached is performance, titled as what happened, never a chance and never a mark.
+    expect(chipReading("3+ goals", "current")?.textContent).toBe("Reached so farActual so far");
+    expect(chipReading("3+ goals", "current")?.querySelector("[data-key-mark]")).toBeNull();
+    // During play a drawn pregame figure wears the hollow key; a withheld current wears none.
+    expect(card().querySelectorAll('li > button [data-chip-reading="pregame"] [data-key-mark="hollow"]')).toHaveLength(3);
+    expect(card().querySelectorAll('li > button [data-key-mark="filled"]')).toHaveLength(0);
+    // The plot's accessible name says each phase and value.
+    expect(plotName()).toContain("Hollow marks are pregame chances.");
+    expect(plotName()).toContain("The solid rule is the count, not a chance.");
+    expect(plotName()).not.toContain("Filled marks");
+    expect(plotName()).toContain(`5+ goals: Pregame chance ${pct(0.13)}, In-game chance No recent probability update`);
+    expect(plotName()).toContain(`3+ goals: Pregame chance ${pct(0.5)}, Actual so far Reached so far`);
+  });
+
+  it("CONSTRUCTED recorded current and a quoted 0% pregame: a filled key appears, and zero stays a mark", () => {
+    const edited = clone(livePage.stories);
+    const goals = edited.cards[0] as SoccerGoalsCard;
+    goals.milestones[1].current = { kind: "recorded", observation: { probability: 0.2, text: pct(0.2), clock: null, detail: "CONSTRUCTED" } };
+    goals.milestones[2].pregame = { kind: "value", observation: { probability: 0, text: pct(0), clock: null, detail: "CONSTRUCTED" } };
+    act(() => root.render(<SoccerMatchStories stream={edited} />));
+    expect(keyItems()).toEqual([
+      ["pregame", "Pregame chance"],
+      ["current", "Recorded in-game"],
+      ["actual", "Count so far"],
+    ]);
+    expect(chipReading("5+ goals", "current")?.textContent).toBe(`${pct(0.2)}Recorded in-game`);
+    expect(chipReading("5+ goals", "current")?.querySelector('[data-key-mark="filled"]')).not.toBeNull();
+    expect(plotName()).toContain("Filled marks are recorded in-game chances.");
+    const zero = card().querySelector('[data-milestone="242765587"] [data-mark="pregame"]');
+    expect(zero).not.toBeNull();
+    expect(percentOf(zero?.parentElement, "bottom")).toBe(0);
+  });
+
+  it("before kickoff with no usable chance: no key, the strip's own spoken words, each figure still titled", () => {
+    const before = page(detail("hullDetail"), history("hullHistory"), markets("hullExactMarkets"), EXACT_PRE_NOW, HULL_BEFORE_ADMISSION);
+    act(() => root.render(<SoccerMatchStories stream={before.stories} />));
+    expect(card().querySelector("[data-goals-key]")).toBeNull();
+    expect(plotName()).toContain("Offered milestones on the count scale; no chances are shown.");
+    expect(chipReading("1+ goal", "pregame")?.textContent).toBe("No recent probability updatePregame chance");
+    expect(chipReading("1+ goal", "pregame")?.querySelector("[data-key-mark]")).toBeNull();
+  });
+
+  it("CONSTRUCTED after the final: the rule is the final count in the key, and each result sits under its own title", () => {
+    const edited = clone(livePage.stories);
+    const goals = edited.cards[0] as SoccerGoalsCard;
+    goals.actual = { kind: "count", title: "Final count", quantity: 5, text: "5", unit: "goals", clock: null, ruleLabel: "5 final", detail: "CONSTRUCTED" };
+    goals.milestones.forEach((m, i) => {
+      m.current = null;
+      m.performance = null;
+      m.result = i < 2 ? { kind: "won" } : { kind: "lost" };
+    });
+    act(() => root.render(<SoccerMatchStories stream={edited} />));
+    expect(keyItems()).toEqual([
+      ["pregame", "Pregame chance"],
+      ["actual", "Final count"],
+    ]);
+    expect(chipReading("5+ goals", "result")?.textContent).toBe(`${PROP_HIT_LABEL}Final result`);
+    expect(chipReading("6+ goals", "result")?.textContent).toBe(`${PROP_MISS_LABEL}Final result`);
+    // After the final no pregame figure wears the in-play hollow key.
+    expect(card().querySelectorAll('li > button [data-key-mark]')).toHaveLength(0);
+    expect(card().querySelectorAll('[data-mark="current"]')).toHaveLength(0);
+  });
+
+  it("both teams: each tile's figures sit over their own phase captions", () => {
+    act(() => root.render(<SoccerMatchStories stream={livePage.stories} />));
+    click(button("Next"));
+    const tile = (label: string) => button(label, host.querySelector('[data-soccer-card="both"]')!);
+    expect(tile("No").querySelector('[data-tile-reading="pregame"]')?.textContent).toBe(`${pct(0.455)}Pregame`);
+    expect(tile("No").querySelector('[data-tile-reading="current"]')?.textContent).toBe(`${pct(0.505)}Current`);
+    expect(tile("Yes").querySelector('[data-tile-reading="pregame"]')?.textContent).toBe(`${pct(0.55)}Pregame`);
+  });
+});
+
+describe("axis labels: measured, anchored inward and staggered, never overlapping or dropped", () => {
+  it("places each label centred, pulls it inside the row, and moves a collision to the next line", () => {
+    // Three labels 30 px wide; the third collides with the second.
+    expect(placeAxisLabels(237, [{ center: 140, width: 30 }, { center: 181, width: 30 }, { center: 201, width: 30 }])).toEqual([
+      { left: 125, row: 0, wrap: false },
+      { left: 166, row: 0, wrap: false },
+      { left: 186, row: 1, wrap: false },
+    ]);
+    // A label near the right edge is anchored inward, never past the row.
+    expect(placeAxisLabels(237, [{ center: 230, width: 120 }])).toEqual([{ left: 117, row: 0, wrap: false }]);
+    expect(placeAxisLabels(237, [{ center: 5, width: 60 }])).toEqual([{ left: 0, row: 0, wrap: false }]);
+    // Wider than the whole row: its own line, wrapping between words.
+    expect(placeAxisLabels(100, [{ center: 50, width: 140 }, { center: 20, width: 20 }])).toEqual([
+      { left: 0, row: 1, wrap: true },
+      { left: 10, row: 0, wrap: false },
+    ]);
+    // Placement follows position, not input order; output keeps input order.
+    expect(placeAxisLabels(200, [{ center: 150, width: 40 }, { center: 50, width: 40 }]).map((p) => p.row)).toEqual([0, 0]);
+  });
+
+  /**
+   * CONSTRUCTED layout boxes, roughly the 375 px / 200% capture: every label row
+   * 237 px wide, the plot 141 px wide starting 80 px in, and each label 15 px
+   * per character. Everything else reports nothing.
+   */
+  function withCapturedBoxes(run: () => void) {
+    const spy = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const box = (left: number, width: number) => ({ left, width, right: left + width, top: 0, bottom: 20, height: 20, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
+      if (this.hasAttribute("data-axis-labels")) return box(0, 237);
+      if (this.getAttribute("role") === "img") return box(80, 141);
+      if (this.hasAttribute("data-axis-label")) return box(0, (this.textContent ?? "").length * 15);
+      return box(0, 0);
+    });
+    try {
+      run();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("goals: 5+ and 6+ no longer overlap, and the count's words stay inside the card", () => {
+    const livePage = page(detail("liveDetail"), history("liveHistory"), markets("liveMarkets"), LIVE_NOW, C.liveAdmission);
+    // CONSTRUCTED count at 6, so its rule sits near the right edge.
+    const edited = clone(livePage.stories);
+    const goals = edited.cards[0] as SoccerGoalsCard;
+    goals.actual = { ...(goals.actual as Extract<NonNullable<SoccerGoalsCard["actual"]>, { kind: "count" }>), quantity: 6, text: "6", ruleLabel: "6 so far" };
+    withCapturedBoxes(() => act(() => root.render(<SoccerMatchStories stream={edited} />)));
+    const quantity = host.querySelector('[data-axis-labels="quantity"]')!;
+    expect(quantity.getAttribute("data-axis-rows")).toBe("2");
+    const row = (text: string) => Array.from(quantity.querySelectorAll("[data-axis-label]")).find((l) => l.textContent === text)?.getAttribute("data-axis-row");
+    expect([row("3+"), row("5+"), row("6+")]).toEqual(["0", "0", "1"]);
+    const actual = host.querySelector('[data-axis-labels="actual"] [data-axis-label="actual"]') as HTMLElement;
+    // 8 characters × 15 = 120 px, centred at 80 + 6/7 × 141 ≈ 201 → pulled in to 237 − 120.
+    expect(parseFloat(actual.style.left)).toBeCloseTo(117, 6);
+  });
+
+  it("half by half: First half and Second half stay whole on two lines instead of painting over each other", () => {
+    const livePage = page(detail("liveDetail"), history("liveHistory"), markets("liveMarkets"), LIVE_NOW, C.liveAdmission, { halvesAdmission: "explicit" });
+    withCapturedBoxes(() => act(() => root.render(<SoccerMatchStories stream={oneCard(livePage.stories.cards.find((c) => c.id === "halves")!)} />)));
+    const periods = host.querySelector('[data-axis-labels="periods"]')!;
+    expect(periods.getAttribute("data-axis-rows")).toBe("2");
+    const labels = Array.from(periods.querySelectorAll<HTMLElement>("[data-axis-label]"));
+    expect(labels.map((l) => [l.textContent, l.getAttribute("data-axis-row")])).toEqual([
+      ["First half", "0"],
+      ["Second half", "1"],
+    ]);
+    expect(labels.every((l) => parseFloat(l.style.left) + (l.textContent ?? "").length * 15 <= 237)).toBe(true);
+  });
+
+  it("without measured boxes (first paint, jsdom) every label is drawn once, centred on its position", () => {
+    const livePage = page(detail("liveDetail"), history("liveHistory"), markets("liveMarkets"), LIVE_NOW, C.liveAdmission);
+    act(() => root.render(<SoccerMatchStories stream={livePage.stories} />));
+    const labels = Array.from(host.querySelectorAll<HTMLElement>('[data-axis-labels="quantity"] [data-axis-label]'));
+    expect(labels.map((l) => l.textContent)).toEqual(["3+", "5+", "6+"]);
+    expect(labels.map((l) => parseFloat(l.style.left))).toEqual([(3 / 7) * 100, (5 / 7) * 100, (6 / 7) * 100]);
+  });
+});
+
+describe("enlarged-text reflow: the cards rearrange instead of overflowing", () => {
+  const finalPage = page(detail("finalDetail"), history("finalHistory"), markets("finalMarkets"), FINAL_NOW, C.liveAdmission);
+
+  it("both teams: the ring group wraps, and the tiles are side by side only while two have room (rem-based minimum)", () => {
+    act(() => root.render(<SoccerMatchStories stream={finalPage.stories} />));
+    const both = host.querySelector('[data-soccer-card="both"]')!;
+    const group = both.querySelector("[data-both-ring-group]")!;
+    expect(group.className).toContain("flex-wrap");
+    expect(group.className).toContain("min-w-0");
+    const tiles = both.querySelector(`ul[aria-label="${finalPage.stories.cards[0].name}"]`) as HTMLElement;
+    expect(tiles.style.gridTemplateColumns).toBe("repeat(auto-fit, minmax(8rem, 1fr))");
+    expect(tiles.className).not.toContain("grid-cols-2");
+    // The missing words stay whole and visible in each tile, under their caption.
+    expect(button("No", both).querySelector('[data-tile-reading="pregame"]')?.textContent).toBe("Pre-match chance unavailablePregame");
+  });
+
+  it("first team: the name keeps the row's width; the value moves under it rather than squeezing it", () => {
+    act(() => root.render(<SoccerMatchStories stream={finalPage.stories} />));
+    click(button("Next"));
+    const lines = Array.from(host.querySelectorAll('[data-soccer-card="first"] [data-first-row-line]'));
+    expect(lines).toHaveLength(3);
+    expect(lines.every((l) => l.className.includes("flex-wrap"))).toBe(true);
+  });
+
+  it("the page, the story card and the headline pad in pixels, so enlarged text keeps the room the padding used to take", () => {
+    act(() => root.render(<SoccerMatchPage match={live} />));
+    expect(host.querySelector("[data-soccer-match]")?.className).toContain("p-[16px]");
+    expect(host.querySelector("[data-soccer-headline]")?.className).toContain("p-[12px]");
+    withRootFont(32);
+    act(() => root.render(<SoccerMatchHeadline headline={live.headline} />));
+    expect(host.querySelector("[data-soccer-headline]")?.className).toContain("px-[8px]");
+  });
+});
+
+describe("exact map: a contained, labelled, keyboard-reachable horizontal scroll when it is wider than its card", () => {
+  const hullPage = page(detail("hullDetail"), history("hullHistory"), markets("hullExactMarkets"), EXACT_PRE_NOW, HULL_BEFORE_ADMISSION);
+  const exact = () => oneCard(hullPage.stories.cards.find((c) => c.id === "exact")!);
+
+  it("the axes' names sit outside the scroller; the scroller is a focusable labelled region; row numbers stay in view", () => {
+    act(() => root.render(<SoccerMatchStories stream={exact()} />));
+    const scroller = host.querySelector("[data-exact-scroller]") as HTMLElement;
+    expect(scroller.getAttribute("role")).toBe("region");
+    expect(scroller.tabIndex).toBe(0);
+    const caption = document.getElementById(scroller.getAttribute("aria-labelledby") ?? "")!;
+    expect(caption.textContent).toBe("Rows: Hull City goals · Columns: Everton goals");
+    expect(scroller.contains(caption)).toBe(false);
+    expect(scroller.getAttribute("data-exact-scroller")).toBe("fits");
+    expect(host.querySelector("[data-exact-pan-hint]")).toBeNull();
+    expect(Array.from(scroller.querySelectorAll('th[scope="row"]')).every((th) => th.className.includes("sticky"))).toBe(true);
+    // Every column is still drawn: nothing is flattened or dropped.
+    expect(scroller.querySelectorAll("td button")).toHaveLength(36);
+  });
+
+  it("CONSTRUCTED overflow: the scroller says so in native words and points to them", () => {
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => 211 });
+    Object.defineProperty(proto, "scrollWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute("data-exact-scroller") ? 528 : 0;
+      },
+    });
+    try {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+    } finally {
+      delete proto.clientWidth;
+      delete proto.scrollWidth;
+    }
+    const scroller = host.querySelector("[data-exact-scroller]") as HTMLElement;
+    expect(scroller.getAttribute("data-exact-scroller")).toBe("overflows");
+    const hint = host.querySelector("[data-exact-pan-hint]")!;
+    expect(hint.textContent).toBe(EXACT_WORDS.panHint);
+    expect(scroller.getAttribute("aria-describedby")).toBe(hint.id);
+    expect(scroller.querySelectorAll("td button")).toHaveLength(36);
   });
 });

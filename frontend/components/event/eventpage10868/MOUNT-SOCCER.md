@@ -120,6 +120,12 @@ const soccerMatch = soccerMatchApplies(event.sport)
    horizontal page scroll; the headline keeps its three aligned columns on a normal phone and falls
    back to one labelled block per outcome only at an accessibility text size or when a measured
    column cell does not fit; each story card's marks, readouts and heat map read at that width.
+   The exact-score map may scroll sideways INSIDE its card when it is wider (native horizontal
+   ScrollView, ExactScoreMapPresentation10868.swift:1167): that is the intended contained case,
+   with its axis names outside the scroller and the native "Swipe the map sideways…" cue, never a
+   page scroll. Known constraint: at 375 px with 200% text a 15-letter word set in the scoreboard's
+   36 px bold (e.g. "Mönchengladbach") is wider than the 293 px the page leaves, so it can only wrap
+   inside the word until an owner short name or a scoreboard type choice exists.
 
 ## Increment 2 (not built)
 

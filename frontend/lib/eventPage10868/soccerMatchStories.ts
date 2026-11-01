@@ -490,6 +490,11 @@ export const GOALS_WORDS = {
   finalCountTitle: "Final count",
   /** `TotalMilestoneInput10868.milestoneUnavailable` (TotalMilestonePresentation10868.swift:443). */
   selectionUnavailable: "Selected milestone unavailable.",
+  /** `TotalMilestoneInput10868` spoken key (TotalMilestonePresentation10868.swift:454-458). */
+  spokenHollow: "Hollow marks are pregame chances.",
+  spokenFilled: "Filled marks are recorded in-game chances.",
+  spokenRule: "The solid rule is the count, not a chance.",
+  spokenStrip: "Offered milestones on the count scale; no chances are shown.",
 } as const;
 
 const unit = (count: number) => (count === 1 ? "goal" : "goals");
@@ -568,6 +573,8 @@ export function soccerGoalsCard(
     chartTitle: GOALS_WORDS.chartTitle,
     quantityAxisTitle: GOALS_WORDS.axisTitle,
     titles: { pregame: GOALS_WORDS.pregameTitle, current: GOALS_WORDS.currentStatusTitle, result: GOALS_WORDS.resultTitle },
+    currentTitles: { recorded: GOALS_WORDS.recordedTitle, status: GOALS_WORDS.currentStatusTitle, reached: GOALS_WORDS.actualSoFarTitle },
+    spoken: { hollow: GOALS_WORDS.spokenHollow, filled: GOALS_WORDS.spokenFilled, rule: GOALS_WORDS.spokenRule, strip: GOALS_WORDS.spokenStrip },
     title: phase === "before" ? GOALS_WORDS.beforeTitle : phase === "live" ? GOALS_WORDS.liveTitle : GOALS_WORDS.finalTitle,
     milestones,
     defaultId: opening === null ? null : milestones[opening].id,
@@ -640,6 +647,9 @@ export const BOTH_WORDS = {
   resultTitle: "Result",
   /** `BothTeamsScoreInput10868.selectionUnavailable` (BothTeamsScorePresentation10868.swift:221). */
   selectionUnavailable: "Selected outcome unavailable.",
+  /** Each outcome tile's captions (BothTeamsScorePresentation10868.swift:218-219). */
+  pregameShort: "Pregame",
+  currentShort: "Current",
 } as const;
 
 /** The reading row every card shares: pre-match, in-play (live) and result (after the final). */
@@ -703,6 +713,7 @@ export function soccerBothCard(
     name: storyName("both", phase),
     eyebrow: BOTH_WORDS.eyebrow,
     titles: { pregame: BOTH_WORDS.pregameTitle, current: BOTH_WORDS.currentTitle, result: BOTH_WORDS.resultTitle },
+    shortTitles: { pregame: BOTH_WORDS.pregameShort, current: BOTH_WORDS.currentShort },
     beforeContext: phase === "before" ? BOTH_WORDS.beforeContext : null,
     outcomes,
     defaultId: fallback.id,
@@ -906,6 +917,8 @@ export const EXACT_WORDS = {
   selectionUnavailable: "Selected score unavailable.",
   scaleUnavailable: "Pre-match scale unavailable. Cells are not shaded.",
   unavailableMark: "—",
+  /** `ExactScoreMapWords10868.panHint` (SoccerExactScoreAdapter10868.swift:155). */
+  panHint: "Swipe the map sideways to see every column.",
   /** `SoccerExactScoreAdapter10868.Words.legend` (L167-173). */
   legend: {
     scaleTitle: "Pre-match chance · darker is higher",
@@ -959,6 +972,7 @@ export function soccerExactCard(
     selectionUnavailable: EXACT_WORDS.selectionUnavailable,
     scaleUnavailable: EXACT_WORDS.scaleUnavailable,
     unavailableMark: EXACT_WORDS.unavailableMark,
+    panHint: EXACT_WORDS.panHint,
     intro: phase === "before" ? EXACT_WORDS.beforeIntro : phase === "live" ? EXACT_WORDS.liveIntro : EXACT_WORDS.finalIntro,
     homeLabel: names.home,
     awayLabel: names.away,
