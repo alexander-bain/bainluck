@@ -1,0 +1,27 @@
+{
+  "q": "When will Spotify release 2026 Wrapped?",
+  "prob": 80.0,
+  "market_id": 4751,
+  "external_id": "KXSPOTIFYWRAPPED-26",
+  "kind": "spotify",
+  "top_outcomes": [
+    {
+      "name": "Before Dec 3",
+      "prob": 20.0,
+      "delta_24h": 0.0
+    },
+    {
+      "name": "Before Dec 4",
+      "prob": 50.0,
+      "delta_24h": 0.0
+    },
+    {
+      "name": "Before Dec 5",
+      "prob": 80.0,
+      "delta_24h": 0.0
+    }
+  ],
+  "outcome_count": 4,
+  "headline": null,
+  "ladder": true
+}
