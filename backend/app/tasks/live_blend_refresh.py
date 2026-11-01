@@ -385,7 +385,7 @@ RECEIPT_GRAPH_MAX_AGE_ENV = "PREVIEW_AT_RECEIPT_GRAPH_MAX_AGE_S"
 RECEIPT_STATS_LOG_INTERVAL_S = 60.0
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
-RECEIPT_QUOTE_RETENTION_S = 300.0
+RECEIPT_QUOTE_RETENTION_S = 60.0
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
