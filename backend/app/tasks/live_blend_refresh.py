@@ -8814,12 +8814,19 @@ class LiveBlendRefresher:
         event_id = frame.get("event_id")
         if event_id not in self._hl_pending:
             return
-        if reply[0] == "published":
+        status = str(reply[0])
+        if status == "published":
             self._hl_resolve(event_id)
-        else:
-            # The ledger refused this send (stale/terminal/contributor/fenced...):
-            # the input is not on screen yet; name why it keeps waiting.
-            self._hl_mark(event_id, "ledger_%s" % str(reply[0])[:20])
+        elif status in ("stale", "terminal"):
+            # `stale`: a newer ledger write superseded this read-set, and that
+            # write's own frame carries every entry, this one included (it was
+            # mutated in first). `terminal`: the event is tombstoned. Either way
+            # nothing is left waiting on this send.
+            self._hl_resolve(event_id, "carried_" + status)
+        elif status != "contributor":
+            # `contributor` recomposes and re-sends at once (observed again);
+            # anything else (fenced, refused, local_*) is a real miss: name it.
+            self._hl_mark(event_id, "ledger_%s" % status[:20])
 
     def _hl_summary(self) -> str:
         """The minute's headline clock: n, p50/p90/max, worst ids with how, fallbacks, late."""
