@@ -9733,6 +9733,15 @@ class LiveBlendRefresher:
                 self._note_receipt_class("na_nobook", event_id)
                 self._hl_no_price(event_id)
                 return None
+            if reading is None and not proof_kwargs:
+                # No valid reading at all from the rows the page shows plus
+                # every leg received since: the stamp reads the same rows, so
+                # there is no price to show (Alex 10/31: not a miss). 11/01
+                # 17:50Z: a Latina-Pianese input with an unpriced home leg sat
+                # 94 s as late:na_orientation, owed no stamp.
+                self._note_receipt_class("na_noreading", event_id)
+                self._hl_no_price(event_id)
+                return None
             self._note_receipt_class("not_admitted", event_id)
             self._hl_mark(event_id, "na_proof" if proof_kwargs else "na_orientation")
             if self._na_proof_logged < 6:

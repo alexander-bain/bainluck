@@ -688,3 +688,34 @@ async def test_without_a_live_verdict_the_unproven_reading_still_waits_for_the_s
     assert r.receipt_preview_stats["verdict_oriented"] == 0
     assert r._hl_fallback.get("na_orientation", 0) >= 1
     assert EV in r._urgent_stamp, "the stamp that computes the verdict is made urgent"
+
+
+async def test_a_receipt_with_no_valid_reading_leaves_the_clock_as_no_price(r):
+    """11/01 17:50Z: a Latina-Pianese input waited 94 s as late:na_orientation:
+    the three-way market's home leg had no price, so no reading existed, and
+    the stamp owed nothing, so nothing ever ended the wait. No valid reading
+    from the shown rows plus every received leg is no price (Alex 10/31)."""
+    home, away = "Latina Calcio", "US Pianese"
+    market = Row(id=MARKET, source="polymarket", external_id="917153", event_id=EV,
+                 name=f"{home} vs. {away}", status="open", market_metadata={})
+    rows = [
+        Row(id=HOME_LEG, market_id=MARKET, name=home, rank=3, current_probability=None,
+            last_updated=SEEN, is_winner=None, external_id="0x" + "31" * 32,
+            resolution_source=None),
+        Row(id=AWAY_LEG, market_id=MARKET, name=away, rank=2,
+            current_probability=Decimal("0.200000"), last_updated=SEEN, is_winner=None,
+            external_id="0x" + "32" * 32, resolution_source=None),
+        Row(id=AWAY_LEG + 1, market_id=MARKET, name=f"Draw ({home} vs. {away})", rank=1,
+            current_probability=Decimal("0.290000"), last_updated=SEEN, is_winner=None,
+            external_id="0x" + "33" * 32, resolution_source=None),
+    ]
+    ev = event()
+    ev.sport_key, ev.home_team_name, ev.away_team_name = "soccer_italy_serie_c", home, away
+    read(r, ev, [MarketOutcomes(market, rows, NOW - timedelta(hours=1), False)])
+    r.held_quotes._database_bound = (NOW - timedelta(seconds=1)).timestamp()
+    r.held_quotes.note_input(mark(AWAY_LEG, 0.22))
+    await drained(r)
+
+    assert ops(r.sent, "propose") == []
+    assert r._hl_fallback.get("na_orientation", 0) == 0
+    assert EV not in r._hl_pending, "no price to show is not a wait"
