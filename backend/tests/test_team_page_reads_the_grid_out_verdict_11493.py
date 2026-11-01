@@ -314,6 +314,20 @@ class _Session:
         return self._session.execute(statement)
 
 
+class _FrozenNow(datetime):
+    """The route's one clock read, pinned to the specimen's minute.
+
+    `get_team` derives the season it stamps against from `now`
+    (`season_windows.season_string`), and MLB rolls to next year's season on
+    Nov 1 — so on the live clock this 2026 grid stops deciding the page at the
+    rollover (the `previous season` gate in `TestFailsOpen`, doing its job).
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        return NOW if tz is None else NOW.astimezone(tz)
+
+
 def _route_page(read):
     """`get_team` for the Braves, with the path, futures and grid read stubbed."""
     from app.models.models import Base, Sport, Team
@@ -333,7 +347,7 @@ def _route_page(read):
 
     with Session(eng) as s, patch.object(route, "_get_championship_path", _path_stub), patch(
         "app.routes.user._query_team_futures", _futures_stub
-    ), patch.object(route, "_read_cached_grid", read):
+    ), patch.object(route, "_read_cached_grid", read), patch.object(route, "datetime", _FrozenNow):
         return asyncio.run(route.get_team("atlanta-braves-mlb", db=_Session(s)))
 
 
@@ -349,6 +363,18 @@ class TestTheRoute:
         by_id = {f["market_id"]: f for f in page["futures"]}
         assert by_id[114584]["state"] == "eliminated"
         assert "state" not in by_id[206639]
+
+    def test_the_rollover_withholds_a_previous_seasons_verdict(self):
+        # The same 2026 grid, read by the route on Nov 1: the page now describes
+        # 2027, so the 2026 verdict decides nothing (the `season_string` gate).
+        async def _read(slug):
+            return _grid(BREWERS_ROW, BRAVES_ROW)
+
+        nov_1 = datetime(2026, 11, 1, 0, 22, tzinfo=timezone.utc)
+        with patch.object(_FrozenNow, "now", classmethod(lambda cls, tz=None: nov_1)):
+            page = _route_page(_read)
+        assert "state" not in page["championship_path"][0]
+        assert all("state" not in f for f in page["futures"])
 
     def test_a_failing_read_costs_the_page_nothing(self):
         async def _boom(slug):
