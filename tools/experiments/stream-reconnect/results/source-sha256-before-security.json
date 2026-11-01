@@ -1,0 +1,23 @@
+{
+  "SOURCE-HASHES.txt": "41c1e4a7f439a7a324514f7e9bc872e58847e457946b65d0f8d5d9bc5b866a11",
+  "browser/browser.mjs": "b12b3c880af58829494e6d4daad9cf80a7020e659d45efc64ea50b3b015a0ab6",
+  "browser/index.html": "a15ce535afd0fe0c70e749aca9160074dc3ef45d180b23db723a951243615590",
+  "package.json": "be1f7949f34dc92f5d30534fc9326f0e7961023f2245b83117bf9019e1dba875",
+  "run.sh": "e39418225d168fa1d308d4a6f093456f8918fa4190110a05f8ded9638ac32ed2",
+  "src/broker.mjs": "26f3063d6a2813ee72752675a3568ec86c30b27055fffd383009fe67f8eda3ba",
+  "src/client.mjs": "4e859c884ef58c2158c04a706ebcbce4be8a52327cace86df3af68eda847e783",
+  "src/journal.mjs": "c925af20817f85153cb1ed0fd4b209ad388ae78a1c6927bcef252407e930ab38",
+  "src/protocol.mjs": "42233065b7e45cede6509f933d26744b2d89e2da8ec7e4099dd9a38efe259e20",
+  "src/run-bounded.mjs": "a7b7f417236afecf6427d0f6edc3c978cda59b05637bd15d6e5d65bdae176459",
+  "src/scenarios.mjs": "70a60bc570bdd4d6253e194eb6e0d2e5e96fc56beedb33720c688b9dc43141fe",
+  "src/stream-server.mjs": "43f198e544a9753a24858e77977f34227c31704835eb264dd60f60db0fe7ec12",
+  "src/wire-client.mjs": "bcb35334f4ebdaf23298ee90db638f573ac3faca14b34c61f65e985b2005e25f",
+  "tests/audit-receipt.mjs": "1113bdf491ae09d97372a162c89451c0799211f998bf8c9001a0347be16ec6da",
+  "tests/fixtures/held-fence-failures.json": "96fe24f553110daade3d25ca73b718cf1dab25d4d2f79bb516b6e1e8391ad9ff",
+  "tests/held-fence-failures.test.mjs": "91af5c688a5c5b1a9c20bb87dc7eef0c36b63f1d41f4a406d3b214342524d51f",
+  "tests/independent-audit.mjs": "173a3a012ed957b28d298c195cc2b07a91e3cfcbab9e7d14bb3647cb196c7825",
+  "tests/inherited-model.mjs": "a4f1f7aa0a68f30c3b20edcba79f6bb24d5d17d0597597a5e2ad10ae37df6fc3",
+  "tests/reviewed-pure-adversarial.mjs": "669fd0b9f1045456265177ff2d0ac37e2ce230552dca6daa346d9652d71fa98c",
+  "tests/transport-unit.mjs": "92fd715a83f3c723ec8fadc68bce6e8adf69a4046b1e7002464731725d9a4a0e",
+  "tests/wire-test.mjs": "b7a8f51b5069d24ea2f90886339b99652f246b8fa9caf238bbfebe2d50376143"
+}
