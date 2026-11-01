@@ -74,8 +74,27 @@
  * controls come back and the entry says the full-size view is unavailable
  * (until a later attempt opens or the scope changes).
  *
- * Card-level Details is not in this increment: every original's exact Details
- * is in All props.
+ * ORIGINAL DETAILS (native card `detailsButton` + host `openCardDetails`;
+ * Design's four-path admission 0a47ebcf): when the owner passes this stream's
+ * `cardPass`, each card's SELECTED readout offers "Details" for its exact
+ * original, only when that selected original resolves through the bridge
+ * (`soccerOriginalDetails.ts` over `soccerCardOriginals.ts`). The tap holds the
+ * bridge token and a FROZEN copy of that pass's original: live updates never
+ * change the view; "Refresh details" replaces it only while the same token
+ * still resolves; otherwise the view keeps what was opened and says the latest
+ * details are unavailable. An opening with no exact original says so, with no
+ * probability and no Refresh. The body draws the catalogue's own built values,
+ * provenance and grade words (All props' layout and labels, the in-game slot
+ * named "Recorded in-game chance"); it computes nothing. Opening and closing
+ * write no held choice.
+ *
+ * ONE MODAL: from the full-size reader, Details is a content mode of that SAME
+ * dialog (the card stays mounted, hidden); "Back to card" restores the card,
+ * the reader body's scroll, the exact map's pan and focus on the Details
+ * control. From a compact card the same shell opens with the Details alone,
+ * and Close returns to that control. The shell's Close always leaves the whole
+ * view. Native's direct Details actions on non-selected outcomes are not
+ * reproduced here (parity debt).
  */
 
 import { useId, useRef, useState, type ReactNode } from "react";
@@ -83,6 +102,18 @@ import { propVerdictLabel } from "@/lib/propGrade";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { useFrameMeasure, useIsomorphicLayoutEffect } from "./useFrameMeasure";
 import SoccerMatchReader, { SOCCER_READER_WORDS, soccerReaderEntry } from "./SoccerMatchReader";
+import type { SoccerCardOpened, SoccerCardPass } from "@/lib/eventPage10868/soccerCardOriginals";
+import {
+  openSoccerDetails,
+  refreshSoccerDetails,
+  soccerDetailsPass,
+  soccerDetailsStatus,
+  soccerOpenSelected,
+  type SoccerDetailsStatus,
+  type SoccerFrozenOriginal,
+  type SoccerOriginalDetails,
+  type SoccerSelectedOriginal,
+} from "@/lib/eventPage10868/soccerOriginalDetails";
 import type {
   SoccerBothCard,
   SoccerCurrent,
@@ -479,7 +510,7 @@ function KeyMark({ kind }: { kind: "hollow" | "filled" | "rule" }) {
 
 // ─── Goals: the milestone profile (TotalMilestonePresentation10868) ────────
 
-function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; hold: Hold }) {
+function GoalsCard({ card, held, hold, details }: { card: SoccerGoalsCard; held: Held; hold: Hold; details: CardDetails | null }) {
   const selection = selectExactlyOnce(card.milestones, soccerRequestedId(held.goals, card.defaultId, card.milestones));
   const chosen = chosenRow(selection);
   const [plot, setPlot] = useState<HTMLDivElement | null>(null);
@@ -626,6 +657,7 @@ function GoalsCard({ card, held, hold }: { card: SoccerGoalsCard; held: Held; ho
           <p className="text-sm font-semibold">{chosen.label}</p>
           <Readout row={chosen} titles={card.titles} currentTitle={currentTitle} />
           <Timing key={chosen.id} timing={chosen.timing} />
+          <DetailsButton details={details} selected={{ card: "goals", id: chosen.id }} label={chosen.label} />
         </div>
       )}
     </article>
@@ -710,7 +742,7 @@ function Ring({ value, label }: { value: number | null; label: string }) {
   );
 }
 
-function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold: Hold }) {
+function BothCard({ card, held, hold, details }: { card: SoccerBothCard; held: Held; hold: Hold; details: CardDetails | null }) {
   const selection = selectExactlyOnce(card.outcomes, soccerRequestedId(held.both, card.defaultId, card.outcomes));
   const chosen = chosenRow(selection);
   const before = chosen ? pregameText(chosen.pregame) : null;
@@ -802,6 +834,7 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
         <div className="space-y-1 rounded-md bg-surface-deep p-2" data-soccer-chosen={chosen.id}>
           <Readout row={chosen} titles={card.titles} />
           <Timing key={chosen.id} timing={chosen.timing} />
+          <DetailsButton details={details} selected={{ card: "both", outcomeId: chosen.id }} label={chosen.label} />
         </div>
       )}
     </article>
@@ -810,7 +843,7 @@ function BothCard({ card, held, hold }: { card: SoccerBothCard; held: Held; hold
 
 // ─── First team: the lollipop plot (FirstScorerComparisonPresentation10868) ─
 
-function FirstCard({ card, held, hold }: { card: SoccerFirstCard; held: Held; hold: Hold }) {
+function FirstCard({ card, held, hold, details }: { card: SoccerFirstCard; held: Held; hold: Hold; details: CardDetails | null }) {
   const selection = selectExactlyOnce(card.rows, soccerRequestedId(held.first, card.defaultId, card.rows));
   const chosen = chosenRow(selection);
   return (
@@ -823,6 +856,7 @@ function FirstCard({ card, held, hold }: { card: SoccerFirstCard; held: Held; ho
         <div className="space-y-1 rounded-md bg-surface-deep p-2" data-soccer-chosen={chosen.id}>
           <p className="text-sm font-semibold">{chosen.label}</p>
           <Readout row={chosen} titles={card.titles} />
+          <DetailsButton details={details} selected={{ card: "first", id: chosen.id }} label={chosen.label} />
         </div>
       )}
       <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
@@ -917,7 +951,19 @@ function ShapeMark({ shape, color, dim, mark }: { shape: Shape; color: string; d
   );
 }
 
-function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held: Held; hold: Hold; colors: SoccerStoryColors }) {
+function HalvesCard({
+  card,
+  held,
+  hold,
+  colors,
+  details,
+}: {
+  card: SoccerHalvesCard;
+  held: Held;
+  hold: Hold;
+  colors: SoccerStoryColors;
+  details: CardDetails | null;
+}) {
   const selection = selectExactlyOnce(card.series, soccerRequestedId(held.halves, card.defaultId, card.series));
   const series = chosenRow(selection);
   const [plot, setPlot] = useState<HTMLDivElement | null>(null);
@@ -1018,7 +1064,10 @@ function HalvesCard({ card, held, hold, colors }: { card: SoccerHalvesCard; held
                 <li key={p.id} className="rounded-md bg-surface-deep p-2">
                   <p className="text-sm font-semibold">{p.label}</p>
                   {cell ? (
-                    <Readout row={cell} titles={card.titles} />
+                    <>
+                      <Readout row={cell} titles={card.titles} />
+                      <DetailsButton details={details} selected={{ card: "halves", id: cell.id }} label={`${series.label} · ${p.label}`} />
+                    </>
                   ) : (
                     <p className="text-sm text-text-secondary">{card.cellUnavailable}</p>
                   )}
@@ -1094,7 +1143,7 @@ const FOCUS_OUTLINE_PX = 2;
 /** What occupies one grid coordinate (native `ExactScoreMapSlot10868`). */
 type ExactSlot = { kind: "original"; original: SoccerExactOriginal } | { kind: "notListed" } | { kind: "ambiguous" };
 
-function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; hold: Hold }) {
+function ExactCard({ card, held, hold, details }: { card: SoccerExactCard; held: Held; hold: Hold; details: CardDetails | null }) {
   if (card.scopes.length === 0) return null;
   // Native `scopeSelection` (ExactScoreMapPresentation10868.swift:384-394): exact id, exactly once.
   const scopeSelection = selectExactlyOnce(card.scopes, soccerRequestedId(held.exactScope, card.defaultScopeId, card.scopes));
@@ -1121,7 +1170,7 @@ function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; ho
         </div>
       )}
       {scope ? (
-        <ExactScopeMap card={card} scope={scope} held={held} hold={hold} />
+        <ExactScopeMap card={card} scope={scope} held={held} hold={hold} details={details} />
       ) : (
         <SelectionUnavailable selection={scopeSelection} words={card.scopeUnavailable} />
       )}
@@ -1129,7 +1178,19 @@ function ExactCard({ card, held, hold }: { card: SoccerExactCard; held: Held; ho
   );
 }
 
-function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; scope: SoccerExactScope; held: Held; hold: Hold }) {
+function ExactScopeMap({
+  card,
+  scope,
+  held,
+  hold,
+  details,
+}: {
+  card: SoccerExactCard;
+  scope: SoccerExactScope;
+  held: Held;
+  hold: Hold;
+  details: CardDetails | null;
+}) {
   const heldKey = `exact:${scope.id}`;
   // Native `originalSelection` (L396-405): exact id within this scope, exactly once; no default score.
   const selection = selectExactlyOnce(scope.originals, held[heldKey] ?? null);
@@ -1385,6 +1446,7 @@ function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; sco
           <p className="text-sm font-semibold">{chosen.label}</p>
           <Readout row={chosen} titles={card.titles} />
           <Timing key={chosen.id} timing={chosen.timing} />
+          <DetailsButton details={details} selected={{ card: "exact", scope: scope.id, original: chosen.id }} label={chosen.label} />
         </div>
       ) : selection.kind === "unavailable" ? (
         <SelectionUnavailable selection={selection} words={card.selectionUnavailable} />
@@ -1395,26 +1457,219 @@ function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; sco
   );
 }
 
+// ─── Original Details (native card `detailsButton` + host card Details) ────
+
+/** Design's words for a fixed view of one original (admission 0a47ebcf, D2), and All props' own labels. */
+export const SOCCER_DETAILS_WORDS = {
+  /** The selected readout's control, spoken "Details: <the original's label>" (All props' word). */
+  open: "Details",
+  back: "Back to card",
+  refresh: "Refresh details",
+  fixedView: "This view updates only when you refresh it.",
+  latestUnavailable: "Latest details unavailable. Showing what you opened.",
+  unresolved: "This prop’s details aren’t available.",
+  pregame: "Pregame chance",
+  /** The frozen body's in-game slot: a recorded reading, never a live "current" one. */
+  recordedInGame: "Recorded in-game chance",
+  result: "Result",
+  venue: "Venue",
+  rules: "Rules",
+} as const;
+
+/** What a card needs to offer its selected original's Details; null: no Details control at all. */
+interface CardDetails {
+  /** This render's pass, already checked to serve this stream. */
+  pass: SoccerCardPass;
+  /** Another view of this page is open: the control rests. */
+  resting: boolean;
+  open: (opened: SoccerCardOpened, from: HTMLButtonElement) => void;
+}
+
+const DETAILS_CONTROL =
+  "min-h-11 text-left text-sm font-semibold text-text-primary underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand";
+
+/**
+ * The selected readout's Details: offered only when the bridge opens THIS
+ * selected original exactly on this pass; no control that could only say
+ * "unavailable", and none for any other row.
+ */
+function DetailsButton({ details, selected, label }: { details: CardDetails | null; selected: SoccerSelectedOriginal; label: string }) {
+  if (!details) return null;
+  const opened = soccerOpenSelected(selected, details.pass);
+  if (opened.kind !== "held") return null;
+  return (
+    <button
+      type="button"
+      disabled={details.resting}
+      onClick={(event) => details.open(opened, event.currentTarget)}
+      className={DETAILS_CONTROL}
+      data-soccer-details-entry={selected.card}
+    >
+      {SOCCER_DETAILS_WORDS.open}
+      <span className="sr-only">{`: ${label}`}</span>
+    </button>
+  );
+}
+
+function DetailsReading({ reading }: { reading: SoccerFrozenOriginal["pregame"] }) {
+  return reading.kind === "value" ? (
+    <span className="text-base font-bold tabular-nums">{reading.text}</span>
+  ) : (
+    <span className="text-sm font-medium text-text-secondary">{reading.words}</span>
+  );
+}
+
+/**
+ * The opened original, drawn from its FROZEN payload only: All props' Details
+ * layout and labels (HockeyJourneyAllProps `OriginalRow`), the catalogue's own
+ * built values, provenance and grade words, nothing computed. The in-game slot
+ * is titled as a recorded reading; Refresh is the only way the payload changes.
+ * Exported for its focused tests only (the unresolved view has no page path
+ * while the entry is offered only for a resolving original).
+ */
+export function SoccerOriginalDetailsBody({
+  details,
+  status,
+  onRefresh,
+  back,
+}: {
+  details: SoccerOriginalDetails;
+  status: SoccerDetailsStatus;
+  onRefresh: () => void;
+  back: ReactNode;
+}) {
+  if (details.kind === "unresolved") {
+    return (
+      <div className="space-y-3" data-soccer-details="unresolved">
+        {back}
+        <p className="rounded-md bg-surface-deep p-2 text-sm font-semibold text-text-primary">{SOCCER_DETAILS_WORDS.unresolved}</p>
+      </div>
+    );
+  }
+  const original = details.frozen;
+  const current = status === "current";
+  return (
+    <div className="space-y-3 text-sm" data-soccer-details={status} data-soccer-details-original={original.key}>
+      {back}
+      <p className="text-text-secondary">{SOCCER_DETAILS_WORDS.fixedView}</p>
+      {/* A live region that is always present, so the words are announced when they appear. */}
+      <p
+        role="status"
+        className={current ? undefined : "rounded-md bg-surface-deep p-2 font-semibold text-text-primary"}
+        data-soccer-details-status={current ? "current" : "unavailable"}
+      >
+        {current ? null : SOCCER_DETAILS_WORDS.latestUnavailable}
+      </p>
+      {/* aria-disabled, not disabled: a refusal arriving with a live update keeps focus on the control. */}
+      <button
+        type="button"
+        aria-disabled={!current}
+        onClick={() => {
+          if (current) onRefresh();
+        }}
+        className={`${STREAM_CONTROL} w-full sm:w-auto ${current ? "text-text-primary" : "text-text-secondary"}`}
+        data-soccer-details-refresh=""
+      >
+        {SOCCER_DETAILS_WORDS.refresh}
+      </button>
+      <div className="space-y-2">
+        <p className="break-words font-semibold">{original.title}</p>
+        <p className="break-words text-text-secondary">{original.outcome}</p>
+        <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div>
+            <dt className="font-medium text-text-secondary">{SOCCER_DETAILS_WORDS.pregame}</dt>
+            <dd data-soccer-details-reading="pregame">
+              <DetailsReading reading={original.pregame} />
+              {original.pregame.kind === "value" && original.pregame.provenance && (
+                <span className="block text-text-secondary">{original.pregame.provenance}</span>
+              )}
+            </dd>
+          </div>
+          {original.later && (
+            <div>
+              <dt className="font-medium text-text-secondary">{SOCCER_DETAILS_WORDS.recordedInGame}</dt>
+              <dd data-soccer-details-reading="later">
+                <DetailsReading reading={original.later} />
+                {original.later.kind === "value" && original.later.provenance && (
+                  <span className="block text-text-secondary">{original.later.provenance}</span>
+                )}
+              </dd>
+            </div>
+          )}
+          {original.grade && (
+            <div>
+              <dt className="font-medium text-text-secondary">{SOCCER_DETAILS_WORDS.result}</dt>
+              <dd data-soccer-details-reading="result">
+                {/* The catalogue's own words: web's one settled vocabulary, or why there is no verdict. */}
+                <span className="text-base font-bold" data-soccer-details-grade="">
+                  {original.grade.words}
+                </span>
+                <span className="block text-text-secondary">{original.grade.provenance}</span>
+              </dd>
+            </div>
+          )}
+        </dl>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-text-secondary">
+          {original.about.source && (
+            <div className="contents">
+              <dt>{SOCCER_DETAILS_WORDS.venue}</dt>
+              <dd className="text-text-primary">{original.about.source}</dd>
+            </div>
+          )}
+          <div className="contents">
+            <dt>{SOCCER_DETAILS_WORDS.rules}</dt>
+            <dd>{original.about.rules}</dd>
+          </div>
+          {original.about.rows.map((row) => (
+            <div key={row.label} className="contents">
+              <dt>{row.label}</dt>
+              <dd className="break-all">{row.value}</dd>
+            </div>
+          ))}
+          {original.about.historical && (
+            <div className="contents">
+              <dt>{original.about.historical.label}</dt>
+              <dd className="break-words">{original.about.historical.value}</dd>
+            </div>
+          )}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
 // ─── The stream ────────────────────────────────────────────────────────────
 
-function CardBody({ card, held, hold, colors }: { card: SoccerStoryCard; held: Held; hold: Hold; colors: SoccerStoryColors }) {
+function CardBody({
+  card,
+  held,
+  hold,
+  colors,
+  details,
+}: {
+  card: SoccerStoryCard;
+  held: Held;
+  hold: Hold;
+  colors: SoccerStoryColors;
+  details: CardDetails | null;
+}) {
   switch (card.id) {
     case "goals":
-      return <GoalsCard card={card} held={held} hold={hold} />;
+      return <GoalsCard card={card} held={held} hold={hold} details={details} />;
     case "both":
-      return <BothCard card={card} held={held} hold={hold} />;
+      return <BothCard card={card} held={held} hold={hold} details={details} />;
     case "first":
-      return <FirstCard card={card} held={held} hold={hold} />;
+      return <FirstCard card={card} held={held} hold={hold} details={details} />;
     case "halves":
-      return <HalvesCard card={card} held={held} hold={hold} colors={colors} />;
+      return <HalvesCard card={card} held={held} hold={hold} colors={colors} details={details} />;
     case "exact":
-      return <ExactCard card={card} held={held} hold={hold} />;
+      return <ExactCard card={card} held={held} hold={hold} details={details} />;
     default:
       return null;
   }
 }
 
-/** The reader's place in one reading scope: the story they moved to, their held choices and the card open full size. */
+/** The reader's place in one reading scope: the story they moved to, their held choices, the card open full size and any open Details. */
 interface SoccerReading {
   scope: string;
   shownId: string | null;
@@ -1423,9 +1678,25 @@ interface SoccerReading {
   readerId: string | null;
   /** The last attempt could not open as a modal: the entry says so until a later attempt or a new scope. */
   readerUnavailable: boolean;
+  /** One original's open Details (over the reader's card, or alone from the page); null when none. Never writes `held`. */
+  details: SoccerOriginalDetails | null;
 }
 
-const freshReading = (scope: string): SoccerReading => ({ scope, shownId: null, held: {}, readerId: null, readerUnavailable: false });
+const freshReading = (scope: string): SoccerReading => ({
+  scope,
+  shownId: null,
+  held: {},
+  readerId: null,
+  readerUnavailable: false,
+  details: null,
+});
+
+/** Where "Back to card" returns: the Details control that opened, the reader body's scroll and each exact map's own pan. */
+interface BackPlace {
+  control: HTMLButtonElement;
+  top: number;
+  pans: Array<{ el: HTMLElement; left: number }>;
+}
 
 const STREAM_CONTROL =
   "min-h-11 rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand";
@@ -1436,6 +1707,7 @@ export default function SoccerMatchStories({
   readerContext = null,
   readerBlocked = false,
   onReaderOpenChange,
+  cardPass = null,
 }: {
   stream: SoccerStoryStream;
   colors?: SoccerStoryColors;
@@ -1445,17 +1717,23 @@ export default function SoccerMatchStories({
   readerBlocked?: boolean;
   /** Told when this stream's reader opens or a reader action closes it. A new scope closes it silently: the page applies the same rule. */
   onReaderOpenChange?: (open: boolean) => void;
+  /**
+   * The owner's card pass built on THIS render from the same inputs as `stream`
+   * (`buildSoccerCardPass`), already checked by the page against its model.
+   * Null (the default): no card offers Details. A pass for another scope reads as none.
+   */
+  cardPass?: SoccerCardPass | null;
 }) {
   const headingId = useId();
   const [stored, setStored] = useState<SoccerReading>(() => freshReading(stream.scope));
   // A new event or phase is a new reading: nothing of the old scope's story,
-  // choices or open reader survives (native stream scope,
+  // choices, open reader or Details survives (native stream scope,
   // "soccer:<event id>:<phase>"). A refresh in the same scope keeps every held
   // id, available or not. Adjusted while rendering, so no frame shows the old
   // scope's choices; no effect, timer or key.
   if (stored.scope !== stream.scope) setStored(freshReading(stream.scope));
   const reading = stored.scope === stream.scope ? stored : freshReading(stream.scope);
-  const { shownId, held, readerId, readerUnavailable } = reading;
+  const { shownId, held, readerId, readerUnavailable, details } = reading;
   const write = (change: (current: SoccerReading) => SoccerReading) =>
     setStored((prev) => change(prev.scope === stream.scope ? prev : freshReading(stream.scope)));
   const setShownId = (id: string) => write((current) => ({ ...current, shownId: id }));
@@ -1467,46 +1745,137 @@ export default function SoccerMatchStories({
   const previous = count > 1 ? cards[(index + count - 1) % count] : null;
   const next = count > 1 ? cards[(index + 1) % count] : null;
   const hold: Hold = (key, value) => write((current) => ({ ...current, held: { ...current.held, [key]: value } }));
+  // Only a pass serving this stream's scope offers or revalidates anything.
+  const pass = soccerDetailsPass(cardPass, stream.scope);
 
-  // ─── The full-size reader ─────────────────────────────────────────────
+  // ─── The full-size reader and the Details ─────────────────────────────
   const readerOpen = readerId !== null;
-  // While any reader of the page is open, the page stream rests (native StoryStream L178).
-  const resting = readerOpen || readerBlocked;
+  const detailsOpen = details !== null;
+  // While any reader or Details of the page is open, the page stream rests (native StoryStream L178).
+  const resting = readerOpen || detailsOpen || readerBlocked;
   const section = useRef<HTMLElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
+  const detailsOpener = useRef<HTMLButtonElement | null>(null);
+  /** Which page control the shell's close returns to: "Open full card", or the compact Details control. */
+  const returnFrom = useRef<"reader" | "details">("reader");
   const openedIn = useRef<string | null>(null);
   const scopeNow = useRef(stream.scope);
+  /** The full-size card's own box inside the reader body (kept mounted, hidden, under Details). */
+  const readerCardBox = useRef<HTMLDivElement>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const backPlace = useRef<BackPlace | null>(null);
+  const restorePlace = useRef<BackPlace | null>(null);
+  const enteringDetails = useRef(false);
   useIsomorphicLayoutEffect(() => {
     scopeNow.current = stream.scope;
   });
   const openReader = (id: string) => {
     if (resting) return;
     openedIn.current = stream.scope;
+    returnFrom.current = "reader";
     write((current) => ({ ...current, readerId: id, readerUnavailable: false }));
     onReaderOpenChange?.(true);
   };
   const moveReader = (id: string) => write((current) => ({ ...current, readerId: id }));
+  const forgetPlaces = () => {
+    backPlace.current = null;
+    restorePlace.current = null;
+    enteringDetails.current = false;
+  };
+  // The shell's Close / Escape (and the owner's): the WHOLE view goes, Details and reader together.
   const closeReader = () => {
-    write((current) => ({ ...current, readerId: null }));
+    forgetPlaces();
+    write((current) => ({ ...current, readerId: null, details: null }));
     onReaderOpenChange?.(false);
   };
-  // No modal, no reader: drop the attempt (the stream and the page's entries come back) and say so by the entry.
+  // No modal, no reader and no Details: drop the attempt (the stream and the page's entries come back) and say so by the entry.
   const readerFailed = () => {
-    write((current) => ({ ...current, readerId: null, readerUnavailable: true }));
+    forgetPlaces();
+    write((current) => ({ ...current, readerId: null, details: null, readerUnavailable: true }));
     onReaderOpenChange?.(false);
   };
-  // Back to the opener only in the scope it opened in; else this match's surviving entry.
+  // Back to the control that opened, only in the scope it opened in; else this match's surviving entry.
   const readerReturn = () => {
-    const own = opener.current;
+    const own = returnFrom.current === "details" ? detailsOpener.current : opener.current;
     if (openedIn.current === scopeNow.current && own?.isConnected && !own.disabled) return own;
     return soccerReaderEntry(section.current, "story");
   };
+  /** A tap on a selected readout's Details: the bridge token and a frozen copy of this pass's original. */
+  const openDetails = (entry: "page" | "reader", opened: SoccerCardOpened, from: HTMLButtonElement) => {
+    const view = openSoccerDetails(stream.scope, entry, opened, pass);
+    if (entry === "page") {
+      if (resting) return;
+      openedIn.current = stream.scope;
+      returnFrom.current = "details";
+      detailsOpener.current = from;
+      write((current) => ({ ...current, details: view, readerUnavailable: false }));
+      onReaderOpenChange?.(true);
+      return;
+    }
+    if (!readerOpen || detailsOpen) return;
+    // The reader's place, read through the card's own box and its closest reader body only.
+    const box = readerCardBox.current;
+    const body = box?.closest<HTMLElement>("[data-soccer-reader-body]") ?? null;
+    backPlace.current = {
+      control: from,
+      top: body?.scrollTop ?? 0,
+      pans: box ? Array.from(box.querySelectorAll<HTMLElement>("[data-exact-scroller]")).map((el) => ({ el, left: el.scrollLeft })) : [],
+    };
+    enteringDetails.current = true;
+    write((current) => ({ ...current, details: view }));
+  };
+  /** "Back to card": a local content action, never the shell's close. */
+  const backToCard = () => {
+    restorePlace.current = backPlace.current;
+    backPlace.current = null;
+    write((current) => ({ ...current, details: null }));
+  };
+  const refreshDetails = () => write((current) => (current.details ? { ...current, details: refreshSoccerDetails(current.details, pass) } : current));
+
+  // After each content switch commits: Details start at the top with focus on
+  // "Back to card"; Back restores each exact map's pan, the reader body's
+  // scroll and focus on the Details control (else the card's own box, so focus
+  // stays in this modal), all without scrolling anything else.
+  useIsomorphicLayoutEffect(() => {
+    if (!readerOpen) {
+      forgetPlaces();
+      return;
+    }
+    if (details?.entry === "reader" && enteringDetails.current) {
+      enteringDetails.current = false;
+      const body = backButton.current?.closest<HTMLElement>("[data-soccer-reader-body]");
+      if (body) body.scrollTop = 0;
+      backButton.current?.focus({ preventScroll: true });
+      return;
+    }
+    const place = restorePlace.current;
+    const box = readerCardBox.current;
+    if (details || !place || !box) return;
+    restorePlace.current = null;
+    for (const { el, left } of place.pans) if (el.isConnected && box.contains(el) && el.scrollLeft !== left) el.scrollLeft = left;
+    const body = box.closest<HTMLElement>("[data-soccer-reader-body]");
+    if (body) body.scrollTop = place.top;
+    const control = place.control;
+    (control.isConnected && box.contains(control) && !control.disabled ? control : box).focus({ preventScroll: true });
+  });
+
   // Exact id, exactly once, against this render's cards: never another card, never a copy.
   const readerSelection = selectExactlyOnce(cards, readerId);
   const readerCard = chosenRow(readerSelection);
   const readerIndex = readerCard ? cards.indexOf(readerCard) : -1;
   const readerPrevious = readerCard && count > 1 ? cards[(readerIndex + count - 1) % count] : null;
   const readerNext = readerCard && count > 1 ? cards[(readerIndex + 1) % count] : null;
+  const detailsStatus = details ? soccerDetailsStatus(details, pass) : null;
+  const detailsCard = details ? cards.find((c) => c.id === details.card) ?? null : null;
+  const pageDetails: CardDetails | null = pass ? { pass, resting, open: (opened, from) => openDetails("page", opened, from) } : null;
+  const readerDetails: CardDetails | null = pass ? { pass, resting: detailsOpen, open: (opened, from) => openDetails("reader", opened, from) } : null;
+  const title = details
+    ? details.kind === "snapshot"
+      ? details.frozen.label
+      : (detailsCard?.name ?? stream.heading)
+    : readerCard
+      ? readerCard.name
+      : stream.heading;
 
   return (
     <section ref={section} aria-labelledby={headingId} aria-roledescription="story stream" className="space-y-3" data-soccer-stories={count}>
@@ -1526,7 +1895,7 @@ export default function SoccerMatchStories({
       {card ? (
         // Pixel padding: the same 12 px as before at normal text, and no wider at enlarged text, so the words keep the room.
         <div className="rounded-lg border border-surface-border p-[12px]">
-          <CardBody card={card} held={held} hold={hold} colors={colors} />
+          <CardBody card={card} held={held} hold={hold} colors={colors} details={pageDetails} />
         </div>
       ) : (
         <p className="rounded-lg bg-surface-deep p-3 text-sm text-text-secondary">{stream.emptyWords}</p>
@@ -1565,29 +1934,55 @@ export default function SoccerMatchStories({
         </nav>
       )}
 
-      {readerOpen && (
+      {/* ONE shell: the full-size card, its Details as a content mode of the same dialog, or Details alone from the page. */}
+      {(readerOpen || detailsOpen) && (
         <SoccerMatchReader
           kind="story"
-          title={readerCard ? readerCard.name : stream.heading}
-          position={readerCard && count > 1 ? `${readerIndex + 1} of ${count}` : null}
+          title={title}
+          position={!details && readerCard && count > 1 ? `${readerIndex + 1} of ${count}` : null}
           context={readerContext}
-          previous={readerPrevious && { name: readerPrevious.name, go: () => moveReader(readerPrevious.id) }}
-          next={readerNext && { name: readerNext.name, go: () => moveReader(readerNext.id) }}
+          previous={!details && readerPrevious ? { name: readerPrevious.name, go: () => moveReader(readerPrevious.id) } : null}
+          next={!details && readerNext ? { name: readerNext.name, go: () => moveReader(readerNext.id) } : null}
           navLabel={stream.storiesLabel}
           onClose={closeReader}
           onUnavailable={readerFailed}
           returnTo={readerReturn}
         >
-          {readerCard ? (
-            <CardBody card={readerCard} held={held} hold={hold} colors={colors} />
-          ) : (
-            <p
-              className="rounded-md bg-surface-deep p-2 text-sm font-semibold text-text-primary"
-              data-soccer-reader-unavailable={readerSelection.kind === "unavailable" ? readerSelection.reason : "missing"}
+          {readerOpen ? (
+            // Kept mounted under Details, so the card's own state survives; hidden, so none of it is focusable or read.
+            <div
+              ref={readerCardBox}
+              tabIndex={-1}
+              hidden={detailsOpen}
+              data-soccer-reader-card=""
+              className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
             >
-              {SOCCER_READER_WORDS.storyUnavailable}
-            </p>
-          )}
+              {readerCard ? (
+                <CardBody card={readerCard} held={held} hold={hold} colors={colors} details={readerDetails} />
+              ) : (
+                <p
+                  className="rounded-md bg-surface-deep p-2 text-sm font-semibold text-text-primary"
+                  data-soccer-reader-unavailable={readerSelection.kind === "unavailable" ? readerSelection.reason : "missing"}
+                >
+                  {SOCCER_READER_WORDS.storyUnavailable}
+                </p>
+              )}
+            </div>
+          ) : null}
+          {details && detailsStatus ? (
+            <SoccerOriginalDetailsBody
+              details={details}
+              status={detailsStatus}
+              onRefresh={refreshDetails}
+              back={
+                details.entry === "reader" ? (
+                  <button ref={backButton} type="button" onClick={backToCard} className={`${STREAM_CONTROL} w-full sm:w-auto`} data-soccer-details-back="">
+                    {SOCCER_DETAILS_WORDS.back}
+                  </button>
+                ) : null
+              }
+            />
+          ) : null}
         </SoccerMatchReader>
       )}
     </section>

@@ -29,12 +29,22 @@
  * the entry says the full-size view is unavailable (until a later attempt
  * opens or the scope changes).
  *
+ * ORIGINAL DETAILS (#10868 four-path admission 0a47ebcf): the optional
+ * `cardPass` is the owner's `buildSoccerCardPass` result built on THIS render
+ * from the same inputs as `match`. It reaches the story stream only when it
+ * belongs to this model (`soccerCardPassFor`: this event, phase and stream
+ * scope, and this model's own originals catalogue object); any other pass, or
+ * none (the default), offers no card Details. Nothing here builds, fetches or
+ * caches a pass.
+ *
  * Accessibility: headings in document order, real buttons, labelled values,
  * no motion, layouts that wrap at 375 px and at 200% text.
  */
 
 import { useId, useRef, useState } from "react";
 import type { SoccerMatchViewModel } from "@/lib/eventPage10868/soccerMatch";
+import type { SoccerCardPass } from "@/lib/eventPage10868/soccerCardOriginals";
+import { soccerCardPassFor } from "@/lib/eventPage10868/soccerOriginalDetails";
 import type { SoccerMatchHeader, SoccerMatchScore, SoccerSlot } from "@/lib/eventPage10868/soccerMatchTypes";
 import { teamColorStyle } from "@/lib/teamColors";
 import SoccerMatchHeadline from "./SoccerMatchHeadline";
@@ -89,7 +99,14 @@ interface SoccerPageReaders {
 
 const closedReaders = (scope: string): SoccerPageReaders => ({ scope, history: false, story: false, historyUnavailable: false });
 
-export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel }) {
+export default function SoccerMatchPage({
+  match,
+  cardPass = null,
+}: {
+  match: SoccerMatchViewModel;
+  /** The owner's card pass for THIS model and render; null (the default) hides every card's Details. */
+  cardPass?: SoccerCardPass | null;
+}) {
   const headingId = useId();
   const { header, headline } = match;
   const [home, , away] = headline.outcomes;
@@ -223,6 +240,7 @@ export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel
         readerContext={readerContext}
         readerBlocked={readers.history}
         onReaderOpenChange={(open) => setReaders({ story: open })}
+        cardPass={soccerCardPassFor(cardPass, match)}
       />
 
       <HockeyJourneyAllProps originals={match.originals} entryLabel={match.copy.allPropsLabel} />
