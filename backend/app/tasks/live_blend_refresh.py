@@ -9920,8 +9920,17 @@ class LiveBlendRefresher:
         value = round(reading.home_probability, 4)
         bag = (getattr(event, "win_probability_sources", None) or {}).get(self.source)
         stored = bag.get("value") if isinstance(bag, dict) else None
-        if self._last_written_value.get(event_id) == value or (
-                isinstance(stored, (int, float)) and round(stored, 4) == value):
+        written = self._last_written_value.get(event_id)
+        ours = preview.pending_entry(event_id, self.source)
+        if (written == value or (written is None and isinstance(stored, (int, float))
+                                 and round(stored, 4) == value)) and not getattr(
+                                     ours, "at_receipt", False):
+            # #10090 11/01 19:16Z: only with no receipt preview of ours showing.
+            # Retiring one sends the screen to whatever the ledger's committed
+            # bag holds, which can be OLDER than this process's view (a stamp
+            # from a stale read): Bengals-Titans showed the old 0.675 for 8.5 s
+            # while Polymarket and this composition said 0.685. With one
+            # showing, the composed value is proposed over it instead.
             # Back at the stored value: retire any receipt preview so the page
             # shows the committed one. Records nothing, so the #5661 restamp
             # gate below (which refuses re-dating an unchanged value) does not

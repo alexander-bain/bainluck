@@ -867,10 +867,11 @@ async def test_a_wide_book_on_a_headline_leg_still_takes_the_preview_back(r):
     assert (settle["reason"], settle["through"]) == ("withdrawn", opened["local_seq"])
 
 
-async def test_back_at_the_committed_bag_value_retires_the_preview_after_a_restart(r):
-    """11/01 18:50Z: after a restart (no memory of its own writes) inputs that
-    composed back to the stored number waited 26-29 s as na_basis."""
-    assert not r._last_written_value
+async def test_back_at_the_stored_value_with_our_preview_showing_proposes_over_it(r):
+    """11/01 19:16Z: retiring our receipt preview sent the screen to the
+    ledger's committed bag, which held an OLDER number (Bengals-Titans showed
+    0.675 for 8.5 s while Polymarket and the composition said 0.685). With a
+    receipt preview of ours showing, the composed value replaces it."""
     read(r, event(), legs())  # the committed bag holds polymarket 0.46
     receive(r, 0.48)
     await drained(r)
@@ -879,8 +880,19 @@ async def test_back_at_the_committed_bag_value_retires_the_preview_after_a_resta
     receive(r, 0.46)
     await drained(r)
 
-    [settle] = ops(r.sent, "settle")
-    assert (settle["reason"], settle["through"]) == ("returned", opened["local_seq"])
+    assert ops(r.sent, "settle") == []
+    assert [op["value"] for op in ops(r.sent, "propose")] == [0.48, 0.46]
+
+
+async def test_after_a_restart_an_input_at_the_stored_value_is_on_screen_at_once(r):
+    """11/01 18:50Z: after a restart (no memory of its own writes) inputs that
+    composed to the stored number waited 26-29 s as na_basis."""
+    assert not r._last_written_value
+    read(r, event(), legs())  # the committed bag holds polymarket 0.46
+    receive(r, 0.46)
+    await drained(r)
+
+    assert ops(r.sent, "propose") == [] and ops(r.sent, "settle") == []
     assert EV not in r._hl_pending
 
 
