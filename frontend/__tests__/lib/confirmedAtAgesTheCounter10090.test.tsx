@@ -193,3 +193,38 @@ describe("#10090 J=A the tap details", () => {
     ).toBe(today);
   });
 });
+
+describe('#10090 heartbeat activity_at (the EKG pulse)', () => {
+  test('reads a parseable activity_at and nothing else', () => {
+    const { heartbeatActivityAt } = jest.requireActual('@/lib/liveStreamController');
+    const iso = '2026-11-01T21:20:00.123+00:00';
+    expect(heartbeatActivityAt(JSON.stringify({ t: iso, confirmed_at: null, activity_at: iso }))).toBe(iso);
+    expect(heartbeatActivityAt(JSON.stringify({ t: iso, confirmed_at: iso }))).toBeNull();
+    expect(heartbeatActivityAt(JSON.stringify({ activity_at: 'soon' }))).toBeNull();
+    expect(heartbeatActivityAt('not json')).toBeNull();
+  });
+});
+
+describe("#10090 the controller reports activity_at as transport only", () => {
+  it("a heartbeat with activity_at reaches onActivityAt, never onConfirmedAt", () => {
+    const source = new FakeSource();
+    const frames: unknown[] = [];
+    const confirmed: string[] = [];
+    const activity: string[] = [];
+    const controller = createLiveStreamController({
+      open: () => source,
+      now: () => 0,
+      onFrame: (f) => frames.push(f),
+      onDeliveringChange: () => undefined,
+      onConfirmedAt: (at) => confirmed.push(at),
+      onActivityAt: (at) => activity.push(at),
+    });
+    controller.start();
+    source.emit("open");
+    source.emit("heartbeat", JSON.stringify({ t: 1, confirmed_at: null, activity_at: CONFIRMED }));
+    expect(activity).toEqual([CONFIRMED]);
+    expect(confirmed).toEqual([]);
+    expect(frames).toEqual([]);
+    controller.stop();
+  });
+});

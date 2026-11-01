@@ -205,3 +205,39 @@ describe('#10090 EKG — which pages draw it (decision 66: ON for live games)', 
     expect(ekgDraws({ ...live, terminalLabel: 'Finished' })).toBe(false);
   });
 });
+
+// Alex 2026-11-01: "pulsing the ekg every time we see a trade from kalshi, pm,
+// or an update from any of our other sources" — the stream's `activity_at`.
+describe('#10090 EKG — every venue report pulses it', () => {
+  test('an advancing activity_at beats while the price and agreement hold still', () => {
+    let t = mounted();
+    t = stepEkgTracker(t, obs({ activityAt: at(3) }), ms(3));
+    expect(t.beats).toBe(1);
+    t = stepEkgTracker(t, obs({ activityAt: at(5) }), ms(5));
+    expect(t.beats).toBe(2);
+    expect(presentEkg(t, 'open', ms(6)).mode).toBe('beating');
+  });
+
+  test('the same activity_at again is no beat, and bursts still coalesce', () => {
+    let t = mounted();
+    t = stepEkgTracker(t, obs({ activityAt: at(3) }), ms(3));
+    t = stepEkgTracker(t, obs({ activityAt: at(3) }), ms(4));
+    expect(t.beats).toBe(1);
+    t = stepEkgTracker(t, obs({ activityAt: at(3.5) }), ms(3.5));
+    expect(t.beats).toBe(1);
+    expect(t.lastSignalAt).toBe(ms(3.5));
+  });
+
+  test('activity heard while the transport is down is recorded silently', () => {
+    let t = mounted();
+    t = stepEkgTracker(t, obs({ status: 'retrying', activityAt: at(3) }), ms(3));
+    expect(t.beats).toBe(0);
+    expect(t.activityAt).toBe(ms(3));
+  });
+
+  test('the mount takes its activity_at as the baseline, not a beat', () => {
+    const t = stepEkgTracker(EMPTY_EKG_TRACKER, obs({ activityAt: at(0) }), ms(0));
+    expect(t.beats).toBe(0);
+    expect(stepEkgTracker(t, obs({ activityAt: at(0) }), ms(1)).beats).toBe(0);
+  });
+});

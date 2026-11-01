@@ -140,6 +140,12 @@ interface UseLiveEventStreamResult {
    * that window is kept and claimed once a committed revision covers it.
    */
   confirmedAt: string | null;
+  /**
+   * #10090 (Alex 2026-11-01) — the newest heartbeat `activity_at` for this
+   * event: a venue reported in, whatever it agreed with. The EKG pulse only;
+   * never a price's age. Null from an old server.
+   */
+  activityAt: string | null;
 }
 
 export function useLiveEventStream(
@@ -174,6 +180,9 @@ export function useLiveEventStream(
   }>({ statusEventId: eventId, status: 'idle' });
   const [recovery, setRecovery] = useState({ eventId, ordinal: 0 });
   const [confirmed, setConfirmed] = useState<{ eventId: number | undefined; at: string | null }>({
+    eventId, at: null,
+  });
+  const [activity, setActivity] = useState<{ eventId: number | undefined; at: string | null }>({
     eventId, at: null,
   });
   // #10090 J C1: the commit floors announced for this event, max per row, the
@@ -379,6 +388,13 @@ export function useLiveEventStream(
             : { eventId, at }
         ));
       },
+      onActivityAt: (at) => {
+        if (mounted.current) setActivity(previous => (
+          previous.eventId === eventId && previous.at !== null && Date.parse(previous.at) >= Date.parse(at)
+            ? previous
+            : { eventId, at }
+        ));
+      },
       // #10090: the reopen after a server-directed rollover fires at its own
       // deadline rather than at the next 5 s tick. The controller cancels it on
       // `stop()` below, and a deadline that outlives its rollover opens nothing.
@@ -434,6 +450,7 @@ export function useLiveEventStream(
     confirmedAt: enabled && confirmed.eventId === eventId
       && !confirmationOwed(gate.eventId === eventId ? gateFloors : {}, authoritativeMembership)
       ? confirmed.at : null,
+    activityAt: enabled && activity.eventId === eventId ? activity.at : null,
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.
     status: statusEventId === eventId ? status : enabled ? 'connecting' : 'idle',

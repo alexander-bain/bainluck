@@ -102,10 +102,11 @@ describe("#10090 the page wiring (pinned by text)", () => {
     // Alex 67: the heartbeat sits inside the tap-for-times button.
     expect(PAGE).toMatch(/\{ekgShowing \? \(\s*<div[^>]*data-testid="ekg-row">\s*<EkgTimesButton \{\.\.\.connectionTimes\}>\s*<EkgHeartbeat tracker=\{ekgTrackerRef\.current\} status=\{streamStatus\} \/>/);
   });
-  test("the tracker is fed the hook's confirmedAt and the ACCEPTED price clock", () => {
+  test("the tracker is fed the hook's confirmedAt, the ACCEPTED price clock and activityAt", () => {
     expect(PAGE).toContain(
-      "{ eventId, status: streamStatus, confirmedAt: streamConfirmedAt, priceObservedAt: acceptedPriceClock }",
+      "eventId, status: streamStatus, confirmedAt: streamConfirmedAt, priceObservedAt: acceptedPriceClock,\n      activityAt: streamActivityAt,",
     );
+    expect(PAGE).toContain("activityAt: streamActivityAt,\n    chartPoints,");
   });
   test("the opt-in hook is called before the page's first conditional return", () => {
     const hook = PAGE.indexOf("useEkgOptIn();");

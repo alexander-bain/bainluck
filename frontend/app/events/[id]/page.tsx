@@ -626,6 +626,8 @@ export default function EventPage({ params }: EventPageProps) {
     blendPreviewNow,
     // #10090 decision J = A: ages the "seconds ago" only (`priceAgeClock`).
     confirmedAt: streamConfirmedAt,
+    // #10090 (Alex 2026-11-01): a venue reported in — the EKG pulse only.
+    activityAt: streamActivityAt,
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
@@ -2465,11 +2467,15 @@ export default function EventPage({ params }: EventPageProps) {
     },
     Date.now(),
   );
-  // #10090 — the heartbeat beats on the same accepted clock, or on the
-  // stream's `confirmed_at` advancing; nothing else (`lib/event/ekgHeartbeat`).
+  // #10090 — the heartbeat beats on the same accepted clock, on the stream's
+  // `confirmed_at` advancing, or on its `activity_at` (a venue reported in);
+  // nothing else (`lib/event/ekgHeartbeat`).
   ekgTrackerRef.current = stepEkgTracker(
     ekgTrackerRef.current,
-    { eventId, status: streamStatus, confirmedAt: streamConfirmedAt, priceObservedAt: acceptedPriceClock },
+    {
+      eventId, status: streamStatus, confirmedAt: streamConfirmedAt, priceObservedAt: acceptedPriceClock,
+      activityAt: streamActivityAt,
+    },
     Date.now(),
   );
   const ekgVisible = ekgDraws({ optIn: ekgOptIn, quoteEligible, isLive, terminalLabel: connectionTerminalLabel });

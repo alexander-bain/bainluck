@@ -91,6 +91,19 @@ export interface StreamHandle {
  * that is not a parseable time all read as no confirmation.
  */
 export function heartbeatConfirmedAt(raw: unknown): string | null {
+  return heartbeatClock(raw, 'confirmed_at');
+}
+
+/**
+ * #10090 (Alex 2026-11-01) — the `activity_at` a heartbeat carries, or null:
+ * the newest venue input for the event, WHATEVER it agreed with. It feeds the
+ * EKG pulse only and must never age or date a price (`confirmed_at` does that).
+ */
+export function heartbeatActivityAt(raw: unknown): string | null {
+  return heartbeatClock(raw, 'activity_at');
+}
+
+function heartbeatClock(raw: unknown, key: 'confirmed_at' | 'activity_at'): string | null {
   let body: unknown = raw;
   if (typeof raw === 'string') {
     try {
@@ -100,7 +113,7 @@ export function heartbeatConfirmedAt(raw: unknown): string | null {
     }
   }
   if (!body || typeof body !== 'object') return null;
-  const value = (body as { confirmed_at?: unknown }).confirmed_at;
+  const value = (body as Record<string, unknown>)[key];
   return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
 }
 
@@ -141,6 +154,11 @@ export interface LiveStreamDeps {
    * and touches no clock, cursor or status here.
    */
   onConfirmedAt?: (confirmedAt: string) => void;
+  /**
+   * #10090 (Alex 2026-11-01) — the heartbeat's `activity_at`: a venue reported
+   * in. The EKG pulse only; touches no clock, cursor or status here.
+   */
+  onActivityAt?: (activityAt: string) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -544,8 +562,11 @@ export function createLiveStreamController(
       // the web subscriber emits it regardless — which is exactly how a dead
       // `worker-ws` kept polling switched off behind a frozen number.
       lastMessageAt = now();
-      const confirmedAt = heartbeatConfirmedAt((event as { data?: unknown })?.data);
+      const data = (event as { data?: unknown })?.data;
+      const confirmedAt = heartbeatConfirmedAt(data);
       if (confirmedAt !== null) deps.onConfirmedAt?.(confirmedAt);
+      const activityAt = heartbeatActivityAt(data);
+      if (activityAt !== null) deps.onActivityAt?.(activityAt);
     });
 
     // The match ended. Terminal: the caller refetches once and settles the page
