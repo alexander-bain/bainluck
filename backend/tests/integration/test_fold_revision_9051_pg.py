@@ -243,9 +243,9 @@ class TestTheRevisionIsTheDatabasesCommitOrder:
         before_value, before, _ = await _fold(Session)
         assert before == {str(CANON): 0, str(TWIN): 0}
         # RESTATED for #10764: the live hero is the capped weighted AVERAGE of
-        # PM 0.4, espn 0.8, kalshi 0.8 at one shared stamp (0.67); the median
+        # PM 0.4, espn 0.8, kalshi 0.8 at one shared stamp (0.66 under decision D; 0.67 before); the median
         # read 0.8. The revision ordering below is what this test is about.
-        assert before_value == pytest.approx(0.67)
+        assert before_value == pytest.approx(0.66)
 
         await _drop_source(Session, CANON, "espn")
         mid_value, mid, _ = await _fold(Session)
