@@ -102,6 +102,9 @@ import soccerFixtures from "./soccerMatch10868.fixtures.json";
 import { buildSoccerMatch, type SoccerMatchAdmission } from "@/lib/eventPage10868/soccerMatch";
 import SoccerMatchPage from "@/components/event/eventpage10868/SoccerMatchPage";
 import SoccerMatchStories from "@/components/event/eventpage10868/SoccerMatchStories";
+import mlbFixtures from "./mlbGame10868.fixtures.json";
+import { buildMlbGame } from "@/lib/eventPage10868/mlbGame";
+import MlbGamePage from "@/components/event/eventpage10868/MlbGamePage";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 
@@ -377,6 +380,44 @@ function soccerMatch(hit: boolean) {
 }
 
 /**
+ * #10868 — the MLB game screen, core checkpoint: one finished game (15321836,
+ * White Sox 7–3 Astros, the REAL retained subset in `mlbGame10868.fixtures.json`).
+ * CONSTRUCTED forced admission: EVERY served market row's settlement is forced
+ * one way (`is_winner` and `hit` together, with `resolution_source:
+ * "api_settlement"`) and nothing else changes, so the pair differs by All
+ * props' verdict words alone. CONSTRUCTED host: the capture's retrieval
+ * instant, the displayed pair equal to the row (3–7), no hero, no projection,
+ * delivery and live claim answered explicitly. The forced pair's non-vacuity is
+ * checked in `mlbGame10868.test.ts` ("the census pair").
+ */
+const MLB_FINAL_NOW = Date.parse("2026-10-11T04:57:23.592725Z");
+function mlbGame(hit: boolean) {
+  const markets = JSON.parse(JSON.stringify(mlbFixtures.finalMarkets)) as Record<string, unknown>;
+  for (const key of ["totals", "spreads", "team_totals", "period_markets", "player_props", "other"]) {
+    markets[key] = ((markets[key] as Array<Record<string, unknown>> | undefined) ?? []).map((row) => ({
+      ...row,
+      is_winner: hit,
+      hit,
+      resolution_source: "api_settlement",
+    }));
+  }
+  return buildMlbGame({
+    event: mlbFixtures.finalDetail as unknown as EventDetailResponse,
+    history: mlbFixtures.finalHistory as unknown as EventHistoryResponse,
+    gameMarkets: markets as unknown as GameMarketsResponse,
+    host: {
+      nowMs: MLB_FINAL_NOW,
+      hero: null,
+      probabilityObservedAt: null,
+      deliveryInterrupted: false,
+      liveClaimUnbacked: false,
+      score: { home: 3, away: 7, observedAt: null },
+      projectedFinal: null,
+    },
+  });
+}
+
+/**
  * EVERY component that can state a settled prop verdict. Not hand-maintained:
  * `enrolment` below proves this list covers the transitive closure.
  */
@@ -556,6 +597,11 @@ const SURFACES: Surface[] = [
   {
     file: `${HOCKEY}/SoccerMatchPage.tsx`,
     render: (hit) => renderToStaticMarkup(<SoccerMatchPage match={soccerMatch(hit)} />),
+  },
+  // #10868 — the MLB game screen (core checkpoint): it states verdicts only through All props.
+  {
+    file: `${HOCKEY}/MlbGamePage.tsx`,
+    render: (hit) => renderToStaticMarkup(<MlbGamePage model={mlbGame(hit)} />),
   },
 ];
 
