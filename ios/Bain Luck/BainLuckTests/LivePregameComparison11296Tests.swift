@@ -699,7 +699,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
         // control, no second popover.
         XCTAssertEqual(occurrences("FreshnessRevealView(", in: page), 1)
         XCTAssertTrue(page.contains(
-            "FreshnessRevealView(status:vm.liveUpdateStatus,lastReceivedAt:vm.priceActivity?.receivedAt,confidenceTier:confidenceTier,forecast:revealForecast11296)"))
+            "FreshnessRevealView(status:vm.liveUpdateStatus,lastReceivedAt:vm.priceActivity?.receivedAt,confirmedAt:vm.event.flatMap{vm.displayedConfirmation($0)},confidenceTier:confidenceTier,forecast:revealForecast11296)"))
         XCTAssertEqual(occurrences("LiveForecastDetails11296(", in: page), 0, "only inside the popover")
         // #11703 adds two writes of the SAME state: it closes when its page is
         // covered (a link pushed another game) or changes game.
