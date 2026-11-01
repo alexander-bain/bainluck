@@ -126,6 +126,7 @@ the next tick rather than overlapping it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -389,16 +390,36 @@ def _pm_props_sql(window_sql: str) -> str:
 
     if not props_to_poll_enabled():
         return ""
+    # 11/01 17:35Z: planned from futures_markets this read took ~3 s (an index
+    # scan of every open Polymarket market under the JSON refusal). The window's
+    # events are a few hundred: a superset of them by index first, then the
+    # socket's exact predicate and the refusal on their markets only.
     return f"""
+        props_events AS MATERIALIZED (
+            SELECT e.id
+              FROM events e
+             WHERE e.status IN ('live', 'suspended')
+                OR (e.status = 'scheduled'
+                    AND e.commence_time >= NOW() - INTERVAL '{int(SLATE_SUPERSET_PAST_HOURS)} hours'
+                    AND e.commence_time <= NOW() + INTERVAL '{int(SLATE_SUPERSET_AHEAD_HOURS)} hours')
+        ),
         props AS MATERIALIZED (
             SELECT fm.id
-              FROM events e
+              FROM props_events pe
+              JOIN events e ON e.id = pe.id
               JOIN futures_markets fm ON fm.event_id = e.id
              WHERE fm.status = 'open'
                AND fm.source = 'polymarket'
                AND COALESCE({window_sql}, FALSE)
                AND {PM_VENUE_LABEL_REFUSAL_SQL}
         ),"""
+
+
+#: The props arm's event superset bounds: at least the socket window's own
+#: (scheduled from 24 h ago — the slate floor — to at most 6 h ahead, the
+#: settings' ceiling). A guard test pins both against the window.
+SLATE_SUPERSET_PAST_HOURS = 24
+SLATE_SUPERSET_AHEAD_HOURS = 6
 
 
 #: ``polymarket_open_contracts.venue_label_refusal_clause`` written out with the
@@ -560,6 +581,14 @@ async def load_population(
         sql = kalshi_population_sql(_kalshi_open_arm())
     else:
         sql = polymarket_population_sql(_polymarket_open_arm())
+    shared = _read_shared_population(venue, sql)
+    if shared is not None:
+        age, rows = shared
+        stats["population_cached"] = "shared"
+        stats["population_age_s"] = round(age, 1)
+        units = build_units(venue, rows)
+        _POPULATION[venue] = (now_mono - age, units)
+        return units
     started = time.monotonic()
     try:
         rows = (
@@ -583,7 +612,57 @@ async def load_population(
     _POPULATION_FAILS.pop(venue, None)
     units = build_units(venue, rows)
     _POPULATION[venue] = (now_mono, units)
+    _store_shared_population(venue, sql, rows)
     return units
+
+
+def _shared_population_key(venue: str, sql: str) -> str:
+    """Keyed by the statement itself: a changed scope (a switch, a window) is a
+    different statement and never reads another's population."""
+    import hashlib
+
+    return f"{_KEY_PREFIX}:{venue}:population:{hashlib.sha1(sql.encode()).hexdigest()[:16]}"
+
+
+def _read_shared_population(venue: str, sql: str):
+    """``(age_s, rows)`` another worker process read under this statement less
+    than ``POPULATION_TTL_S`` ago, else None.
+
+    #10090 (11/01 17:32-17:35Z): every pass re-ran the population read (6-12 s
+    of a 24 s pass, `population_cached` False on each): the prefork children
+    each held their own copy, and the 200 MB child recycle dropped it. Never
+    raises: anything unreadable is a miss.
+    """
+    try:
+        raw = _redis().get(_shared_population_key(venue, sql))
+        if raw is None:
+            return None
+        try:
+            import orjson
+
+            body = orjson.loads(raw)
+        except ImportError:
+            body = json.loads(raw)
+        age = time.time() - float(body["at"])
+        if not 0 <= age < POPULATION_TTL_S:
+            return None
+        return age, [tuple(row) for row in body["rows"]]
+    except Exception:  # noqa: BLE001 — a miss reads the database, as before
+        return None
+
+
+def _store_shared_population(venue: str, sql: str, rows) -> None:
+    try:
+        payload = {"at": time.time(), "rows": [list(row) for row in rows]}
+        try:
+            import orjson
+
+            raw = orjson.dumps(payload)
+        except ImportError:
+            raw = json.dumps(payload)
+        _redis().set(_shared_population_key(venue, sql), raw, ex=int(POPULATION_TTL_S))
+    except Exception as exc:  # noqa: BLE001 — the process copy still serves
+        logger.warning("venue_poll_30s: population not shared for %s: %s", venue, exc)
 
 
 def population_binds(shown_ids: list[int]) -> dict:
