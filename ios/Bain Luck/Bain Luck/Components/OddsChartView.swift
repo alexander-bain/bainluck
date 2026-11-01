@@ -523,6 +523,9 @@ struct OddsChartView: View {
     var refreshStreaming: Bool = false
     var liveUpdateStatus: LiveUpdateStatus = .hidden
     var priceActivity: LivePriceActivity?
+    /// #10090 C2 — the hero prints a preview, so the tip's number is that
+    /// preview's and `priceActivity` (committed moves) does not describe it.
+    var liveEdgeShowsPreview: Bool = false
     /// #9436 — the hero's current home number, for the dot at the live edge.
     /// Nil off a live page.
     var liveEdge: LiveEdgeReading?
@@ -844,6 +847,7 @@ struct OddsChartView: View {
          refreshStreaming: Bool = false,
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
+         liveEdgeShowsPreview: Bool = false,
          liveEdge: LiveEdgeReading? = nil,
          quoteIsCurrent: Bool = true,
          pairedAwayLabel9483: String? = nil,
@@ -878,6 +882,7 @@ struct OddsChartView: View {
         self.refreshStreaming = refreshStreaming
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
+        self.liveEdgeShowsPreview = liveEdgeShowsPreview
         self.liveEdge = liveEdge
         self.quoteIsCurrent = quoteIsCurrent
         self.pairedAwayLabel9483 = pairedAwayLabel9483
@@ -895,6 +900,13 @@ struct OddsChartView: View {
         _selectedRange = selectedRange
         _selection = State(initialValue: selection ?? OddsChartSelection())
         _vm = StateObject(wrappedValue: model ?? OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
+    }
+
+    /// #10090 C2 — the tip's slide, read like the hero's (`heroRising`): the
+    /// printed direction of the committed move, or nil while a preview prints,
+    /// whose direction no committed receipt describes.
+    static func liveEdgeRising(_ activity: LivePriceActivity?, showsPreview: Bool) -> Bool? {
+        showsPreview ? nil : activity?.homeRising
     }
 
     /// #3410 — whether the payload holds a single reading, anywhere.
@@ -2302,7 +2314,7 @@ struct OddsChartView: View {
                     LiveChartEdgeMarker(
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
                         tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
-                        rising: priceActivity?.homeDelta.map { $0 > 0 },
+                        rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
                         lineColor: colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: colorForSource(liveSplit.source, sources: sources))
@@ -2899,6 +2911,27 @@ struct OddsChartView: View {
         var rendered = points
         var frames = liveFrames
         var replacedPin = false
+        // #10090 — the committed headline re-values an older pin (web's #8749
+        // `appendHeroObservation`): the marker is never drawn, and the pin keeps
+        // its time. Re-checked against THIS payload, like the preview.
+        var revalued: (date: Date, value: Double)?
+        if let marker = frames.last, let authority = marker.headlineOverPin {
+            frames.removeLast()
+            if let edge = BlendPreview.olderPinUnderHeadline(
+                   history, authority: authority, at: marker.date, p: marker.homeProbability),
+               let edgeAt = edge.timestamp.asDate,
+               let carried = BlendPreview.carriedPointsAfter(history, at: marker.date),
+               let index = rendered.lastIndex(where: {
+                   $0.source == "aggregate" && $0.date == edgeAt && $0.probability == edge.homeProbability
+               }) {
+                rendered[index] = ChartDataPoint(date: edgeAt, probability: marker.homeProbability, source: "aggregate")
+                // The carry-forward minute after the headline goes with the value it carried.
+                rendered.removeAll {
+                    $0.source == "aggregate" && $0.date >= marker.date && $0.date < edgeAt && carried.contains($0.date)
+                }
+                revalued = (marker.date, marker.homeProbability)
+            }
+        }
         if let preview = frames.last, let authority = preview.previewAuthority {
             if !BlendPreview.chartCoversAuthority(history, authority: authority) {
                 frames.removeLast()
@@ -2921,8 +2954,11 @@ struct OddsChartView: View {
             }
         }
         if !frames.isEmpty {
+            // A re-valued pin caps the relabel at the headline's clock, so no
+            // bucket moves onto the pin past the value that replaced it.
             rendered = servedBlendAtEvidenceTime(
-                rendered, history: history, previewAt: replacedPin ? frames.last?.date : nil)
+                rendered, history: history, previewAt: replacedPin ? frames.last?.date : nil,
+                headline: revalued, frames: frames)
         }
         let publishedEdge = rendered
             .filter { $0.source == "aggregate" }
@@ -2976,25 +3012,51 @@ struct OddsChartView: View {
     /// live row): no bucket's evidence is later than that. The bucket that
     /// contains the read moves to the pin, so the pin still ends the line and
     /// the published edge does not move. When a preview replaced the pin,
-    /// `previewAt` is the cap and that bucket stays where it was, because the
-    /// preview must stay strictly newer than every committed point. An
-    /// unpinned payload proves no read time, so it is returned unchanged: a
-    /// minute's end could sit past the live edge.
+    /// `previewAt` is the cap, because the preview must stay strictly newer
+    /// than every committed point: that bucket moves to the latest held frame
+    /// before the preview that printed its value, else it stays where it was.
+    ///
+    /// When the committed headline re-valued the pin, its clock is the cap,
+    /// and that bucket moves to the latest instant in its minute, up to the
+    /// headline, where the line already shows the bucket's value: the
+    /// headline's clock when the bucket prints the headline (the commit's own
+    /// reading), else the latest held frame that printed it. So a commit
+    /// inside the minute is never drawn before the headline showed it, and a
+    /// bucket that predates the commit never takes the headline's instant.
+    /// With no such instant it stays at its minute start. The headline's
+    /// revision covers the pin's (`BlendPreview.olderPinUnderHeadline`), so no
+    /// bucket's evidence is later than the headline's clock.
+    ///
+    /// An unpinned payload proves no read time, so it is returned unchanged:
+    /// a minute's end could sit past the live edge.
     ///
     /// A relabelling in time only: the same values, the same order, no point
     /// added or removed. A chart with no frames never reaches this.
     static func servedBlendAtEvidenceTime(
         _ points: [ChartDataPoint],
         history: EventHistoryResponse,
-        previewAt: Date?
+        previewAt: Date?,
+        headline: (date: Date, value: Double)? = nil,
+        frames: [LiveBlendPoint] = []
     ) -> [ChartDataPoint] {
         guard history.blendEdgePinned == true,
               let pinAt = history.aggregateLine?.last?.timestamp.asDate else { return points }
-        let cap = previewAt.map { min($0, pinAt) } ?? pinAt
+        let cap = [previewAt, headline?.date].compactMap { $0 }.reduce(pinAt, min)
         return points.map { point in
             guard point.source == "aggregate", point.date < cap else { return point }
             let end = point.date.addingTimeInterval(60)
-            let date = end < cap ? end : (previewAt == nil ? cap : point.date)
+            let date: Date
+            if end < cap {
+                date = end
+            } else if headline == nil && previewAt == nil {
+                date = cap
+            } else if headline?.value == point.probability {
+                date = cap
+            } else {
+                date = frames
+                    .filter { $0.date >= point.date && $0.date < cap && $0.homeProbability == point.probability }
+                    .map(\.date).max() ?? point.date
+            }
             return ChartDataPoint(date: date, probability: point.probability, source: point.source)
         }
     }
@@ -3984,27 +4046,36 @@ struct OddsChartView: View {
     }
 
     private func strokeStyleForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> StrokeStyle {
+        Self.strokeStyle(source: source,
+                         isModel: sources[source]?.type == "model",
+                         hasAggregate: vm.history?.aggregateLine != nil && isMultiSource(vm.history!))
+    }
+
+    /// #10090 / #11105 — every line joins its segments ROUND. The default
+    /// miter join (limit 10) turns a tiny real reversal between two close
+    /// vertices into a needle many times taller than the move; a round join
+    /// draws each wiggle at its true height, as the live tail
+    /// (`LiveChartEdgeMarker`) already does. Every line keeps the default
+    /// BUTT cap: a round cap pushes each run half a line width past its end,
+    /// closing short capture holes (#7878) and starting the line before its
+    /// first observation; the live tail already rounds its own end.
+    static func strokeStyle(source: String, isModel: Bool, hasAggregate: Bool) -> StrokeStyle {
         if source == "aggregate" {
             // Meta-aggregate across all sources — boldest line
-            return StrokeStyle(lineWidth: 3.0)
+            return StrokeStyle(lineWidth: 3.0, lineJoin: .round)
         }
         if source == "consensus" {
-            // Check if aggregate exists — if so, consensus is secondary
-            let hasAggregate = vm.history?.aggregateLine != nil && isMultiSource(vm.history!)
-            if hasAggregate {
-                // Regular weight, same as other sources
-                return StrokeStyle(lineWidth: 1.5)
-            }
-            // Sportsbooks-only: consensus is the primary line
-            return StrokeStyle(lineWidth: 2.5)
+            // If aggregate exists, consensus is secondary: regular weight,
+            // same as other sources. Sportsbooks-only: consensus is the
+            // primary line.
+            return StrokeStyle(lineWidth: hasAggregate ? 1.5 : 2.5, lineJoin: .round)
         }
         // Model sources get dashed lines, thinner
-        let isModel = sources[source]?.type == "model"
         if isModel {
-            return StrokeStyle(lineWidth: 1.5, dash: [5, 3])
+            return StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [5, 3])
         }
         // Market sources (Kalshi, Polymarket) — thin solid
-        return StrokeStyle(lineWidth: 1.5)
+        return StrokeStyle(lineWidth: 1.5, lineJoin: .round)
     }
 
     private func displayNameForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> String {
