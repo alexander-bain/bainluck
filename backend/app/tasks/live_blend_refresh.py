@@ -5185,7 +5185,7 @@ class LiveBlendRefresher:
         self._receipt_call(settle)
 
     def _note_confirm_basis(self, event_id: int, contributing, *, stored_row=None,
-                            value=None) -> None:
+                            value=None, home_value=None) -> None:
         """#10090 decision J: the rows an agreeing disposition blended, for
         `ConfirmedAt` to compare later inputs against (`TailReceipts.resolve`
         hands it the disposition after the commit).
@@ -5201,7 +5201,9 @@ class LiveBlendRefresher:
             return
         if stored_row is not None and not self._stored_entry_is(stored_row, value):
             return
-        self._receipt_call(confirmed.note_basis, event_id, contributing)
+        # #10090: the reading's own home value also orients the EKG list.
+        self._receipt_call(confirmed.note_basis, event_id, contributing,
+                           home_value if home_value is not None else value)
 
     def _note_confirm_unpublishable(self, event_id: int) -> None:
         """#10090 decision J (lane1 R2): this attempt's frame failed, so no
@@ -7318,7 +7320,7 @@ class LiveBlendRefresher:
                         # publishes, and whether the game is live.
                         new_rev, event.status,
                     )
-                    self._note_confirm_basis(event_id, contributing)
+                    self._note_confirm_basis(event_id, contributing, home_value=value)
 
                     # The AGGREGATE, computed off the sources JSONB the server
                     # RETURNED — the number the hero renders, not this one

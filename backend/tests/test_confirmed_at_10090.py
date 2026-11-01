@@ -332,7 +332,7 @@ class TestWriter:
         assert [eid for eid, _ in due] == [E]
         payload = json.loads(due[0][1])
         assert payload == {"c": int(STAMP_WALL * 1000), "h": None, "w": int(clock.wall * 1000),
-                           "a": None, "s": t.source, "r": []}
+                           "a": None, "s": t.source, "r": [], "q": []}
         assert t.take_due() is None  # nothing changed, nothing held: the writer may stop
         clock.tick(1)
         t.note_input(E, HOME, 0.62, clock.wall)
@@ -1393,8 +1393,8 @@ class TestUpdateList:
                    _entry(s="polymarket", r=[self.MS - 700, self.MS + 5000]),
                    _entry(c=self.MS), "junk"]
         got = ca.recent_updates(entries, {"kalshi": self.MS - 900}, self.NOW)
-        assert got == [("polymarket", self.MS - 700), ("kalshi", self.MS - 400)]
-        assert ca.recent_updates(entries, {}, self.NOW, limit=1) == [("kalshi", self.MS - 400)]
+        assert got == [("polymarket", self.MS - 700, None), ("kalshi", self.MS - 400, None)]
+        assert ca.recent_updates(entries, {}, self.NOW, limit=1) == [("kalshi", self.MS - 400, None)]
 
     @pytest.mark.asyncio
     async def test_the_heartbeat_sends_each_update_once(self, route_reads, monkeypatch):
@@ -1442,3 +1442,68 @@ class TestUpdateList:
             ("kalshi", ca.iso((int(base * 1000) - 200) / 1000)),
             ("kalshi", ca.iso(int(base * 1000) / 1000))]
         assert len([u for u in sent if u[0] == "polymarket"]) > 1
+
+
+# ── the EKG list's probability (Alex 2026-11-01: "not a probability. that was
+#    kinda the whole point") ─────────────────────────────────────────────────
+
+class TestUpdateProbability:
+    NOW = 1_793_314_900.0
+    MS = int(NOW * 1000)
+
+    def test_one_row_priced_as_home_or_as_its_complement(self):
+        assert ca.solve_orientation({HOME: 0.36}, 0.36) == {HOME: True}
+        assert ca.solve_orientation({AWAY: 0.64}, 0.36) == {AWAY: False}
+
+    def test_a_devig_pair_is_oriented_by_the_one_mean_that_reproduces_the_stamp(self):
+        # home YES 0.36 and away YES 0.65 publish (0.36 + 0.35) / 2.
+        assert ca.solve_orientation({HOME: 0.36, AWAY: 0.65}, 0.355) == {HOME: True, AWAY: False}
+
+    @pytest.mark.parametrize("prices,home", [
+        ({HOME: 0.5}, 0.5),                       # both sides reproduce it
+        ({HOME: 0.36}, 0.41),                     # neither does
+        ({HOME: 0.3, AWAY: 0.3, PROP: 0.4}, 0.5), # not a one- or two-row reading
+        ({HOME: None}, 0.36),
+    ])
+    def test_no_orientation_rather_than_a_guess(self, prices, home):
+        assert ca.solve_orientation(prices, home) is None
+
+    def test_each_input_carries_the_venues_home_probability_after_it(self, clock):
+        t = _tracker(clock)
+        t.begin([E])
+        t.note_basis(E, _rows(o70=0.36, o71=0.65), home_value=0.355)
+        t.resolved(E, ("stamped", 0.355, STAMPED_AT, None, 9, "live"))
+        t.published({(E, 9)})
+        t.take_due()
+        t.note_input(E, HOME, 0.36, clock.wall)   # the away row has no input yet
+        clock.tick(0.1)
+        t.note_input(E, AWAY, 0.65, clock.wall)
+        clock.tick(0.1)
+        t.note_input(E, HOME, 0.38, clock.wall)
+        payload = json.loads(t.take_due()[0][1])
+        assert payload["q"] == [None, 0.355, 0.365]
+        assert len(payload["q"]) == len(payload["r"])
+
+    def test_a_stamp_without_a_home_value_teaches_nothing(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6)
+        t.take_due()
+        t.note_input(E, HOME, 0.6, clock.wall)
+        assert json.loads(t.take_due()[0][1])["q"] == [None]
+
+    def test_recent_updates_pair_each_receipt_with_its_probability(self):
+        entries = [_entry(s="kalshi", r=[self.MS - 900, self.MS - 400], q=[0.36, None]),
+                   _entry(s="polymarket", r=[self.MS - 700], q=[1.7]),     # not a probability
+                   _entry(s="kalshi2", r=[self.MS - 600], q=[0.4, 0.5])]   # misaligned: ignored
+        assert ca.recent_updates(entries, {}, self.NOW) == [
+            ("kalshi", self.MS - 900, 0.36), ("polymarket", self.MS - 700, None),
+            ("kalshi2", self.MS - 600, None), ("kalshi", self.MS - 400, None)]
+
+    def test_the_heartbeat_keeps_two_item_rows_and_lists_probabilities_beside_them(self):
+        from app.routes.event_stream import _heartbeat
+
+        body = json.loads(_heartbeat(None, None, (("kalshi", self.MS, 0.36),
+                                                  ("polymarket", self.MS + 10, None)))
+                          .split("data: ", 1)[1].split("\n", 1)[0])
+        assert [len(row) for row in body["updates"]] == [2, 2]
+        assert body["update_p"] == [0.36, None]

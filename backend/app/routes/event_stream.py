@@ -117,7 +117,10 @@ def _heartbeat(confirmed_at: Optional[float], activity_at: Optional[float] = Non
     ``activity_at`` the newest venue input whatever it agreed with (the EKG
     pulse, Alex 2026-11-01; never a price's age); ``updates`` the venue inputs
     since the last heartbeat, ``[venue, ISO receipt]`` oldest first (the EKG's
-    update list). A reader that knows nothing of them keeps reading ``t``."""
+    update list), with ``update_p`` beside it: each one's venue home
+    probability or null, same order (a separate key so a reader that expects
+    two-item rows keeps working). A reader that knows nothing of them keeps
+    reading ``t``."""
     from app.utils.confirmed_at import iso
 
     return sse_encode(
@@ -125,7 +128,8 @@ def _heartbeat(confirmed_at: Optional[float], activity_at: Optional[float] = Non
             "t": datetime.now(timezone.utc).isoformat(),
             "confirmed_at": iso(confirmed_at),
             "activity_at": iso(activity_at),
-            **({"updates": [[source, iso(ms / 1000)] for source, ms in updates]}
+            **({"updates": [[u[0], iso(u[1] / 1000)] for u in updates],
+                "update_p": [u[2] if len(u) > 2 else None for u in updates]}
                if updates else {}),
         }),
         event="heartbeat",
@@ -688,7 +692,7 @@ async def _stream(
                 read_updates = getattr(confirmations, "updates", None)
                 if activity_due and callable(read_updates):
                     updates = tuple(read_updates(members, updates_sent))
-                    for source, ms in updates:
+                    for source, ms, *_ in updates:
                         updates_sent[source] = max(updates_sent.get(source, -1), ms)
                 yield _heartbeat(confirmed_sent, activity_sent, updates)
                 confirmed_beat, last_beat = loop_now, loop_now

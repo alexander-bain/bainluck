@@ -153,7 +153,7 @@ class _Event:
                  "busy_until", "previewing", "frozen_until", "touched",
                  "written", "written_at", "awaiting", "awaiting_until",
                  "awaiting_wall", "last_input", "begun", "outside", "outside_until",
-                 "written_input", "recent")
+                 "written_input", "recent", "orient")
 
     def __init__(self) -> None:
         #: None = this run has not published a reading; `_SILENT` = the last
@@ -186,8 +186,12 @@ class _Event:
         self.outside_until: Optional[float] = None
         #: The `last_input` the last write carried (the activity pulse, ``a``).
         self.written_input: Optional[float] = None
-        #: Receipt times (ms) of inputs since the last write (``r``).
+        #: (receipt ms, the venue's home probability after that input or None)
+        #: of inputs since the last write (``r`` and ``q``).
         self.recent: collections.deque = collections.deque(maxlen=RECENT_PER_WRITE)
+        #: outcome -> True (its price is the home side's) / False (its
+        #: complement is), from the last stamp (`solve_orientation`); None unknown.
+        self.orient: Optional[dict[int, bool]] = None
 
 
 class ConfirmedAt:
@@ -247,7 +251,7 @@ class ConfirmedAt:
             # again while still unknown starts a new one, here (R5).
             state.unknown_since = recv_wall
         state.latest[outcome_id] = (p, recv_wall)
-        state.recent.append(_ms(recv_wall))
+        state.recent.append((_ms(recv_wall), _home_value(state)))
         if state.last_input is None or recv_wall > state.last_input:
             state.last_input = recv_wall
             # #10090 (Alex 2026-11-01): the page's EKG pulses on every venue
@@ -310,10 +314,14 @@ class ConfirmedAt:
             state.outside_until = now + self.preview_ttl_s
             self._settle(event_id, state, None, wall)
 
-    def note_basis(self, event_id: int, rows: Iterable[Any]) -> None:
+    def note_basis(self, event_id: int, rows: Iterable[Any],
+                   home_value: Optional[float] = None) -> None:
         """The rows a reading with an agreeing disposition blended (its
         ``contributing_outcomes``: ``id`` + ``current_probability``, a held
-        quote's overlay included). Taken by that batch's `resolved`."""
+        quote's overlay included). Taken by that batch's `resolved`.
+
+        ``home_value`` (a stamp's own home probability for this source) also
+        teaches the EKG list which side each row prices (`solve_orientation`)."""
         if self._closed:
             return
         basis = {}
@@ -323,6 +331,10 @@ class ConfirmedAt:
                 self._basis.pop(event_id, None)
                 return  # a blended row we cannot name cannot be agreed with
             basis[int(oid)] = getattr(row, "current_probability", None)
+        if home_value is not None and basis:
+            orient = solve_orientation(basis, home_value)
+            if orient is not None or event_id in self._events:
+                self._state(event_id).orient = orient
         if basis:
             self._basis[event_id] = basis
         else:
@@ -637,10 +649,11 @@ class ConfirmedAt:
         activity only, for the EKG; they never date a price (`combine` does not
         read them)."""
         state.written_input = state.last_input
-        recent = sorted(state.recent)
+        recent = sorted(state.recent, key=lambda item: item[0])
         state.recent.clear()
         return json.dumps({"c": report[0], "h": report[1], "w": _ms(wall),
-                           "a": _ms(state.last_input), "s": self.source, "r": recent},
+                           "a": _ms(state.last_input), "s": self.source,
+                           "r": [ms for ms, _ in recent], "q": [p for _, p in recent]},
                           separators=(",", ":"))
 
     def _kick(self) -> None:
@@ -773,11 +786,55 @@ def activity(entries: Iterable[Any], now_wall: float) -> Optional[float]:
     return min(newest, int(now_wall * 1000)) / 1000.0
 
 
+#: How close a candidate orientation must reproduce the stamp's 4-place value.
+ORIENT_TOLERANCE = 0.00015
+
+
+def solve_orientation(prices: dict, home: float) -> Optional[dict[int, bool]]:
+    """Which side each blended row prices, from a stamp: the ONE assignment
+    (row price = home's, or its complement = home's) whose mean reproduces the
+    stamp's home probability ``home``. None when no assignment or more than one
+    does (a 50% row, a three-row devig, a reading not of that shape): the EKG
+    list then shows no probability rather than a guess."""
+    try:
+        home = float(home)
+        rows = [(int(oid), float(p)) for oid, p in prices.items()]
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= len(rows) <= 2 or not math.isfinite(home):
+        return None
+    found = None
+    for mask in range(1 << len(rows)):
+        sides = [bool(mask >> i & 1) for i in range(len(rows))]
+        value = sum(p if side else 1.0 - p for (_, p), side in zip(rows, sides)) / len(rows)
+        if abs(value - home) <= ORIENT_TOLERANCE:
+            if found is not None:
+                return None
+            found = {oid: side for (oid, _), side in zip(rows, sides)}
+    return found
+
+
+def _home_value(state: "_Event") -> Optional[float]:
+    """The venue's home probability from the newest input of every oriented
+    row, or None while one is missing. The EKG list only."""
+    orient = state.orient
+    if not orient:
+        return None
+    total = 0.0
+    for oid, side in orient.items():
+        latest = state.latest.get(oid)
+        if latest is None or latest[0] is None:
+            return None
+        total += latest[0] if side else 1.0 - latest[0]
+    return round(total / len(orient), 4)
+
+
 def recent_updates(entries: Iterable[Any], after: dict, now_wall: float,
-                   limit: int = 60) -> list[tuple[str, int]]:
-    """(venue, receipt ms) of every input the entries list that is newer than
-    ``after[venue]`` (ms), oldest first, at most ``limit`` (the newest). The
-    EKG's update list only: activity, never a price's age."""
+                   limit: int = 60) -> list[tuple[str, int, Optional[float]]]:
+    """(venue, receipt ms, the venue's home probability or None) of every
+    input the entries list that is newer than ``after[venue]`` (ms), oldest
+    first, at most ``limit`` (the newest). The EKG's update list only: never a
+    price's age."""
     now_ms = int(now_wall * 1000)
     out = []
     for raw in entries:
@@ -788,9 +845,14 @@ def recent_updates(entries: Iterable[Any], after: dict, now_wall: float,
         if not isinstance(entry, dict) or not isinstance(entry.get("s"), str):
             continue
         source, floor = entry["s"], after.get(entry["s"], -1)
-        for ms in entry.get("r") or ():
+        receipts = entry.get("r") or ()
+        probs = entry.get("q")
+        if not isinstance(probs, list) or len(probs) != len(receipts):
+            probs = [None] * len(receipts)
+        for ms, p in zip(receipts, probs):
             if type(ms) is int and floor < ms <= now_ms:
-                out.append((source, ms))
+                ok = isinstance(p, (int, float)) and not isinstance(p, bool) and 0.0 <= p <= 1.0
+                out.append((source, ms, float(p) if ok else None))
     out.sort(key=lambda item: (item[1], item[0]))
     return out[-limit:]
 
@@ -921,7 +983,7 @@ class ConfirmedReads:
                 entries.extend(cached[1])
         return activity(entries, self._wall())
 
-    def updates(self, event_ids, after: dict) -> list[tuple[str, int]]:
+    def updates(self, event_ids, after: dict) -> list[tuple[str, int, Optional[float]]]:
         """The cached inputs newer than ``after`` (`recent_updates`), [] unless
         every member was read within ``READ_FRESH_S``. No read of its own."""
         now = self._mono()
