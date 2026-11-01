@@ -162,7 +162,7 @@ describe("#8336 a live event page shows one freshness status", () => {
     expect(html).not.toContain(PROMISE);
   });
 
-  it("a polled page: one chart status, the header ring kept, no second or third ticker", () => {
+  it("a polled page: one chart status, no header ring, no second or third ticker", () => {
     const html = draw(false);
 
     expect(count(html, STATUS)).toBe(1);
@@ -170,9 +170,9 @@ describe("#8336 a live event page shows one freshness status", () => {
     expect(count(html, BADGE)).toBe(0);
     expect(html).not.toMatch(TICKER);
     expect(html).not.toContain(REFRESH_GLYPH);
-    // CONTROL — the header's ring is #5039's and stays. Without this arm a
-    // deletion of every countdown on the page would pass the assertions above.
-    expect(count(html, PROMISE)).toBe(1);
+    // #10090 (Alex 2026-11-01): a page on the live stream draws no poll ring,
+    // even while the stream reconnects; the chart status above says so.
+    expect(count(html, PROMISE)).toBe(0);
   });
 
   it("the status sits in the chart card's header, beside Win Probability", () => {
