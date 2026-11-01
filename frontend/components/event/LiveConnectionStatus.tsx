@@ -47,6 +47,11 @@ export interface ConnectionTimes {
   scoreConfirmedAt: string | null | undefined;
   /** `heroFreshness`'s answer: which visible fact is the oldest. */
   oldestFact: HeroFact | null;
+  /**
+   * #10090 Alex 2026-10-31 — when a source last told us the number on screen
+   * (`marketUpdateClock`): never a database write time.
+   */
+  marketUpdatedAt?: string | null;
 }
 
 interface LiveConnectionStatusProps extends ConnectionTimes {
@@ -154,15 +159,12 @@ export function ConnectionTimesPanel({
   now,
   placement = 'absolute inset-x-3 top-full',
   style,
-  observation,
   priceObservedAt,
   priceConfirmedAt = null,
   scoreShown,
   scoreConfirmedAt,
-  oldestFact,
+  marketUpdatedAt,
 }: ConnectionTimes & { id: string; open: boolean; now: number; placement?: string; style?: CSSProperties }) {
-  const confirmedClock = priceAgeClock(priceObservedAt, priceConfirmedAt);
-  const priceConfirmedShown = confirmedClock !== null && confirmedClock !== priceObservedAt;
   return (
     <div
       id={id}
@@ -172,43 +174,17 @@ export function ConnectionTimesPanel({
     >
       <dl className="space-y-1.5">
         <div>
-          <dt className="font-medium text-text-primary">Probability observed</dt>
+          <dt className="font-medium text-text-primary">Latest source update</dt>
           <dd>
-            <Clock iso={priceObservedAt} now={now} milliseconds />
+            <Clock iso={marketUpdatedAt ?? priceAgeClock(priceObservedAt, priceConfirmedAt)} now={now} />
           </dd>
         </div>
-        {priceConfirmedShown ? (
-          <div>
-            <dt className="font-medium text-text-primary">Probability confirmed</dt>
-            <dd>
-              <Clock iso={confirmedClock} now={now} />
-            </dd>
-          </div>
-        ) : null}
-        {observation ? (
-          <>
-            <div>
-              <dt className="font-medium text-text-primary">Readings shown this visit</dt>
-              <dd>{observation.count} · first reading plus newer updates</dd>
-            </div>
-            <div>
-              <dt className="font-medium text-text-primary">Current probability delivery</dt>
-              <dd>{observation.delivery === 'dnpl' ? 'Live preview' : observation.delivery === 'committed' ? 'Published update' : 'Delivery unknown'}</dd>
-            </div>
-          </>
-        ) : null}
         {scoreShown ? (
           <div>
-            <dt className="font-medium text-text-primary">Score confirmed</dt>
+            <dt className="font-medium text-text-primary">Score</dt>
             <dd>
               <Clock iso={scoreConfirmedAt} now={now} />
             </dd>
-          </div>
-        ) : null}
-        {scoreShown && oldestFact ? (
-          <div>
-            <dt className="font-medium text-text-primary">Oldest on screen</dt>
-            <dd>{oldestFact === 'score' ? 'The score' : 'The probability'}</dd>
           </div>
         ) : null}
       </dl>

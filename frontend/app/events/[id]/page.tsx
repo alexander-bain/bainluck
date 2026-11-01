@@ -83,6 +83,7 @@ import {
   priceAgeClock,
   stepConnectionTracker,
   type ConnectionTracker,
+  marketUpdateClock,
 } from "@/lib/event/liveConnectionStatus";
 import {
   eventTournamentKey,
@@ -2522,6 +2523,15 @@ export default function EventPage({ params }: EventPageProps) {
     scoreShown: Boolean(liveGamesLine) || heroScorePairPresent,
     scoreConfirmedAt: heroStampInputs.scoreStamp,
     oldestFact: displayedOldestFact,
+    // #10090 (Alex 2026-10-31): the newest moment a source spoke — a live
+    // market's receipt (instant update or confirmed quote), never the time
+    // our database stored it; polled sources by their own update stamp.
+    marketUpdatedAt: acceptedPriceClock === null ? null : marketUpdateClock({
+      sources: event?.win_probability_sources as Record<string, unknown> | null | undefined,
+      previewObservedAt: observationDelivery === "dnpl" ? acceptedPriceClock : null,
+      confirmedAt: typeof confirmedAtShown === "string" ? confirmedAtShown : null,
+      fallback: acceptedPriceClock,
+    }),
   };
   // #10090 Alex 67 — while the EKG is on screen it is the one calm signal; the
   // chart's status speaks only when something is wrong. The fullscreen view
