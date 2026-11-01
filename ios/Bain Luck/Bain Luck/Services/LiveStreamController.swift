@@ -479,6 +479,10 @@ final class LiveStreamController {
     /// whether it is about the number on screen. Touches no clock or delivery
     /// state.
     private let onConfirmedAt: @MainActor (Date) -> Void
+    /// #10090 (Alex 2026-11-01) — a heartbeat's `activity_at`
+    /// (`heartbeatActivityAt`): a venue reported in for this event, whatever
+    /// price it carried. The EKG pulse only; never a price's age.
+    private let onActivityAt: @MainActor (Date) -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -528,6 +532,7 @@ final class LiveStreamController {
         onPreviewV3: @escaping @MainActor (String, TimeInterval?) -> Void = { _, _ in },
         onPreviewReset: @escaping @MainActor () -> Void = {},
         onConfirmedAt: @escaping @MainActor (Date) -> Void = { _ in },
+        onActivityAt: @escaping @MainActor (Date) -> Void = { _ in },
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
         healthyRolloverDelay: @escaping () -> TimeInterval = {
@@ -548,6 +553,7 @@ final class LiveStreamController {
         self.onPreviewV3 = onPreviewV3
         self.onPreviewReset = onPreviewReset
         self.onConfirmedAt = onConfirmedAt
+        self.onActivityAt = onActivityAt
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
         self.healthyRolloverDelay = healthyRolloverDelay
@@ -573,6 +579,16 @@ final class LiveStreamController {
         guard let data = raw.data(using: .utf8),
               let beat = try? JSONDecoder().decode(Beat.self, from: data) else { return nil }
         return beat.confirmed_at?.asDate
+    }
+
+    /// #10090 (Alex 2026-11-01) — the heartbeat's `activity_at`: the newest
+    /// venue input for the event, whatever it agreed with, or nil (an older
+    /// server, a null, junk). The EKG pulse only.
+    nonisolated static func heartbeatActivityAt(_ raw: String) -> Date? {
+        struct Beat: Decodable { let activity_at: String? }
+        guard let data = raw.data(using: .utf8),
+              let beat = try? JSONDecoder().decode(Beat.self, from: data) else { return nil }
+        return beat.activity_at?.asDate
     }
 
     // MARK: Public surface
@@ -846,6 +862,7 @@ final class LiveStreamController {
             // but the transport's moves. The server sends it only after the
             // connect replay (live R3), so the replay is already applied here.
             if let confirmed = Self.heartbeatConfirmedAt(raw) { self.onConfirmedAt(confirmed) }
+            if let activity = Self.heartbeatActivityAt(raw) { self.onActivityAt(activity) }
         }
 
         // The match ended. Terminal: the caller refetches once and settles the

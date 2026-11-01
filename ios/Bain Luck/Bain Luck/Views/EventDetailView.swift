@@ -167,7 +167,8 @@ struct EventDetailView: View {
         return EkgTracker.Observation(eventId: event.id,
                                       transportOpen: EkgHeartbeat.transportOpen(vm.liveUpdateStatus),
                                       confirmedAt: vm.confirmedAtCoveringShown(event),
-                                      priceObservedAt: vm.displayedProbabilityObservedAt(event))
+                                      priceObservedAt: vm.displayedProbabilityObservedAt(event),
+                                      activityAt: vm.streamActivityAt)
     }
     private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }
     /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`

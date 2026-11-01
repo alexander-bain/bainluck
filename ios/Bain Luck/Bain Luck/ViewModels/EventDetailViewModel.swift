@@ -179,6 +179,10 @@ final class EventDetailViewModel: ObservableObject {
     /// through `confirmedAtCoveringShown`, which decides whether it is about
     /// the number on screen. Cleared with the connection that carried it.
     @Published private(set) var streamConfirmedAt: Date?
+    /// #10090 (Alex 2026-11-01) — the newest `activity_at` the stream handed
+    /// on: a venue reported in, whatever it carried. Feeds only the EKG pulse;
+    /// it never ages or dates a price. Cleared with the connection.
+    @Published private(set) var streamActivityAt: Date?
     /// #10090 decision J — this connection's connect `reconcile` has arrived.
     /// The server sends the first confirmed heartbeat BEFORE it (lane1's
     /// #11772 probe), and only the reconcile's floor makes a served price older
@@ -1369,6 +1373,7 @@ final class EventDetailViewModel: ObservableObject {
                     // The next 20 s beat re-sends this; the connection's
                     // reconcile is not re-sent, so it stays (#11772 R4).
                     self.streamConfirmedAt = nil
+                    self.streamActivityAt = nil
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
                     self.pendingResyncGeneration = nil
@@ -1423,6 +1428,10 @@ final class EventDetailViewModel: ObservableObject {
                 guard let self else { return }
                 if self.streamConfirmedAt.map({ confirmed > $0 }) ?? true { self.streamConfirmedAt = confirmed }
             },
+            onActivityAt: { [weak self] activity in
+                guard let self else { return }
+                if self.streamActivityAt.map({ activity > $0 }) ?? true { self.streamActivityAt = activity }
+            },
             deliversFoldedQuotes: true
         )
         stream = controller
@@ -1468,6 +1477,7 @@ final class EventDetailViewModel: ObservableObject {
         awaitingFoldedResult = false
         streamHasPushedPrice = false
         streamConfirmedAt = nil
+        streamActivityAt = nil
         if connectReconcileSeen { connectReconcileSeen = false }
         streamTickTask?.cancel()
         streamTickTask = nil

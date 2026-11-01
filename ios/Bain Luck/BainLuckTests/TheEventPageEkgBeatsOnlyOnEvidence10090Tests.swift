@@ -53,6 +53,47 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         XCTAssertEqual(t.beats, 1)
     }
 
+    // MARK: - Every venue report pulses it (Alex 2026-11-01)
+
+    private func activity(_ a: TimeInterval?, open: Bool = true) -> EkgTracker.Observation {
+        EkgTracker.Observation(eventId: Self.event, transportOpen: open, confirmedAt: at(0),
+                               priceObservedAt: at(0), activityAt: a.map(at))
+    }
+
+    func testAnActivityAdvanceBeatsWhileThePriceAndAgreementHoldStill() {
+        var t = EkgTracker.empty.stepped(activity(0), now: at(1))
+        XCTAssertEqual(t.beats, 0, "the activity it opens with is a baseline")
+        t = t.stepped(activity(3), now: at(3.2))
+        XCTAssertEqual(t.beats, 1)
+        t = t.stepped(activity(5), now: at(5.2))
+        XCTAssertEqual(t.beats, 2)
+        XCTAssertEqual(EkgHeartbeat.present(t, status: .live, now: at(6)).mode, .beating)
+    }
+
+    func testTheSameActivityAgainIsNoBeatAndBurstsCoalesce() {
+        var t = EkgTracker.empty.stepped(activity(0), now: at(1)).stepped(activity(3), now: at(3.2))
+        t = t.stepped(activity(3), now: at(4))
+        XCTAssertEqual(t.beats, 1)
+        t = t.stepped(activity(3.5), now: at(3.6))
+        XCTAssertEqual(t.beats, 1, "inside the beat gap")
+        XCTAssertEqual(t.lastSignalAt, at(3.6))
+    }
+
+    func testActivityHeardWhileTheStreamIsDownIsRecordedSilently() {
+        let t = EkgTracker.empty.stepped(activity(0), now: at(1)).stepped(activity(3, open: false), now: at(3.2))
+        XCTAssertEqual(t.beats, 0)
+        XCTAssertEqual(t.activityAt, at(3))
+    }
+
+    func testTheHeartbeatsActivityAtIsReadAndNothingElse() {
+        XCTAssertEqual(LiveStreamController.heartbeatActivityAt(
+            #"{"t":"x","confirmed_at":null,"activity_at":"2026-11-01T21:25:02.583+00:00"}"#),
+            "2026-11-01T21:25:02.583+00:00".asDate)
+        XCTAssertNil(LiveStreamController.heartbeatActivityAt(#"{"confirmed_at":"2026-11-01T21:25:02Z"}"#))
+        XCTAssertNil(LiveStreamController.heartbeatActivityAt(#"{"activity_at":"soon"}"#))
+        XCTAssertNil(LiveStreamController.heartbeatActivityAt("not json"))
+    }
+
     func testARenderThatRepeatsItsInputsNeverBeatsAgain() {
         let once = opened().stepped(obs(confirmed: 6, price: 0), now: at(6.2))
         let again = once.stepped(obs(confirmed: 6, price: 0), now: at(9))

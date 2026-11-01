@@ -11,7 +11,7 @@ import Foundation
 ///
 /// ═══ A BEAT IS EVIDENCE, NEVER A TIMER ═══
 ///
-/// Exactly two things earn a beat:
+/// Exactly three things earn a beat:
 ///
 ///   * decision J's `confirmed_at` ADVANCING, as the page already gates it
 ///     (`EventDetailViewModel.confirmedAtCoveringShown`: nil while a newer
@@ -20,7 +20,11 @@ import Foundation
 ///   * the clock of the number the hero PRINTS advancing
 ///     (`displayedProbabilityObservedAt`, preview included) — the web's
 ///     "accepted price clock". Without it the line would go flat exactly while
-///     new prices land, because J is withheld whenever a newer one is owed.
+///     new prices land, because J is withheld whenever a newer one is owed;
+///   * the stream's `activity_at` ADVANCING (Alex 2026-11-01: pulse "every
+///     time we see a trade from kalshi, pm, or an update from any of our other
+///     sources"): the newest venue input, whatever price it carried. It claims
+///     only that the markets reported in, which is all a beat says.
 ///
 /// Nothing else: a keep-alive carries the same `confirmed_at`, a re-read that
 /// returns the held value carries the same clock, and a reconnect moves
@@ -49,6 +53,8 @@ nonisolated struct EkgTracker: Equatable {
     var confirmedAt: Date?
     /// Newest printed-number clock seen for this event.
     var priceAt: Date?
+    /// Newest `activity_at` seen for this event.
+    var activityAt: Date?
     /// When the markets last reported in (a drawn beat or a coalesced one).
     var lastSignalAt: Date?
     /// When the last beat was DRAWN.
@@ -64,6 +70,8 @@ nonisolated struct EkgTracker: Equatable {
         var transportOpen: Bool
         var confirmedAt: Date?
         var priceObservedAt: Date?
+        /// The stream's `activity_at` (a venue reported in), or nil.
+        var activityAt: Date? = nil
     }
 
     private static func newer(_ next: Date?, than prev: Date?) -> Bool {
@@ -76,19 +84,22 @@ nonisolated struct EkgTracker: Equatable {
         // what it already had, never a report it heard.
         guard eventId == obs.eventId else {
             return EkgTracker(eventId: obs.eventId, confirmedAt: obs.confirmedAt,
-                              priceAt: obs.priceObservedAt)
+                              priceAt: obs.priceObservedAt, activityAt: obs.activityAt)
         }
         let confirmedAdvanced = Self.newer(obs.confirmedAt, than: confirmedAt)
         let priceAdvanced = Self.newer(obs.priceObservedAt, than: priceAt)
+        let activityAdvanced = Self.newer(obs.activityAt, than: activityAt)
         var next = self
         if confirmedAdvanced { next.confirmedAt = obs.confirmedAt }
         if priceAdvanced { next.priceAt = obs.priceObservedAt }
+        if activityAdvanced { next.activityAt = obs.activityAt }
 
         // An advance is a report only if the report is recent: the first
         // confirmation after a connect "advances" from nothing, and on a
         // market that went quiet minutes ago it is minutes old.
         let advancedTo = [confirmedAdvanced ? obs.confirmedAt : nil,
-                          priceAdvanced ? obs.priceObservedAt : nil].compactMap { $0 }.max()
+                          priceAdvanced ? obs.priceObservedAt : nil,
+                          activityAdvanced ? obs.activityAt : nil].compactMap { $0 }.max()
         guard let advancedTo, now.timeIntervalSince(advancedTo) < Self.flatAfter,
               obs.transportOpen else { return next }
 
