@@ -383,6 +383,11 @@ RECEIPT_GRAPH_MAX_AGE_S = 300.0
 RECEIPT_GRAPH_MAX_AGE_ENV = "PREVIEW_AT_RECEIPT_GRAPH_MAX_AGE_S"
 #: The receipt worker logs its cumulative `receipt_preview_stats` at most this often.
 RECEIPT_STATS_LOG_INTERVAL_S = 60.0
+#: #10090: a headline input the receipt path cannot preview (any headline-clock
+#: fallback) makes its event's next stamp URGENT: it skips the blend floor (a
+#: 5 s CPU throttle on Polymarket) down to this minimum since the last stamp,
+#: so the stamp path delivers it in one flush instead of up to a floor later.
+URGENT_STAMP_MIN_S = 0.25
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
 RECEIPT_QUOTE_RETENTION_S = 60.0
@@ -3918,6 +3923,9 @@ class LiveBlendRefresher:
         self._receipt_lock_wait = [0, 0.0, 0.0, 0]
         #: Receipt publish passes this minute: (count, longest s, its plans).
         self._receipt_pass_max = [0, 0.0, 0]
+        #: event id -> `_mono` its stamp became urgent (`URGENT_STAMP_MIN_S`).
+        self._urgent_stamp: dict[int, float] = {}
+        self.urgent_stamp_stats: dict[str, int] = {"marked": 0, "bypassed": 0}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -3935,6 +3943,10 @@ class LiveBlendRefresher:
             return True
         floor = self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
         if now - last >= floor:  # the caller's clock on both sides, as before
+            return True
+        urgent = getattr(self, "_urgent_stamp", None)
+        if urgent and event_id in urgent and now - last >= URGENT_STAMP_MIN_S:
+            self.urgent_stamp_stats["bypassed"] += 1
             return True
         # #10090 (Argon flush-loop Rank 2): or a floor after the stamp on the
         # current clock, on both sides. A Kalshi main flush hands its own start
@@ -6706,6 +6718,9 @@ class LiveBlendRefresher:
             # clock's record is `_record_stamp_clock`, by every caller).
             last = self._last_refresh_at.get(event_id)
             self._last_refresh_at[event_id] = now if last is None else max(last, now)
+            urgent = getattr(self, "_urgent_stamp", None)
+            if urgent:
+                urgent.pop(event_id, None)
 
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
@@ -8789,6 +8804,7 @@ class LiveBlendRefresher:
                 # A live event between a drop and its re-read: this input
                 # waits too, so the headline clock counts it.
                 self._hl_pending[event_id] = [getattr(mark, "recv_mono", now), "refetch", None, 0]
+                self._urgent_stamp.setdefault(event_id, now)
             return  # kept for the overlay; no graph to compose it on yet
         speaking = self._receipt_speaking.get(event_id)
         if speaking is not None and oid not in speaking:
@@ -8859,11 +8875,14 @@ class LiveBlendRefresher:
                 )
                 lw, self._receipt_lock_wait = self._receipt_lock_wait, [0, 0.0, 0.0, 0]
                 pm, self._receipt_pass_max = self._receipt_pass_max, [0, 0.0, 0]
-                logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d",
+                for eid in [e for e, at in self._urgent_stamp.items() if now - at > 60.0]:
+                    del self._urgent_stamp[eid]
+                logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
                             lw[0], int(lw[1] * 1000), int(lw[2] * 1000), lw[3],
-                            pm[0], int(pm[1] * 1000), pm[2])
+                            pm[0], int(pm[1] * 1000), pm[2],
+                            ",".join("%s:%d" % kv for kv in self.urgent_stamp_stats.items()))
             due, deferred = [], {}
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
@@ -8909,11 +8928,16 @@ class LiveBlendRefresher:
             self._hl_samples.append((max(0.0, _mono() - entry[0]), event_id, why))
 
     def _hl_mark(self, event_id, how: str) -> None:
-        """A headline input that will wait for the stamp path: say why."""
+        """A headline input that will wait for the stamp path: say why, and
+        make that stamp urgent (`URGENT_STAMP_MIN_S`)."""
         entry = self._hl_pending.get(event_id)
-        if entry is not None and entry[1] == "receipt":
-            entry[1] = how
-            self._hl_fallback[how] = self._hl_fallback.get(how, 0) + 1
+        if entry is not None:
+            if event_id not in self._urgent_stamp:
+                self._urgent_stamp[event_id] = _mono()
+                self.urgent_stamp_stats["marked"] += 1
+            if entry[1] == "receipt":
+                entry[1] = how
+                self._hl_fallback[how] = self._hl_fallback.get(how, 0) + 1
 
     def _hl_published(self, frame, meta, reply) -> None:
         """Ledger observer: any published frame for an event puts its value on screen."""
