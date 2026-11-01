@@ -67,6 +67,17 @@ import SwiftUI
 /// while it still resolves; the first pass it no longer resolves on clears it
 /// (`Session.expireInspection`), so it never comes back without a new
 /// deliberate inspection. Nothing is held or resumed for incoming updates.
+///
+/// Explore props (`GolfFieldPropsBrowseAdapter10868`): the page's secondary
+/// entry asks for the page's hold once, then opens the "Prop groups" menu — one
+/// row per held market under its typed role, even when there is one. A row
+/// opens that one group's compact catalogue; a card asks for the hold once and
+/// opens that exact original's existing Details. The menu, the group and the
+/// Details all read ONE pass's originals. A held group is bound to its scope,
+/// market source and id and role; on a pass where nothing carries that key it
+/// draws the Details' own unavailable view, never another group. Done unwinds
+/// Details → group → menu → page; a swipe-down returns to the page. Browsing
+/// writes no golfer, finish, inspection, scale or chooser choice.
 struct GolfFieldEventPageHost10868: View {
     let winner: FuturesMarketDetail
     let history: FuturesHistoryResponse?
@@ -88,11 +99,14 @@ struct GolfFieldEventPageHost10868: View {
     /// A non-page mode shown over the page.
     struct Presented: Identifiable, Equatable {
         let mode: GolfEventPageMode10868
+        /// The prop group menu or one group, with any Details opened over it.
+        var browsing = false
         var id: String {
+            if browsing { return "browse" }
             switch mode {
-            case .page: "page"
-            case .reader(let card): "reader.\(card)"
-            case .chooser: "chooser"
+            case .page: return "page"
+            case .reader(let card): return "reader.\(card)"
+            case .chooser: return "chooser"
             }
         }
     }
@@ -135,12 +149,17 @@ struct GolfFieldEventPageHost10868: View {
     ///   - Details opened from a full-size card sits over that card; Done returns
     ///     to the SAME card with the same golfer and finish;
     ///   - Details opened from the page returns to the page;
+    ///   - Explore props opens the group menu over the page, a group over the
+    ///     menu and Details over the group; Done unwinds Details → group → menu →
+    ///     page;
     ///   - an interactive dismissal returns to the page, golfer and finish kept.
     struct Session: Equatable {
         /// The full-size card or the chooser open in the sheet; never `.page`.
         var mode: GolfEventPageMode10868? = nil
-        /// Details, over `mode` when one is open, else over the page.
+        /// Details, over `mode` when one is open, else over the browse layer or the page.
         var details: GolfFieldOriginalsAdapter10868.Destination? = nil
+        /// The prop group menu or one held group; never open beside `mode`.
+        var browse: GolfFieldPropsBrowseAdapter10868.Layer? = nil
         var chosen: Int? = nil
         var hasChosen = false
         var selectedFinish: String? = nil
@@ -154,6 +173,7 @@ struct GolfFieldEventPageHost10868: View {
         /// closes over a card, so the card's sheet is never re-presented.
         var presented: Presented? {
             if let mode { return Presented(mode: mode) }
+            if browse != nil { return Presented(mode: .page, browsing: true) }
             return details == nil ? nil : Presented(mode: .page)
         }
 
@@ -163,10 +183,24 @@ struct GolfFieldEventPageHost10868: View {
         mutating func open(_ mode: GolfEventPageMode10868) {
             self.mode = mode == .page ? nil : mode
             details = nil
+            browse = nil
         }
 
         mutating func openDetails(_ destination: GolfFieldOriginalsAdapter10868.Destination) {
             details = destination
+        }
+
+        /// Explore props: the group menu over the page — no card, no Details.
+        mutating func openBrowse() {
+            mode = nil
+            details = nil
+            browse = .menu
+        }
+
+        /// One group from the menu, held by its full key — never by role or position alone.
+        mutating func openGroup(_ key: GolfFieldPropsBrowseAdapter10868.Key) {
+            details = nil
+            browse = .group(key)
         }
 
         mutating func choose(_ id: Int) {
@@ -179,11 +213,16 @@ struct GolfFieldEventPageHost10868: View {
             selectedFinish = id
         }
 
-        /// Done: Details returns to the card it was opened over (or the page); a
-        /// card or the chooser returns to the page.
+        /// Done: Details returns to the card, group or page it was opened over; a
+        /// group returns to the menu; the menu, a card or the chooser returns to
+        /// the page.
         mutating func close() {
             if details != nil {
                 details = nil
+            } else if case .group? = browse {
+                browse = .menu
+            } else if browse != nil {
+                browse = nil
             } else {
                 mode = nil
             }
@@ -193,6 +232,7 @@ struct GolfFieldEventPageHost10868: View {
         mutating func dismiss() {
             details = nil
             mode = nil
+            browse = nil
         }
 
         /// A deliberate inspection choice: start, step, moment choice or plot tap.
@@ -244,8 +284,9 @@ struct GolfFieldEventPageHost10868: View {
             .onChange(of: snapshot.pass) { _, pass in session.expireInspection(in: pass) }
     }
 
-    /// Details over the open card or the page, else the open card or chooser —
-    /// each over THIS pass's input and originals.
+    /// Details over the open card, the browse layer or the page, else the open
+    /// card or chooser, else the browse layer — each over THIS pass's input and
+    /// originals.
     @ViewBuilder private var sheetContent: some View {
         let snapshot = makeSnapshot()
         let input = make(snapshot)
@@ -254,6 +295,31 @@ struct GolfFieldEventPageHost10868: View {
             detailsContent(details, input: input, originals: originals)
         } else if let mode = session.mode {
             page(input, mode: mode, originals: originals, snapshot: snapshot)
+        } else if let layer = session.browse {
+            browseContent(layer, originals: originals)
+        }
+    }
+
+    /// The group menu, or the one held group, over the SAME originals the
+    /// Details above resolve against. A held group no group on this pass carries
+    /// draws the Details' own unavailable view — never another group.
+    @ViewBuilder private func browseContent(_ layer: GolfFieldPropsBrowseAdapter10868.Layer,
+                                            originals: GolfFieldOriginalsAdapter10868.Originals) -> some View {
+        let groups = Self.propGroups(winner: winner, history: history, legs: legs, originals: originals, now: now)
+        switch layer {
+        case .menu:
+            GolfPropGroupMenu10868(groups: groups, onChoose: { session.openGroup($0) })
+        case .group(let key):
+            if let shown = GolfFieldPropsBrowseAdapter10868.group(key, in: groups)?.originals {
+                OriginalMarketCatalogueView9483(
+                    catalogue: shown.catalogue, selection: shown.selection, heading: shown.heading,
+                    context: shown.context, emptyWords: shown.emptyWords,
+                    unavailableChoice: shown.unavailableChoice, labels: shown.labels, tint: shown.tint,
+                    onSelect: GolfFieldPropsBrowseAdapter10868.select(hold: onInteraction,
+                                                                     open: { session.openDetails($0) }))
+            } else {
+                OriginalMarketDetailsView9483(catalogue: originals.catalogue, selection: nil, tint: DS.blue)
+            }
         }
     }
 
@@ -294,7 +360,10 @@ struct GolfFieldEventPageHost10868: View {
             },
             onChooserControl: { control in apply(control) },
             onOpenOriginal: Self.openOriginal(input, originals: originals, hold: onInteraction,
-                                              open: { session.openDetails($0) }))
+                                              open: { session.openDetails($0) }),
+            onExploreProps: GolfFieldPropsBrowseAdapter10868.entry(
+                Self.propGroups(winner: winner, history: history, legs: legs, originals: originals, now: now),
+                hold: onInteraction, open: { session.openBrowse() }))
     }
 
     /// The hold first, then the exact mode — never the reverse.
@@ -506,6 +575,73 @@ struct GolfFieldEventPageHost10868: View {
             GolfFieldPageInputAdapter10868.Sources(winner: winner, history: history, legs: legs), now: now)
         return GolfFieldOriginalsAdapter10868.originals(
             field, legs: legs, host: GolfFieldPageAdapter10868.Host(now: now, calendar: calendar, locale: locale))
+    }
+
+    /// The prop groups over the caller's pass of originals — the value its
+    /// Details resolve against — from the same Winner field and legs the
+    /// originals were built from. Membership and roles only: every reading is
+    /// the originals' own.
+    static func propGroups(winner: FuturesMarketDetail, history: FuturesHistoryResponse?,
+                           legs: GolfFieldFinishAdapter10868.Legs = .init(),
+                           originals: GolfFieldOriginalsAdapter10868.Originals, now: Date,
+                           tint: Color = DS.blue) -> [GolfFieldPropsBrowseAdapter10868.Group] {
+        let field = GolfFieldPageInputAdapter10868.field(
+            GolfFieldPageInputAdapter10868.Sources(winner: winner, history: history, legs: legs), now: now)
+        return GolfFieldPropsBrowseAdapter10868.groups(field, legs: legs, originals: originals, tint: tint)
+    }
+}
+
+/// "Prop groups": one row per held group — its typed role and its own count of
+/// supplied rows — in the originals' order, even when there is one. A row opens
+/// that one group; nothing is ranked, searched or summed, and the sheet's Done
+/// returns to the page.
+private struct GolfPropGroupMenu10868: View {
+    let groups: [GolfFieldPropsBrowseAdapter10868.Group]
+    let onChoose: (GolfFieldPropsBrowseAdapter10868.Key) -> Void
+    @ScaledMetric(relativeTo: .body) private var controlSize: CGFloat = 44
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(GolfFieldPropsBrowseAdapter10868.Words.heading)
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            if groups.isEmpty {
+                Text(GolfFieldPropsBrowseAdapter10868.Words.emptyWords)
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                Button { onChoose(group.key) } label: {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(group.key.role.name)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(DS.textPrimary)
+                            Text(GolfFieldPropsBrowseAdapter10868.Words.count(group.count))
+                                .font(.caption)
+                                .foregroundStyle(DS.textSecondary)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(DS.blue)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(minHeight: controlSize)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 1))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(GolfFieldPropsBrowseAdapter10868.spoken(group))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 }
 

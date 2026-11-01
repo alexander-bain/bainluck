@@ -71,7 +71,9 @@ import SwiftUI
 // no timer or animation, holds no subscription and presents no sheet or
 // navigation of its own. Each mode below is content the host's existing
 // container shows; every callback is the host's own closure handed to the leaf
-// unchanged. With no callback, nothing pretends to act.
+// unchanged. With no callback, nothing pretends to act. "Explore props" is one
+// secondary row under the stories, on the page only, drawn with the owner's
+// words and the host's callback; the groups it opens are the host's content.
 //
 // Host binding still owed — not available at this base: an owner that admits,
 // for one tournament snapshot, the history input, the selected golfer's finish
@@ -127,6 +129,9 @@ nonisolated struct GolfEventPageCopy10868: Equatable {
     let storiesLabel: String
     /// Shown in the finish card when no finish input fits this phase.
     let finishUnavailable: String
+    /// "Explore props": the secondary entry to the supplied originals in typed
+    /// groups, on the page only; nil draws no entry.
+    var exploreLabel: String? = nil
 }
 
 /// The owner's reading status and its one manual control.
@@ -182,6 +187,7 @@ nonisolated enum GolfEventPageAccessibilityID10868 {
     static let about = "golfEventPage10868.about"
     static let status = "golfEventPage10868.status"
     static let statusAction = "golfEventPage10868.status.action"
+    static let explore = "golfEventPage10868.explore"
     static func card(_ card: GolfEventPageCard10868) -> String { "golfEventPage10868.card.\(card)" }
     static func open(_ card: GolfEventPageCard10868) -> String { "golfEventPage10868.open.\(card)" }
 }
@@ -272,6 +278,11 @@ nonisolated struct GolfEventPageModel10868: Equatable {
         canOpen && Self.readable(input.copy.aboutLabel) != nil
     }
 
+    /// The Explore props entry: readable words and a callback, nothing else.
+    func exploreAvailable(canOpen: Bool) -> Bool {
+        canOpen && Self.readable(input.copy.exploreLabel) != nil
+    }
+
     /// The owner's Pause / Resume-updates action, only with a callback,
     /// readable words and an id no history control also hands back — both
     /// reach the host's one history action callback.
@@ -307,6 +318,8 @@ struct GolfEventPagePresentation10868: View {
     var onChoose: ((FieldChooserOriginalRef10868) -> Void)? = nil
     var onChooserControl: ((FieldChooserControl10868) -> Void)? = nil
     var onOpenOriginal: ((FieldChooserOriginalRef10868) -> Void)? = nil
+    /// "Explore props", from the page only; the host's own closure, unchanged.
+    var onExploreProps: (() -> Void)? = nil
 
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -367,6 +380,12 @@ struct GolfEventPagePresentation10868: View {
     func openAbout() {
         guard model.aboutAvailable(canOpen: onAbout != nil) else { return }
         onAbout?()
+    }
+
+    /// Hands Explore props to the host, only on the page and only while its entry is drawn.
+    func exploreProps() {
+        guard mode == .page, model.exploreAvailable(canOpen: onExploreProps != nil) else { return }
+        onExploreProps?()
     }
 
     /// Hands the owner's status action id back, only while it is drawn and available.
@@ -517,10 +536,36 @@ struct GolfEventPagePresentation10868: View {
             ForEach(model.stories, id: \.self) { card in
                 storyCard(card)
             }
+            if model.exploreAvailable(canOpen: onExploreProps != nil), let label = input.copy.exploreLabel {
+                exploreEntry(label)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(input.copy.storiesLabel)
         .accessibilityIdentifier(GolfEventPageAccessibilityID10868.stories)
+    }
+
+    /// The secondary Explore props row under the stories (the field page's
+    /// entry pattern), drawn on the page only — never inside a reader.
+    private func exploreEntry(_ label: String) -> some View {
+        Button(action: exploreProps) {
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(.body.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.body.weight(.semibold))
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(DS.blue)
+            .padding(.horizontal, 16)
+            .frame(minHeight: controlSize)
+            .modifier(GolfEventPageCardSurface10868())
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(GolfEventPageAccessibilityID10868.explore)
     }
 
     private func storyCard(_ card: GolfEventPageCard10868) -> some View {

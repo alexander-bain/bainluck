@@ -80,6 +80,8 @@ enum GolfFieldPageAdapter10868 {
         static let finishUnavailable = "Finish chances unavailable for this golfer."
         static let finishOpen = "Expand finish expectations"
         static let contendersOpen = "Expand who starts strongest"
+        /// The secondary entry to the supplied originals in typed groups (Design).
+        static let exploreProps = "Explore props"
     }
 
     // MARK: - Phase
@@ -118,7 +120,8 @@ enum GolfFieldPageAdapter10868 {
             context: context(winner, tournament: tournament, host: host),
             aboutLabel: nil,
             storiesLabel: Words.storiesLabel,
-            finishUnavailable: finishUnavailable)
+            finishUnavailable: finishUnavailable,
+            exploreLabel: Words.exploreProps)
     }
 
     static func eyebrow(_ winner: FuturesMarketDetail, phase: GolfFinishPhase10868) -> String {
