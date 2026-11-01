@@ -186,30 +186,24 @@ class TestTheSpecimen:
             "Cleveland Cavaliers",
         ], "the slice must refill from the legs the phantoms were displacing"
 
-    def test_the_one_real_rung_KEEPS_THE_CARD_and_its_number_is_renormalized(self):
-        """0.74 on a 0.52/0.96 book — a wide quote, but a real one. It leads.
+    def test_the_one_real_rung_keeps_the_card_and_destination_probability(self):
+        """#11616: keep the real .74, without squeezing an incomplete field.
 
-        🔴 ITS PRINTED NUMBER MOVES, AND THAT IS A CONSEQUENCE WORTH STATING.
-        Production serves this card RAW (0.74 · 0.48 · 0.48 · 0.48 · 0.48, summing
-        to 2.66) because #1200's overround guard reads a field summing far past
-        100% as a set of independent binaries and declines to squeeze it. Fifteen
-        phantoms at 0.48 are what put it there. With them gone the field is
-        coherent again (sum 1.40) and gets the #23 squeeze it should always have
-        had: 0.529 · 0.179 · 0.146 · 0.146.
-
-        So the fix does not only remove four rows — it hands a mutually exclusive
-        field back to the normalizer that had given up on it. Pinned rather than
-        left to be discovered, and `test_the_phantoms_are_what_defeated_the_squeeze`
-        below is the control that says which direction that ran in.
-
-        (#1201's placeholder strip cannot reach this: it keys on EXACTLY 0.5 and
-        these sit at 0.48.)
+        The earlier .529 expected here came from normalizing only search's
+        surviving subset. Detail's approved policy refuses that transformation
+        when any original field price is withheld. Preserve this empty-book
+        specimen and its healthy headline; changing surfaces cannot change its
+        probability. The asynchronous refusal set is passed exactly as a real
+        route supplies it, and the implicit path must agree for this specimen.
         """
-        top = _build_search_top_outcomes(_curry_market(), limit=5, lean=False)
-
-        assert top[0]["name"] == "Golden State Warriors"
-        assert top[0]["probability"] == pytest.approx(0.529, abs=0.005)
-        assert sum(o["probability"] for o in top) == pytest.approx(1.0, abs=0.02)
+        market = _curry_market()
+        withheld = {o.id for o in market.outcomes if _leg_prices_an_empty_book(o)}
+        assert withheld
+        for denied in (None, withheld):
+            top = _build_search_top_outcomes(market, limit=5, lean=False, withheld=denied)
+            assert top[0]["name"] == "Golden State Warriors"
+            assert top[0]["probability"] == 0.74
+            assert sum(o["probability"] for o in top) == pytest.approx(1.40)
 
     def test_the_phantoms_are_what_defeated_the_squeeze(self):
         """The BEFORE control, and it reproduces production byte for byte.

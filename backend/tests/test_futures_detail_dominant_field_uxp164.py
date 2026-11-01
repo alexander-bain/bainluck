@@ -213,7 +213,10 @@ class TestBothSerializersMoved:
     def test_detail_serializer_drops_before_leader_pick(self):
         from app.routes import futures
 
-        src = inspect.getsource(futures._format_market_detail)
+        from app.utils.futures_outcome_representation import represent_futures_outcomes
+
+        assert "represented = represent_futures_outcomes(" in inspect.getsource(futures._format_market_detail)
+        src = inspect.getsource(represent_futures_outcomes)
         drop_at = src.index("outcomes = drop_dominant_field_outcomes(")
         norm_at = src.index("normalize_display_probs(\n")
         # Anchored WITHOUT the closing paren (#6110): the ordering this test is
@@ -232,10 +235,14 @@ class TestBothSerializersMoved:
     def test_search_serializer_drops_before_leader_pick(self):
         from app.routes import events
 
-        src = inspect.getsource(events._build_search_top_outcomes)
-        drop_at = src.index("out = _drop_dominant_field_outcomes(")
-        norm_at = src.index("_normalize_search_outcome_probs(")
-        pick_at = src.index("return _leader_pick_order(out)")
+        from app.utils.futures_outcome_representation import represent_futures_outcomes
+
+        consumer = inspect.getsource(events._build_search_top_outcomes)
+        assert consumer.index("represented = represent_futures_outcomes(") < consumer.index("top = real[:limit]")
+        src = inspect.getsource(represent_futures_outcomes)
+        drop_at = src.index("outcomes = drop_dominant_field_outcomes(")
+        norm_at = src.index("normalize_display_probs(")
+        pick_at = src.index("leader_pick_order(outcomes")
         assert norm_at < drop_at < pick_at
 
     def test_search_and_detail_cannot_diverge_on_this_market(self):
@@ -267,14 +274,18 @@ class TestTheApiContract:
         # pass a count captured BEFORE the drop.
         from app.routes import futures
 
-        src = inspect.getsource(futures._format_market_detail)
+        from app.utils.futures_outcome_representation import represent_futures_outcomes
+
+        consumer = inspect.getsource(futures._format_market_detail)
+        assert "concept_outcome_count = represented.concept_outcome_count" in consumer
+        src = inspect.getsource(represent_futures_outcomes)
         capture_at = src.index("concept_outcome_count = len(outcomes)")
         drop_at = src.index("outcomes = drop_dominant_field_outcomes(")
         assert capture_at < drop_at, "the count must be captured pre-drop"
         # Anchor on the CALL, not the token. `"outcome_count": len(outcomes)` in the
         # response dict is a DIFFERENT and correct use of the post-drop length — it
         # reports how many rows the page shows. Only the derive call must be pre-drop.
-        call = src[src.index("derive_market_concept_key(") :]
+        call = consumer[consumer.index("derive_market_concept_key(") :]
         call = call[: call.index(")")]
         assert "concept_outcome_count" in call
         assert "len(outcomes)" not in call, "the pre-drop count must be the one passed"

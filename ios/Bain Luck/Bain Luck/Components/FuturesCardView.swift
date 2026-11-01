@@ -80,25 +80,46 @@ struct FuturesCardView: View {
                 .font(.caption)
                 .lineLimit(1)
             Spacer()
-            movementIndicator(outcome.movement)
-            if let prob = outcome.probability {
-                Text(formatProbability(prob))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
+            if let detail = outcome.detailValue {
+                // #11616: a saved card prints its market page's own decision —
+                // Won/Lost or "Result unknown" with no bar or move, and a price
+                // with the page's full-field integer and boundary label.
+                if detail.printsMovement { movementIndicator(outcome.movement) }
+                switch detail {
+                case .verdict(let verdict):
+                    valueText(verdict.label)
+                case .resultUnknown:
+                    valueText("Result unknown")
+                case .price(let prob):
+                    valueText(futuresProbabilityLabel(prob, renderedPercent: outcome.detailRenderedPercent))
+                case .none:
+                    EmptyView()
+                }
+            } else {
+                movementIndicator(outcome.movement)
+                if let prob = outcome.probability {
+                    valueText(formatProbability(prob))
+                }
             }
         }
         .padding(.vertical, 2)
         .background(
             GeometryReader { geo in
-                if let prob = outcome.probability {
+                if let prob = outcome.barProbability {
                     Rectangle()
                         .fill(categoryColor.opacity(0.06))
                         .frame(width: geo.size.width * min(1, prob))
                 }
             }
         )
+    }
+
+    private func valueText(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .monospacedDigit()
+            .foregroundStyle(.primary)
     }
 
     private var categoryColor: Color {

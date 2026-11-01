@@ -15,12 +15,17 @@ as `Won`/`Lost`: `_search_row_prints_a_verdict`, a mirror of `outcomeRowVerdict`
 (`frontend/components/futures/OutcomeRow.tsx`). Every row the card draws as a
 number keeps its vote.
 
-So the open ALCS board (60087229, `?q=yankees`, 10-02) KEEPS its "Sep 23": Toronto
+The original open ALCS board (60087229, `?q=yankees`, 10-02) KEPT its "Sep 23": Toronto
 is `is_winner=false, api_settlement` at 0%, and an open market prints only
 authoritative WINNERS (#6082), so the card shows Toronto as a numeric 0%. That 0%
 is on screen, and so is its age. Freshening the footer while the old number stays
 visible would be the flattering half of #6018. (Sol's mounted-contract receipt,
 `artifacts/9819-mounted-contributor-contract-20261002/HANDBACK.md`.)
+
+#11616 now applies detail's relative-age refusal to that same input. The old
+Toronto quote is null on the wire, so it no longer dates the other printed
+prices. The raw-price/ID-only controls below retain the original zero-price
+rule; the paired wire and mounted tests cover the new actual representation.
 
 ═══ THE PAIR ═══
 
@@ -250,9 +255,25 @@ class TestTheMirrorOfOutcomeRowVerdict:
 class TestThePairedWire:
     def test_the_served_payload_carries_the_age_and_still_prints_toronto(self):
         payload = _format_futures_for_search(_alcs())
-        assert payload["prices_updated_at"] == TORONTO_AT.isoformat()
-        names = [o["name"] for o in payload["top_outcomes"]]
-        assert "Toronto Blue Jays" in names
+        # #11616: detail's relative-age refusal now reaches search. Toronto
+        # remains navigable/graded on the wire, but its old quote is not printed.
+        assert payload["prices_updated_at"] == LIVE_MIN.isoformat()
+        toronto = next(o for o in payload["top_outcomes"] if o["name"] == "Toronto Blue Jays")
+        assert toronto["probability"] is None
+        assert toronto["is_winner"] is False
+        assert toronto["resolution_source"] == "api_settlement"
+
+    def test_wire_zero_dates_the_card_but_explicit_null_does_not(self):
+        market = _alcs()
+        rows = [{"id": o.id, "probability": o.current_probability} for o in market.outcomes]
+        assert _served_prices_as_of(market, rows) == TORONTO_AT.isoformat()
+        rows[-1]["probability"] = None
+        assert _served_prices_as_of(market, rows) == LIVE_MIN.isoformat()
+
+    def test_no_printed_prices_has_no_price_age(self):
+        market = _alcs()
+        rows = [{"id": o.id, "probability": None} for o in market.outcomes]
+        assert _served_prices_as_of(market, rows) is None
 
     def test_the_frontend_fixture_is_exactly_what_this_formatter_serves(self):
         """The jest half mounts FuturesCard on this file; it must be our wire."""

@@ -80,7 +80,9 @@ class TestResolutionSourceIsServed:
         comment beside the key cannot satisfy it (the containment-guard failure
         class — this module's own docstring mentions the field a dozen times).
         """
-        src = inspect.getsource(futures_routes._format_market_detail)
+        from app.utils.futures_outcome_representation import represent_futures_outcomes
+        assert "represented = represent_futures_outcomes(" in inspect.getsource(futures_routes._format_market_detail)
+        src = inspect.getsource(represent_futures_outcomes)
         dicts = _outcome_dict_keys(src)
         assert dicts, "no outcome payload (a dict carrying `is_winner`) found"
         for keys in dicts:
@@ -96,18 +98,25 @@ class TestResolutionSourceIsServed:
         here, because a served `null` is exactly the value that means UNGRADED.
         A literal would make every row read as ungraded and blank the site's
         genuine `Won` marks."""
-        src = inspect.getsource(futures_routes)
+        from app.utils import futures_outcome_representation
+        src = inspect.getsource(futures_routes) + "\n" + inspect.getsource(futures_outcome_representation)
         bindings = []
         for node in ast.walk(ast.parse(src)):
             if not isinstance(node, ast.Dict):
                 continue
             for k, v in zip(node.keys, node.values):
                 if isinstance(k, ast.Constant) and k.value == "resolution_source":
-                    assert isinstance(v, ast.Attribute), (
-                        f'"resolution_source" is bound to {ast.dump(v)[:80]}, '
-                        "not to a model attribute"
-                    )
-                    assert v.attr == "resolution_source"
+                    if isinstance(v, ast.Attribute):
+                        assert v.attr == "resolution_source"
+                    else:
+                        # The shared search/detail carrier allows an omitted
+                        # optional field, but must read the actual row whenever
+                        # present. A literal or wrong attribute still fails.
+                        assert isinstance(v, ast.Call)
+                        assert isinstance(v.func, ast.Name) and v.func.id == "getattr"
+                        assert isinstance(v.args[0], ast.Name) and v.args[0].id == "o"
+                        assert isinstance(v.args[1], ast.Constant) and v.args[1].value == "resolution_source"
+                        assert isinstance(v.args[2], ast.Constant) and v.args[2].value is None
                     bindings.append(ast.unparse(v))
         assert bindings, "no payload binds `resolution_source` to the model"
 
@@ -118,7 +127,7 @@ class TestTheFrontendFenceThatMakesTheAbsentCaseSafe:
     def _outcome_row_src(self) -> str:
         here = pathlib.Path(__file__).resolve().parents[2]
         return (
-            here / "frontend" / "components" / "futures" / "OutcomeRow.tsx"
+            here / "frontend" / "lib" / "futuresOutcomeVerdict.ts"
         ).read_text()
 
     def test_the_verdict_withholds_on_strict_null_only(self):
@@ -195,7 +204,10 @@ class TestTheFrontendFenceThatMakesTheAbsentCaseSafe:
         `outcomeRowVerdict`. A branch that restates `isResolved && is_winner ===`
         for itself is the drift this predicate exists to prevent, and it is how
         the defect renders again on one surface while the tests watch another."""
-        src = self._outcome_row_src()
+        here = pathlib.Path(__file__).resolve().parents[2]
+        component = (here / "frontend" / "components" / "futures" / "OutcomeRow.tsx").read_text()
+        assert 'import { outcomeRowVerdict } from "@/lib/futuresOutcomeVerdict"' in component
+        src = component + self._outcome_row_src()
         # Strip block comments and line comments: the prose deliberately quotes
         # the banned pattern to explain why it is banned.
         code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)

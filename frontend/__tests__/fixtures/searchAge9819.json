@@ -2,7 +2,7 @@
   "alcs": {
     "id": 60087229,
     "name": "MLB Playoffs: Team to advance to ALCS",
-    "prices_updated_at": "2026-09-23T10:31:12+00:00",
+    "prices_updated_at": "2026-10-02T11:15:00+00:00",
     "status": "open",
     "top_outcomes": [
       {
@@ -37,7 +37,7 @@
         "id": 232072954,
         "is_winner": false,
         "name": "Toronto Blue Jays",
-        "probability": 0.0,
+        "probability": null,
         "resolution_source": "api_settlement"
       }
     ]

@@ -3,6 +3,7 @@
  */
 
 import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
+import type { SettlementDisplay } from "@/lib/types";
 import type { DiscoverPriceCards } from "@/lib/discover/priceRefresh";
 import type { TournamentPayload } from "@/lib/tournament";
 import type { ClosedPeriodRow } from "@/lib/marketMapUtils";
@@ -638,9 +639,15 @@ export interface TeamSeasonAnswer {
 
 /** Lean outcome shape carried by typeahead futures suggestions (#993). */
 export interface TypeaheadOutcome {
+  rendered_percent?: number | null;
   name: string;
   probability: number | null;
   movement: number | null;
+  is_winner?: boolean | null;
+  resolution_source?: string | null;
+  settlement_display?: SettlementDisplay | null;
+  last_updated?: string | null;
+  price_changed_at?: string | null;
 }
 
 export interface TypeaheadResponse {

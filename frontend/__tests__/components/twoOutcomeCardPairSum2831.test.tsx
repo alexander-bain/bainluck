@@ -497,8 +497,8 @@ describe("anti-drift", () => {
     // Two rows out of a longer field are not a duel, and `slice` must not be
     // able to manufacture one.
     const code = codeOf("components/FuturesCard.tsx");
-    expect(code).toMatch(/renderedOutcomeRowPercents\(outcomes\.map\(\(o\) => o\.probability\)\)/);
-    expect(code).not.toMatch(/renderedOutcomeRowPercents\(topOutcomes/);
+    expect(code).toMatch(/representedOutcomeRowPercents\(outcomes\)/);
+    expect(code).not.toMatch(/(?:represented|rendered)OutcomeRowPercents\(topOutcomes/);
   });
 
   it("no second rounding policy was introduced", () => {

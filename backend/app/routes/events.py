@@ -48,6 +48,7 @@ from app.utils.scheduled_start import (
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
 from app.utils.market_label_normalization import non_sport_topic_label, rewrite_venue_league_vocabulary
 from app.utils.market_display_name import rewrite_question_colon_display
+from app.utils.grid_out_division_legs import drop_out_division_legs, out_legs_by_market
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -59,8 +60,6 @@ from app.utils.market_display_name import rewrite_question_colon_display
 # (its three cross-route imports — feed, golf — are function-local), so there is
 # no cycle to defer around. `tests/test_startup.py` is the standing guard.
 from app.routes.futures import (
-    WITHHELD_PRICE_FIELDS,
-    _board_has_a_verdict,
     _fleet_newest_observation,
     _withheld_price_outcome_ids,
 )
@@ -72,7 +71,6 @@ from app.utils.game_market_club_names import (
     repair_card_club_names,
     repair_club_names,
 )
-from app.utils.market_staleness import board_touched_at, unobserved_board_keys
 from app.utils.nation_flags import flag_nation
 from app.utils.series_card_labels import (
     market_threshold_label,
@@ -211,6 +209,7 @@ from app.utils.name_normalization import (
     diacritic_fold_query,
     expand_search_terms,
 )
+from app.config.person_aliases import resolve_reviewed_person_alias
 from app.config.team_aliases import (
     curated_team_aliases,
     expand_club_short_forms,
@@ -237,9 +236,13 @@ from app.utils.search_intent import (
 )
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
+    adapt_cached_search_response,
+    adapt_cached_typeahead_response,
+    attest_represented_top_outcomes,
     search_response_cache_enabled,
     search_response_cache_key,
     search_response_ttl_seconds,
+    stamp_futures_representation_policy,
 )
 from app.utils.participant_images import participant_images_for_event
 from app.utils.search_collections import attach_search_collections
@@ -958,7 +961,7 @@ def _search_boards_list_the_same_field(names: frozenset, kept_names: frozenset) 
 
 
 def _search_same_question_folded_ids(
-    markets: list, withheld_by_market: dict
+    markets: list, withheld_by_market: dict, out_divisions_by_market: Optional[dict] = None
 ) -> set[int]:
     """The ids of rows that ask a question a better-ranked row from ANOTHER venue
     already asks — Discover's fold, run over the search page (#8851).
@@ -998,13 +1001,16 @@ def _search_same_question_folded_ids(
     kept: list[tuple] = []  # (listed names, card item), rank order
     for m in markets:
         if _search_same_question_as_a_kept_card(
-            m, withheld_by_market.get(m.id), kept
+            m, withheld_by_market.get(m.id), kept,
+            out_division_labels=(out_divisions_by_market or {}).get(m.id),
         ):
             folded.add(m.id)
     return folded
 
 
-def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
+def _search_same_question_as_a_kept_card(
+    market, withheld, kept: list, *, out_division_labels=None
+) -> bool:
     """#8851's per-row decision: True if a better-ranked row from another venue,
     already in `kept`, asks this row's question. Otherwise the row is appended to
     `kept` and False is returned.
@@ -1029,7 +1035,9 @@ def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
                 "name": market.name,
                 "source": market.source,
                 "resolution_date": market.resolution_date,
-                "top_outcomes": _build_search_top_outcomes(market, withheld=withheld),
+                "top_outcomes": _build_search_top_outcomes(
+                    market, withheld=withheld, out_division_labels=out_division_labels
+                ),
             },
         }
         names = _search_listed_names(market)
@@ -1269,7 +1277,9 @@ def _live_twin_first(markets: list, now: Optional[datetime] = None) -> list:
     return out
 
 
-def _search_market_is_past_and_frozen(market, now: Optional[datetime] = None) -> bool:
+def _search_market_is_past_and_frozen(
+    market, now: Optional[datetime] = None, *, out_division_labels=None
+) -> bool:
     """A Kalshi board whose own ticker date has passed and whose prices stopped.
 
     #8852 — `?q=recession` (390px, 2026-09-26) served "What will Truist Financial
@@ -1291,6 +1301,24 @@ def _search_market_is_past_and_frozen(market, now: Optional[datetime] = None) ->
 
     A row with no dated ticker, no printable price stamp, or not from Kalshi is
     "cannot say" and stays.
+
+    #11616 O1: a board that carries a supported result is kept — settled means
+    settled — but only for that result: the builder draws nothing else from a
+    closed, frozen board (:func:`_search_market_is_closed_and_frozen`), and the
+    promoted headline never takes one, results or not.
+    """
+    return _search_market_is_closed_and_frozen(market, now) and not _search_card_result_ids(
+        market, out_division_labels=out_division_labels
+    )
+
+
+def _search_market_is_closed_and_frozen(market, now: Optional[datetime] = None) -> bool:
+    """#8852's two clauses alone: ticker date passed AND prices stopped.
+
+    #11616 O1. Whatever results it carries, such a board answers a question that
+    already closed: its frozen prices are never drawn as live, and it is never
+    the promoted headline — a truthful result does not make a closed question
+    the most relevant answer to a search.
     """
     if getattr(market, "source", None) != "kalshi":
         return False
@@ -6215,6 +6243,28 @@ def _alias_futures_arms(terms: list[str]) -> list:
     return arms + _postseason_round_futures_arms(terms)
 
 
+def _person_alias_literal_futures_arms(q: str, person_alias) -> list:
+    """#11617 A1: on a reviewed person-alias hit, the literal query's own NAME arm.
+
+    The alias replaces `_q_identity` with the canonical name, so every recall arm
+    reads "Shai Gilgeous-Alexander" and a market NAMED with what the reader typed
+    ("SGA regulatory decision") reached none of them — though alias-off finds it
+    on both routes. This is the plain name arm alias-off uses, compiled from the
+    literal terms; the canonical recall is untouched, so the rails see the union.
+
+    Name-only, like `_alias_futures_arms`: no outcome subquery and no team/event
+    arm, because the literal is a person's initials, not a club. [] with no alias,
+    so the common path compiles byte-identical SQL.
+    """
+    if person_alias is None:
+        return []
+    literal = _strip_search_scaffolding(q.strip().split())
+    if not literal:
+        return []
+    expanded = _apply_search_synonyms(expand_search_terms(literal))
+    return [and_(*[_build_round_word_ilike(FuturesMarket.name, t, e) for t, e in expanded])]
+
+
 #: #9333 — a postseason ROUND, named by the reader and by no stored text.
 #: `/search?q=wild card` on Monday 2026-09-28 served ZERO games with four MLB
 #: Wild Card series opening the next day, and led its futures with the NCAAB and
@@ -10082,6 +10132,7 @@ async def search_events(
             # accelerator, never a dependency.
             _hit = None
         if _hit is not None:
+            _hit = adapt_cached_search_response(_hit)
             # OUTSIDE the try above, on purpose, and it is the #2117 lesson
             # transplanted rather than re-derived. Inside it, an exception here
             # would skip the `return` and silently convert a cache HIT into a
@@ -10185,6 +10236,13 @@ async def search_events(
     # nothing. An identity site, so it rewrites the subject and never `q`; the
     # same call sits at `/typeahead`'s `_q_identity` so the two cannot disagree.
     _q_identity = expand_club_short_forms(_q_identity)
+
+    # #11617: reviewed whole-query person aliases use the same recall/ranking
+    # identity as the full name. Resolve raw q so a compound intent is not
+    # silently broadened; q still owns the response, logs and cache key.
+    _person_alias = resolve_reviewed_person_alias(q, sport_key=sport)
+    if _person_alias is not None:
+        _q_identity = _person_alias.canonical_name
 
     # `search_pattern = f"%{q}%"` STOOD HERE AND WAS DEAD — assigned on this line
     # and read nowhere in the backend (one occurrence in the tree). It is deleted
@@ -12070,6 +12128,10 @@ async def search_events(
     # `pats` and `revs`. Recall, tier1 window, relevance tier — all three.
     _futures_nickname_arms = _team_nickname_futures_arms(terms)
     _futures_where_or.extend(_futures_nickname_arms)
+    # #11617 A1: the literal name arm on a person-alias hit (three wirings, as
+    # the alias arms above: recall here, the tier<=1 split and tier 0 below).
+    _futures_literal_arms = _person_alias_literal_futures_arms(q, _person_alias)
+    _futures_where_or.extend(_futures_literal_arms)
 
     # #10024: a team-plus-competition query (`dodgers world series`) splits across
     # the market name and one outcome. NOT a `_futures_where_or` arm: it is read
@@ -12145,7 +12207,7 @@ async def search_events(
     # candidate set this route can see is exactly what it was.
     _futures_tier1_arms = [
         arm for arm in (futures_name_match, league_ticker_match) if arm is not None
-    ] + list(_futures_alias_arms) + list(_futures_nickname_arms)
+    ] + list(_futures_alias_arms) + list(_futures_nickname_arms) + list(_futures_literal_arms)
 
     # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
     # correlated string_agg(outcome names) computed for every candidate row
@@ -12287,6 +12349,11 @@ async def search_events(
     # so this appends nothing and the compiled SQL is byte-identical on the
     # no-alias path — the same no-cost property the recall arms already have.
     _futures_tier_whens = [(futures_name_match, 0)]
+    # #11617 A1: tier 0, the literal-name tier — exactly the tier this market
+    # takes with the alias off — placed directly after the canonical name match
+    # so no tier-1 inference arm below can claim a literal-name row first.
+    if _futures_literal_arms:
+        _futures_tier_whens.append((or_(*_futures_literal_arms), 0))
     # #9340: a bare round query's own markets sit ABOVE the name matches (tier
     # -1) — "Season Series Winner" matches `championship series` by name through
     # the `winner` synonym and would fill the window. Every such row is recalled
@@ -12886,8 +12953,14 @@ async def search_events(
     # #10028: a refusal check that times out withholds instead of 500ing, and
     # lands here so the answer is marked degraded and never cached.
     _withheld_shed: list = []
+    # #11616: the same cached grid verdict as detail, once for this pool.
+    # Non-division boards do not read Redis; a miss never builds the grid.
+    _out_divisions_by_market = await out_legs_by_market(deduped_futures)
     _withheld_by_market = {
-        m.id: await _search_withheld_price_ids(db, m, _withheld_shed)
+        m.id: await _search_withheld_price_ids(
+            db, m, _withheld_shed,
+            out_division_labels=_out_divisions_by_market.get(m.id),
+        )
         for m in deduped_futures
     }
     # #8734: the events this response serves. A game's own winner market is left
@@ -12900,14 +12973,15 @@ async def search_events(
     _served_event_ids = {r.get("id") for r in formatted_results} - {None}
     futures_markets = [
         m for m in deduped_futures if not _futures_card_has_no_answer(
-            m, _withheld_by_market.get(m.id)
+            m, _withheld_by_market.get(m.id),
+            out_division_labels=_out_divisions_by_market.get(m.id),
         )
         and m.id not in _container_parent_ids  # #8375
         and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
     ]
     # #8851: one question, one row — filter-then-slice; families reuse the ids.
     _same_question_folded_ids = _search_same_question_folded_ids(
-        futures_markets, _withheld_by_market
+        futures_markets, _withheld_by_market, _out_divisions_by_market
     )
     futures_markets = [
         m for m in futures_markets if m.id not in _same_question_folded_ids
@@ -13223,24 +13297,35 @@ async def search_events(
     # #8661: the deduped rows were asked before the filter above; only a
     # promoted headline contender can be new here, and one whose every price is
     # refused leaves the page like any other withdrawn card.
+    # A promoted market can be outside the original pool. Only those new rows
+    # need context; this batch is normally non-division boards and reads nothing.
+    _out_divisions_by_market.update(await out_legs_by_market(
+        m for m in futures_markets if m.id not in _withheld_by_market
+    ))
     for m in futures_markets:
         if m.id not in _withheld_by_market:
             _withheld_by_market[m.id] = await _search_withheld_price_ids(
-                db, m, _withheld_shed
+                db, m, _withheld_shed,
+                out_division_labels=_out_divisions_by_market.get(m.id),
             )
     if _withheld_shed:
         degraded.append("price_refusal")
     futures_markets = [
         m for m in futures_markets
-        if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
-        # #8852: a promoted contender that closed in April is not the headline.
-        and not _search_market_is_past_and_frozen(m)
+        if not _futures_market_prices_all_withheld(
+            m, _withheld_by_market[m.id],
+            out_division_labels=_out_divisions_by_market.get(m.id),
+        )
+        # #8852: a promoted contender that closed in April is not the headline —
+        # #11616 O1: not even when it carries a result (relevance, not truth).
+        and not _search_market_is_closed_and_frozen(m)
         # #8734: a promoted headline contender is asked too.
         and not _answers_a_served_game_card(m, _served_event_ids)
     ]
     _formatted_by_id = {
         m.id: _format_futures_for_search(
-            m, _withheld_by_market.get(m.id), query_terms=expanded  # #8842
+            m, _withheld_by_market.get(m.id), query_terms=expanded,  # #8842
+            out_division_labels=_out_divisions_by_market.get(m.id),
         )
         for m in (*deduped_futures, *futures_markets)
     }
@@ -13300,7 +13385,10 @@ async def search_events(
         [
             m
             for m in deduped_futures
-            if not _futures_card_has_no_answer(m, _withheld_by_market.get(m.id))
+            if not _futures_card_has_no_answer(
+                m, _withheld_by_market.get(m.id),
+                out_division_labels=_out_divisions_by_market.get(m.id),
+            )
             and m.id not in _container_parent_ids
             and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
             and m.id not in _same_question_folded_ids  # #8851
@@ -14274,6 +14362,7 @@ async def typeahead_search(
             # were already this block's behaviour and both must stay.
             _hit = None
         if _hit is not None:
+            _hit = adapt_cached_typeahead_response(_hit)
             # #2117: COUNT BEFORE RETURNING. This is the exit the trending write
             # could not see, and the reason a warmed term became uncountable.
             #
@@ -14354,6 +14443,11 @@ async def typeahead_search(
     # #9834: club short forms (`man utd`, `bvb`) name the club — the same
     # rewrite, at the same identity site, as `/search`.
     _q_identity = expand_club_short_forms(_q_identity)
+    # #11617: same whole-query admission as /search, before every recall rail.
+    # Parsed intent subjects alone are not permission to expand an alias.
+    _person_alias = resolve_reviewed_person_alias(q)
+    if _person_alias is not None:
+        _q_identity = _person_alias.canonical_name
     # #9527: the same subject with a matchup connector dropped, for the sites
     # that ask whether the reader named the teams and for the ranker. Read
     # `_matchup_subject` for why those, and only those.
@@ -15224,6 +15318,9 @@ async def typeahead_search(
     # for three cycles after /typeahead's twin was fixed.
     ta_futures_where.extend(_team_nickname_futures_arms(terms))
 
+    # #11617 A1: the literal name arm on a person-alias hit, as /search.
+    ta_futures_where.extend(_person_alias_literal_futures_arms(q, _person_alias))
+
     # LAT-P007: UNION, not OR — the LAT-P006 treatment, same reasoning, same
     # measurement rail. A top-level OR blocks the hash-semi-join transformation,
     # so the arms degrade to subplans probed against a seq scan of
@@ -15754,6 +15851,7 @@ async def typeahead_search(
     #: `(market id, kalshi ticker, event id)` for every row that reaches the
     #: dropdown — plain scalars, read while the ORM row is live. #6447 residual.
     _ta_market_facts: list[tuple[int, Optional[str], Optional[int]]] = []
+    _ta_out_divisions = await out_legs_by_market(ta_futures_ranked)
     for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
@@ -15785,7 +15883,9 @@ async def typeahead_search(
         # answer (`top_outcomes` below prints April's settled legs as `>99%`),
         # so its row is a stale claim, not an honest title. Asked before the
         # dedup key so a live row sharing the key can take it.
-        if _search_market_is_past_and_frozen(market):
+        if _search_market_is_past_and_frozen(
+            market, out_division_labels=_ta_out_divisions.get(market.id)
+        ):
             continue
         # #10165: before the dedup key, for #8852's reason — the container must
         # not claim a key a real row would otherwise take.
@@ -15809,8 +15909,13 @@ async def typeahead_search(
         # and so never reached this loop. `oscars` (production 2026-09-28)
         # printed Polymarket's `Oscars 2027: Best Picture Winner` and Kalshi's
         # `Oscar Winner: Best Picture` on consecutive rows, both at 49%.
-        _ta_withheld = await _search_withheld_price_ids(db, market)
-        if _search_same_question_as_a_kept_card(market, _ta_withheld, _ta_kept_cards):
+        _ta_out_labels = _ta_out_divisions.get(market.id)
+        _ta_withheld = await _search_withheld_price_ids(
+            db, market, out_division_labels=_ta_out_labels
+        )
+        if _search_same_question_as_a_kept_card(
+            market, _ta_withheld, _ta_kept_cards, out_division_labels=_ta_out_labels
+        ):
             continue
         # #6447 residual: the two scalars the club-name repair needs, read HERE
         # while the row is certainly live and kept as plain data. The repair
@@ -15832,7 +15937,7 @@ async def typeahead_search(
             label = _TIER_LABELS.get(market.market_tier, None)
         if not label and market.sport_id is None:
             label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
-        futures_pool.append({
+        futures_pool.append(stamp_futures_representation_policy({
             "type": "futures",
             # #7397: same translation as the search card below it — the dropdown
             # is one tap above the page, so leaving it raw here would have the
@@ -15842,6 +15947,7 @@ async def typeahead_search(
             "text": rewrite_venue_league_vocabulary(market.name),
             "market_id": market.id,
             "market_tier": market.market_tier,
+            "status": market.status,
             "market_type_label": label or market.market_type or "Market",
             "sport_key": market.llm_sport_category,
             # #993 Slice A: carry the answer (top 3, #23-normalized) so the
@@ -15856,6 +15962,7 @@ async def typeahead_search(
                 lean=True,
                 withheld=_ta_withheld,
                 query_terms=ta_expanded,  # #8842
+                out_division_labels=_ta_out_labels,
             ),
             # RANKING evidence, private and stripped before the response. The
             # three rows above are a DISPLAY cut; using them as the market's
@@ -15883,7 +15990,7 @@ async def typeahead_search(
             # slice, only when that game is among the rows the reader sees.
             "_listing_of_game": _game_listing_event_id(market),
             "_listing_questions": len(_search_surviving_legs(market)),
-        })
+        }))
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
     # ranked futures — tennis winner fields resolve to /event/[key] via the
@@ -37224,9 +37331,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
 from app.utils.outcome_display import (  # noqa: E402
     is_placeholder_outcome_name as _is_placeholder_outcome_name,
     is_field_outcome as _is_field_outcome,
-    normalize_display_probs as _normalize_search_outcome_probs,
+    normalize_display_probs as _normalize_search_outcome_probs,  # noqa: F401 - existing test/consumer import
     leader_pick_order as _leader_pick_order,
-    drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
     drop_incoherent_near_certain as _drop_incoherent_near_certain,
     drop_incoherent_ladder_outcomes as _drop_incoherent_ladder_outcomes,
     drop_unbacked_legs as _drop_unbacked_legs,
@@ -37456,8 +37562,16 @@ def _futures_market_prices_only_empty_books(market: "FuturesMarket") -> bool:
     return bool(priced) and all(_leg_prices_an_empty_book(o) for o in priced)
 
 
-def _search_surviving_legs(market: "FuturesMarket") -> list:
+def _search_surviving_legs(
+    market: "FuturesMarket", *, drop_empty_book: bool = True
+) -> list:
     """The legs the search ladder will actually draw, before its sort and slice.
+
+    #11616 F5: ``drop_empty_book=False`` returns the same chain before its last
+    (#6676) drop. The builder and the card predicates decide supported results
+    on that set, and :func:`_search_card_legs` draws a supported result on an
+    empty book result-only; the default stays the priced set the #5516/#6676
+    arms read.
 
     Lifted out of :func:`_build_search_top_outcomes` unchanged for #5516, so the
     market-level withdrawal predicate and the builder judge the SAME legs. The
@@ -37594,6 +37708,9 @@ def _search_surviving_legs(market: "FuturesMarket") -> list:
     # now asks whether the quote bounds anything at all (spread >= 0.90) instead of
     # testing each side against its own bound. This line did not change for that
     # either.
+    #
+    if not drop_empty_book:
+        return real  # F5: `_search_card_legs` applies it, keeping results unpriced
     return [o for o in real if not _leg_prices_an_empty_book(o)]
 
 
@@ -37765,8 +37882,76 @@ def _futures_board_is_mostly_unserved(market: "FuturesMarket") -> bool:
     return 0 < served < _BOARD_MIN_SERVED_SUM  # all-zero rungs are #6327's
 
 
+def _search_card_legs(
+    market, candidates: list, result_ids: set[int]
+) -> tuple[list, set[int]]:
+    """``(drawn legs, empty-book result ids)`` from the pre-empty-book legs.
+
+    #11616 F5: the card predicates and the builder decide supported results on
+    ONE leg set. An empty-book leg's number is not a price (#6676) and is never
+    served, but a supported RESULT on it is still the venue's verdict: it is
+    drawn result-only (no probability, integer, odds, rank or movement), so a
+    card kept for that result is never served with no rows.
+    """
+    empty_book_results = {
+        o.id for o in candidates
+        if o.id in result_ids and _leg_prices_an_empty_book(o)
+    }
+    drawn = [
+        o for o in candidates
+        if o.id in empty_book_results or not _leg_prices_an_empty_book(o)
+    ]
+    return drawn, empty_book_results
+
+
+def _search_card_result_ids(market, *, out_division_labels=None) -> set[int]:
+    """Supported results on the legs the builder draws (#11616 F5, O2).
+
+    The predicates' half of the one universe: eligible legs (division labels
+    applied) that survive search's own pre-empty-book drops. The representation
+    removes no supported result from that set — expired rungs are dropped only
+    on open boards, where only a graded winner prints, and winners are exempt.
+    """
+    if not any(getattr(o, "resolution_source", None) is not None for o in getattr(market, "outcomes", ())):
+        return set()
+    from app.utils.futures_outcome_representation import eligible_futures_outcomes
+
+    eligible = {o.id for o in eligible_futures_outcomes(market, out_division_labels)}
+    return _search_supported_result_ids(
+        market,
+        [o for o in _search_surviving_legs(market, drop_empty_book=False) if o.id in eligible],
+    )
+
+
+def _search_supported_result_ids(market, outcomes=None, *, out_division_labels=None) -> set[int]:
+    """Results the destination's existing reader policy can actually print.
+
+    Price admission and result evidence are separate. The resolved Polymarket
+    contract can refuse a legacy grade, so a nonempty source alone is not enough.
+    No I/O; the common ungraded board exits before eligible-universe work.
+    """
+    if not any(getattr(o, "resolution_source", None) is not None for o in getattr(market, "outcomes", ())):
+        return set()
+    from app.utils.futures_outcome_representation import eligible_futures_outcomes
+    from app.utils.settlement_display import applies_to_market, settlement_display
+
+    resolved = getattr(market, "status", None) == "resolved"
+    targeted = applies_to_market(market)
+    eligible = outcomes if outcomes is not None else eligible_futures_outcomes(market, out_division_labels)
+    supported = set()
+    for outcome in eligible:
+        contract = settlement_display(
+            is_winner=getattr(outcome, "is_winner", None),
+            resolution_source=getattr(outcome, "resolution_source", None),
+            stored_probability=getattr(outcome, "current_probability", None),
+        ) if targeted else None
+        if _search_row_prints_a_verdict(outcome, resolved, contract=contract):
+            supported.add(outcome.id)
+    return supported
+
+
 def _futures_card_has_no_answer(
-    market: "FuturesMarket", withheld: Optional[set] = None
+    market: "FuturesMarket", withheld: Optional[set] = None, *, out_division_labels=None
 ) -> bool:
     """The card this market would draw can state no answer a reader can trust.
 
@@ -37800,18 +37985,25 @@ def _futures_card_has_no_answer(
     prices stopped (`_search_market_is_past_and_frozen`). Its numbers are real
     but they answer a question that already closed, printed as if it were open.
     """
+    # #11616: an absent/refused prediction does not erase a supported result —
+    # judged on the legs the builder draws (F5), division labels applied (O2).
+    if _search_card_result_ids(market, out_division_labels=out_division_labels):
+        return False
     return (
         _futures_market_has_no_outcome_rows(market)
         or _futures_market_is_wholly_unpriced(market)
         or _futures_market_prices_only_empty_books(market)
         or _futures_board_is_mostly_unserved(market)
-        or _futures_market_prices_all_withheld(market, withheld)
-        or _search_market_is_past_and_frozen(market)
+        # #11616 R-O2: the same division labels as every other result read here.
+        or _futures_market_prices_all_withheld(
+            market, withheld, out_division_labels=out_division_labels
+        )
+        or _search_market_is_past_and_frozen(market, out_division_labels=out_division_labels)
     )
 
 
 def _futures_market_prices_all_withheld(
-    market: "FuturesMarket", withheld: Optional[set]
+    market: "FuturesMarket", withheld: Optional[set], *, out_division_labels=None
 ) -> bool:
     """Every leg the search ladder would price is in the refusal set (#8661).
 
@@ -37822,6 +38014,8 @@ def _futures_market_prices_all_withheld(
     never withdraw a card.
     """
     if not withheld:
+        return False
+    if _search_card_result_ids(market, out_division_labels=out_division_labels):
         return False
     priced = [
         o for o in _search_surviving_legs(market) if o.current_probability is not None
@@ -38170,10 +38364,24 @@ async def _search_container_parent_ids(
     ) | _search_unlinked_container_parents_among(unlinked, named_rows)
 
 
+def _search_now() -> datetime:
+    """The request's real instant, the clock detail's representation reads
+    (``_format_market_detail`` passes ``datetime.now(timezone.utc)``). Search's
+    one clock: the day-granular ladder window derives from it, so a test pins
+    this and both stay consistent (gotcha #44).
+
+    #11616 F1: the representation used to receive MIDNIGHT of today. A rung
+    expires at ``D+1 11:59:59Z`` (deadline ``D 23:59:59Z`` + 0.5 d grace), so
+    from 12:00Z to 24:00Z detail dropped yesterday's rung while search kept it,
+    and an exclusive board normalized over a different field (44/28/20 on
+    search vs 48/30/22 on detail)."""
+    return datetime.now(timezone.utc)
+
+
 def _search_today_ymd() -> float:
-    """Today (UTC) on the ``YYYYMMDD`` scale date rungs sort on (#8930). One
-    function so tests pin the clock instead of branching on it (gotcha #44)."""
-    today = datetime.now(timezone.utc).date()
+    """Today (UTC) on the ``YYYYMMDD`` scale date rungs sort on (#8930), read
+    from :func:`_search_now`. Day-granular, for the ladder window only."""
+    today = _search_now().date()
     return float(today.year * 10000 + today.month * 100 + today.day)
 
 
@@ -38323,7 +38531,9 @@ def _search_ladder_window(
     return [ordered[index] for index in priced[start : start + limit]]
 
 
-def _search_query_matched_leg(market, board: list, top: list, query_terms, withheld: set):
+def _search_query_matched_leg(
+    market, board: list, top: list, query_terms, withheld: set, *, result_ids=frozenset()
+):
     """The priced leg that NAMES the query and does not already lead the card, or None.
 
     #8842 — `?q=ohtani` (390px, 2026-09-26 ~15:15Z) served four cards on which
@@ -38366,8 +38576,7 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     matched = next(
         (
             o for o in board
-            if o.id not in withheld
-            and _outcome_prints_a_price(o)
+            if (o.id in result_ids or (o.id not in withheld and _outcome_prints_a_price(o)))
             and _text_names_every_term(o.name, remainder)
         ),
         None,
@@ -38386,6 +38595,11 @@ def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple
     are rank 1), and a tie left to load order is what made the card show the
     Dodgers in one read and the Brewers in the next.
 
+    #11616 R-multi: price comes first, the order detail serves its rows in
+    (`represent_futures_outcomes` sorts on `current_probability`), so a board
+    whose winners are priced differently leads with the winner both detail
+    heroes name. A stored rank that disagreed led search with the other one.
+
     One row stays with the best live leg while any exists: #8640's point is
     that a result must not headline an open board, and a board with more
     winners than rows would otherwise be all results. Everything else keeps its
@@ -38396,6 +38610,7 @@ def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple
     winners = sorted(
         (o for o in real if headline_tier(o) == 1 and getattr(o, "is_winner", None) is True),
         key=lambda o: (
+            -(o.current_probability or 0),
             getattr(o, "rank", None) is None,
             getattr(o, "rank", None) or 0,
             o.name or "",
@@ -38420,44 +38635,48 @@ def _build_search_top_outcomes(
     lean: bool = False,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    *,
+    out_division_labels=None,
 ) -> list[dict]:
-    """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
-    full search formatter and the typeahead futures branch.
+    """Select search rows from the destination's full-field representation.
 
-    #8842: ``query_terms`` (the handler's expanded terms) lets a card that was
-    recalled through an OUTCOME name carry that outcome. See
-    `_search_query_matched_leg`.
-
-    ``lean=True`` returns the minimal typeahead payload (name / probability /
-    movement only — no id/odds/rank) to keep the dropdown response small.
-    Placeholder outcomes are filtered; probabilities are #23-normalized so the
-    displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
-
-    ``withheld`` is #6993's fourth and last surface. The four-arm refusal union
-    lives in ``routes/futures.py::_withheld_price_outcome_ids`` and reaches the
-    detail, group, browse and faceted routes; THIS builder never asked it, so
-    ``/api/events/search?q=Nasdaq-100`` served outcome ``1597367`` at
-    ``probability: 1.0`` — rank 1, the card's whole headline — while
-    ``/futures/109485`` served the same leg as ``None`` in the same minute, and
-    the search card is one tap above the page that contradicts it.
-
-    IT IS PASSED IN, NOT COMPUTED HERE, and that is forced rather than chosen:
-    the union is ``async(db, market)`` because two of its arms read the snapshot
-    table, while this builder is synchronous and is called from a dict
-    comprehension that formats each market exactly once (the L2-38 latency
-    shape). Both callers are ``async`` route handlers holding a session, so they
-    build the map and hand each market its own set. ``None`` means "nobody
-    asked" and is a pass-through — every existing caller keeps its behaviour.
+    Numerical admission, relative age, movement validity and result metadata
+    are established before the visible limit or query pin. Search keeps its
+    existing reachability, live/result ordering and cumulative-window choices.
+    ``lean`` omits ID/odds/rank, but retains result and observation fields so a
+    client can distinguish a confirmed result from a withheld prediction.
+    Async quote/fleet refusal inputs are supplied by the caller; this function
+    makes no database or network call and never mutates source rows (#11616).
     """
     # Q480 / #6524 / #4253 / #6676 — the four pre-sort refusals, and the reason
     # every one of them is applied BEFORE the sort and the `[:limit]` slice, now
     # live in `_search_surviving_legs`. They were lifted there by #5516 so that
     # the withdrawal predicate judges the same legs this builder draws; nothing
     # about the chain itself changed.
-    # #10248 D5. Function-local: the module's top-level imports are reserved.
-    from app.utils.futures_market_snapshot import reader_change_24h
+    from app.utils.futures_outcome_representation import represent_futures_outcomes
 
-    real = _search_surviving_legs(market)
+    # #11616 F1: the request's real instant, as detail passes it — never
+    # midnight. Expired-rung admission is instant-granular; only the ladder
+    # window below is day-granular (`_search_today_ymd`, same clock).
+    represented = represent_futures_outcomes(
+        market, withheld,
+        out_division_labels=out_division_labels,
+        now=_search_now(),
+    )
+    by_id = {row["id"]: row for row in represented.outcomes}
+    # Surface reachability/selection remains bounded, but its values and state
+    # come from the destination's whole eligible field before the top-N cut.
+    # #11616 F5: results are decided on the same pre-empty-book legs the card
+    # predicates judge (`_search_card_result_ids`); a supported result on an
+    # empty book is drawn result-only and never carries the book's midpoint.
+    _candidates = [o for o in _search_surviving_legs(market, drop_empty_book=False) if o.id in by_id]
+    _result_ids = _search_supported_result_ids(market, _candidates)
+    real, _empty_book_results = _search_card_legs(market, _candidates, _result_ids)
+    # #11616 O1: a closed, frozen board is kept only for its results (#8852
+    # withdraws it otherwise), so it draws only them — its other legs' frozen
+    # prices would read as live answers to a question that already closed.
+    if _result_ids and _search_market_is_closed_and_frozen(market, _search_now()):
+        real = [o for o in real if o.id in _result_ids]
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
     # Reds 18%` on a three-way inning market whose tie leg was never stored.
@@ -38470,8 +38689,8 @@ def _build_search_top_outcomes(
     # The search card is then WITHDRAWN by `_futures_card_has_no_answer`; the
     # dropdown keeps its row and its name-reachability (#4723's control) and
     # simply stops printing a set that does not add up.
-    if _futures_board_is_mostly_unserved(market):
-        return []
+    if _futures_board_is_mostly_unserved(market) and not _result_ids:
+        return attest_represented_top_outcomes([])
     # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
     # sixteen rungs, an order implying a favourite, and not one number. Measured
     # live 2026-09-15: `?q=Sonmez` served market 61106176 "WTA Guadalajara
@@ -38495,8 +38714,8 @@ def _build_search_top_outcomes(
     # Returning `[]` rather than a dashed list serves BOTH surfaces off the one
     # guard: the typeahead dropdown (`lean=True`) stops carrying three
     # `probability: None` rungs, and the search card is withdrawn by the caller.
-    if not any(o.current_probability is not None for o in real):
-        return []
+    if not any(o.current_probability is not None for o in real) and not _result_ids:
+        return attest_represented_top_outcomes([])
     # SORT ON THE SERVED VALUE, not the stored one — #6993, and the same line
     # browse and faceted needed for the same reason. Ordering by the raw column
     # is what put a withheld stored `1.0` at rank 1 in the first place, and on
@@ -38512,7 +38731,11 @@ def _build_search_top_outcomes(
     # `0`, not `-1`: a genuine `0.0` price sorts here too, and the two are
     # equally uninteresting as headlines. The nulling below is what tells them
     # apart on the wire, not this ordering.
-    _withheld_ids = withheld or set()
+    _withheld_ids = (
+        (withheld or set())
+        | {oid for oid, row in by_id.items() if row["probability"] is None}
+        | _empty_book_results
+    )
     # #8640: A GRADED RUNG ON A STILL-OPEN LADDER IS A RESULT, NOT THE ANSWER.
     # Measured live 2026-09-25, `?q=Fed rate` led market 113427 *What will Fed
     # Rate hit before 2027* (polymarket, open, `mutually_exclusive=false`) with
@@ -38542,22 +38765,44 @@ def _build_search_top_outcomes(
         market, "mutually_exclusive", True
     )
 
-    # Every other board gets one tier, so its order is byte-for-byte what it was.
+    # On other boards a supported result is the answer even without a price;
+    # ungraded rows retain their represented-price ordering within their tier.
+    #
+    # #11616 L1/L2: on the open multi-winner board the LIVE tier is exactly the
+    # rows both detail pages may lead with (web `pickLiveLeader`, iOS
+    # `futuresDetailHeroOutcome`): not a raw `is_winner` true, and a represented
+    # price above 0. A real 0.0 still prints 0% on the card (#6195) but cannot
+    # headline over a result (#7439's second clause: "0% Above 60" is a
+    # different wrong headline). A graded LOSER (`False` + a source) prints its
+    # live number on every surface (#6082), so it leads like any live row —
+    # Root's L2 ruling, which reverses #8640's graded-loss control on purpose.
+    #
+    # #11616 B1: a raw `is_winner` true that is NOT a supported result goes to
+    # tier 0, not the result tier. In tier 1 it joined #9675's kept winners,
+    # which order by STORED rank, so "A 60%" (true, null source, rank 1) led
+    # over "B Won" (api_settlement, rank 2) while both detail heroes led with
+    # B. In tier 0 it sorts by price below every supported result, which is
+    # detail's own fallback order: live, then supported winner, then price.
     def _headline_tier(o) -> int:
         if not _demote_graded:
-            return 0
-        if o.id in _withheld_ids or o.current_probability is None:
-            return 0
-        if leg_is_graded(
-            getattr(o, "is_winner", None), getattr(o, "resolution_source", None)
-        ):
+            return 1 if o.id in _result_ids else 0
+        if o.id in _result_ids:
             return 1
+        if (
+            o.id in _withheld_ids
+            or o.current_probability is None
+            or not (by_id[o.id]["probability"] or 0) > 0
+            or getattr(o, "is_winner", None) is True
+        ):
+            return 0
         return 2
 
     # #8834: a cumulative ladder is drawn as the rungs around its crossing, in
     # threshold order, and never reaches the probability sort below. See
     # `_search_ladder_window` for why the sort is wrong on exactly this shape.
     window = _search_ladder_window(market, real, _withheld_ids, limit, lean)
+    if window == [] and _result_ids:
+        window = None  # no live crossing remains, but the result still answers
     pinned = None
     if window is not None:
         top = window
@@ -38588,7 +38833,7 @@ def _build_search_top_outcomes(
         real.sort(
             key=lambda o: (
                 _headline_tier(o),
-                0 if o.id in _withheld_ids else (o.current_probability or 0),
+                0 if o.id in _empty_book_results else by_id[o.id]["probability"] or 0,
             ),
             reverse=True,
         )
@@ -38608,7 +38853,9 @@ def _build_search_top_outcomes(
         # first, since #10279, because the dropdown prints two rows and the
         # iPhone row one. Not on the ladder window above: a threshold rung is
         # never a player or a team.
-        pinned = _search_query_matched_leg(market, real, top, query_terms, _withheld_ids)
+        pinned = _search_query_matched_leg(
+            market, real, top, query_terms, _withheld_ids, result_ids=_result_ids
+        )
         if pinned is not None and any(o is pinned for o in top):
             top = [pinned] + [o for o in top if o is not pinned]
         elif pinned is not None:
@@ -38632,171 +38879,77 @@ def _build_search_top_outcomes(
     # the #993 pair went wrong, and this serializer exists so that cannot
     # recur. Completed from each rung's own ticker; see
     # `game_market_club_names.repair_field_outcome_name`.
-    threshold_label = market_threshold_label(market)  # #9383
-    named = [
-        (o, reader_outcome_name(o.external_id, o.name, threshold_label) or o.name)
-        for o in top
-    ]
-    # #6195: A `0.0` IS A PRICE, AND THIS IS THE LINE THAT PRINTED IT AS A DASH.
-    #
-    # Measured on production 2026-09-21: `?q=Super Bowl` served this card for
-    # *Sports Emmy Award for Outstanding Live Sports Special: Championship
-    # Event?* (13886744) drawing FIVE rungs of which FOUR were `probability:
-    # null` — NBA Finals, College Football Playoff, Super Bowl LX, The Masters —
-    # while `futures_outcomes` holds `0.000000` for every one of them and
-    # `/api/futures/13886744` serves them as `0.0`. One tap apart, two answers
-    # about the same four numbers, and the near-empty board is on the surface a
-    # reader meets FIRST. `0.000000` is not a missing price; it is the field
-    # saying this candidate is out, on a market where we know every answer.
-    #
-    # `_outcome_prints_a_price` RATHER THAN A LOCAL `is not None`, and that is
-    # the load-bearing half. `_served_prices_as_of` — the age pip under this
-    # same card — scopes itself to rows that print a price by calling that
-    # predicate, and its docstring states the coupling as a contract: a `0.0`
-    # leg "regains its vote here with no edit to this function". A local test
-    # here would satisfy this issue and re-open #6256 in the same diff, because
-    # the two sides of the card would once again be deciding "is this a price"
-    # in two places. They decide it in one.
-    #
-    # `movement` is deliberately NOT moved with it. Its truthiness answers a
-    # different question — "did this leg move" — and a change of exactly zero is
-    # honestly absent rather than a number worth drawing; UX-P275 is the ruling
-    # that a move which rounds to nothing must not print as a move. Only the
-    # price is a claim about the world that `0` can correctly make.
-    if lean:
-        out = [
-            {
-                "name": name,
-                "probability": (
-                    float(o.current_probability) if _outcome_prints_a_price(o) else None
-                ),
-                # #10248 D5 — `reader_change_24h`.
-                "movement": (
-                    float(chg)
-                    if (chg := reader_change_24h(
-                        market, o.id, o.current_probability, o.probability_change_24h
-                    ))
-                    else None
-                ),
-            }
-            for o, name in named
-        ]
-    else:
-        out = [
-            {
-                "id": o.id,
-                "name": name,
-                "probability": (
-                    float(o.current_probability) if _outcome_prints_a_price(o) else None
-                ),
-                "american_odds": o.current_american_odds,
-                "rank": o.rank,
-                # #10248 D5 — `reader_change_24h`.
-                "movement": (
-                    float(chg)
-                    if (chg := reader_change_24h(
-                        market, o.id, o.current_probability, o.probability_change_24h
-                    ))
-                    else None
-                ),
-                # #8640: the grade, in the detail payload's own two fields
-                # (`FuturesOutcome` in `lib/types.ts`), so a client can tell a
-                # graded 1.0 from a live one. Both are needed: `is_winner`
-                # defaults to false, and only `resolution_source` separates
-                # "graded a loss" from "never graded".
-                "is_winner": getattr(o, "is_winner", None),
-                "resolution_source": getattr(o, "resolution_source", None),
-            }
-            for o, name in named
-        ]
-    # #6993: null the refused price, keyed on presence, exactly as the detail,
-    # group, browse and faceted arms do — `WITHHELD_PRICE_FIELDS` is the one
-    # place the spellings of "the price" are listed, so `movement` (this
-    # payload's name for the 24h delta) is covered without a local rule.
-    #
-    # HERE, ABOVE `_normalize_search_outcome_probs`, AND THAT IS LOAD-BEARING —
-    # the same ordering the detail serializer documents. A refused `1.0` left in
-    # place until after the #23 squeeze would still sit in the divisor and go on
-    # halving every honest row on the board, which is the refusal leaking back
-    # in as a quieter lie about the legs we DO print.
-    #
-    # `_drop_dominant_field_outcomes` and `_leader_pick_order` below then judge
-    # the number RENDERED rather than the stored one, which is what they both
-    # document wanting: a withheld row reads as priceless and can neither
-    # headline the card nor be mistaken for a dominant field.
-    #
-    # KEYED ON THE ORM ROW, NOT ON `od["id"]`, AND THAT IS NOT A STYLE CHOICE:
-    # the lean typeahead shape has no `id` key at all (the docstring above says
-    # so, and `_served_prices_as_of` relies on it). `od.get("id")` would be
-    # `None` for every dropdown row, match nothing, and leave the refused price
-    # headlining the one surface a reader meets FIRST — a fix that reads as
-    # shipped and withholds nothing. `named` and `out` are built from the same
-    # list in the same order in both branches, so the zip is exact.
+    named = [(o, by_id[o.id]["name"]) for o in top]
+    out = []
+    for o, name in named:
+        row = by_id[o.id]
+        item = {
+            "name": name,
+            "probability": row["probability"],
+            "rendered_percent": row["rendered_percent"],
+            "movement": row["probability_change_24h"],
+            "is_winner": row["is_winner"],
+            "resolution_source": row["resolution_source"],
+            "last_updated": row["last_updated"],
+            "price_changed_at": row["price_changed_at"],
+        }
+        if "settlement_display" in row:
+            item["settlement_display"] = row["settlement_display"]
+        if not lean:
+            # #11616: odds follow the served probability, as rank does — a
+            # NULL price beside stored odds would be attested here and then
+            # refused by the cache validator on the producer's own card.
+            priced = row["probability"] is not None
+            item.update(
+                id=o.id,
+                american_odds=row["american_odds"] if priced else None,
+                rank=row["rank"] if priced else None,
+            )
+        if o.id in _empty_book_results:
+            # F5: the verdict, never the empty book's midpoint.
+            item.update(probability=None, rendered_percent=None, movement=None, price_changed_at=None)
+            if not lean:
+                item.update(american_odds=None, rank=None)
+        out.append(item)
+
     if pinned is not None and not lean:
         for (o, _name), od in zip(named, out):
             if o is pinned:
                 od["query_match"] = True
-                od["matched_rank"] = 1 + sum(
-                    1 for leg in real
-                    if leg.id not in _withheld_ids
-                    and (leg.current_probability or 0) > (o.current_probability or 0)
+                # #11616 O-P1a: a priced pin's place is its served rank —
+                # detail's number for the row. The #8863 count of legs priced
+                # STRICTLY above it gave a tie a neighbour's number (1, 2, 2
+                # beside detail's 1, 2, 3); it remains only where no rank is served.
+                od["matched_rank"] = None if od["probability"] is None else (
+                    od.get("rank") if od.get("rank") is not None else 1 + sum(
+                        1 for leg in real
+                        if leg.id not in _withheld_ids
+                        and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
+                    )
                 )
-    if _withheld_ids:
-        for (o, _name), od in zip(named, out):
-            if o.id in _withheld_ids:
-                for field in WITHHELD_PRICE_FIELDS:
-                    if field in od:
-                        od[field] = None
-                # `rank` IS NOT IN THE TUPLE AND MUST NOT JOIN IT. The stored
-                # column is seeded from the price at ingest — outcome 1597367's
-                # stored rank is literally `1` BECAUSE its price is the refused
-                # `1.0` — so serving it beside `probability: null` publishes
-                # "this is the favourite", the refused claim in a third costume.
-                #
-                # Nulled HERE rather than in the shared tuple because the other
-                # four surfaces already answer this correctly and differently:
-                # `_format_market_detail` treats the column as "the SEED, not
-                # the served answer" and overwrites it from the display order at
-                # `assign_display_ranks` (#2556), which is why detail serves this
-                # same leg as rank 19 of 19. Adding `rank` to the tuple would
-                # null a number that is already honest there. Bringing #2556's
-                # display-rank pass to search is the fuller answer and it belongs
-                # to that ship, not this one — it would move `rank` on every row
-                # of every search card, and this arm is about one refused price.
-                #
-                # Safe on the wire: no search surface renders this field, and the
-                # clients that read `rank` elsewhere already handle null
-                # (`rank={outcome.rank ?? index + 1}` on the futures page, and
-                # the team/my-stuff cards gate `#{rank} of {total}` on truthiness).
-                if "rank" in od:
-                    od["rank"] = None
-    # #199: don't sum-to-1 non-mutually-exclusive participation families
-    # (golf make-cut/top-N) — that squashed an honest 87% make-cut to ~20% in search.
-    _normalize_search_outcome_probs(
-        out, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+    # #11616 F2: the same winner rule detail's representation orders by
+    # (`_is_graded_winner`: `is_winner` with a source), plus this builder's own
+    # supported winners. Without it `demote_dominant_field` sent a settled
+    # "Other" 1.0 to the END, and the dropdown led with a loser ("Alice Lost")
+    # on a board detail leads with "Other · Won".
+    _winner_rows = {
+        id(item) for (o, _name), item in zip(named, out)
+        if o.id in _result_ids and item.get("is_winner") is True
+    }
+
+    def _is_supported_winner(item: dict) -> bool:
+        return id(item) in _winner_rows or (
+            bool(item.get("is_winner")) and item.get("resolution_source") is not None
+        )
+
+    return attest_represented_top_outcomes(
+        _leader_pick_order(out, is_winner_of=_is_supported_winner)
     )
-    # UX-P164: search is the OTHER half of the #993 pair and it had the identical
-    # defect — measured live 2026-08-29, `/api/events/search?q=which party will win
-    # the house` served `Democratic Party 0.855 | Republican Party 0.145 | Other
-    # 1.0`, byte-for-byte what `/api/futures/112903` served. Demotion alone cannot
-    # help here either: this list is already sliced to `limit`, so "the end" is
-    # inside the dropdown. Fixing only the detail page would have moved the
-    # disagreement between two surfaces instead of ending it — the exact failure
-    # this module exists to prevent, and UX-P162's lesson applied before it bites.
-    #
-    # Placed AFTER normalization for the same reason as the detail serializer:
-    # `_FIELD_DOMINANT_MIN` judges the number RENDERED, so a field row that the
-    # #23 squeeze brings below the threshold is real information and survives.
-    # This can return `limit - 1` rows; that is honest — a dropdown showing four
-    # real answers beats four real answers plus a no-bid ask printed as 100%.
-    out = _drop_dominant_field_outcomes(
-        out, lambda o: o.get("name"), lambda o: o.get("probability")
-    )
-    return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 
 
 async def _search_withheld_price_ids(
-    db, market: "FuturesMarket", shed: Optional[list] = None
+    db, market: "FuturesMarket", shed: Optional[list] = None,
+    *, out_division_labels=None,
 ) -> set[int]:
     """#6993's refusal set for one market, or an empty set if the row cannot say.
 
@@ -38894,12 +39047,12 @@ async def _search_withheld_price_ids(
         # its own recency gate), and `unobserved_board_keys` reads None as
         # "withhold nothing", so a live board pays nothing and a graded board
         # keeps its result by construction.
-        outcomes = getattr(market, "outcomes", None) or []
-        withheld |= unobserved_board_keys(
-            ((o.id, o.last_updated) for o in outcomes),
-            board_touched_at=board_touched_at(market),
+        from app.utils.futures_outcome_representation import (
+            eligible_futures_outcomes, local_futures_withheld_ids,
+        )
+        withheld = local_futures_withheld_ids(
+            market, eligible_futures_outcomes(market, out_division_labels), withheld,
             fleet_newest_observation=await _fleet_newest_observation(db, market),
-            board_has_a_verdict=_board_has_a_verdict(outcomes),
         )
         await _close(commit=True)
         return withheld
@@ -39739,7 +39892,7 @@ def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEviden
     )
 
 
-def _search_row_prints_a_verdict(outcome, market_resolved: bool) -> bool:
+def _search_row_prints_a_verdict(outcome, market_resolved: bool, *, contract=None) -> bool:
     """Does FuturesCard draw this served search row as `Won`/`Lost` (no price)?
 
     #9819. A line-for-line mirror of `outcomeRowVerdict` in
@@ -39759,7 +39912,12 @@ def _search_row_prints_a_verdict(outcome, market_resolved: bool) -> bool:
     from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 
     source = getattr(outcome, "resolution_source", None)
-    if source == RETRACTION_SOURCE or source is None:
+    if source == RETRACTION_SOURCE:
+        return False
+    contract = contract if contract is not None else getattr(outcome, "settlement_display", None)
+    if contract is not None and market_resolved:
+        return contract.get("verdict") in ("won", "lost")
+    if source is None:
         return False
     is_winner = getattr(outcome, "is_winner", None)
     if is_winner is None:
@@ -39821,8 +39979,10 @@ def _served_prices_as_of(
     as printable moves in one place. In particular its truthiness on `0.0` is
     reproduced on purpose — a `0.0` leg renders `—` today, so it may not date the
     mark today, and when #6195 makes it render `0%` it regains its vote here with
-    no edit to this function. Keying on the served dict's `probability` instead
-    would read the same value one step later and duplicate that decision.
+    no edit to this function. Since #11616, the final represented probability
+    can also be withheld by local detail policy. An explicit wire null therefore
+    excludes a row before the raw-row predicate; ID-only callers retain the
+    original predicate. A genuine served zero is still a price.
 
     None when no served row both prints a price and carries a stamp (the lean
     typeahead shape omits the id, a market can have no outcomes at all, and a
@@ -39830,7 +39990,14 @@ def _served_prices_as_of(
     renders nothing on None rather than falling back to `updated_at`: an empty
     space is honest and the old pip was not.
     """
-    served_ids = {o.get("id") for o in served if o.get("id") is not None}
+    # #11616: the representation can refuse a stored quote locally, after the
+    # async refusal set was computed. An explicit wire null prints no price and
+    # must not date the footer. ID-only legacy callers retain the raw-row check.
+    served_ids = {
+        o.get("id") for o in served
+        if o.get("id") is not None
+        and ("probability" not in o or o["probability"] is not None)
+    }
     if not served_ids:
         return None
     # #6993 IS THIS DOCSTRING'S OWN DEFECT ARRIVING BY A THIRD DOOR. The section
@@ -39993,6 +40160,8 @@ def _format_futures_for_search(
     market: FuturesMarket,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    *,
+    out_division_labels=None,
 ) -> dict:
     """Format a futures market for search results (answer-first, #23-normalized).
 
@@ -40009,6 +40178,7 @@ def _format_futures_for_search(
         lean=False,
         withheld=withheld,
         query_terms=query_terms,  # #8842
+        out_division_labels=out_division_labels,
     )
     # #6585: COUNT THE LEGS THE LADDER DRAWS FROM, not the rows behind it.
     #
@@ -40044,10 +40214,12 @@ def _format_futures_for_search(
     # 236) per card — measured, ~0.2 ms on a 20-card response worst case. The
     # single-pass win (filter once, hand the same list to both call sites) is
     # latency's under notice 41 and is named in #5516's remainder.
-    real_count = len(_search_surviving_legs(market))
+    real_count = len(drop_out_division_legs(
+        _search_surviving_legs(market), out_division_labels
+    ))
 
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
-    return {
+    return stamp_futures_representation_policy({
         "id": market.id,
         # #7397: the venue's league word, translated to ours, and nothing else.
         # `/search?q=chiefs` drew the chip `NFL (18)` and eighteen cards reading
@@ -40107,7 +40279,7 @@ def _format_futures_for_search(
         # byte-for-byte (it is the row's write time and other readers key off
         # it); this is the additive field the age pip reads instead.
         "prices_updated_at": _served_prices_as_of(market, top_outcomes, withheld),
-    }
+    }, top_outcomes)
 
 
 async def _stamp_linked_event_kickoff(

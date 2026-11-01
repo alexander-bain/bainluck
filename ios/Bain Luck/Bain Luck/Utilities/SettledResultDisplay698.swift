@@ -1,5 +1,17 @@
 import Foundation
 
+/// The existing detail decision needs only these four fields. Search supplies
+/// the same wire evidence without constructing or fetching a detail response.
+nonisolated protocol FuturesResultRow698: Sendable {
+    var probability: Double? { get }
+    var isWinner: Bool? { get }
+    var resolutionSource: String? { get }
+    var settlementDisplay: SettlementDisplay698? { get }
+}
+
+extension FuturesOutcome: FuturesResultRow698 {}
+extension SearchFuturesOutcome: FuturesResultRow698 {}
+
 /// #698 — what a settled Market Details row may SAY about its own result.
 ///
 /// The native twin of web's `frontend/lib/settledResultDisplay.ts` and of the
@@ -54,7 +66,7 @@ nonisolated enum SettledResultDisplay698 {
     /// The served contract when present; the fallback on a targeted market;
     /// otherwise nil, meaning "use the legacy rule unchanged".
     static func certainty(
-        _ outcome: FuturesOutcome,
+        _ outcome: some FuturesResultRow698,
         marketSource: String?,
         marketStatus: String?
     ) -> Certainty? {

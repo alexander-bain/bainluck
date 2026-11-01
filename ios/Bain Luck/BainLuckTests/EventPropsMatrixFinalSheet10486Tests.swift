@@ -193,11 +193,21 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
         } while Date() < until
     }
 
+    /// The sheet as its reader sees it: the window's own composited, opaque
+    /// pixels over the presentation's container, so the sheet's navigation
+    /// bar (Close and the player's title) is read with its body. The sheet
+    /// view's own hierarchy drawn into a transparent image carried only the
+    /// glyph ink on iOS 26.5 — no grouped background, no bar, no title.
     private func sheetLines(_ host: UIViewController, _ name: String) throws -> [String] {
         let sheet = try XCTUnwrap(host.presentedViewController, "\(name): the question sheet is open")
-        let view = try XCTUnwrap(sheet.view)
-        let image = UIGraphicsImageRenderer(bounds: view.bounds).image { _ in
-            view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+        let window = try XCTUnwrap(sheet.view.window, "\(name): the sheet is in a window")
+        let container = try XCTUnwrap(sheet.presentationController?.presentedView, "\(name): the sheet's container")
+        let box = container.convert(container.bounds, to: window).intersection(window.bounds).integral
+        let crop = try XCTUnwrap(box.isEmpty ? nil : box, "\(name): the sheet's container is on screen")
+        let format = UIGraphicsImageRendererFormat(for: window.traitCollection)
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(bounds: crop, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("props-final-sheet-10486-\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
@@ -219,13 +229,31 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
     /// Opens Judge's 2+ hits from the live payload as the matrix does, then
     /// moves the payload to `final` and returns the open sheet's lines before
     /// and after — the same presentation, never re-opened.
+    /// The presented sheet lives in a window of the app's foreground-active
+    /// scene, as a reader's does (the MatrixPageReadingAnchor10236Tests host).
+    private func sceneWindow(_ name: String) throws -> UIWindow {
+        func activeScene() -> UIWindowScene? {
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive }
+        }
+        let deadline = CACurrentMediaTime() + 10
+        while activeScene() == nil && CACurrentMediaTime() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        let scene = try XCTUnwrap(activeScene(), "\(name): the final sheet needs a foreground-active window scene")
+        return UIWindow(windowScene: scene)
+    }
+
     private func journey(_ name: String, to final: (Feed) throws -> Void) throws -> (before: [String], after: [String]) {
         let feed = Feed(during: try during())
         let host = hostForMeasurement(Presenter(feed: feed))
         host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        let window = UIWindow(frame: host.view.frame)
+        let window = try sceneWindow(name)
+        let previousKeyWindow = window.windowScene?.windows.first { $0.isKeyWindow }
+        window.frame = host.view.frame
         window.rootViewController = host; window.makeKeyAndVisible()
-        defer { host.dismiss(animated: false); window.isHidden = true }
+        defer { host.dismiss(animated: false); window.isHidden = true; previousKeyWindow?.makeKey() }
         settle(host, 0.3)
         let (_, row) = try openJudge()
         var selection = EventPropsMatrixSelection()
