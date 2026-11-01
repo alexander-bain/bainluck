@@ -244,3 +244,49 @@ async def test_redis_verification_is_inside_same_operation_budget():
         assert r.gate.stats["timeouts_skipped"] == 1 and not r.reconnections
     finally:
         await r.gate.aclose()
+
+
+async def test_the_hub_validates_against_a_background_copy_not_a_read_per_batch():
+    """Alex 11/01: no database read between a venue's price and the screen."""
+    from app.utils.live_fanout import CachedPrimaryAuthority
+
+    r = Rig()
+    reads = []
+
+    async def primary():
+        reads.append(monotonic())
+        return r.authority
+
+    cache = CachedPrimaryAuthority(primary)
+    try:
+        first = await cache.read()
+        for _ in range(20):
+            assert await cache.read() == first
+        assert len(reads) <= 2, "one fresh read, the refresher's first at most"
+    finally:
+        cache._task.cancel()
+        await r.gate.aclose()
+
+
+async def test_a_stale_copy_is_never_used():
+    from app.utils.live_fanout import CachedPrimaryAuthority
+
+    r = Rig()
+    reads = []
+
+    async def primary():
+        reads.append(1)
+        return r.authority
+
+    cache = CachedPrimaryAuthority(primary)
+    try:
+        await cache.read()
+        cache._task.cancel()
+        cache._at -= CachedPrimaryAuthority.MAX_AGE_S + 1
+        before = len(reads)
+        await cache.read()
+        assert len(reads) == before + 1, "an old copy forces a fresh primary read"
+    finally:
+        if cache._task:
+            cache._task.cancel()
+        await r.gate.aclose()
