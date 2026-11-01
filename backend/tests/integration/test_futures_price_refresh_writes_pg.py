@@ -1933,7 +1933,9 @@ class TestTheLabelArmReachesTheBoardTheValueArmsCannot9543:
 
 
 @pytest.fixture
-async def poll_db():
+async def poll_db(monkeypatch):
+    from contextlib import asynccontextmanager
+
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     import app.models.models  # noqa: F401
@@ -1959,6 +1961,17 @@ async def poll_db():
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=subset))
     maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    # #10090: the poll's extra writer sessions (`_write_jobs`) open through
+    # `get_task_session`, which in production is this same database.
+    @asynccontextmanager
+    async def task_session(**_kw):
+        async with maker() as extra:
+            yield extra
+
+    from app.tasks import base as tasks_base
+
+    monkeypatch.setattr(tasks_base, "get_task_session", task_session)
     async with maker() as session:
         yield session
     await engine.dispose()

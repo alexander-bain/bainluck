@@ -1303,6 +1303,7 @@ async def _write_group(
     deferred = DeferredPoints.read(outcome_ids)
     now = datetime.now(timezone.utc)
     moved: list[int] = []  # #10090 heat: markets sent to the writer
+    jobs: list[tuple[int, list, "PollWrite"]] = []
     for unit in group_units:
         unit_found = found if venue == "kalshi" else found.get(unit.key)
         if not unit_found:
@@ -1325,16 +1326,22 @@ async def _write_group(
             )
             if history is not None:
                 poll.min_interval_s, poll.big_move = history
-            try:
-                await write_market(
-                    session, venue=venue, market_id=market_id, priced=priced,
-                    poll=poll, deferred=deferred, stats=stats,
-                )
-                moved.append(market_id)
-            except Exception as exc:  # noqa: BLE001 — gotcha 42: one market, not the pass
-                await session.rollback()
-                stats["market_errors"] = stats.get("market_errors", 0) + 1
-                stats["errors"].append(f"market {market_id}: {str(exc)[:160]}")
+            jobs.append((market_id, priced, poll))
+
+    async def write(job_session, job) -> None:
+        market_id, priced, poll = job
+        try:
+            await write_market(
+                job_session, venue=venue, market_id=market_id, priced=priced,
+                poll=poll, deferred=deferred, stats=stats,
+            )
+            moved.append(market_id)
+        except Exception as exc:  # noqa: BLE001 — gotcha 42: one market, not the pass
+            await job_session.rollback()
+            stats["market_errors"] = stats.get("market_errors", 0) + 1
+            stats["errors"].append(f"market {market_id}: {str(exc)[:160]}")
+
+    await _write_jobs(session, jobs, write, stats)
     deferred.save()
     if venue == "polymarket" and moved and history is None:
         from app.tasks import pm_hot_props
@@ -1342,6 +1349,48 @@ async def _write_group(
         if pm_hot_props.enabled():
             stats["hot_moves_recorded"] = stats.get("hot_moves_recorded", 0) + (
                 await pm_hot_props.record_moved(session, moved))
+
+
+#: #10090 (11/01 17:41Z): each CLOB window priced ~3,500 legs and the pass spent
+#: the rest of its budget committing ~500 markets one after another (5-8 round
+#: trips each). Markets are independent (one commit each, SKIP LOCKED rerank,
+#: newer-writer guard), so this many sessions write them side by side. 1 is
+#: the old sequential writer.
+WRITERS = max(1, min(8, _env_int("VENUE_POLL_30S_WRITERS", 4)))
+
+
+async def _write_jobs(session, jobs, write, stats) -> None:
+    """Run ``write(session, job)`` for every job: on ``session`` alone when
+    ``WRITERS`` is 1 or there is one job, else on ``WRITERS`` sessions (the
+    caller's plus fresh task sessions) pulling from one queue. A writer
+    session that cannot open leaves its share to the others."""
+    if WRITERS <= 1 or len(jobs) < 2:
+        for job in jobs:
+            await write(session, job)
+        return
+    from collections import deque
+    from contextlib import AsyncExitStack
+
+    from app.tasks.base import get_task_session
+
+    queue = deque(jobs)
+
+    async def drain(job_session) -> None:
+        while queue:
+            await write(job_session, queue.popleft())
+
+    async with AsyncExitStack() as stack:
+        sessions = [session]
+        for _ in range(min(WRITERS, len(jobs)) - 1):
+            try:
+                sessions.append(await stack.enter_async_context(
+                    get_task_session(statement_timeout_ms=20_000, lock_timeout_ms=2_000)))
+            except Exception as exc:  # noqa: BLE001
+                stats["writer_open_errors"] = stats.get("writer_open_errors", 0) + 1
+                logger.warning("venue_poll_30s: extra writer not opened: %s", exc)
+                break
+        stats["writers"] = max(stats.get("writers", 0), len(sessions))
+        await asyncio.gather(*(drain(s) for s in sessions))
 
 
 _SECOND_LEG = re.compile(r"_(no|side1)$")
