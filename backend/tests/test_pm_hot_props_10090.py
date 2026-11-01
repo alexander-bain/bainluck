@@ -24,6 +24,12 @@ class _Pipe:
     def zrange(self, key, start, end, withscores=False):
         self.ops.append(("zrange", key))
 
+    def hset(self, key, mapping):
+        self.ops.append(("hset", key, mapping))
+
+    def hgetall(self, key):
+        self.ops.append(("hgetall", key))
+
     def execute(self):
         out = []
         for op in self.ops:
@@ -34,6 +40,12 @@ class _Pipe:
             elif op[0] == "zrange":
                 out.append([(str(m).encode(), float(s))
                             for m, s in self.store.get(op[1], {}).items()])
+            elif op[0] == "hset":
+                self.store.setdefault(op[1], {}).update(op[2])
+                out.append(len(op[2]))
+            elif op[0] == "hgetall":
+                out.append({str(k).encode(): str(v).encode()
+                            for k, v in self.store.get(op[1], {}).items()})
             else:
                 out.append(True)
         self.ops = []
@@ -132,3 +144,94 @@ def test_the_props_arm_is_the_sockets_window_and_the_venue_refusal():
         dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "events.status = 'live'" in sql and "venue_type" in sql
     assert "futures_markets.source = 'polymarket'" in sql and "IN (1, 3)" in sql
+
+
+
+# ── no hard rule: the live set follows this process's CPU (Alex 11/01 2:40 PM) ──
+
+
+class _Clocks:
+    def __init__(self):
+        self.wall, self.cpu = 0.0, 0.0
+
+    def tick(self, wall, cpu_cores):
+        self.wall += wall
+        self.cpu += wall * cpu_cores
+
+
+def _budget(monkeypatch, target="0.80"):  # the default is 0.75
+    monkeypatch.setenv("PM_HOT_PROPS_CPU_TARGET", target)
+    c = _Clocks()
+    return c, hot.LiveBudget(clock=lambda: c.wall, cpu_clock=lambda: c.cpu)
+
+
+def test_the_budget_grows_while_cpu_has_room_and_holds_near_the_target(monkeypatch):
+    c, b = _budget(monkeypatch)
+    assert b.current(1500) == hot.BUDGET_START
+    c.tick(hot.BUDGET_EVAL_S, 0.60)
+    assert b.current(1500) == hot.BUDGET_START + hot.BUDGET_STEP
+    c.tick(hot.BUDGET_EVAL_S / 2, 0.60)
+    assert b.current(1500) == hot.BUDGET_START + hot.BUDGET_STEP, "evaluated once per interval"
+    c.tick(hot.BUDGET_EVAL_S, 0.85)   # this interval averages ~0.77: within the margin, hold
+    assert b.current(1500) == hot.BUDGET_START + hot.BUDGET_STEP
+
+
+def test_the_budget_shrinks_by_a_third_above_target_never_below_the_floor(monkeypatch):
+    c, b = _budget(monkeypatch)
+    c.tick(hot.BUDGET_EVAL_S, 0.95)
+    assert b.current(1500) == int(hot.BUDGET_START * 2 / 3)
+    for _ in range(10):
+        c.tick(hot.BUDGET_EVAL_S, 0.95)
+        b.current(1500)
+    assert b.current(1500) == hot.BUDGET_FLOOR
+
+
+def test_the_budget_never_passes_the_ceiling(monkeypatch):
+    c, b = _budget(monkeypatch)
+    for _ in range(30):
+        c.tick(hot.BUDGET_EVAL_S, 0.10)
+        b.current(450)
+    assert b.current(450) == 450 and b.cap == 450
+
+
+def test_hot_props_are_capped_by_the_budget(on, monkeypatch):
+    now = 1_800_000_000.0
+    _heat(on, now, {0: {1: 9, 2: 8, 3: 7, 4: 6}})
+    c, b = _budget(monkeypatch)
+    b.cap = 2
+    assert hot.hot_market_ids(now=now, budget=b) == {1, 2}
+
+
+def test_volume_lifts_a_prop_with_fewer_moves(on):
+    now = 1_800_000_000.0
+    _heat(on, now, {0: {1: 6, 2: 5}})
+    on.store[hot._VOLUME_KEY] = {2: 1_000_000}
+    monkeypatch_cap = hot.LiveBudget()
+    monkeypatch_cap.cap = 1
+    assert hot.hot_market_ids(now=now, budget=monkeypatch_cap) == {2}
+    assert hot.rank_score(5, 1_000_000) > hot.rank_score(6, None)
+    assert hot.rank_score(6, None) == 6
+
+
+async def test_a_recorded_move_keeps_the_markets_volume(on):
+    now = 1_800_000_000.0
+
+    class _VolSession(_Session):
+        async def execute(self, stmt):
+            self.stmts.append(stmt)
+
+            class _R:
+                def all(self):
+                    return [(11, 250_000), (12, None)]
+            return _R()
+
+    assert await hot.record_moved(_VolSession(owned=[]), [11, 12], now=now) == 2
+    assert on.store[hot._VOLUME_KEY] == {11: 250_000}
+
+
+def test_the_cpu_target_defaults_with_headroom_and_is_bounded(monkeypatch):
+    monkeypatch.delenv("PM_HOT_PROPS_CPU_TARGET", raising=False)
+    assert hot.cpu_target() == 0.75
+    for raw, want in (("2", 0.95), ("0.1", 0.30), ("x", 0.75)):
+        monkeypatch.setenv("PM_HOT_PROPS_CPU_TARGET", raw)
+        assert hot.cpu_target() == want
