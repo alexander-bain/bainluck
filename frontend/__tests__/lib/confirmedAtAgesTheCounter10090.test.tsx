@@ -16,8 +16,9 @@
  *     server's page is exactly today's;
  *   * an open socket with a confirmed value on screen reads "Connected", not
  *     "Connected · waiting"; every warning still outranks it;
- *   * the tap details add a "Probability confirmed" row and leave
- *     `data-observation-at` (the A6 recorder's read) on the observation.
+ *   * the tap details' "Latest source update" reads the newer confirmation
+ *     (Alex 2026-10-31: one price row) and leave `data-observation-at` (the
+ *     A6 recorder's read) on the observation.
  */
 
 import React from "react";
@@ -172,19 +173,20 @@ describe("#10090 J=A the tap details", () => {
     now: NOW,
   };
 
-  it("a newer confirmation adds its own row, a few seconds old; the observation is untouched", () => {
+  it("a newer confirmation is the latest source update, a few seconds old; the observation is untouched", () => {
     const html = renderToStaticMarkup(<LiveConnectionStatus {...base} priceConfirmedAt={CONFIRMED} />);
-    expect(html).toContain("Probability confirmed");
-    expect(html).toContain(`dateTime="${CONFIRMED}"`);
-    expect(html).toContain("2s ago");
+    const latest = html.match(/Latest source update<\/dt><dd>(.*?)<\/dd>/)![1];
+    expect(latest).toContain(`dateTime="${CONFIRMED}"`);
+    expect(latest).toContain("2s ago");
     expect(html).toContain(`data-observation-at="${OBSERVED}"`);
-    expect(html).toContain(`dateTime="${OBSERVED}"`);
-    expect(html).toContain("25s ago");
+    expect(html).not.toContain(`dateTime="${OBSERVED}"`);
+    expect(html).not.toContain("Probability confirmed");
   });
 
   it("no confirmation, or an older one, is today's markup", () => {
     const today = renderToStaticMarkup(<LiveConnectionStatus {...base} />);
-    expect(today).not.toContain("Probability confirmed");
+    expect(today).toContain(`Latest source update</dt><dd><span><time dateTime="${OBSERVED}"`);
+    expect(today).toContain("25s ago");
     expect(renderToStaticMarkup(<LiveConnectionStatus {...base} priceConfirmedAt={null} />)).toBe(today);
     expect(
       renderToStaticMarkup(<LiveConnectionStatus {...base} priceConfirmedAt="2026-10-29T23:00:01.000Z" />),

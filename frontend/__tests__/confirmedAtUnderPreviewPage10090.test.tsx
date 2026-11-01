@@ -2,10 +2,11 @@
  * #10090 decision J under a preview — WEB HALF of native #11816's rule 2.
  *
  * `confirmed_at` vouches for the COMMITTED pair. While a preview is displayed,
- * the page may say "Probability confirmed" (and the status may read
+ * the page may date its "Latest source update" from it (and the status may read
  * "Connected") only if the preview PRINTS the committed pair: same digits, both
  * sides, at the precision the reader sees. A preview printing another number is
- * provisional and keeps its own clock. Before this, master claimed the
+ * provisional and keeps its own clock. (Alex 2026-10-31: the pop-up's two rows;
+ * the separate "Probability confirmed" row is gone, its rule is not.) Before this, master claimed the
  * confirmation over any preview whose observation was older than
  * `confirmed_at`, whatever number it printed.
  *
@@ -84,8 +85,7 @@ const { AnalyticsProvider } = require("@/components/Analytics");
 function draw() {
   return renderToStaticMarkup(<AnalyticsProvider><EventDetailPage params={{ id: String(ID) }} /></AnalyticsProvider>);
 }
-const confirmedRow = (html: string) => html.match(/Probability confirmed<\/dt><dd>(.*?)<\/dd>/)?.[1] ?? null;
-const observedRow = (html: string) => html.match(/Probability observed<\/dt><dd>(.*?)<\/dd>/)![1];
+const latestRow = (html: string) => html.match(/Latest source update<\/dt><dd>(.*?)<\/dd>/)![1];
 const status = (html: string) => html.match(/data-testid="live-connection-status" data-status="([^"]*)"/)![1];
 const heroDigits = (html: string) => (html.match(/data-hero-digits="">([^<]+)/g) ?? []).map(m => m.replace(/.*>/, ""));
 const delivery = (html: string) => html.match(/data-observation-delivery="([^"]*)"/)![1];
@@ -99,7 +99,7 @@ afterEach(() => jest.restoreAllMocks());
 test("control: no preview, the committed number is confirmed exactly as today", () => {
   const html = draw();
   expect(delivery(html)).toBe("committed");
-  expect(confirmedRow(html)).toContain(`dateTime="${CONFIRMED}"`);
+  expect(latestRow(html)).toContain(`dateTime="${CONFIRMED}"`);
   expect(status(html)).toBe("Connected");
 });
 
@@ -107,8 +107,8 @@ test("a preview printing the committed pair keeps the confirmation, aged from th
   blendPreview = preview(.6002); // prints 60.0 / 40.0, the committed pair
   const html = draw();
   expect(delivery(html)).toBe("dnpl");
-  expect(observedRow(html)).toContain(`dateTime="${OBSERVED}"`);
-  expect(confirmedRow(html)).toContain(`dateTime="${CONFIRMED}"`);
+  // The confirmation (2 s) is newer than the preview's observation (8 s).
+  expect(latestRow(html)).toContain(`dateTime="${CONFIRMED}"`);
   expect(status(html)).toBe("Connected");
 });
 
@@ -117,8 +117,9 @@ test("a preview printing another number is never called confirmed and keeps its 
   const html = draw();
   expect(delivery(html)).toBe("dnpl");
   expect(heroDigits(html)).toEqual(["64", "36"]);
-  expect(confirmedRow(html)).toBeNull();
-  expect(observedRow(html)).toContain(`dateTime="${OBSERVED}"`);
+  // Never the confirmation's clock: the preview's own observation.
+  expect(latestRow(html)).toContain(`dateTime="${OBSERVED}"`);
+  expect(latestRow(html)).not.toContain(CONFIRMED);
   expect(status(html)).toBe("Connected · waiting");
 });
 
@@ -126,31 +127,33 @@ test("'the same number' is the printed number, at the precision this reader sees
   blendPreview = preview(.603);
   // Tenths on (the default): 60.3 is not the committed 60.0.
   const tenths = draw();
-  expect(confirmedRow(tenths)).toBeNull();
+  expect(latestRow(tenths)).toContain(`dateTime="${OBSERVED}"`);
   expect(status(tenths)).toBe("Connected · waiting");
   // Opted out (`?tenths=off`): both print 60 / 40, so it is the confirmed number.
   tenthsOn = false;
   const whole = draw();
   expect(heroDigits(whole)).toEqual(["60", "40"]);
-  expect(confirmedRow(whole)).toContain(`dateTime="${CONFIRMED}"`);
+  expect(latestRow(whole)).toContain(`dateTime="${CONFIRMED}"`);
   expect(status(whole)).toBe("Connected");
 });
 
 test("once a different-number preview expires, the committed number is confirmed again", () => {
   blendPreview = preview(.64);
-  expect(confirmedRow(draw())).toBeNull();
+  expect(latestRow(draw())).toContain(`dateTime="${OBSERVED}"`);
   blendPreviewNow = NOW + 1000;
   const html = draw();
   expect(delivery(html)).toBe("committed");
-  expect(confirmedRow(html)).toContain(`dateTime="${CONFIRMED}"`);
+  expect(latestRow(html)).toContain(`dateTime="${CONFIRMED}"`);
   expect(status(html)).toBe("Connected");
 });
 
 test("no confirmed_at (an old server) is today's page with or without a preview", () => {
   confirmedAt = null;
-  expect(confirmedRow(draw())).toBeNull();
+  // Only a socket source (kalshi): its database stamp is never shown, so the
+  // committed observation clock stands.
+  expect(latestRow(draw())).toContain(`dateTime="${COMMITTED}"`);
   blendPreview = preview(.6002);
   const html = draw();
-  expect(confirmedRow(html)).toBeNull();
+  expect(latestRow(html)).toContain(`dateTime="${OBSERVED}"`);
   expect(status(html)).toBe("Connected · waiting");
 });

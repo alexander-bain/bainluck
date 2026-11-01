@@ -175,7 +175,7 @@ describe("#4861 a page that stopped being fed stops claiming to be live", () => 
     expect(html).not.toContain(PROMISE);
     expect(html).toContain("Rams");
     expect(html).toContain("Price may be old");
-    expect(html).toContain("Probability observed</dt><dd><span>Time unavailable</span>");
+    expect(html).toContain("Latest source update</dt><dd><span>Time unavailable</span>");
     expect(html).toContain('data-observation-at=""');
     expect(html).toContain('data-observation-count="0"');
   });

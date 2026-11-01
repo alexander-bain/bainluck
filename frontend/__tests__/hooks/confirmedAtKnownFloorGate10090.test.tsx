@@ -7,8 +7,8 @@
  * paths the server may even ADVANCE it for a commit the reader does not hold.
  * So once the stream announces a floor the committed revision on screen does
  * not cover, the page claims no confirmation: no "Connected" without
- * "waiting", no "Probability confirmed" row, no confirmation in the age clock
- * (it reads the shown value's own clock). Received values are kept, and only a
+ * "waiting", no confirmation in the pop-up's "Latest source update" or the age
+ * clock (both read the shown value's own clock). Received values are kept, and only a
  * committed revision covering every floor — an adopted result or a load —
  * lets them count again under J's rule.
  *
@@ -176,6 +176,10 @@ function HeldPage({ initial }: { initial: Held }) {
   return <span>{headline}</span>;
 }
 
+// The pop-up's one price row (Alex 2026-10-31): the confirmation's clock when
+// one is claimed, else the shown value's own.
+const latestShown = (html: string) =>
+  html.match(/Latest source update<\/dt><dd><span><time dateTime="([^"]+)"/)?.[1] ?? null;
 const details = (c: Commit) => renderToStaticMarkup(
   <LiveConnectionStatus
     presentation={{ label: c.label, tone: "live", breathes: true, announcement: "" }}
@@ -212,7 +216,7 @@ async function confirmedPage(): Promise<Page> {
   const page = await mount();
   await page.emit(["heartbeat", heartbeat(T)]);
   expect(page.last()).toMatchObject({ headline: 0.48, confirmedAt: T, shownClock: observed, ageClock: T, label: "Connected" });
-  expect(details(page.last())).toContain("Probability confirmed");
+  expect(latestShown(details(page.last()))).toBe(T);
   return page;
 }
 
@@ -220,7 +224,7 @@ function expectUnconfirmed(c: Commit) {
   expect(c.confirmedAt).toBeNull();
   expect(c.ageClock).toBe(c.shownClock);
   expect(c.label).toBe("Connected · waiting");
-  expect(details(c)).not.toContain("Probability confirmed");
+  expect(latestShown(details(c))).toBe(c.shownClock);
 }
 
 const originalEventSource = globalThis.EventSource;
@@ -271,7 +275,7 @@ describe("#10090 J C1 live's catching sequence", () => {
     expect(page.last()).toMatchObject({
       headline: 0.49, revision: moved, shownClock: resultAt, confirmedAt: T2, ageClock: T2, label: "Connected",
     });
-    expect(details(page.last())).toContain("Probability confirmed");
+    expect(latestShown(details(page.last()))).toBe(T2);
     await page.unmount();
   });
 
@@ -376,7 +380,7 @@ describe("#10090 J C1 live's catching sequence", () => {
       expect(c.confirmedAt).toBeNull();
       expect(c.ageClock).toBe(c.shownClock);
       expect(c.label).not.toBe("Connected");
-      expect(details(c)).not.toContain("Probability confirmed");
+      expect(latestShown(details(c))).toBe(c.shownClock);
     }
     await page.unmount();
   });
