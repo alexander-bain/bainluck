@@ -587,17 +587,6 @@ PREVIEW_PUBLISH_CHUNK = 8
 
 _ACCEPTS_REFUSED: dict = {}
 
-#: #10090: how often the receipt path re-reads the source's current read
-#: barrier (one `read_ticket` call), to re-read a kept graph whose ticket a
-#: retirement has staled BEFORE proposing on it (a refused open costs a refetch).
-RECEIPT_BARRIER_POLL_S = 0.2
-
-
-def _barrier_of(ticket) -> Optional[int]:
-    """The retirement barrier a read ticket carries (AuthorityTicket or int)."""
-    barrier = getattr(ticket, "barrier", ticket)
-    return barrier if type(barrier) is int else None
-
 
 def _accepts_refused(preview) -> bool:
     """Whether this registry's `execute` takes the #10090 ``refused`` hook."""
@@ -3933,9 +3922,6 @@ class LiveBlendRefresher:
         #: of its waiting headline legs: a stamp whose read began after it
         #: publishes a committed frame that carries that input.
         self._hl_commit_at: dict[int, float] = {}
-        #: The source's newest read barrier (`RECEIPT_BARRIER_POLL_S`), or None.
-        self._barrier_now: Optional[int] = None
-        self._barrier_task: Optional[asyncio.Task] = None
         self.graph_refetch_stats: dict[str, int] = {"reads": 0, "events": 0, "kept": 0, "errors": 0}
         #: Receipt-path claim-lock waits this minute: (count, total s, max s, timeouts).
         self._receipt_lock_wait = [0, 0.0, 0.0, 0]
@@ -8909,15 +8895,6 @@ class LiveBlendRefresher:
         if event_id not in self._hl_pending:
             # [recv mono, how, first composition mono, compositions]
             self._hl_pending[event_id] = [getattr(mark, "recv_mono", now), "receipt", None, 0]
-        barrier = self._barrier_now
-        if barrier is not None and event_id not in self._graph_refetch:
-            cached = self._preview_graphs.get(event_id)
-            held = _barrier_of(getattr(cached[1], "preview_read_ticket", None)) if cached else None
-            if held is not None and held < barrier:
-                # A retirement staled this graph's ticket: its next open would be
-                # refused (`read_required`). Re-read it now, during the interval.
-                self.graph_refetch_stats["stale_ticket"] = self.graph_refetch_stats.get("stale_ticket", 0) + 1
-                self._schedule_graph_refetch((event_id,), lost=False)
         self._receipt_due[event_id] = None
         last = self._receipt_last.get(event_id)
         self._wake_receipt(last is None or now - last[0] >= _receipt_interval())
@@ -8944,39 +8921,7 @@ class LiveBlendRefresher:
         except Exception:
             self.receipt_preview_stats["errors"] += 1
 
-    async def _watch_barrier(self) -> None:
-        """#10090: keep `_barrier_now` within `RECEIPT_BARRIER_POLL_S` while the
-        receipt worker is active (one lightweight `read_ticket` per poll)."""
-        idle_since = None
-        while True:
-            task = self._receipt_task
-            if task is None or task.done():
-                idle_since = idle_since or _mono()
-                if _mono() - idle_since > 5.0:
-                    self._barrier_now = None
-                    return
-            else:
-                idle_since = None
-            try:
-                async with asyncio.timeout(0.5):
-                    ticket, _ = await self._preview_ticket()
-                barrier = _barrier_of(ticket)
-                if barrier is not None:
-                    self._barrier_now = barrier
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                self._barrier_now = None  # unknown: propose and let Redis judge
-            await asyncio.sleep(RECEIPT_BARRIER_POLL_S)
-
     def _wake_receipt(self, now: bool) -> None:
-        barrier_task = self._barrier_task
-        if barrier_task is None or barrier_task.done():
-            try:
-                self._barrier_task = asyncio.get_running_loop().create_task(
-                    self._watch_barrier(), name=f"receipt-barrier-{self.source}")
-            except RuntimeError:
-                pass
         task = self._receipt_task
         if task is None or task.done():
             try:
@@ -9259,15 +9204,6 @@ class LiveBlendRefresher:
             self._note_receipt_class("old_graph", event_id)
             self._hl_mark(event_id, "old_graph")
             return None
-        barrier = self._barrier_now
-        held = _barrier_of(getattr(event, "preview_read_ticket", None))
-        if barrier is not None and held is not None and held < barrier:
-            # Its open would be refused: the re-read (`_note_receipt_input`)
-            # re-queues this event with a current ticket.
-            self._note_receipt_class("stale_ticket", event_id)
-            if event_id not in self._graph_refetch:
-                self._schedule_graph_refetch((event_id,), lost=False)
-            return None
         commit_patched = False
         waiting = self._hl_pending.get(event_id)
         if waiting is not None and waiting[1] != "receipt" and self._receipt_commits:
@@ -9285,7 +9221,9 @@ class LiveBlendRefresher:
                 or getattr(event, "preview_read_ticket", None) is None
                 or type(getattr(event, "preview_rev", None)) is not int
                 or not _preview_at_receipt(self.source, event_id))
-        if gate or self._current_reading_proof(event_id, group, [], park_refused=False):
+        proof_kwargs = {} if gate else self._current_reading_proof(
+            event_id, group, [], park_refused=False)
+        if gate:
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
             if gate:
@@ -9340,15 +9278,18 @@ class LiveBlendRefresher:
             # committed and stamped, so on screen (headline clock stops).
             self._hl_resolve(event_id, "in_graph")
             return None  # nothing received since the graph: the stamp's own path
+        # #10090: a market that needs current-book proof (the bundled
+        # Challenger pair) is read under that proof here, exactly as the
+        # optional observation preview does, and rechecked at send.
         reading = compute_source_home_probability(
-            patched, event.home_team_name, event.away_team_name,
+            patched, event.home_team_name, event.away_team_name, **proof_kwargs,
         )
-        if reading is None:
+        if reading is None and not proof_kwargs:
             self._receipt_speaking[event_id] = frozenset()
         if reading is None or not has_proven_home_orientation(reading):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
-            self._hl_mark(event_id, "na_orientation")
+            self._hl_mark(event_id, "na_proof" if proof_kwargs else "na_orientation")
             return None
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
@@ -9401,7 +9342,7 @@ class LiveBlendRefresher:
             entry = self._hl_pending.get(event_id)
             if entry is not None and not entry[1].endswith("+commit"):
                 entry[1] += "+commit"  # this wait ends through its committed rows
-        return ("propose", event, reading, value, contributing, newest)
+        return ("propose", event, reading, value, contributing, newest, patched, proof_kwargs)
 
     async def _preview_at_receipt_rows(self, due: list, withdrawn: list) -> None:
         """Compose ``due`` events at receipt and revoke ``withdrawn`` ones'.
@@ -9475,7 +9416,20 @@ class LiveBlendRefresher:
                         frames.extend(preview.refused(event_id, self.source, "returned"))
                         stats["returned"] += 1
                     continue
-                _kind, event, reading, value, contributing, newest = plan
+                _kind, event, reading, value, contributing, newest, patched, proof_kwargs = plan
+                if proof_kwargs:
+                    # Current book proof may change during the Redis checkout.
+                    from app.utils.live_blend import (
+                        compute_source_home_probability, has_proven_home_orientation,
+                    )
+
+                    current = compute_source_home_probability(
+                        patched, event.home_team_name, event.away_team_name, **proof_kwargs,
+                    )
+                    if (current is None or not has_proven_home_orientation(current)
+                            or round(current.home_probability, 4) != value):
+                        self._hl_mark(event_id, "na_proof")
+                        continue
                 stamped_at = _dt.now(timezone.utc)
                 counts = getattr(preview, "refusal_counts", None)
                 before = dict(counts) if isinstance(counts, dict) else None
