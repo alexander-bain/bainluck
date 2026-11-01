@@ -1194,6 +1194,7 @@ class PolymarketWebSocket:
                                     await self._price_quotes(
                                         quotes, shard, book_snapshot=False,
                                         quote_versions=quote_versions,
+                                        normalized=True,
                                     )
                                     continue
 
@@ -1418,6 +1419,7 @@ class PolymarketWebSocket:
         *,
         book_snapshot: bool = True,
         quote_versions: Optional[dict] = None,
+        normalized: bool = False,
     ) -> None:
         """Hand extracted current quotes to `on_price`, in order.
 
@@ -1426,6 +1428,10 @@ class PolymarketWebSocket:
         extraction error that stopped the frame part-way: the quotes before it
         are priced, then it is raised, as when extraction and pricing
         alternated batch by batch.
+
+        ``normalized``: every quote already passed `_price_change_quotes`
+        (#10090 CPU: re-validating one it built cost a dict, a list and a
+        call per quote, and always passed).
         """
         # An async price callback can complete without suspending (#10665).
         batch_size = SNAPSHOT_BATCH_SIZE
@@ -1438,11 +1444,10 @@ class PolymarketWebSocket:
                 if quote_versions is not None and asset in quote_versions:
                     # Validate identity without changing legacy top-level price
                     # handling when the old protocol omitted its timestamp.
-                    normalized = _price_change_quotes({
+                    if normalized or _price_change_quotes({
                         "timestamp": quote.get("timestamp"),
                         "price_changes": [quote],
-                    })
-                    if normalized:
+                    }):
                         identity = (
                             int(float(quote["timestamp"])),
                             float(quote["best_bid"]), float(quote["best_ask"]),

@@ -93,12 +93,73 @@ TLS_READ_BUFFER_BYTES = 32 * 1024
 #: Shutdown bound for the child after its stdin closes; it has no drain.
 CHILD_EXIT_SECONDS = 5.0
 
+#: #10090 CPU: an open quote the consumer would skip is not forwarded. One that
+#: repeats the last top of book this child forwarded for its token, inside the
+#: consumer's own repeat window (`PM_WS_REPEAT_SKIP_MS`, default 250 ms;
+#: `PM_OPEN_REPEAT_FILTER_MS` overrides it here; 0 is off), changes nothing a
+#: reader sees (`handle_price`'s `_skip_repeat`), yet cost the consumer a pickle,
+#: a pipe read, a dispatch, a loop turn and its handler: production 11/01
+#: ~07:00Z, the open path was 24% of the consumer's CPU at 0.93 of a core. A
+#: book snapshot always goes and starts its token over; a quote without both
+#: sides, and every trade, goes untouched.
+REPEAT_FILTER_DEFAULT_MS = 250.0
+#: How often the filter forgets books older than its window (memory bound).
+REPEAT_FILTER_PRUNE_S = 5.0
+
 RECEIVER_SCRIPT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "run_pm_open_receiver.py",
 )
 
 PRICE, TRADE, STATS, START, ASSETS = "p", "t", "s", "start", "assets"
+
+
+def repeat_filter_window_s(environ=None) -> float:
+    """`REPEAT_FILTER_DEFAULT_MS`'s window, in seconds (0.0: off)."""
+    environ = os.environ if environ is None else environ
+    for name in ("PM_OPEN_REPEAT_FILTER_MS", "PM_WS_REPEAT_SKIP_MS"):
+        raw = environ.get(name)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            value = float(raw.strip())
+        except ValueError:
+            return 0.0  # the consumer turns its skip off on this too
+        return value / 1000.0 if 0 < value < float("inf") else 0.0
+    return REPEAT_FILTER_DEFAULT_MS / 1000.0
+
+
+class RepeatFilter:
+    """Which open quotes the child forwards (`REPEAT_FILTER_DEFAULT_MS`)."""
+
+    def __init__(self, window_s: float, clock: Callable[[], float]):
+        self.window_s, self._clock = window_s, clock
+        self._sent: dict = {}
+        self._pruned_at = clock()
+        self.filtered = 0
+
+    def forward(self, message: Any) -> bool:
+        if self.window_s <= 0 or not isinstance(message, dict):
+            return True
+        asset = message.get("asset_id")
+        if message.get("book_snapshot"):
+            self._sent.pop(asset, None)
+            return True
+        book = (message.get("best_bid"), message.get("best_ask"))
+        if asset is None or book[0] is None or book[1] is None:
+            return True
+        now = self._clock()
+        if now - self._pruned_at >= REPEAT_FILTER_PRUNE_S:
+            self._pruned_at = now
+            for token in [token for token, (_book, at) in self._sent.items()
+                          if now - at >= self.window_s]:
+                del self._sent[token]
+        seen = self._sent.get(asset)
+        if seen is not None and seen[0] == book and now - seen[1] < self.window_s:
+            self.filtered += 1
+            return False
+        self._sent[asset] = (book, now)
+        return True
 
 
 def encode_frame(message: Any, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
@@ -409,13 +470,22 @@ async def serve_receiver(
         writer.write(encode_frame((kind, message)))
         await writer.drain()
 
-    client.on_price = lambda message: forward(PRICE, message)
+    repeats = RepeatFilter(repeat_filter_window_s(), loop.time)
+
+    async def forward_price(message):
+        if repeats.forward(message):
+            await forward(PRICE, message)
+
+    client.on_price = forward_price
     client.on_trade = lambda message: forward(TRADE, message)
 
     async def report():
         trimmed_at = loop.time()
         while True:
-            await forward(STATS, client.stats)
+            stats = client.stats
+            if repeats.filtered and isinstance(stats, dict):
+                stats = {**stats, "repeats_filtered": repeats.filtered}
+            await forward(STATS, stats)
             if release_free_heap is not None and loop.time() - trimmed_at >= HEAP_TRIM_SECONDS:
                 release_free_heap()
                 trimmed_at = loop.time()
