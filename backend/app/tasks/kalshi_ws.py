@@ -2767,7 +2767,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 if returned_rows and not final_drain and callable(note_committed):
                     # Before any await: the committed rows' own preview may go
                     # out ahead of the stamp's read (`note_committed_rows`).
-                    note_committed(returned_rows)
+                    note_committed(returned_rows, marks=batch_marks)
                 # The enclosing session exited normally: publish its returned
                 # DB time before another await, never before COMMIT or on failure.
                 price_clock_ready = (

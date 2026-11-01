@@ -4563,7 +4563,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     stats["repeat_skip_ms"] = int(round(repeat_skip_s * 1000))
 
     async def write_chunk(
-        chunk: dict[int, float], *, final=False, start_market_publish=None,
+        chunk: dict[int, float], *, final=False, start_market_publish=None, marks=None,
     ) -> _PMPriceWriteResult | bool | None:
         """One flush transaction: write, re-rank, commit, publish, un-buffer.
 
@@ -4960,7 +4960,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         if written_rows and not final and callable(note_committed):
             # Before any await: the committed rows' own preview may go out
             # ahead of the stamp's read (`note_committed_rows`).
-            note_committed(written_rows)
+            note_committed(written_rows, marks=marks)
         # Register publication immediately after COMMIT, before buffer cleanup
         # can be interrupted. The game flush owns and joins its one sender so
         # event stamping can proceed while this separate notification awaits
@@ -6045,6 +6045,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     wrote = await write_chunk(
                         current_chunk, final=final,
                         start_market_publish=start_market_publish,
+                        marks=chunk_marks,
                     )
                     from app.tasks.live_blend_refresh import note_price_commit_ack
 

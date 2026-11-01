@@ -388,6 +388,11 @@ RECEIPT_STATS_LOG_INTERVAL_S = 60.0
 #: 5 s CPU throttle on Polymarket) down to this minimum since the last stamp,
 #: so the stamp path delivers it in one flush instead of up to a floor later.
 URGENT_STAMP_MIN_S = 0.25
+#: #10090: a finished event this process already ran its terminal-read
+#: retirement for is not retired again by every later read for this long. Each
+#: repeat on an already-absent event advanced the GLOBAL barrier (and wrote its
+#: row), refusing every prepared open as `read_required` (~1/s on Polymarket).
+TERMINAL_READ_RETRY_S = 30.0
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
 RECEIPT_QUOTE_RETENTION_S = 60.0
@@ -3895,6 +3900,7 @@ class LiveBlendRefresher:
             "ambiguous": 0, "not_admitted": 0, "returned": 0, "withdrawn": 0, "errors": 0,
             # Skips before composition (counted only; same returns as before):
             "no_bound": 0, "routing": 0, "kept_no_graph": 0, "not_speaking": 0,
+            "own_write": 0,
         }
         #: Wall seconds spent composing receipt previews (local CPU, no await).
         self.receipt_compose_s = 0.0
@@ -3942,6 +3948,13 @@ class LiveBlendRefresher:
         #: event id -> `_mono` its stamp became urgent (`URGENT_STAMP_MIN_S`).
         self._urgent_stamp: dict[int, float] = {}
         self.urgent_stamp_stats: dict[str, int] = {"marked": 0, "bypassed": 0}
+        #: outcome id -> {stored `last_updated` epoch: (price, written input
+        #: seq, `_mono`)}: this process's last few committed writes, so a quote
+        #: received while its own row's write was in flight is ordered by input
+        #: seq (receipt order), not by the row's later clock.
+        self._own_writes: dict[int, dict] = {}
+        #: event id -> `_mono` of its terminal-read retirement (`TERMINAL_READ_RETRY_S`).
+        self._terminal_reads: dict[int, float] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -7331,6 +7344,7 @@ class LiveBlendRefresher:
                 )
             await publish_committed(pending)
             self._hl_committed_frames(pending, read_t0)
+            self._hl_stamped_unchanged(event_ids, read_t0)
             if settled:
                 await self._publish_previews(
                     [f for f in settled if f["preview"]["kind"] != "blend"]
@@ -8568,7 +8582,7 @@ class LiveBlendRefresher:
             if queued:
                 self._wake_receipt(True)
 
-    def note_committed_rows(self, rows) -> None:
+    def note_committed_rows(self, rows, marks=None) -> None:
         """A committed price write's RETURNING rows. Never raises.
 
         Called synchronously after the write's COMMIT, before its first await.
@@ -8589,6 +8603,8 @@ class LiveBlendRefresher:
         if graphs is None or not (receipt or commit_arm):
             return
         try:
+            from app.utils.aggregation import _coerce_timestamp
+
             now = _mono()
             wake = False
             noted = self._noted_commits
@@ -8608,6 +8624,21 @@ class LiveBlendRefresher:
                     commits = self._receipt_commits
                     commits.pop(oid, None)
                     commits[oid] = (now, values)
+                    w_mark = marks.get(oid) if marks else None
+                    w_seq = getattr(w_mark, "seq", None)
+                    w_at = _coerce_timestamp(values["last_updated"])
+                    w_price = values.get("current_probability")
+                    if (w_seq is not None and w_at is not None and w_price is not None
+                            and getattr(w_mark, "probability", None) is not None
+                            and round(float(w_mark.probability), 6) == round(float(w_price), 6)):
+                        # #10090: the input this write stored, by seq: a quote
+                        # received after it is newer than this stored row,
+                        # whatever the row's clock (`_receipt_preview_plan`).
+                        own = self._own_writes.pop(oid, None) or {}
+                        own[w_at.timestamp()] = (round(float(w_price), 6), w_seq, now)
+                        while len(own) > 3:
+                            own.pop(next(iter(own)))
+                        self._own_writes[oid] = own
                     entry = self._hl_pending.get(event_id) if event_id is not None else None
                     if entry is not None:
                         quote = self._receipt_quotes.get(oid)
@@ -8857,11 +8888,13 @@ class LiveBlendRefresher:
             return
         if bound is None:
             self.receipt_preview_stats["no_bound"] += 1
+            self._receipt_quotes.pop(oid, None)  # superseded: never overlay it
             return
         route = self.receipt_route
         token = route() if route is not None else 0
         if token is None:
             self.receipt_preview_stats["routing"] += 1
+            self._receipt_quotes.pop(oid, None)  # superseded: never overlay it
             return
         quotes = self._receipt_quotes
         prior = quotes.pop(oid, None)
@@ -9004,8 +9037,9 @@ class LiveBlendRefresher:
         self._hl_commit_at.pop(event_id, None)
         if entry is None:
             return
-        if how == "committed" and entry[1] != "receipt":
-            entry[1] += ">committed"  # a fallback ended by the stamp's committed frame
+        if how is not None and (how == "committed" or how.startswith("stamp_")) \
+                and entry[1] != "receipt":
+            entry[1] += ">" + how  # a fallback ended by the stamp (its frame, or nothing to send)
         if len(self._hl_samples) < 20000:
             # A fallback keeps its reason (why it waited); else how it reached the screen.
             why = entry[1] if entry[1] != "receipt" else (how or "receipt")
@@ -9078,6 +9112,28 @@ class LiveBlendRefresher:
         except Exception:
             pass
 
+    def _hl_stamped_unchanged(self, event_ids, read_t0) -> None:
+        """#10090: a stamp whose read began after this process committed a
+        waiting input's price, and that had nothing to publish (the reading is
+        unchanged, records no new observation, or this source has none): the
+        screen already shows what that input composes to (headline clock
+        stops). Never raises."""
+        try:
+            if read_t0 is None or not self._hl_pending:
+                return
+            for event_id in event_ids:
+                if event_id not in self._hl_pending:
+                    continue
+                disposition = self._dispositions.get(event_id)
+                if not disposition or disposition[0] not in (
+                        "unchanged", "unobserved", "no_reading", "preview_only"):
+                    continue
+                at = self._hl_commit_at.get(event_id)
+                if at is not None and at <= read_t0:
+                    self._hl_resolve(event_id, "stamp_" + disposition[0])
+        except Exception:
+            pass
+
     def _hl_mutate_refused(self, event_id, status) -> None:
         """A proposal's ledger call composed no frame. ``ok``: accepted with
         nothing to send (the screen already shows that composition). A stale
@@ -9131,6 +9187,12 @@ class LiveBlendRefresher:
         return " ".join(parts) or "-"
 
     def _prune_receipt_quotes(self, now: float) -> None:
+        own = self._own_writes
+        while own:
+            oid = next(iter(own))
+            if now - max(w[2] for w in own[oid].values()) <= RECEIPT_GRAPH_MAX_AGE_S:
+                break
+            del own[oid]
         quotes = self._receipt_quotes
         while quotes:
             oid = next(iter(quotes))
@@ -9246,19 +9308,31 @@ class LiveBlendRefresher:
                     outcomes.append(row)
                     continue
                 price, bound, mark = quote[0], quote[1], quote[2]
+                at = bound
                 stored = _coerce_timestamp(getattr(row, "last_updated", None))
                 if stored is not None and stored.timestamp() >= bound:
                     current = getattr(row, "current_probability", None)
                     if current is not None and round(float(current), 6) == price:
                         outcomes.append(row)  # the row already holds this quote
                         continue
-                    stats["ambiguous"] += 1
-                    self._note_receipt_class("ambiguous", event_id)
-                    self._hl_mark(event_id, "ambiguous")
-                    return None
+                    own = self._own_writes.get(row.id)
+                    wrote = own.get(stored.timestamp()) if own else None
+                    if (wrote is None or current is None
+                            or wrote[0] != round(float(current), 6)
+                            or getattr(mark, "seq", -1) <= wrote[1]):
+                        stats["ambiguous"] += 1
+                        self._note_receipt_class("ambiguous", event_id)
+                        self._hl_mark(event_id, "ambiguous")
+                        return None
+                    # #10090: this process stored that row from an input older
+                    # than this quote (seq order is receipt order), so the quote
+                    # is newer though the row's clock is later: ordered just
+                    # after the stored row, as the write in flight was.
+                    stats["own_write"] += 1
+                    at = stored.timestamp() + 0.000001
                 outcomes.append(SimpleNamespace(**{
                     **vars(row), "current_probability": price,
-                    "last_updated": datetime.fromtimestamp(bound, timezone.utc),
+                    "last_updated": datetime.fromtimestamp(at, timezone.utc),
                 }))
                 overlaid.add(row.id)
                 changed = True
@@ -10207,6 +10281,16 @@ class LiveBlendRefresher:
             if event.status not in PREVIEW_STATUSES or event.completed_at is not None:
                 rev = getattr(event, "preview_rev", None)
                 if type(rev) is int and rev >= 0:
+                    now = _mono()
+                    seen = self._terminal_reads.get(event_id)
+                    if seen is not None and now - seen < TERMINAL_READ_RETRY_S:
+                        continue  # #10090: already run; a repeat only moved the barrier
+                    if len(self._terminal_reads) > 4096:
+                        self._terminal_reads = {
+                            eid: at for eid, at in self._terminal_reads.items()
+                            if now - at < TERMINAL_READ_RETRY_S
+                        }
+                    self._terminal_reads[event_id] = now
                     # One retirement per statement ticket. A racing retirement
                     # refuses this one; it must wait for another real read.
                     await self._retire_preview_event(event_id, rev, ticket)
