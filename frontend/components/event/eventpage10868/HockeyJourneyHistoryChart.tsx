@@ -39,6 +39,20 @@
  * The guide line, every period, its words and its time never move or go; type
  * never shrinks (the 200% "Q3" that ran past the right edge, browser lab
  * c9bcdad25b).
+ *
+ * Layout (R-H1, Design admission 2026-11-01): an optional `layout`, the web
+ * soccer chart's convention (`SoccerMatchHistoryChart`): "inline" (the
+ * default, every page caller) draws a 230 px plot exactly as before;
+ * "expanded" (for a full-size reader; no caller passes it yet) a 360 px plot.
+ * The height is chosen once per render and carried through the plot, the
+ * guide lines, the y scale, the x-label band and the SVG height. Margins,
+ * the lifted guide-label band (added ABOVE the plot, never taken from it),
+ * every horizontal measurement and position, every point, run, gap, mark,
+ * guide, label, the key, the caption, the notes and the disclosure are the
+ * same in both; type never shrinks. A missing history keeps its absence
+ * panel at the inline height in both layouts (no blank expanded plot, no
+ * mark). Native baseball keeps its owner's 230 px plot in its reader: 360 px
+ * is a web choice, not native pixel parity.
  */
 
 import { useId, useRef, useState } from "react";
@@ -50,7 +64,9 @@ import type {
 } from "@/lib/eventPage10868/hockeyJourneyTypes";
 import { DEFAULT_ROOT_FONT_PX, useFrameMeasure, useIsomorphicLayoutEffect } from "./useFrameMeasure";
 
-const PLOT_HEIGHT = 230;
+/** The plot's height per layout (`SoccerMatchHistoryChart`'s convention): inline on the page, expanded in a full-size reader. */
+const PLOT_HEIGHTS = { inline: 230, expanded: 360 } as const;
+export type HockeyJourneyHistoryLayout = keyof typeof PLOT_HEIGHTS;
 /** `text-xs` at the default root size. Axis text scales with the reader's root font. */
 const AXIS_FONT_PX = 12;
 /** Average advance of an axis glyph, in em — an estimate used only until the real text is measured. */
@@ -211,10 +227,15 @@ function KeySlot({ label, reading }: { label: string; reading: HockeyJourneyRead
 export default function HockeyJourneyHistoryChart({
   history,
   colors,
+  layout = "inline",
 }: {
   history: HockeyJourneyHistory;
   colors: HockeyJourneyLineColors;
+  /** Optional: "expanded" draws the taller plot (see Layout); default "inline", the page chart unchanged. */
+  layout?: HockeyJourneyHistoryLayout;
 }) {
+  // Chosen once per render; every vertical bound below reads it.
+  const plotHeight = PLOT_HEIGHTS[layout];
   const frame = useRef<HTMLDivElement>(null);
   const { width, rootFontPx } = useFrameMeasure(frame, 600);
   const titleId = useId();
@@ -240,7 +261,7 @@ export default function HockeyJourneyHistoryChart({
 
   const domain = history.domain;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 40);
-  const plotH = PLOT_HEIGHT - MARGIN.top - MARGIN.bottom;
+  const plotH = plotHeight - MARGIN.top - MARGIN.bottom;
   const x = (t: number) =>
     domain && domain.upper > domain.lower
       ? MARGIN.left + ((t - domain.lower) / (domain.upper - domain.lower)) * plotW
@@ -277,8 +298,8 @@ export default function HockeyJourneyHistoryChart({
   );
   const laneCount = placements.reduce((n, label) => Math.max(n, label.lane + 1), 0);
   // The first lane starts below the lower half of the "0%" label, which is centred on the plot's floor.
-  const labelBandTop = PLOT_HEIGHT + guideBand - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
-  const svgHeight = Math.max(PLOT_HEIGHT + guideBand + 26, labelBandTop + laneCount * laneHeight + 4);
+  const labelBandTop = plotHeight + guideBand - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
+  const svgHeight = Math.max(plotHeight + guideBand + 26, labelBandTop + laneCount * laneHeight + 4);
 
   // Real text lengths replace the estimate once the browser can measure them (not in jsdom/SSR).
   // A label drawn for the first time is measured too, so the drawn subset is re-checked against real widths.
@@ -332,7 +353,8 @@ export default function HockeyJourneyHistoryChart({
         {history.absence || !domain ? (
           <div
             className="flex flex-col items-center justify-center rounded-lg bg-surface-deep p-4 text-center"
-            style={{ minHeight: PLOT_HEIGHT }}
+            // The absence keeps the inline height in every layout: nothing is drawn, so nothing is given more room.
+            style={{ minHeight: PLOT_HEIGHTS.inline }}
           >
             <p className="text-base font-semibold">{history.absence?.title}</p>
             {history.absence?.words && <p className="mt-1 text-sm text-text-secondary">{history.absence.words}</p>}
