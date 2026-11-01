@@ -3884,6 +3884,10 @@ class LiveBlendRefresher:
         self._receipt_quotes: dict[int, tuple] = {}
         #: Events with a quote not yet composed (insertion order); one worker.
         self._receipt_due: dict[int, None] = {}
+        #: #10090: due events composed at once, not after the per-event receipt
+        #: interval: a fallback whose missing piece just arrived (a re-read
+        #: graph, or this process's commit of its price). One extra composition.
+        self._receipt_now: set[int] = set()
         #: Events whose previewed legs a withdrawal or settlement took away.
         self._receipt_withdrawn: dict[int, None] = {}
         #: event id -> every leg of the markets its last receipt reading was
@@ -8593,6 +8597,8 @@ class LiveBlendRefresher:
                     if quote[3] in kept and self._preview_graph_outcomes.get(
                             getattr(quote[2], "outcome_id", None)) == quote[3]:
                         self._receipt_due[quote[3]] = None
+                        if quote[3] in self._hl_pending:
+                            self._receipt_now.add(quote[3])
                         queued = True
             if queued:
                 self._wake_receipt(True)
@@ -8663,6 +8669,7 @@ class LiveBlendRefresher:
                             self._hl_commit_at[event_id] = now
                     if entry is not None and entry[1] != "receipt":
                         self._receipt_due[event_id] = None
+                        self._receipt_now.add(event_id)
                         wake = True
                 if not commit_arm:
                     continue
@@ -9021,12 +9028,14 @@ class LiveBlendRefresher:
                             ",".join("%s:%d/%d/%d" % (k, v[0], int(v[1] * 1000), int(v[2] * 1000))
                                      for k, v in sorted(holds.items())) or "-")
             due, deferred = [], {}
+            urgent = self._receipt_now
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
-                if last is not None and now - last[0] < interval:
+                if last is not None and now - last[0] < interval and event_id not in urgent:
                     deferred[event_id] = None
                 else:
                     due.append(event_id)
+                    urgent.discard(event_id)
             self._receipt_due = deferred
             withdrawn, self._receipt_withdrawn = list(self._receipt_withdrawn), {}
             if due or withdrawn:
