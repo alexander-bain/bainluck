@@ -2370,6 +2370,7 @@ export default function EventPage({ params }: EventPageProps) {
     commenceTime: event?.commence_time,
     liveClaimUnbacked,
     venueSettled: Boolean(venueSettledSentence),
+    streamEligible: quoteEligible,
   });
 
   // #4861 — and only where one actually IS landing. The ring above counts down

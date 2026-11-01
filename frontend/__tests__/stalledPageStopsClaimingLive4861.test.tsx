@@ -209,7 +209,8 @@ describe("#4861 a page that stopped being fed stops claiming to be live", () => 
     eventFailure = undefined;
 
     // `lastRefresh` initialises to now, so nothing is overdue on first render.
-    expect(draw()).toContain(PROMISE);
+    // #10090 (Alex 2026-11-01): a streamed page never draws the poll ring.
+    expect(draw()).not.toContain(PROMISE);
   });
 });
 

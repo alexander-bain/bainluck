@@ -197,7 +197,8 @@ describe("#5039 the polled live header says how old its number is", () => {
     expect(html).toContain('data-observation-at=""');
     expect(html).toContain('data-observation-count="0"');
     expect(html).not.toContain("8s ago");
-    expect(html).toContain(PROMISE);
+    // #10090 (Alex 2026-11-01): a streamed page never draws the poll ring.
+    expect(html).not.toContain(PROMISE);
   });
 
   it("does not take the countdown away to do it", () => {
@@ -208,7 +209,8 @@ describe("#5039 the polled live header says how old its number is", () => {
 
     const html = draw();
 
-    expect(html).toContain(PROMISE);
+    // #10090 (Alex 2026-11-01): a streamed page never draws the poll ring.
+    expect(html).not.toContain(PROMISE);
     expect(html).toContain(STATUS);
   });
 
@@ -236,7 +238,8 @@ describe("#5039 the polled live header says how old its number is", () => {
 
     const html = draw();
 
-    expect(html).toContain(PROMISE);
+    // #10090 (Alex 2026-11-01): a streamed page never draws the poll ring.
+    expect(html).not.toContain(PROMISE);
     expect(html).not.toContain(AGE);
   });
 });

@@ -371,6 +371,17 @@ export function shouldShowRefreshCountdown(args: {
    * established for the same reason).
    */
   venueSettled?: boolean;
+  /**
+   * #10090 — THIS PAGE IS SUBSCRIBED TO THE LIVE STREAM (`canSubscribeEventQuotes`).
+   *
+   * Alex (2026-11-01): with display-now-persist-later on, prices arrive as the
+   * venues trade, so a countdown to our next poll "works against the desire to
+   * make the product feel alive". `streamConnected` alone flashed the ring
+   * for a moment on every reconnect. The stream's own connection status
+   * (`liveConnectionStatus.ts`) says when it is interrupted; the ring adds a
+   * poll clock on top. Optional, absent means "not subscribed".
+   */
+  streamEligible?: boolean;
   now?: Date;
 }): boolean {
   const { isFinished, streamConnected, isLive, isSuspended, commenceTime } = args;
@@ -378,6 +389,9 @@ export function shouldShowRefreshCountdown(args: {
   // Unchanged: a finished event has nothing to refresh, and a pushed event
   // shows its age stamp instead (live/034 S2).
   if (isFinished || streamConnected) return false;
+
+  // #10090: a streamed page never draws the poll countdown, connected or not.
+  if (args.streamEligible) return false;
 
   // #6381 — BESIDE the finished arm, and deliberately not inside the
   // `isSuspended` branch below. A venue-graded match has nothing to refresh for

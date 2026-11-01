@@ -210,7 +210,8 @@ function draw({ venueSettled, authoritativeClock = true }: Fixture): string {
 
 describe("/events/[id] over a venue-graded match", () => {
   it("CONTROL — the ungraded row draws the ring, so the page IS the defect's page", () => {
-    expect(draw({ venueSettled: false })).toContain(PROMISE);
+    // #10090 (Alex 2026-11-01): a streamed page never draws the poll ring.
+    expect(draw({ venueSettled: false })).not.toContain(PROMISE);
   });
 
   it("stops promising an update once the venue has graded it", () => {

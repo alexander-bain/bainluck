@@ -181,7 +181,8 @@ describe("#5459 the event page stops promising liveness it cannot back", () => {
 
     const html = draw();
 
-    expect(html).toContain(PROMISE);
+    // #10090 (Alex 2026-11-01): a streamed page never draws the poll ring.
+    expect(html).not.toContain(PROMISE);
     expect(html).toContain(CLAIM);
     expect(html).not.toContain(ADMISSION);
   });
@@ -222,7 +223,8 @@ describe("#5459 the event page stops promising liveness it cannot back", () => {
 
     const html = draw();
 
-    expect(html).toContain(PROMISE);
+    // #10090 (Alex 2026-11-01): a streamed page never draws the poll ring.
+    expect(html).not.toContain(PROMISE);
     expect(html).toContain(CLAIM);
   });
 });

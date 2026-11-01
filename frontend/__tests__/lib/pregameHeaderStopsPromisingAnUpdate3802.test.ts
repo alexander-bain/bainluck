@@ -171,3 +171,25 @@ describe("#3802 shouldShowRefreshCountdown", () => {
     });
   });
 });
+
+// #10090 (Alex 2026-11-01): with display-now-persist-later on, a page subscribed
+// to the live stream never draws the poll countdown, even for the moment a
+// reconnect leaves `streamConnected` false.
+describe("#10090 a streamed page draws no poll ring", () => {
+  const live = {
+    isFinished: false,
+    streamConnected: false,
+    isLive: true,
+    isSuspended: false,
+    commenceTime: "2026-11-01T18:00:00Z",
+    now: new Date("2026-11-01T19:00:00Z"),
+  };
+
+  it("CONTROL: a live page that is not streamed keeps its ring", () => {
+    expect(shouldShowRefreshCountdown(live)).toBe(true);
+  });
+
+  it("a live page subscribed to the stream draws none while it reconnects", () => {
+    expect(shouldShowRefreshCountdown({ ...live, streamEligible: true })).toBe(false);
+  });
+});
