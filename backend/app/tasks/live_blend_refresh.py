@@ -8480,6 +8480,15 @@ class LiveBlendRefresher:
                 if self._preview_graph_outcomes.get(row.id) == event_id:
                     del self._preview_graph_outcomes[row.id]
 
+    def _refetch_all_graphs(self) -> None:
+        """#10090: re-read every kept live graph (a retirement staled their tickets). Never raises."""
+        try:
+            if _preview_at_receipt_possible(getattr(self, "source", None)) and self._preview_graphs:
+                self.graph_refetch_stats["barrier"] = self.graph_refetch_stats.get("barrier", 0) + 1
+                self._schedule_graph_refetch(list(self._preview_graphs))
+        except Exception:
+            self.graph_refetch_stats["errors"] += 1
+
     def _schedule_graph_refetch(self, event_ids) -> None:
         """#10090: re-read these live events' graphs now (they had one). Never raises."""
         try:
@@ -10232,8 +10241,16 @@ class LiveBlendRefresher:
                                 if idle else self._preview_call(connection))
                         if idle and len(idle) == len(items):
                             # One capacity batch, proved by one locked read.
-                            return await preview.prepare_retirements(items, call,
-                                                                     self.preview_stats)
+                            reclaimed = self.preview_stats.get("capacity_reclaimed", 0)
+                            retired = await preview.prepare_retirements(items, call,
+                                                                        self.preview_stats)
+                            if self.preview_stats.get("capacity_reclaimed", 0) > reclaimed:
+                                # #10090: each acknowledged retirement moved the
+                                # read barrier, so every kept graph's ticket is now
+                                # refused (`read_required`) at its next open. Re-read
+                                # them at once, before their next tick needs them.
+                                self._refetch_all_graphs()
+                            return retired
                         return await preview.prepare(items, call, self.preview_stats)
                     except BaseException as exc:
                         first_error = exc
