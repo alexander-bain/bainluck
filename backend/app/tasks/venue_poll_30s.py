@@ -268,7 +268,7 @@ def _socket_game_sql(window_sql: str) -> str:
     )
 
 
-def _pool_sql(venue: str, window_sql: str) -> str:
+def _pool_sql(venue: str, window_sql: str, props_sql: str = "") -> str:
     """The shown markets of one venue the game socket does not carry.
 
     Two arms, each planned on its own driving index, because one predicate over
@@ -304,11 +304,13 @@ def _pool_sql(venue: str, window_sql: str) -> str:
                AND fm.source = '{venue}'
                AND e.commence_time <= NOW() + make_interval(hours => :game_horizon_hours)
                AND NOT {_socket_game_sql(window_sql)}
-        ),
+        ),{props_sql}
         pool AS (
             SELECT id FROM unlinked
             UNION
-            SELECT id FROM linked
+            SELECT id FROM linked{"""
+            UNION
+            SELECT id FROM props""" if props_sql else ""}
         )
     """
 
@@ -363,7 +365,7 @@ def polymarket_population_sql(open_arm: bool) -> str:
         else ""
     )
     return f"""
-        WITH {_pool_sql("polymarket", window)}
+        WITH {_pool_sql("polymarket", window, _pm_props_sql(window))}
         SELECT fm.id, {GAMMA_EVENT_ID_EXPR} AS gamma_event_id, fo.id, fo.external_id
           FROM pool
           JOIN futures_markets fm ON fm.id = pool.id
@@ -374,6 +376,46 @@ def polymarket_population_sql(open_arm: bool) -> str:
            AND {_ELIGIBLE_LEG_SQL}
          ORDER BY fm.id, fo.id
     """
+
+
+def _pm_props_sql(window_sql: str) -> str:
+    """#10090 ``PM_WS_PROPS_TO_POLL``: the venue-labelled props of the games the
+    PM socket's window holds, which neither socket arm carries any more (a held
+    game's props are on the open arm as well: overlap, never a gap). The
+    window and the refusal are the sockets' own predicates, rendered. Empty
+    when the switch is off: the population is exactly what it was.
+    """
+    from app.tasks.polymarket_open_contracts import props_to_poll_enabled
+
+    if not props_to_poll_enabled():
+        return ""
+    return f"""
+        props AS MATERIALIZED (
+            SELECT fm.id
+              FROM events e
+              JOIN futures_markets fm ON fm.event_id = e.id
+             WHERE fm.status = 'open'
+               AND fm.source = 'polymarket'
+               AND COALESCE({window_sql}, FALSE)
+               AND {PM_VENUE_LABEL_REFUSAL_SQL}
+        ),"""
+
+
+#: ``polymarket_open_contracts.venue_label_refusal_clause`` written out with the
+#: ``->`` operators the rest of this module uses (an offline render picks
+#: subscript syntax, which needs Postgres 14). A guard test pins the two to the
+#: same answers.
+PM_VENUE_LABEL_REFUSAL_SQL = (
+    "COALESCE(jsonb_typeof(fm.market_metadata) = 'object'"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1') = 'object'"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1'->'v') = 'number'"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'v') = '1'"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1'->'semantic_type') = 'string'"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'semantic_type') <> ''"
+    " AND jsonb_typeof(fm.market_metadata->'content_understanding_v1'->'venue_type') = 'string'"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'venue_type') <> ''"
+    " AND (fm.market_metadata->'content_understanding_v1'->>'venue_type') <> 'moneyline', FALSE)"
+)
 
 
 def _kalshi_open_arm() -> bool:

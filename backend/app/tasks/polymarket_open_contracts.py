@@ -158,6 +158,52 @@ def open_contract_scope() -> str:
     return OPEN_SCOPE_ALL
 
 
+def props_to_poll_enabled() -> bool:
+    """#10090: ``PM_WS_PROPS_TO_POLL=1`` takes the venue-labelled props of the
+    socket's games off both socket arms; the 30-second poll prices them.
+
+    Alex 2026-11-01 ~9:05 AM PT ("I agree to all those suggestions": CPU item
+    5). At 17:10Z 5,267 of the game window's 5,538 Polymarket markets (10,090
+    of ~11,200 subscribed tokens) carried a venue label that is not
+    ``moneyline`` — props the blend never reads. Main game odds stay on the
+    socket. A game a reader holds keeps its props live through the open arm's
+    held-event seed. Off by default; unset it to undo at the next restart.
+    """
+    return os.getenv("PM_WS_PROPS_TO_POLL", "0").strip() == "1"
+
+
+def venue_label_refusal_clause():
+    """``venue_label_refutes_full_contest_winner`` as SQL over FuturesMarket:
+    a version-1 understanding record whose own ``venue_type`` is a non-empty
+    string other than ``moneyline``. A missing or malformed record is never a
+    refusal (SQL NULL coalesces to false), as in the Python rule and the
+    stamp read's ``known_refusal``.
+    """
+    from sqlalchemy import and_, func
+
+    from app.models.models import FuturesMarket
+    from app.services.polymarket_api import GAMMA_FULL_CONTEST_WINNER_TYPES
+    from app.utils.content_understanding import (
+        CONTENT_UNDERSTANDING_KEY, CONTENT_UNDERSTANDING_VERSION,
+    )
+
+    understanding = FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY]
+    version = understanding["v"]
+    semantic = understanding["semantic_type"]
+    venue = understanding["venue_type"]
+    return func.coalesce(and_(
+        func.jsonb_typeof(FuturesMarket.market_metadata) == "object",
+        func.jsonb_typeof(understanding) == "object",
+        func.jsonb_typeof(version) == "number",
+        version.astext == str(CONTENT_UNDERSTANDING_VERSION),
+        func.jsonb_typeof(semantic) == "string",
+        semantic.astext != "",
+        func.jsonb_typeof(venue) == "string",
+        venue.astext != "",
+        venue.astext.not_in(sorted(GAMMA_FULL_CONTEST_WINNER_TYPES)),
+    ), False)
+
+
 #: #10090: under ``slate`` a market leaves the fast set only once it has been out
 #: of every seed class (held, served, slate, mirroring a game token) this long.
 OPEN_SCOPE_QUIET_S = 1800.0
@@ -242,11 +288,16 @@ def open_contract_scope_markets_stmt():
     from app.models.models import Event, FuturesMarket
     from app.tasks.polymarket_ws import _slate_event_window
 
-    return (
+    stmt = (
         select(FuturesMarket.id)
         .join(Event, FuturesMarket.event_id == Event.id)
         .where(*_open_market_clauses(), _slate_event_window())
     )
+    if props_to_poll_enabled():
+        # The game arm dropped these too; the poll prices them, and a held
+        # event's still come back through the held-event seed.
+        stmt = stmt.where(~venue_label_refusal_clause())
+    return stmt
 
 
 def open_contract_held_markets_stmt(

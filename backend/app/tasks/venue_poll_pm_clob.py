@@ -91,6 +91,7 @@ COST, at the measured sizes (2026-10-30)
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -291,6 +292,104 @@ def token0_of(market) -> Optional[str]:
     return tokens[0] if len(tokens) == 2 else None
 
 
+#: Conditions this process already looked up in the catalog (found or not),
+#: so a condition the catalog cannot place costs one read per process.
+_CATALOG_CHECKED: set[str] = set()
+#: Market ids per catalog read.
+CATALOG_IDS_PER_READ = 2000
+
+
+def persisted_token0(external_id, market_tokens, outcome_tokens, legs, wanted) -> dict[str, str]:
+    """Token 0 of each wanted condition the catalog row already stores.
+
+    #10090 (11/01): the pass learned 240 tokens a pass from Gamma (24 reads,
+    75% misses) against 50,503 unknown, so the "30-second" source fell back
+    to Gamma for nearly every leg — while the catalog held the tokens the
+    socket subscribes with. The same two stored fields the socket reads:
+
+    * ``clob_token_ids`` on a market whose own external id is a condition:
+      exactly two tokens, token 0 first — ``token0_of``'s rule on Gamma's own
+      field, which the ingest stores;
+    * ``clob_yes_token_by_outcome`` on a field market: an outcome's YES token
+      is token 0 of the condition its leg names (``contract_key`` index 0).
+    """
+    from app.tasks.polymarket_open_contracts import contract_key
+
+    out: dict[str, str] = {}
+    tokens = market_tokens
+    if isinstance(tokens, str):
+        try:
+            tokens = json.loads(tokens)
+        except ValueError:
+            tokens = None
+    if isinstance(tokens, list):
+        tokens = [str(t) for t in tokens if t is not None and str(t)]
+        key = contract_key(external_id or "")
+        if len(tokens) == 2 and key is not None and key[1] == 0 and key[0] in wanted:
+            out[key[0]] = tokens[0]
+    if isinstance(outcome_tokens, str):
+        try:
+            outcome_tokens = json.loads(outcome_tokens)
+        except ValueError:
+            outcome_tokens = None
+    if isinstance(outcome_tokens, dict):
+        for oid, ext in legs:
+            key = contract_key(ext or "")
+            token = outcome_tokens.get(str(oid))
+            if (key is not None and key[1] == 0 and key[0] in wanted
+                    and key[0] not in out and token):
+                out[key[0]] = str(token)
+    return out
+
+
+async def seed_persisted_tokens(session, units: list[Unit], wanted: set[str], *, stats: dict) -> None:
+    """Cache token 0 of every wanted condition the catalog stores (`persisted_token0`).
+
+    Read by primary key, once per condition per process; a found token is
+    stored exactly as a Gamma answer is (`store_tokens`). Never raises: a
+    failed read leaves the conditions to Gamma, as before.
+    """
+    wanted = {c for c in wanted if c not in _CATALOG_CHECKED}
+    if session is None or not wanted:
+        return
+    by_market: dict[int, list[tuple[int, str]]] = {}
+    for unit in units:
+        for market_id, legs in unit.legs.items():
+            if any(leg_condition(ext) in wanted for _oid, ext in legs):
+                by_market.setdefault(market_id, []).extend(legs)
+    if not by_market:
+        _CATALOG_CHECKED.update(wanted)
+        return
+    from sqlalchemy import select
+
+    from app.models.models import FuturesMarket
+    from app.utils.futures_liveness import OUTCOME_TOKEN_METADATA_KEY
+
+    found: dict[str, Optional[str]] = {}
+    ids = sorted(by_market)
+    try:
+        for i in range(0, len(ids), CATALOG_IDS_PER_READ):
+            rows = (await session.execute(
+                select(
+                    FuturesMarket.id,
+                    FuturesMarket.external_id,
+                    FuturesMarket.market_metadata["clob_token_ids"],
+                    FuturesMarket.market_metadata[OUTCOME_TOKEN_METADATA_KEY],
+                ).where(FuturesMarket.id.in_(ids[i : i + CATALOG_IDS_PER_READ]))
+            )).all()
+            for market_id, ext, market_tokens, outcome_tokens in rows:
+                found.update(persisted_token0(
+                    ext, market_tokens, outcome_tokens, by_market.get(market_id, ()), wanted,
+                ))
+    except Exception as exc:  # noqa: BLE001 — Gamma still resolves them
+        logger.warning("venue_poll_pm_clob: catalog tokens unreadable: %s", exc)
+        stats["tokens_seed_errors"] = stats.get("tokens_seed_errors", 0) + 1
+        return
+    _CATALOG_CHECKED.update(wanted)
+    store_tokens(found, now=time.time())
+    stats["tokens_seeded"] = stats.get("tokens_seeded", 0) + len(found)
+
+
 async def resolve_tokens(service, conditions: list[str], *, deadline: float, stats: dict) -> None:
     """Ask Gamma for up to ``TOKEN_REQUESTS_PER_PASS`` batches of unknown tokens.
 
@@ -376,8 +475,13 @@ async def clob_pass(session, service, units: list[Unit], *, deadline: float, off
     now = time.time()
     conditions = list(dict.fromkeys(c for u in units for c in _leg_conditions(u)))
     known = cached_tokens(conditions, now=now)
-    unknown = [c for c in conditions if c not in known]
     stats["clob_conditions"] = len(conditions)
+    # A Gamma miss is retried hourly; the catalog may hold that token already.
+    await seed_persisted_tokens(
+        session, units, {c for c in conditions if not known.get(c)}, stats=stats,
+    )
+    known = cached_tokens(conditions, now=now)
+    unknown = [c for c in conditions if c not in known]
     stats["clob_tokens_unknown"] = len(unknown)
     if unknown:
         await resolve_tokens(service, unknown, deadline=deadline, stats=stats)

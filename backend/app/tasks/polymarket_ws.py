@@ -3847,6 +3847,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         OPEN_SCOPE_EARLY_REFRESH_MIN_S, OPEN_SCOPE_PRESENCE_CHECK_S,
         OPEN_SCOPE_QUIET_S, game_mirror_market_ids,
         open_contract_held_markets_stmt, open_scope_memory,
+        props_to_poll_enabled,
     )
     from app.utils.reader_presence import (  # #10090: held + served seeds
         PresenceUnreadable, read_reader_presence, served_market_ids,
@@ -4125,6 +4126,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         live_win_topup_ids: set[int] = set()
         stored_outcome_tokens: dict[int, tuple[int, str]] = {}
 
+        from app.tasks.polymarket_open_contracts import props_to_poll_enabled
+
+        props_off = props_to_poll_enabled()
+        dropped_props: set[int] = set()
         async with get_task_session() as session:
             market_result = await session.execute(slate_market_stmt(market_ids))
             ext_by_market: dict[int, str] = {}
@@ -4135,6 +4140,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # catalog metadata this token read already owns. Missing labels
                 # remain conservative; titles and outcome names are never guessed.
                 if pm_non_speaking_metadata(metadata):
+                    if props_off:
+                        # #10090 `PM_WS_PROPS_TO_POLL`: the 30-second poll
+                        # prices it; a held game's come back on the open arm.
+                        dropped_props.add(mid)
+                        continue
                     non_blend_market_ids.add(mid)
                 elif event_status == "live":
                     # Same conservative WIN eligibility as the blend owner map.
@@ -4169,6 +4179,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     asset_ids.append(str(token))
                     asset_to_market[str(token)] = mid
                 tokens_by_market[mid] = [str(t) for t in tokens]
+
+            if dropped_props:
+                market_ids -= dropped_props
+                for mid in dropped_props:
+                    event_id_by_market.pop(mid, None)
 
             # Q490 — ask for the slate's tokens instead of waiting for a rotation.
             # The ingest stamp (Q460) is correct and covers the catalogue, but Gamma
@@ -7858,7 +7873,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 except PresenceUnreadable:
                     continue
                 markets, events = memory.unseen(
-                    presence, legged_market_ids, event_id_by_market.values()
+                    presence, legged_market_ids,
+                    # Under `PM_WS_PROPS_TO_POLL` the game socket no longer
+                    # carries a held game's props: its event asks too.
+                    () if props_to_poll_enabled() else event_id_by_market.values(),
                 )
                 if not markets and not events:
                     continue

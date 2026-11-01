@@ -619,3 +619,77 @@ async def test_a_clob_rotation_stopped_by_a_timeout_or_a_429_makes_the_pass_part
     monkeypatch.setattr(v, "poll_venue", _poll)
     summary = await v.poll_venue_prices({"kalshi", "polymarket"})
     assert summary["terminal"] == terminal
+
+
+# ── tokens the catalog already stores (11/01) ────────────────────────────────
+
+
+@pytest.mark.parametrize("ext, market_tokens, outcome_tokens, legs, want", [
+    # a binary: its own condition, exactly two tokens, token 0 first
+    ("0xa", ["111", "222"], None, [(1, "0xa"), (2, "0xa_side1")], {"0xa": "111"}),
+    # Gamma's field is stored as a JSON string on older rows
+    ("0xa", '["111", "222"]', None, [], {"0xa": "111"}),
+    # any other shape is refused, as token0_of refuses it
+    ("0xa", ["111"], None, [], {}),
+    ("0xa", ["111", "222", "333"], None, [], {}),
+    # a field market (Gamma event id): an outcome's YES token is token 0 of its leg's condition
+    ("917153", None, {"5": "555", "6": "666"}, [(5, "0xe"), (6, "0xf_side1")], {"0xe": "555"}),
+    # only wanted conditions
+    ("0xz", ["111", "222"], None, [], {}),
+])
+def test_token_zero_from_the_two_stored_fields_the_socket_reads(
+        ext, market_tokens, outcome_tokens, legs, want):
+    wanted = {"0xa", "0xe", "0xf"}
+    assert clob.persisted_token0(ext, market_tokens, outcome_tokens, legs, wanted) == want
+
+
+class _CatalogSession:
+    def __init__(self, rows):
+        self.rows, self.reads = rows, 0
+
+    async def execute(self, _stmt):
+        self.reads += 1
+        rows = self.rows
+
+        class _Result:
+            def all(self):
+                return rows
+        return _Result()
+
+
+async def test_a_token_the_catalog_stores_is_read_off_the_clob_without_asking_gamma(monkeypatch):
+    written, _cursors = _wire(monkeypatch)
+    monkeypatch.setattr(clob, "_CATALOG_CHECKED", set())
+    units = [v.Unit("100", {1: [(11, "0xa"), (12, "0xa_side1")]}),
+             v.Unit("200", {2: [(21, "0xmissing")]})]
+    session = _CatalogSession([(1, "0xa", ["t-0xa", "t-0xa-1"], None),
+                               (2, "0xmissing", None, None)])
+    service = _Service({"t-0xa": (0.42, 0.50)})
+    stats = {"errors": []}
+    rest = await clob.clob_pass(session, service, units, deadline=time.monotonic() + 20,
+                                offset=0.0, stats=stats)
+
+    assert stats["tokens_seeded"] == 1 and stats["clob_tokens_unknown"] == 1
+    assert service.gamma_reads == 1, "only the condition the catalog cannot place goes to Gamma"
+    assert service.reads == [["t-0xa"]]
+    assert [u.key for u in rest] == ["200"]
+
+    await clob.clob_pass(session, service, units, deadline=time.monotonic() + 20,
+                         offset=0.0, stats={"errors": []})
+    assert session.reads == 1, "a condition is looked up in the catalog once per process"
+
+
+async def test_a_failed_catalog_read_leaves_every_condition_to_gamma(monkeypatch):
+    _wire(monkeypatch)
+    monkeypatch.setattr(clob, "_CATALOG_CHECKED", set())
+
+    class _Broken:
+        async def execute(self, _stmt):
+            raise RuntimeError("db down")
+
+    service = _Service({"t-0xa": (0.42, 0.50)})
+    stats = {"errors": []}
+    await clob.clob_pass(_Broken(), service, [v.Unit("100", {1: [(11, "0xa")]})],
+                         deadline=time.monotonic() + 20, offset=0.0, stats=stats)
+    assert stats["tokens_seed_errors"] == 1 and service.gamma_reads == 1
+    assert clob._CATALOG_CHECKED == set(), "unread conditions are tried again next pass"

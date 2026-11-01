@@ -2769,3 +2769,32 @@ async def test_tail_shadow_pass_writes_nothing_and_grades_against_the_fresh_row(
     # No 0.39 vs 0.40 agrees inside 0.01.
     assert stats["tail_disagree"] == 1 and stats["tail_agree"] == 1
     assert stats["tail_would_write"] == 2 and "rows_updated" not in stats
+
+
+async def test_polymarket_population_takes_the_socket_games_props_only_when_switched(
+        poll_db, monkeypatch):
+    """#10090 `PM_WS_PROPS_TO_POLL` (Alex 2026-11-01): a live game's
+    venue-labelled prop joins the population; its moneyline, an unlabelled
+    market and an old-version label stay with the socket."""
+    db = poll_db
+    live = await _vp_event(db, status="live", starts_in=timedelta(hours=-1))
+
+    def label(venue_type, v=1):
+        return {"content_understanding_v1": {"v": v, "semantic_type": venue_type,
+                                             "venue_type": venue_type},
+                "polymarket_event_id": "7001"}
+
+    await _vp_market(db, source="polymarket", ext="0xp01", event_id=live,
+                     legs=[("0xp01", False, None)], metadata=label("total"))
+    await _vp_market(db, source="polymarket", ext="0xm01", event_id=live,
+                     legs=[("0xm01", False, None)], metadata=label("moneyline"))
+    await _vp_market(db, source="polymarket", ext="0xu01", event_id=live,
+                     legs=[("0xu01", False, None)], metadata={"polymarket_event_id": "7001"})
+    await _vp_market(db, source="polymarket", ext="0xf01", event_id=live,
+                     legs=[("0xf01", False, None)], metadata=label("total", v=999))
+    await db.commit()
+
+    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    assert await _vp_population(db, "polymarket", open_arm=False) == set()
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    assert await _vp_population(db, "polymarket", open_arm=False) == {"0xp01"}
