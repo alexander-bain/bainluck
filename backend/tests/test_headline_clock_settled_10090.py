@@ -168,3 +168,26 @@ def test_the_receipt_plan_routes_an_unpriceable_book_before_marking_na_proof():
     source = inspect.getsource(LiveBlendRefresher._receipt_preview_plan)
     nobook = source.index("self._home_book_empty(event, patched)")
     assert nobook < source.index('self._hl_mark(event_id, "na_proof" if proof_kwargs')
+
+
+def test_an_unoriented_receipt_names_its_legs(monkeypatch, caplog):
+    """07:49Z 11/01: a three-way moneyline waited 14.3 s as `na_orientation` with
+    no line saying why; each such composition now names its legs (bounded)."""
+    import logging
+
+    r = _refresher(monkeypatch)
+    patched = _challenger()
+    with caplog.at_level(logging.INFO, logger="app.tasks.live_blend_refresh"):
+        r._log_na_orientation(1, patched, {51}, None)
+        r._log_na_orientation(1, "not a graph", set(), None)  # never raises
+    lines = [rec.getMessage() for rec in caplog.records if "na_orientation event=" in rec.getMessage()]
+    assert lines[0] == ("live_blend_refresh[kalshi]: na_orientation event=1 reading=none "
+                        "m5[Delaney=0.99/rNone/ov,Wang=0.01/rNone]")
+
+
+def test_both_refusal_kinds_share_the_attribution_bound():
+    import inspect
+
+    source = inspect.getsource(LiveBlendRefresher._receipt_preview_plan)
+    assert "self._log_na_orientation(event_id, patched, overlaid, reading)" in source
+    assert "if self._na_proof_logged < 6:" in source

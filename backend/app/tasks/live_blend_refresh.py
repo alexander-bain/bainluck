@@ -8171,6 +8171,31 @@ class LiveBlendRefresher:
         except Exception:
             logger.debug("na_proof attribution failed", exc_info=True)
 
+    def _log_na_orientation(self, event_id, patched, overlaid, reading) -> None:
+        """#10090: one line per receipt composition with no proven home
+        orientation (bounded with `na_proof`'s): whether the reading was None or
+        unoriented, and each market's legs (name, price, rank, received, overlaid).
+        07:49Z 11/01: a K League 2 three-way moneyline waited 14.3 s this way and
+        nothing said why. Never raises."""
+        try:
+            markets = []
+            for entry in patched:
+                legs = ",".join(
+                    "%s=%s/r%s%s%s" % (
+                        (getattr(row, "name", None) or "?")[:18],
+                        getattr(row, "current_probability", None), getattr(row, "rank", None),
+                        "/rq" if getattr(row, "_receipt_quote", False) else "",
+                        "/ov" if row.id in overlaid else "")
+                    for row in entry.outcomes)
+                if legs:
+                    markets.append("m%s[%s]" % (getattr(entry.market, "id", "?"), legs))
+            logger.info("live_blend_refresh[%s]: na_orientation event=%s reading=%s %s",
+                        self.source, event_id,
+                        "none" if reading is None else "unoriented",
+                        " ".join(markets[:4]) or "-")
+        except Exception:
+            logger.debug("na_orientation attribution failed", exc_info=True)
+
     def _current_reading_proof(self, event_id, group, refused, *, park_refused=True):
         """Keep optional observation previews on the ordinary Kalshi proof path."""
         proof_kwargs = {}
@@ -9657,9 +9682,12 @@ class LiveBlendRefresher:
                 return None
             self._note_receipt_class("not_admitted", event_id)
             self._hl_mark(event_id, "na_proof" if proof_kwargs else "na_orientation")
-            if proof_kwargs and self._na_proof_logged < 6:
+            if self._na_proof_logged < 6:
                 self._na_proof_logged += 1
-                self._log_na_proof(event_id, patched, overlaid)
+                if proof_kwargs:
+                    self._log_na_proof(event_id, patched, overlaid)
+                else:
+                    self._log_na_orientation(event_id, patched, overlaid, reading)
             return None
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
