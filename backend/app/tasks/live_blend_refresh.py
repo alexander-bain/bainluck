@@ -3950,7 +3950,7 @@ class LiveBlendRefresher:
         #: market is found by the next tick's composition.
         self._receipt_speaking: dict[int, frozenset] = {}
         #: event id -> (`_mono` of its last receipt composition, the ledger seq
-        #: of the receipt proposal still pending or None, its whole-percent blend).
+        #: of the receipt proposal still pending or None, its blend in tenths).
         self._receipt_last: dict[int, tuple] = {}
         self._receipt_task: Optional[asyncio.Task] = None
         self._receipt_wake: Optional[asyncio.Event] = None
@@ -9645,9 +9645,16 @@ class LiveBlendRefresher:
             del last[event_id]
 
     def _receipt_blend(self, event, source_value, eligibility, basis) -> Optional[int]:
-        """The whole-percent blend ``event``'s committed bag composes to with
-        this source at ``source_value`` (None: the committed value), as the
-        preview composer does; None when there is none."""
+        """The blend ``event``'s committed bag composes to with this source at
+        ``source_value`` (None: the committed value), as the preview composer
+        does, in TENTHS of a percent (the event page shows 81.4%); None when
+        there is none.
+
+        11/01 19:07Z: in whole percent, Polymarket's Bills 0.78 -> 0.785 (the
+        blend 0.1 point higher) read as "unchanged" and was never proposed;
+        Polymarket held 0.785 for 5.7 s and the screen never showed it (the
+        venue-to-screen probe, with the receipt trace).
+        """
         from types import SimpleNamespace
 
         from app.utils.aggregation import compute_aggregate_probability, stamp_source_reading
@@ -9663,7 +9670,7 @@ class LiveBlendRefresher:
             espn_win_prob_home=getattr(event, "espn_win_prob_home", None),
             opening_home_probability=getattr(event, "opening_home_probability", None),
         ), event.status)
-        return None if probability is None else round(float(probability) * 100)
+        return None if probability is None else round(float(probability) * 1000)
 
     def _receipt_preview_plan(self, event_id: int, now: float, preview):
         """What a receipt composition does for this event: None (nothing),
@@ -9681,7 +9688,8 @@ class LiveBlendRefresher:
         event waits for its stamp, as `HeldRowQuotes.overlay_event` does.
         Then `_commit_preview_plan`'s checks: a proven orientation, every
         contributor read, an overlaid one among them, open unsettled markets.
-        Skipped when the whole-percent blend is what the event already shows.
+        Skipped when the blend, in tenths of a percent, is what the event
+        already shows.
         """
         from types import SimpleNamespace
 

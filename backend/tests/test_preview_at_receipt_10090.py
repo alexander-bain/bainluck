@@ -267,7 +267,7 @@ def _skip_cases():
         "returned_to_the_stored_value": dict(last_written=0.48),
         "handover_changing": dict(route=lambda: None),
         "not_live": dict(ev=dict(status="scheduled")),
-        # The received book does not move the whole-percent blend shown.
+        # The received book does not move the blend shown, in tenths of a percent.
         "blend_unchanged": dict(price=0.461),
     }
 
@@ -882,3 +882,15 @@ async def test_back_at_the_committed_bag_value_retires_the_preview_after_a_resta
     [settle] = ops(r.sent, "settle")
     assert (settle["reason"], settle["through"]) == ("returned", opened["local_seq"])
     assert EV not in r._hl_pending
+
+
+async def test_a_move_of_a_tenth_of_a_point_in_the_blend_is_proposed(r):
+    """11/01 19:07Z: Polymarket's Bills 0.78 -> 0.785 moved the blend 0.1 point
+    but not a whole percent, read as unchanged and never reached the screen,
+    which shows tenths (Polymarket held 0.785 for 5.7 s)."""
+    read(r, event(), legs())  # polymarket 0.46 beside kalshi 0.50: blend 48.0%
+    receive(r, 0.465)  # blend 48.2%: the same whole percent
+    await drained(r)
+
+    [opened] = ops(r.sent, "propose")
+    assert opened["value"] == 0.465
