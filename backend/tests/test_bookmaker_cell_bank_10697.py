@@ -45,10 +45,18 @@ class _Row:
         self.sum_sq_err = sum_sq_err
 
 
+def _bucket_for(lo):
+    """One bucket per cell whatever the clock reads: the settled months take
+    1-6 and any other month (the open one) takes 0. Never ``lo.month % 10`` —
+    the writer sums rows by (bucket, category), and that put November's open
+    month on January's settled bucket (#10697)."""
+    return SETTLED.index(lo) + 1 if lo in SETTLED else 0
+
+
 def _rows_for(category, lo, version=0):
     """Distinct, cell-specific rows so a carried cell is distinguishable."""
     n = 10 + lo.month + version * 1000
-    return [_Row(lo.month % 10, category, n, n // 2, n * 0.5, n * 0.2)]
+    return [_Row(_bucket_for(lo), category, n, n // 2, n * 0.5, n * 0.2)]
 
 
 class _BankRedis:
@@ -237,15 +245,15 @@ def test_spare_wall_refreshes_only_cells_older_than_the_refresh_age(monkeypatch)
     for lo, age in ((old, bw._BOOKMAKER_BANK_REFRESH_AFTER_S + 60), (young, 60)):
         redis.hset(bw._BOOKMAKER_BANK_KEY, bw._bookmaker_cell_key("sport_00", lo),
                    json.dumps({"banked_at": now - age,
-                               "rows": [[lo.month, "sport_00", 1, 1, 0.5, 0.1]]}))
+                               "rows": [[_bucket_for(lo), "sport_00", 1, 1, 0.5, 0.1]]}))
 
     summary, calls = _run(monkeypatch, grid, redis, version=1)
     assert calls == [("sport_00", old)]
     assert summary["bank"]["refreshed"] == 1
     assert summary["bank"]["carried"] == 2
     published = {b["bucket_idx"]: b["n"] for b in json.loads(redis.curve[2])}
-    assert published[old.month % 10] == _rows_for("sport_00", old, 1)[0].n
-    assert published[young.month] == 1, "a young carried cell was replaced"
+    assert published[_bucket_for(old)] == _rows_for("sport_00", old, 1)[0].n
+    assert published[_bucket_for(young)] == 1, "a young carried cell was replaced"
 
 
 def test_an_unreadable_bank_falls_back_to_the_full_walk(monkeypatch):
