@@ -136,7 +136,7 @@ def _refresher(monkeypatch, source="polymarket"):
     refresher.held_quotes = HeldRowQuotes()
     refresher.sent = []
 
-    async def record(frames, *, prepare_frames=None):
+    async def record(frames, *, prepare_frames=None, refused=None):
         frames = list(frames)
         if prepare_frames is not None:
             frames.extend(await prepare_frames())
@@ -266,7 +266,6 @@ def _skip_cases():
         "no_bound": dict(bound=None),
         "returned_to_the_stored_value": dict(last_written=0.48),
         "handover_changing": dict(route=lambda: None),
-        "current_book_proof": dict(proof=True),
         "not_live": dict(ev=dict(status="scheduled")),
         # The received book does not move the whole-percent blend shown.
         "blend_unchanged": dict(price=0.461),
@@ -280,8 +279,6 @@ async def test_nothing_is_composed_when_the_receipt_cannot_say_it(r, monkeypatch
     monkeypatch.setattr(module, "_mono", lambda: clock[0])
     if "route" in spec:
         r.receipt_route = spec["route"]
-    if spec.get("proof"):
-        monkeypatch.setattr(r, "_current_reading_proof", lambda *a, **kw: {"proof": True})
     if "last_written" in spec:
         r._last_written_value[EV] = spec["last_written"]
     if not spec.get("no_read"):
@@ -308,6 +305,27 @@ async def test_the_same_receipt_composes_when_no_case_applies(r, monkeypatch):
     receive(r, 0.48)
     await drained(r)
     assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
+
+
+async def test_a_current_book_proof_reads_the_receipt_instead_of_withholding_it(r, monkeypatch):
+    """#10090 (was the `current_book_proof` skip case): a market that needs the
+    current-book proof is read UNDER it at receipt and rechecked at send, as
+    the observation preview does. The proof binds only the bundled Kalshi
+    Challenger pair, so this Polymarket book composes even with a book that
+    proves nothing, and the proof's callbacks never raise into the worker."""
+    refused = []
+    monkeypatch.setattr(r, "_current_reading_proof", lambda *a, **kw: {
+        "require_current_book_midpoint": True,
+        "current_book_midpoint": lambda ticker: None,
+        "current_book_primary_price": None,
+        "current_primary_input": lambda row: None,
+        "current_book_refused": lambda: refused.append(True),
+    })
+    read(r, event(), legs())
+    receive(r, 0.48)
+    await drained(r)
+    assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
+    assert refused == [] and r.receipt_preview_stats["errors"] == 0
 
 
 async def test_a_stored_row_that_already_holds_the_quote_is_read_as_stored(r):

@@ -56,11 +56,15 @@ def _hero(sources, status="live"):
 
 
 def _plain_average(**values):
-    """The #10764 average over base weights with the share cap, no refusals."""
-    from app.utils.aggregation import SOURCE_WEIGHTS
+    """The #10764 average over live base weights with the share cap, no refusals.
+
+    Live base weights since #10090 decision D: kalshi and polymarket carry the
+    sportsbook's 3.0 (`_live_base_weight`); every other source keeps its
+    `SOURCE_WEIGHTS` entry."""
+    from app.utils.aggregation import _live_base_weight
 
     keys = list(values)
-    weights = cap_weight_shares([SOURCE_WEIGHTS[k] for k in keys])
+    weights = cap_weight_shares([_live_base_weight(k) for k in keys])
     return round(_weighted_average([values[k] for k in keys], weights), 6)
 
 
@@ -77,19 +81,21 @@ class TestTheBlueJaysSpecimenReplay:
 
     def test_stamped_live_drops_the_day_old_kalshi_price_entirely(self):
         """kalshi 0.565 was stamped the PREVIOUS day. Under the #10764 average it
-        still pulled at the 0.1 floor (0.060397 -> 94/6); now it carries nothing,
-        so the hero equals the same bag with kalshi deleted."""
+        still pulled at the 0.1 floor (0.060397 -> 94/6, and 0.088164 -> 91/9 at
+        decision D's live 3.0); now it carries nothing, so the hero equals the
+        same bag with kalshi deleted."""
         without_kalshi = {k: v for k, v in SPECIMEN_STAMPED.items() if k != "kalshi"}
         assert _hero(SPECIMEN_STAMPED) == _hero(without_kalshi)
 
         # The before, computed rather than remembered: the hero-floor weights
-        # the average used until this change.
+        # the average used until this change (today's base weights, so kalshi
+        # pulls at 3.0 x 0.1 since #10090 decision D, not 0.8 x 0.1).
         _keys, values, weights, floored = effective_source_weights_detailed(
             _FakeEvent(SPECIMEN_STAMPED), "live"
         )
         assert floored == {"kalshi"}
         assert round(_weighted_average(values, weights), 6) == pytest.approx(
-            0.060397, abs=1e-6
+            0.088164, abs=1e-6
         )
 
     def test_the_residual_pull_is_an_arm_inside_the_ramp_not_past_it(self):
@@ -114,13 +120,15 @@ class TestTheBlueJaysSpecimenReplay:
         no_betting = {k: v for k, v in SPECIMEN_STAMPED.items() if k != "betting"}
         assert _hero(no_betting) == pytest.approx(0.003123, abs=1e-6)
 
-    def test_unstamped_live_is_unchanged_at_88_12(self):
+    def test_unstamped_live_averages_every_arm_at_77_23(self):
         """MISSING TIME, explicit: with no clock on any arm nothing can be ranked,
-        so the bag averages exactly as #10764 accepted it. This is the legacy
-        shape; every writer has stamped since 2026-08-14."""
+        so the bag averages exactly as #10764 accepted it, at live base weights:
+        88/12 until #10090 decision D gave the day-old kalshi 0.565 the
+        sportsbook's 3.0. This is the legacy shape; every writer has stamped
+        since 2026-08-14."""
         home = _hero(dict(SPECIMEN_VALUES))
-        assert home == pytest.approx(0.120991, abs=1e-6)
-        assert (round((1 - home) * 100), round(home * 100)) == (88, 12)
+        assert home == pytest.approx(0.227194, abs=1e-6)
+        assert (round((1 - home) * 100), round(home * 100)) == (77, 23)
         assert home == _plain_average(**SPECIMEN_VALUES)
 
     @pytest.mark.parametrize("status", ["completed", "suspended", "scheduled"])
@@ -270,10 +278,14 @@ class TestHeroEqualsTheLiveChartEdge:
 
 
 #: Root's counterexample: betting undated, espn and kalshi stamped at T0.
+#: The pair's second arm is `mlb` (0.8): it was `kalshi`, also 0.8 until #10090
+#: decision D gave the live markets the sportsbook's 3.0, which made it the
+#: pair's primary and this bag a test of D instead of the refusal. Every number
+#: below is unchanged by the swap.
 REFUSED_ARM_BAG = {
     "betting": 0.9,
     "espn": {"value": 0.1, "updated_at": T0.isoformat()},
-    "kalshi": {"value": 0.9, "updated_at": T0.isoformat()},
+    "mlb": {"value": 0.9, "updated_at": T0.isoformat()},
 }
 
 
@@ -316,7 +328,7 @@ class TestTheRefusedArmDoesNotControlTheGate:
     def test_the_flag_half_agrees_with_the_value(self):
         flag = assess_event_divergence(_FakeEvent(REFUSED_ARM_BAG, "live"), "live")
         assert flag is not None
-        assert (flag.primary_source, flag.other_source) == ("espn", "kalshi")
+        assert (flag.primary_source, flag.other_source) == ("espn", "mlb")
 
     def test_the_strawman_shows_the_old_gate_population_stood_down(self):
         """The defect, reproduced from the pre-correction gate input: every
@@ -377,7 +389,7 @@ class TestTheRefusedArmDoesNotControlTheGate:
 
     def test_a_positive_refusal_beside_the_pair_still_governs_it(self):
         refused = {
-            **_stamped(espn=(0.1, 0), kalshi=(0.9, 0)),
+            **_stamped(espn=(0.1, 0), mlb=(0.9, 0)),
             "betting": {
                 "value": 0.9,
                 "updated_at": T0.isoformat(),

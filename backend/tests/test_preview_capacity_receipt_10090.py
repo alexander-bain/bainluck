@@ -150,6 +150,8 @@ async def test_idle_reclaim_is_counted_apart_from_attempted(monkeypatch, caplog)
     ]
     rig = _Rig(monkeypatch, tickets=[(7, [2, 3, 4, 9]), (8, []), (9, [])], rows=rows,
                reread=[[rows[3]], [rows[1]]], idle={2, 3, 9})
+    # Idle reclaim runs only under pressure (#10090 11/01): 4 residents of 4.
+    monkeypatch.setattr(blend_preview.registry(), "max_events", 4, raising=False)
     caplog.set_level(logging.INFO, logger=lbr.__name__)
     await rig.worker._maintain_preview_capacity()
     assert rig.retired == [4] and rig.idle_retired == [9, 3] and rig.missing == []
@@ -290,3 +292,30 @@ def test_alarm_format_is_unchanged():
     assert blend_preview.LEDGER_ALARM_FORMAT == (
         "blend_preview ledger ALARM status=%s phase=%s source=%s count=%d event_id=%s")
     assert 'ALARM' not in lbr.PREVIEW_CAPACITY_RECEIPT_FORMAT
+
+
+async def test_lifecycle_retirements_wait_for_pressure_or_a_quiet_ledger(monkeypatch, caplog):
+    """#10090 11/01: each lifecycle retirement advances the global barrier and
+    refuses every in-flight receipt proposal of both venues, so with spare
+    capacity and more than PREVIEW_LIFECYCLE_QUIET_LIVE live residents they wait."""
+    now = datetime.now(timezone.utc)
+    live = [(n, 10, False, 'live', now - timedelta(hours=1), now) for n in (1, 2, 3, 4)]
+    rows = live + [(5, 10, True, 'final', now - timedelta(hours=3), now)]
+    rig = _Rig(monkeypatch, tickets=[(7, [1, 2, 3, 4, 5, 6])], rows=rows)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    # Neither the finished resident (5) nor the missing one (6) is retired.
+    assert rig.retired == [] and rig.missing == []
+    [line] = _receipts(caplog)
+    assert _fields(line)['attempted'] == '0' and _fields(line)['end'] == 'done'
+
+
+async def test_lifecycle_retirements_run_under_pressure_whatever_is_live(monkeypatch, caplog):
+    now = datetime.now(timezone.utc)
+    live = [(n, 10, False, 'live', now - timedelta(hours=1), now) for n in (1, 2, 3, 4)]
+    rows = live + [(5, 10, True, 'final', now - timedelta(hours=3), now)]
+    rig = _Rig(monkeypatch, tickets=[(7, [1, 2, 3, 4, 5])], rows=rows)
+    monkeypatch.setattr(blend_preview.registry(), "max_events", 5, raising=False)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    assert rig.retired == [5]

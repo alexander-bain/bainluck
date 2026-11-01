@@ -1567,6 +1567,12 @@ def _gate_population(
     live = [(k, v, w) for k, v, w in zip(keys, values, weights) if k not in floored]
     if len(live) < 2:
         live = list(zip(keys, values, weights))
+    # #10090: decision D gives the live markets the sportsbook's weight, so a
+    # live betting/kalshi pair TIES and `assess_divergence` falls back to the
+    # reading order — dict order picked the headline. A tie now goes to the
+    # higher base weight (the pair's primary before D); the sort is stable, so
+    # equal base weights keep the reading order exactly as before.
+    live.sort(key=lambda kvw: -SOURCE_WEIGHTS.get(kvw[0], 0.5))
     return (
         {k: v for k, v, _ in live},
         {k: w for k, _, w in live},
@@ -1657,7 +1663,8 @@ def _live_gate_population(
     the average rendered a pair it was built to protect: betting 0.90 (undated)
     beside espn 0.10 and kalshi 0.90 (both stamped) read hero 0.378261, while
     the same bag without betting reads 0.10 — as does the dated live chart edge,
-    whose gate only ever sees the arms it weighed.
+    whose gate only ever sees the arms it weighed. (Weights before #10090
+    decision D; the guard's bag now pairs espn with mlb, which D leaves at 0.8.)
 
     So the refused arms leave the population BEFORE `_gate_population` runs, and
     the share cap is re-taken over what remains, which makes the gate answer

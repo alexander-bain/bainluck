@@ -111,6 +111,13 @@ PREVIEW_CAPACITY_BATCH = 32
 #: reclaim moves the global barrier, refusing every other event's next open
 #: (`read_required`); full buckets keep their own reclamation (`retire_policy`).
 PREVIEW_IDLE_RECLAIM_FILL = 0.75
+#: #10090 11/01: lifecycle retirements (finished, long-scheduled, long-suspended
+#: or deleted residents) advance the ledger's global barrier one by one, and each
+#: advance refuses every in-flight receipt proposal of both venues, which re-read
+#: and retry (~100-170 ms a time; 06:42-06:43Z: 626 and 857 ms as Saturday's games
+#: ended). With spare capacity they wait for pressure (`PREVIEW_IDLE_RECLAIM_FILL`)
+#: or a quiet ledger: at most this many live residents.
+PREVIEW_LIFECYCLE_QUIET_LIVE = 3
 PREVIEW_CAPACITY_LIVE_OLD_HOURS = 6.0
 
 
@@ -521,8 +528,9 @@ def _field_ranks(prices) -> list:
 def _patched_group(group, returned: dict) -> Optional[list]:
     """``group`` with each committed row in ``returned`` (outcome id -> its
     `COMMIT_PATCH_FIELDS`) newer than the graph's copy patched in. Rows are
-    replaced, never mutated. None when a patched market's cached `rank`s are
-    not what its write's re-rank (`rerank_market_fields_stmt`) stores."""
+    replaced, never mutated. A patched market whose cached `rank`s are not
+    what its write's re-rank (`rerank_market_fields_stmt`) stores takes that
+    re-rank's ranks (`_field_ranks`); the graph is never dropped for it."""
     from types import SimpleNamespace
 
     patched = []
@@ -3946,6 +3954,8 @@ class LiveBlendRefresher:
         self._hl_pending: dict[int, list] = {}
         self._hl_samples: list[tuple[float, int, str]] = []
         self._hl_late = 0
+        #: Inputs received after their game's recorded end (`_hl_settle_finished`).
+        self._hl_settled = 0
         self._hl_fallback: dict[str, int] = {}
         #: event id -> mono when its receipt proposal was composed (split timing).
         self._hl_composed: dict[int, float] = {}
@@ -6458,6 +6468,7 @@ class LiveBlendRefresher:
                 for entry in group:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
+        self._hl_settle_finished(grouped)
         if preview_ticket is not None:
             self._remember_preview_graphs(grouped, original_rows, read_started,
                                           stamp_read=overlay_held)
@@ -9141,7 +9152,11 @@ class LiveBlendRefresher:
             urgent = self._receipt_now
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
-                if last is not None and now - last[0] < interval and event_id not in urgent:
+                # `now < last + interval`, the same sum the wait below is taken
+                # from: `now - last < interval` can stay true after waiting out
+                # `last + interval - now` exactly (float rounding at 0.1 s), and
+                # the loop then defers with a zero wait until the clock ticks.
+                if last is not None and now < last[0] + interval and event_id not in urgent:
                     deferred[event_id] = None
                 else:
                     due.append(event_id)
@@ -9269,6 +9284,38 @@ class LiveBlendRefresher:
         except Exception:
             pass
 
+    def _hl_settle_finished(self, grouped) -> None:
+        """#10090: a read sees an input's event finished. Alex 10/31: "If
+        there's no valid price to show, I won't count that as a miss." An input
+        received after the game's recorded end (the venue settling to 0.01/0.99)
+        has no live headline to move: the page shows the result, so it leaves
+        the clock (`settled=` in the minute line). One received before the end
+        was a real wait and ends here at its full age (`stamp_settled`). 07:06Z
+        11/01: a J-League tick 28 s after full time sat 91 s as `late`. Never
+        raises."""
+        try:
+            if not self._hl_pending:
+                return
+            from app.utils.aggregation import _coerce_timestamp
+            from app.utils.blend_preview import PREVIEW_STATUSES
+
+            now, wall = _mono(), time.time()
+            for event_id, (event, _group) in grouped.items():
+                entry = self._hl_pending.get(event_id)
+                if entry is None or (event.status in PREVIEW_STATUSES
+                                     and event.completed_at is None):
+                    continue
+                ended = _coerce_timestamp(event.completed_at)
+                if ended is not None and wall - (now - entry[0]) >= ended.timestamp():
+                    self._hl_pending.pop(event_id, None)
+                    self._hl_composed.pop(event_id, None)
+                    self._hl_commit_at.pop(event_id, None)
+                    self._hl_settled += 1
+                else:
+                    self._hl_resolve(event_id, "stamp_settled")
+        except Exception:
+            pass
+
     def _hl_mutate_refused(self, event_id, status) -> None:
         """A proposal's ledger call composed no frame. ``ok``: accepted with
         nothing to send (the screen already shows that composition). A stale
@@ -9296,16 +9343,17 @@ class LiveBlendRefresher:
             self._hl_samples.append((now - entry[0], event_id, "late:" + entry[1]))
         samples, self._hl_samples = self._hl_samples, []
         late, self._hl_late = self._hl_late, 0
+        settled, self._hl_settled = self._hl_settled, 0
         fallback, self._hl_fallback = self._hl_fallback, {}
         if not samples:
-            return "n=0 late=%d" % late
+            return "n=0 late=%d settled=%d" % (late, settled)
         ordered = sorted(x[0] for x in samples)
         pick = lambda q: int(round(ordered[min(len(ordered) - 1, int(q * len(ordered)))] * 1000))
         worst = sorted(samples, key=lambda x: -x[0])[:5]
-        return "n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d" % (
+        return "n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d settled=%d" % (
             len(samples), pick(0.5), pick(0.9), int(round(ordered[-1] * 1000)),
             ",".join("%s:%d:%s" % (eid, int(round(lat * 1000)), how) for lat, eid, how in worst),
-            ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late)
+            ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late, settled)
 
     def _note_receipt_class(self, kind: str, event_id) -> None:
         """Count one receipt composition outcome against its event (stats line)."""
@@ -10171,8 +10219,10 @@ class LiveBlendRefresher:
                     return (not row[2] and row[3] == "scheduled"
                             and row[4] is not None and row[4] > row[5])
 
+                lifecycle_due = idle_pressure or sum(
+                    1 for row in rows if row[3] == "live") <= PREVIEW_LIFECYCLE_QUIET_LIVE
                 targets = sorted((eid for eid in candidates
-                                  if eid not in present or present[eid][2]
+                                  if (lifecycle_due and (eid not in present or present[eid][2]))
                                   or (idle_pressure and eid in idle
                                       and idle_target(present[eid]))),
                                  key=priority)[:PREVIEW_CAPACITY_BATCH]

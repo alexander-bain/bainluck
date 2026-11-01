@@ -34,11 +34,15 @@ from app.utils.repair_lock_budget import (
 logger = logging.getLogger(__name__)
 
 
-#: Q460 / #10090 — reread the full eligible subscription scope every ten
+#: Q460 / #10090 — reread the full eligible subscription scope every thirty
 #: minutes. An unchanged scope keeps its healthy sockets and buffered inputs;
-#: changed mappings/policy still use the existing drain/rebuild path.
+#: changed mappings/policy still use the existing drain/rebuild path. #10090
+#: 11/01: was ten. Each Polymarket re-read is a 25-110 s catalog read whose
+#: install fences flushes (06:32Z: fence 1.98 s, a 529 ms headline wait); a
+#: game turning live is admitted at once by the admission watchers, not by
+#: this timer, so only new non-live markets wait longer for their socket.
 SUBSCRIPTION_REFRESH_SECONDS = int(
-    os.getenv("WS_SUBSCRIPTION_REFRESH_SECONDS", "600")
+    os.getenv("WS_SUBSCRIPTION_REFRESH_SECONDS", "1800")
 )
 
 #: Q491 — the interval between flush STARTS (#10090: start to start, so a

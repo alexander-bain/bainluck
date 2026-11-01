@@ -451,9 +451,14 @@ def test_the_gate_changes_no_displayed_hero_on_the_live_population(
     Asserted rather than asserted-about, because it is the property that makes
     the gate safe to ship without a staged rollout. Compare the shipped
     aggregate against the ungated weighted median over the SAME effective
-    weights; they must agree everywhere, including on the four gated events.
+    weights; they must agree everywhere, including on the four gated events —
+    except a live pair #10090 decision D left TIED (a live market carries the
+    sportsbook's 3.0). The ungated median of a tie is the midpoint of two
+    disagreeing readings (15011303: 0.42595, a number neither source said); the
+    gate renders the higher base weight, the pair's primary before D.
     """
     gated = 0
+    tied = 0
     for row in live_two_source_events:
         keys, values, weights = _readings(
             row["win_probability_sources"], row["status"]
@@ -463,6 +468,16 @@ def test_the_gate_changes_no_displayed_hero_on_the_live_population(
         shipped = compute_aggregate_probability(
             _Ev(row["win_probability_sources"], row["status"]), row["status"]
         )
+        if weights[0] == weights[1] and assess_divergence(
+            dict(zip(keys, values)), dict(zip(keys, weights))
+        ):
+            primary = max(keys, key=lambda k: SOURCE_WEIGHTS.get(k, 0.5))
+            assert shipped == pytest.approx(values[keys.index(primary)]), (
+                f"event {row['event_id']}: a tied pair rendered {shipped}"
+            )
+            tied += 1
+            gated += 1
+            continue
         ungated = round(_weighted_median(values, weights), 6)
         assert shipped == pytest.approx(ungated), (
             f"event {row['event_id']}: gate moved the hero {ungated} -> {shipped}"
@@ -473,6 +488,7 @@ def test_the_gate_changes_no_displayed_hero_on_the_live_population(
         "NON-VACUITY: no event in the fixture trips the gate, so this test "
         "proved nothing about gated events"
     )
+    assert tied >= 1, "NON-VACUITY: no tied live pair, the tie branch is unproven"
 
 
 def test_exactly_the_wide_pairs_are_flagged_for_matching(live_two_source_events):

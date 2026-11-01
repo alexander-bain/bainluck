@@ -717,8 +717,9 @@ class TestTheFrameCarriesTheStoredBlend:
 
         fresh = datetime.now(timezone.utc).isoformat()
         # What the server kept: this arm's kalshi reading PLUS a sportsbook
-        # reading it never had in hand. Weight 3.0 against kalshi's 0.8, so the
-        # two candidate aggregates are nowhere near each other.
+        # reading it never had in hand. Live, both weigh 3.0 (#10090 decision D)
+        # and the divergence gate's tie goes to the sportsbook, so the two
+        # candidate aggregates are nowhere near each other.
         returned = {
             "kalshi": {"value": 0.9, "updated_at": fresh},
             "betting": {"value": 0.1, "updated_at": fresh},

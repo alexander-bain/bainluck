@@ -135,16 +135,18 @@ class TestTheSpecimenIsFixed:
         """
         # Cap only: the unstamped shape production held on 2026-08-13. On the
         # MEDIAN path the cap is still sufficient by itself. RESTATED: on the
-        # live AVERAGE (#10764) it is not — 0.120991, 88/12 — and with no clock
-        # on any arm the #1829 eligibility rule has nothing to refuse. Every
-        # writer has stamped since 2026-08-14, so this is the legacy shape.
+        # live AVERAGE (#10764) it is not — 0.120991, 88/12, and 0.227194, 77/23
+        # since #10090 decision D gave the day-old kalshi the sportsbook's 3.0 —
+        # and with no clock on any arm the #1829 eligibility rule has nothing to
+        # refuse. Every writer has stamped since 2026-08-14, so this is the
+        # legacy shape.
         cap_only = compute_aggregate_probability(
             _FakeEvent(dict(SPECIMEN_VALUES), "suspended")
         )
         assert cap_only == pytest.approx(0.008, abs=1e-9)
         assert compute_aggregate_probability(
             _FakeEvent(dict(SPECIMEN_VALUES))
-        ) == pytest.approx(0.120991, abs=1e-6)
+        ) == pytest.approx(0.227194, abs=1e-6)
 
         # Decay only: same stamps, cap disabled by dropping below its gate is not
         # possible at 5 sources, so verify against hand-computed decayed weights.
