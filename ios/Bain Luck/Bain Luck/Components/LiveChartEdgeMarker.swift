@@ -208,24 +208,26 @@ final class LiveEdgeGlideMemory {
     }
 }
 
-// MARK: - Changed-digit text
+// MARK: - Whole-value text
 
-/// A printed accepted value whose CHANGED characters roll, the rest held
-/// still: 60.4% -> 60.7% moves only the tenths digit. A rise rolls up, a fall
-/// rolls down; nil (direction unknown) rolls up.
+/// A printed accepted value that changes as a WHOLE string: the old one
+/// leaves, the new one arrives, each complete. No per-digit roll and no
+/// crossfade in place, either of which can put a mix of the two on screen —
+/// a third number nobody quoted. A rise slides up, a fall slides down; nil
+/// (direction unknown) slides up.
 ///
-/// Alex, 2026-10-31: the decimal shows the number is alive, but sliding the
-/// whole figure on every tenth made it hard to read. This replaces the
-/// whole-string slide (which existed so no mix of old and new digits could
-/// show mid-move): only the digits that changed are in motion, for
-/// `LiveChartEdgeMarkerPlan.glideDuration`.
+/// A modifier on the caller's own `Text`, so the text and its fonts stay
+/// where they were; `value` must be the string that `Text` prints. The
+/// leaving copy inherits the same environment (font, colour) from outside.
 ///
-/// A modifier on the caller's own `Text`; `value` must be the string that
-/// `Text` prints. SwiftUI's numeric content transition compares the old and
-/// new glyphs itself, so kerning, fonts and width stay the caller's.
+/// Both strings are moved by this modifier's own state, not by an insertion /
+/// removal transition: SwiftUI plays a removed view's transition as it was
+/// captured BEFORE the change, so the leaving string would slide the way the
+/// previous update went while the arriving one slid this way.
 ///
-/// Rolls only in an active scene with motion allowed and `animates` true;
-/// otherwise the new value is drawn at once.
+/// Slides only in an active scene with motion allowed and `animates` true. If
+/// any of those turns off mid-slide the slide is CANCELLED, not left to run:
+/// the leaving string goes and the arriving one is drawn settled.
 extension View {
     func acceptedValueChange(_ value: String, rising: Bool? = nil, animates: Bool = true) -> some View {
         modifier(AcceptedValueChange(value: value, rising: rising, animates: animates))
@@ -238,13 +240,82 @@ private struct AcceptedValueChange: ViewModifier {
     let animates: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @State private var outgoing: String?
+    @State private var progress: CGFloat = 1
+    /// −1 moves up (a rise), +1 moves down (a fall).
+    @State private var direction: CGFloat = -1
+    /// Which change a finishing slide belongs to, so the first of two quick
+    /// updates cannot clear the second's leaving string.
+    @State private var generation = 0
+    /// Bumped to cancel: a new identity drops the in-flight interpolation,
+    /// which re-setting `progress` to the 1 it is already heading for cannot.
+    @State private var epoch = 0
 
-    private var rolls: Bool { animates && !reduceMotion && scenePhase == .active }
+    private var slides: Bool { animates && !reduceMotion && scenePhase == .active }
 
     func body(content: Content) -> some View {
-        content
-            .contentTransition(rolls ? .numericText(countsDown: rising == false) : .identity)
-            .animation(rolls ? .easeOut(duration: LiveChartEdgeMarkerPlan.glideDuration) : nil, value: value)
+        ZStack {
+            if let outgoing {
+                Text(outgoing)
+                    .modifier(VerticalShift(fraction: direction * progress))
+                    .accessibilityHidden(true)
+            }
+            content
+                .modifier(VerticalShift(fraction: -direction * (1 - progress)))
+        }
+        .clipped()
+        .id(epoch)
+        .onChange(of: slides) { _, allowed in
+            if !allowed { cancel() }
+        }
+        .onChange(of: value) { old, _ in
+            guard slides else {
+                cancel()
+                return
+            }
+            var still = Transaction()
+            still.disablesAnimations = true
+            generation += 1
+            let mine = generation
+            withTransaction(still) {
+                outgoing = old
+                direction = LiveChartEdgeMarkerPlan.shiftDirection(rising: rising)
+                progress = 0
+            }
+            // Next turn of the run loop, or SwiftUI coalesces 0 and 1 into
+            // the end state and nothing moves.
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: LiveChartEdgeMarkerPlan.glideDuration)) {
+                    progress = 1
+                } completion: {
+                    if generation == mine { outgoing = nil }
+                }
+            }
+        }
+    }
+
+    private func cancel() {
+        var still = Transaction()
+        still.disablesAnimations = true
+        generation += 1
+        withTransaction(still) {
+            outgoing = nil
+            progress = 1
+            epoch += 1
+        }
+    }
+}
+
+/// Translate by a fraction of the view's own height — the one number the
+/// text knows and its caller does not.
+private struct VerticalShift: GeometryEffect {
+    var fraction: CGFloat
+    var animatableData: CGFloat {
+        get { fraction }
+        set { fraction = newValue }
+    }
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: 0, y: fraction * size.height))
     }
 }
 
