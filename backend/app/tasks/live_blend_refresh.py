@@ -4019,6 +4019,10 @@ class LiveBlendRefresher:
         self._ambiguous_logged = 0
         #: `na_proof` attribution lines used this minute.
         self._na_proof_logged = 0
+        #: #10090: per-minute budget of `receipt-revoke` diagnosis lines, and the
+        #: legs each pending withdrawal named (event id -> outcome ids).
+        self._revoke_logged = 0
+        self._withdrawn_why: dict[int, tuple] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -9202,6 +9206,8 @@ class LiveBlendRefresher:
             events.pop(None, None)
             for event_id in spare:
                 events.pop(event_id, None)
+            for event_id in events:
+                self._withdrawn_why[event_id] = tuple(sorted(outcome_ids))[:6]
             if events:
                 self._receipt_withdrawn.update(events)
                 self._wake_receipt(True)
@@ -9252,6 +9258,7 @@ class LiveBlendRefresher:
                     del self._hl_commit_at[eid]
                 self._ambiguous_logged = 0
                 self._na_proof_logged = 0
+                self._revoke_logged = 0
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -9507,6 +9514,26 @@ class LiveBlendRefresher:
                 self._schedule_graph_refetch((event_id,), lost=False)
         except Exception:
             self.receipt_preview_stats["errors"] += 1
+
+    def _log_receipt_revoke(self, event_id, reason, entry, *, oids=(), value=()) -> None:
+        """#10090 diagnosis: a receipt preview a reader saw is taken back. The
+        venue-to-screen probe (11/01 18:43Z, Bills-Ravens) saw a Polymarket
+        number shown for 100 ms, then the stored one for 13.9 s. At most 40 a
+        minute. Never raises."""
+        try:
+            if self._revoke_logged >= 40:
+                return
+            self._revoke_logged += 1
+            speaking = self._receipt_speaking.get(event_id) or frozenset()
+            logger.info(
+                "live_blend_refresh[%s]: receipt-revoke event=%s reason=%s pending=%s "
+                "detail=%s oids=%s speaking_hit=%s graph=%s",
+                self.source, event_id, reason, getattr(entry, "value", None), value,
+                ",".join(str(o) for o in oids), any(o in speaking for o in oids),
+                event_id in self._preview_graphs,
+            )
+        except Exception:
+            pass
 
     def _hl_summary(self) -> str:
         """The minute's headline clock: n, p50/p90/max, worst ids with how, fallbacks, late."""
@@ -9839,7 +9866,9 @@ class LiveBlendRefresher:
             # shows the committed one. Records nothing, so the #5661 restamp
             # gate below (which refuses re-dating an unchanged value) does not
             # apply; checked first so a stale receipt preview never outlives it.
-            return ("returned",)
+            bag = (getattr(event, "win_probability_sources", None) or {}).get(self.source)
+            return ("returned", value, bag.get("value") if isinstance(bag, dict) else None,
+                    getattr(event, "preview_rev", None))
         basis = observation_basis(contributing)
         if not basis or restamp_records_no_observation(
                 value, oldest_observation_time(contributing),
@@ -9926,9 +9955,11 @@ class LiveBlendRefresher:
             stats = self.receipt_preview_stats
             for event_id in withdrawn:
                 entry = preview.pending_entry(event_id, self.source)
+                why = self._withdrawn_why.pop(event_id, ())
                 if entry is not None and entry.at_receipt:
                     frames.extend(preview.refused(event_id, self.source, "withdrawn"))
                     stats["withdrawn"] += 1
+                    self._log_receipt_revoke(event_id, "withdrawn", entry, oids=why)
             for event_id, plan in plans:
                 entry = preview.pending_entry(event_id, self.source)
                 if plan[0] == "returned":
@@ -9936,6 +9967,7 @@ class LiveBlendRefresher:
                     if entry is not None and entry.at_receipt:
                         frames.extend(preview.refused(event_id, self.source, "returned"))
                         stats["returned"] += 1
+                        self._log_receipt_revoke(event_id, "returned", entry, value=plan[1:])
                     continue
                 _kind, event, reading, value, contributing, newest, patched, proof_kwargs = plan
                 if proof_kwargs:
