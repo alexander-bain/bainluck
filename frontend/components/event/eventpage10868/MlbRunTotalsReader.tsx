@@ -47,7 +47,9 @@
  * COMPACT CONTEXT (native `compactHeader`): only the caller's strings, away
  * first — the two names, with the two score strings between them only when
  * BOTH are present, then the state words. It derives no score, parses no
- * scope, is not a heading and has no id; every part wraps.
+ * scope, is not a heading and has no id; every part wraps. The type and view
+ * live in the verdict-free `MlbReaderContext` (shared with the history
+ * reader); the type is re-exported from this path unchanged.
  *
  * THE CALLER OWNS open/closed and the scope. It renders this only while open,
  * and closes it in the same render as a new event or phase (so no frame shows
@@ -60,53 +62,16 @@
 import type { MlbRunTotalsInput } from "@/lib/eventPage10868/mlbRunTotals";
 import SoccerMatchReader from "./SoccerMatchReader";
 import MlbRunTotalsCard, { type MlbRunTotalsColors, type MlbRunTotalsSelection } from "./MlbRunTotalsCard";
+import { RunReaderContext, type MlbRunReaderContext } from "./MlbReaderContext";
 
-/** The compact context, as the caller already holds it: display strings only. */
-export interface MlbRunReaderContext {
-  away: string;
-  home: string;
-  /** Both runs figures exactly as the page prints them; null when the page shows no pair. */
-  score: { away: string; home: string } | null;
-  state: string;
-}
+// The compact context's type, still public from this path (its definition moved to `MlbReaderContext`).
+export type { MlbRunReaderContext } from "./MlbReaderContext";
 
 /** Native `BaseballPageInputAdapter10868.Words`, verbatim. */
 export const MLB_RUN_READER_WORDS = {
   title: "Run totals",
   storyUnavailable: "This story isn’t available for this game state. Every original is still in All props.",
 } as const;
-
-/** Away first: the names (and the score only when both strings exist) on one wrapping line, then the state. */
-function RunReaderContext({ context }: { context: MlbRunReaderContext }) {
-  const score = context.score && context.score.away !== "" && context.score.home !== "" ? context.score : null;
-  return (
-    <div className="space-y-1" data-mlb-run-reader-context="">
-      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-base font-semibold">
-        <span className="min-w-0 break-words" data-mlb-run-reader-team="away">
-          {context.away}
-        </span>
-        {score ? (
-          <span className="whitespace-nowrap tabular-nums" data-mlb-run-reader-score="">
-            {`${score.away} – ${score.home}`}
-          </span>
-        ) : (
-          <span className="text-text-secondary">
-            <span aria-hidden="true">·</span>
-            <span className="sr-only">,</span>
-          </span>
-        )}
-        <span className="min-w-0 break-words" data-mlb-run-reader-team="home">
-          {context.home}
-        </span>
-      </p>
-      {context.state && (
-        <p className="break-words text-sm text-text-secondary" data-mlb-run-reader-state="">
-          {context.state}
-        </p>
-      )}
-    </div>
-  );
-}
 
 export default function MlbRunTotalsReader({
   totals,
