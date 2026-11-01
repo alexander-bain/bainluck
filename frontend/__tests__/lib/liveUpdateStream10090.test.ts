@@ -9,8 +9,11 @@ import {
   EMPTY_UPDATE_LIST,
   heartbeatUpdates,
   PLAYBACK_SPREAD_MS,
+  advanceScreen,
+  openScreen,
   revealUpdates,
   scheduleUpdates,
+  SHOWN_CAPACITY,
   updateProbabilityText,
   UPDATE_LIST_CAPACITY,
   updateTimeText,
@@ -41,7 +44,7 @@ describe('#10090 the update list', () => {
     expect(new Set(list.updates.map((u) => u.seq)).size).toBe(3);
     expect(addUpdates(list, [a, b])).toBe(list);
     list = addUpdates(list, Array.from({ length: 150 }, (_, i) => ({ source: 'kalshi', at: T0 + 1000 + i, p: null })));
-    expect(list.updates).toHaveLength(UPDATE_LIST_CAPACITY);
+    expect(list.updates.length).toBe(Math.min(UPDATE_LIST_CAPACITY, 153));
     expect(list.updates[0].at).toBe(T0 + 1149);
   });
 
@@ -135,5 +138,21 @@ describe('#10090 the list streams at the venues pace, not in batches', () => {
     const list = batch(EMPTY_UPDATE_LIST, [0]);
     const play = scheduleUpdates(EMPTY_PLAYBACK, list.updates, 0);
     expect(scheduleUpdates(play, list.updates, 50)).toBe(play);
+  });
+});
+
+describe('#10090 the panel keeps the rows it showed', () => {
+  test('a new batch never shrinks the list, and rows sort by receipt across venues', () => {
+    let list = addUpdates(EMPTY_UPDATE_LIST, Array.from({ length: 120 }, (_, i) => ({ source: 'kalshi', at: T0 + i, p: 0.5 })));
+    let screen = openScreen(list.updates);
+    expect(screen.rows).toHaveLength(SHOWN_CAPACITY);
+    list = addUpdates(list, [{ source: 'kalshi', at: T0 + 500, p: 0.5 }, { source: 'polymarket', at: T0 + 100, p: 0.4 }]);
+    screen = advanceScreen(screen, list.updates, 0);
+    expect(screen.rows).toHaveLength(SHOWN_CAPACITY);       // nothing taken away while the batch waits
+    screen = advanceScreen(screen, list.updates, PLAYBACK_SPREAD_MS);
+    expect(screen.rows[0].at).toBe(T0 + 500);
+    expect(screen.rows.find(row => row.source === 'polymarket')?.p).toBe(0.4);
+    expect(screen.rows).toHaveLength(SHOWN_CAPACITY);
+    expect(advanceScreen(screen, list.updates, PLAYBACK_SPREAD_MS + 50)).toBe(screen);
   });
 });

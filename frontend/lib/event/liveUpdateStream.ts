@@ -29,7 +29,10 @@ export interface LiveUpdateList {
   newest: Record<string, number>;
 }
 
-export const UPDATE_LIST_CAPACITY = 100;
+export const UPDATE_LIST_CAPACITY = 300;
+
+/** Rows the panel keeps on screen. */
+export const SHOWN_CAPACITY = 100;
 
 export const EMPTY_UPDATE_LIST: LiveUpdateList = { updates: [], nextSeq: 0, newest: {} };
 
@@ -145,4 +148,41 @@ export function revealUpdates(playback: UpdatePlayback, now: number): UpdatePlay
   while (count < playback.queue.length && playback.queue[count][1] <= now) count++;
   if (count === 0) return playback;
   return { ...playback, shown: playback.queue[count - 1][0], queue: playback.queue.slice(count) };
+}
+
+/** What the panel shows: the playback and its rows, newest receipt first. */
+export interface UpdateScreen {
+  playback: UpdatePlayback;
+  rows: LiveUpdate[];
+}
+
+/** The screen when the panel opens: what is already listed, at once. */
+export function openScreen(updates: LiveUpdate[]): UpdateScreen {
+  const top = updates.reduce((max, update) => Math.max(max, update.seq), -1);
+  return {
+    playback: { ...EMPTY_PLAYBACK, scheduled: top, shown: top },
+    rows: [...updates].sort(byReceipt).slice(0, SHOWN_CAPACITY),
+  };
+}
+
+function byReceipt(a: LiveUpdate, b: LiveUpdate): number {
+  return b.at - a.at || b.seq - a.seq;
+}
+
+/**
+ * Schedules what is new in `updates` and reveals what is due. Revealed rows
+ * join the screen's own list, so the source list's bound never takes a shown
+ * row away, and a venue whose batch lands later still sorts by its receipt.
+ * Same object when nothing changes.
+ */
+export function advanceScreen(screen: UpdateScreen, updates: LiveUpdate[], now: number): UpdateScreen {
+  const scheduled = scheduleUpdates(screen.playback, updates, now);
+  const playback = revealUpdates(scheduled, now);
+  if (playback === screen.playback) return screen;
+  const from = screen.playback.shown;
+  const added = updates.filter(update => update.seq > from && update.seq <= playback.shown);
+  return {
+    playback,
+    rows: added.length === 0 ? screen.rows : [...added, ...screen.rows].sort(byReceipt).slice(0, SHOWN_CAPACITY),
+  };
 }
