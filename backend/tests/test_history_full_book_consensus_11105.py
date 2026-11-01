@@ -190,8 +190,16 @@ def _stored_full_book_median(at: str) -> tuple[int, float]:
 # ---------------------------------------------------------------------------
 
 
+def _served_before_decision_d(monkeypatch):
+    """The capture is production's 10/29 line, served before #10090 decision D
+    gave the live markets the sportsbook's weight (10/31): a replay of it, or a
+    comparison with its frames, uses the weights in force then."""
+    monkeypatch.setattr("app.utils.aggregation.LIVE_MARKET_SOURCES", frozenset())
+
+
 async def test_the_pre_fix_route_reproduces_the_line_production_served(monkeypatch):
     """The fixture IS the specimen: the old route redraws production's line exactly."""
+    _served_before_decision_d(monkeypatch)
     line, betting = await _serve(monkeypatch, fixed=False)
     served = {_P(t).strftime("%H:%M"): v for t, v in _FIXTURE["served_aggregate_line"]}
     # 23:25 is the live edge, pinned against the clock the read ran on.
@@ -218,8 +226,10 @@ async def test_the_betting_input_is_the_headline_consensus_at_each_minutes_end(m
 
 
 async def test_the_23_15_bucket_no_longer_overshoots_the_frames(monkeypatch):
+    _served_before_decision_d(monkeypatch)
     before, _ = await _serve(monkeypatch, fixed=False)
     monkeypatch.undo()
+    _served_before_decision_d(monkeypatch)
     after, _ = await _serve(monkeypatch)
     frames = _FIXTURE["frames_last_in_minute"]
     assert after["23:15"] == 0.699395

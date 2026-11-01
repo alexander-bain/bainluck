@@ -227,6 +227,9 @@ async def test_control_before_the_fix_the_route_served_what_production_served(
     disagree with the frames, so the test above cannot pass against the old code.
     """
     _without_the_floor(monkeypatch)
+    # And under the weights production served with on 10/28: #10090 decision D
+    # (the live markets at the sportsbook's weight) came on 10/31.
+    monkeypatch.setattr("app.utils.aggregation.LIVE_MARKET_SOURCES", frozenset())
     # And without the full-book consensus (#11105 layer 2): production served the
     # repriced-books rows, which on a minute one of the two books wrote is that book.
     monkeypatch.setattr(
