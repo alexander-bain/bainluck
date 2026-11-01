@@ -624,3 +624,67 @@ async def test_a_fresh_graph_schedules_no_reread(r, monkeypatch):
     r._receipt_preview_plan(EV, module._mono(), blend_preview.registry())
 
     assert scheduled == [] and r.receipt_preview_stats["old_graph"] == 0
+
+
+# ── an unproven reading is oriented by the stamp's live verdict ──────────────
+
+VILL, ND = "Villanova Wildcats", "Notre Dame Fighting Irish"
+
+
+def duel_pair():
+    """11/01 16:44Z specimen (event 15334892): a live NCAAB game holding two
+    same-named Polymarket duel markets (the men's and the "(W)" one), so the
+    reading is their two-market composite with no proven home orientation.
+    Every input waited 5-18 s as na_orientation for the stamp, which applied
+    its cached inversion verdict to this same reading."""
+    group = []
+    for base, condition, (home, away) in ((0, CONDITION, ("0.240000", "0.760000")),
+                                          (10, "0x" + "21" * 32, ("0.235000", "0.765000"))):
+        market = Row(id=MARKET + base, source="polymarket", external_id=condition, event_id=EV,
+                     name=f"{ND} vs. {VILL}", status="open", market_metadata={})
+        rows = [
+            Row(id=HOME_LEG + base, market_id=MARKET + base, name=VILL, rank=2,
+                current_probability=Decimal(home), last_updated=SEEN, is_winner=None,
+                external_id=condition, resolution_source=None),
+            Row(id=AWAY_LEG + base, market_id=MARKET + base, name=ND, rank=1,
+                current_probability=Decimal(away), last_updated=SEEN, is_winner=None,
+                external_id=condition + "_side1", resolution_source=None),
+        ]
+        group.append(MarketOutcomes(market, rows, NOW - timedelta(hours=2), False))
+    return group
+
+
+def duel_event():
+    ev = event()
+    ev.sport_key, ev.home_team_name, ev.away_team_name = "basketball_ncaab", VILL, ND
+    return ev
+
+
+@pytest.mark.parametrize("flipped, value", [(False, 0.2175), (True, 0.7825)])
+async def test_an_unproven_reading_shows_what_the_stamps_live_verdict_will_write(
+        r, flipped, value):
+    read(r, duel_event(), duel_pair())
+    r._inversion[EV] = (time.monotonic() + 60.0, flipped)
+
+    receive(r, 0.20)  # the men's market: Villanova 0.24 -> 0.20, beside the women's 0.235
+    await drained(r)
+
+    assert [op["value"] for op in ops(r.sent, "propose")] == [value]
+    assert r.receipt_preview_stats["verdict_oriented"] >= 1
+    assert r.receipt_preview_stats["errors"] == 0
+
+
+@pytest.mark.parametrize("verdict", ["none", "expired"])
+async def test_without_a_live_verdict_the_unproven_reading_still_waits_for_the_stamp(
+        r, verdict):
+    read(r, duel_event(), duel_pair())
+    if verdict == "expired":
+        r._inversion[EV] = (time.monotonic() - 0.01, False)
+
+    receive(r, 0.20)
+    await drained(r)
+
+    assert ops(r.sent, "propose") == []
+    assert r.receipt_preview_stats["verdict_oriented"] == 0
+    assert r._hl_fallback.get("na_orientation", 0) >= 1
+    assert EV in r._urgent_stamp, "the stamp that computes the verdict is made urgent"

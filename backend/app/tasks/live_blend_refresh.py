@@ -3941,6 +3941,8 @@ class LiveBlendRefresher:
             # Skips before composition (counted only; same returns as before):
             "no_bound": 0, "routing": 0, "kept_no_graph": 0, "not_speaking": 0,
             "own_write": 0, "superseded": 0, "overwritten": 0,
+            # Unproven readings oriented by the stamp's live verdict (`_live_orientation`):
+            "verdict_oriented": 0,
         }
         #: Wall seconds spent composing receipt previews (local CPU, no await).
         self.receipt_compose_s = 0.0
@@ -4264,6 +4266,23 @@ class LiveBlendRefresher:
         flipped = not math.isclose(corrected, home_prob, rel_tol=0.0, abs_tol=1e-9)
         self._inversion[event_id] = (now + self.inversion_ttl_s, flipped)
         return corrected
+
+    def _live_orientation(self, event_id: int, reading):
+        """#10090: an unproven reading oriented as the stamp would orient it
+        now — `_oriented`'s cached verdict while it is live, never a read.
+        None when there is no live verdict (the stamp's path computes one).
+
+        11/01 16:44Z: every Polymarket input on a live NCAAB game (event
+        15334892, two same-named duel markets) waited 5-18 s as na_orientation
+        for a stamp that applied this same cached verdict to the same reading;
+        at 16:55Z a Kalshi input waited 80 s the same way (event 15340110).
+        """
+        cached = self._inversion.get(event_id)
+        if cached is None or time.monotonic() >= cached[0]:
+            return None
+        if not cached[1]:
+            return reading
+        return _replace(reading, home_probability=1.0 - reading.home_probability)
 
     # ── the refresh itself ───────────────────────────────────────────────────
 
@@ -9701,7 +9720,14 @@ class LiveBlendRefresher:
         )
         if reading is None and not proof_kwargs:
             self._receipt_speaking[event_id] = frozenset()
-        if reading is None or not has_proven_home_orientation(reading):
+        oriented = reading
+        if reading is not None and not has_proven_home_orientation(reading):
+            # The stamp applies its live inversion verdict to this reading
+            # without a read (`_oriented`): show now what it will write.
+            oriented = None if proof_kwargs else self._live_orientation(event_id, reading)
+            if oriented is not None:
+                stats["verdict_oriented"] += 1
+        if oriented is None:
             stats["not_admitted"] += 1
             if proof_kwargs and self._home_book_empty(event, patched):
                 self._note_receipt_class("na_nobook", event_id)
@@ -9716,6 +9742,7 @@ class LiveBlendRefresher:
                 else:
                     self._log_na_orientation(event_id, patched, overlaid, reading)
             return None
+        reading = oriented
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
         ids = {getattr(row, "id", None) for row in contributing}
