@@ -9710,7 +9710,7 @@ class LiveBlendRefresher:
         except Exception:
             self.receipt_preview_stats["errors"] += 1
 
-    def _log_drop_noop(self, preview, event_id, value, event) -> None:
+    def _log_drop_noop(self, preview, event_id, value, event, contributing=()) -> None:
         """#10090 diagnosis: a receipt proposal the ledger answered with no
         frame and no refusal (11/01 21:32Z: a Polymarket input waited 3.0 s as
         `drop_noop`). At most 20 a minute. Never raises."""
@@ -9722,13 +9722,16 @@ class LiveBlendRefresher:
             pending = None if state is None else state.pending.get(self.source)
             logger.info(
                 "live_blend_refresh[%s]: drop-noop event=%s value=%s ticket=%s status=%s "
-                "pending=%s expired=%s base_rev=%s stored=%s",
+                "pending=%s expired=%s base_rev=%s stored=%s stored_basis=%s contrib=%s",
                 self.source, event_id, value, getattr(event, "preview_read_ticket", None),
                 None if state is None else state.status,
                 None if pending is None else (pending.value, pending.at_receipt, pending.seq),
                 None if state is None else state.expired.get(self.source),
                 None if state is None else getattr(state, "base_rev", None),
                 None if state is None else ((state.base_sources or {}).get(self.source) or {}).get("value"),
+                None if state is None else ((state.base_sources or {}).get(self.source) or {}).get("observed_basis"),
+                [(getattr(o, "id", None), str(getattr(o, "current_probability", None)),
+                  str(getattr(o, "last_updated", None))[11:23]) for o in (contributing or ())][:6],
             )
         except Exception:
             pass
@@ -10268,7 +10271,7 @@ class LiveBlendRefresher:
                     self._note_receipt_class("drop_" + why[:24], event_id)
                     self._hl_mark(event_id, "drop_" + why[:24])
                     if why == "noop":
-                        self._log_drop_noop(preview, event_id, value, event)
+                        self._log_drop_noop(preview, event_id, value, event, contributing)
                     if why == "local_ticket" and event_id in self._preview_graphs:
                         self._schedule_context_refresh((event_id,))
                     continue
