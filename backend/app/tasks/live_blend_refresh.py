@@ -8883,6 +8883,7 @@ class LiveBlendRefresher:
             batch = [event_id for event_id in batch if event_id in self._preview_graphs]
             if not batch:
                 continue
+            started = _mono()
             try:
                 ticket = await self._preview_admission_read()
                 if ticket is None:
@@ -8897,6 +8898,9 @@ class LiveBlendRefresher:
                             "event_ids", list(batch), type_=ARRAY(Integer))))
                     )).all()
                 stats["ctx_reads"] = stats.get("ctx_reads", 0) + 1
+                took = int((_mono() - started) * 1000)
+                stats["ctx_ms"] = stats.get("ctx_ms", 0) + took
+                stats["ctx_max_ms"] = max(stats.get("ctx_max_ms", 0), took)
             except Exception:
                 stats["errors"] += 1
                 logger.warning("live_blend_refresh[%s]: graph context re-read failed", self.source,
