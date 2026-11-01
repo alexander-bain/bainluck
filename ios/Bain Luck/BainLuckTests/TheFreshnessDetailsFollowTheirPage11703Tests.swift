@@ -211,5 +211,13 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
             .accessibilityActivate())
         let reopened = await settle(host, timeout: 3) { host.presentedViewController != nil }
         XCTAssertTrue(reopened, "the second game's own details still open when the reader asks")
+
+        // The first page's own close comes seconds after the push on iOS 27
+        // (its `onDisappear`); it must not take the second game's details
+        // with it.
+        let secondDetails = host.presentedViewController
+        await settle(host, timeout: 6)
+        XCTAssertTrue(secondDetails != nil && host.presentedViewController === secondDetails,
+            "#11703: the second game's details closed on their own after the first page's late close")
     }
 }
