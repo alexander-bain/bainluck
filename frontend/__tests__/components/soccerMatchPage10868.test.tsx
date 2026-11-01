@@ -127,7 +127,7 @@ const text = (selector: string, within: ParentNode = host) => within.querySelect
 const percentOf = (el: Element | null | undefined, prop: "bottom" | "left" | "width") =>
   parseFloat((el as HTMLElement | null)?.style[prop] ?? "NaN");
 /** A one-card stream, for a card built straight from the owner (no page route). */
-const oneCard = (card: SoccerStoryCard): SoccerStoryStream => ({ heading: "Stories", cards: [card], manualStatus: null, storiesLabel: "Stories", emptyWords: "" });
+const oneCard = (card: SoccerStoryCard): SoccerStoryStream => ({ scope: "soccer:one-card", heading: "Stories", cards: [card], manualStatus: null, storiesLabel: "Stories", emptyWords: "" });
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const live = page(detail("liveDetail"), history("liveHistory"), markets("liveMarkets"), LIVE_NOW);
@@ -678,7 +678,7 @@ describe("held selections: exact id, exactly once, no substitute, kept across re
   const pressed = (id: string) => Array.from(card(id).querySelectorAll('button[aria-pressed="true"]'));
   const timingButtons = (id: string) => Array.from(card(id).querySelectorAll("button[aria-controls]"));
   const chip = (id: string, label: string) => button(label, card(id));
-  const goalChip = (label: string) => Array.from(card("goals").querySelectorAll("li > button")).find((b) => b.querySelector("span")?.textContent === label)!;
+  const goalChip = (label: string) => Array.from(card("goals").querySelectorAll<HTMLButtonElement>("li > button")).find((b) => b.querySelector("span")?.textContent === label)!;
 
   describe("GOALS milestones", () => {
     it("a removed held milestone says so, shows no other milestone, and the reader can choose another", () => {
