@@ -14,6 +14,13 @@
  *   finalHistory  atlas-v6/raw/mlb-15321836-history.json       (0db9e147…)
  *   finalMarkets  atlas-v6/raw/mlb-15321836-game-markets.json  (42dfb489…), player_props[0:62]
  *
+ * SECOND FIXTURE, FINAL ONLY — `mlbRunTotals10868.fixtures.json` (S1, read-only
+ * here): the ENTIRE `game_question_matrix` member of that SAME game-markets body
+ * (42dfb489…), which the reduced `finalMarkets` omits. The run-total tests join
+ * it back onto `finalMarkets` (a CONSTRUCTED admission, named where used);
+ * neither fixture is edited, and the matrix is never a before or live input
+ * except where a test supplies it to prove it is refused.
+ *
  * REAL proves the FINAL phase only. CONSTRUCTED here, and named where used:
  * every clock; the host's values (the hero pair through the page's own
  * `resolveProbability`, its accepted clock, `deliveryInterrupted`,
@@ -28,6 +35,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import fixtures from "./mlbGame10868.fixtures.json";
+import runTotalsFixture from "./mlbRunTotals10868.fixtures.json";
 import type { EventDetailResponse, EventHistoryResponse } from "@/lib/types";
 import type { GameMarketsResponse } from "@/lib/api";
 import { resolveProbability } from "@/lib/eventKeyStats";
@@ -55,6 +63,13 @@ import {
   type MlbGameModel,
   type MlbGameView,
 } from "@/lib/eventPage10868/mlbGame";
+import {
+  MLB_RUN_TOTAL_WORDS,
+  mlbFinalTotals,
+  mlbRunComparison,
+  mlbRunLines,
+  mlbRunSelected,
+} from "@/lib/eventPage10868/mlbRunTotals";
 
 // ─── Bodies and clocks ─────────────────────────────────────────────────────
 
@@ -700,6 +715,151 @@ describe("All props is H4's catalogue over this game's own body, in native baseb
       expect(v.originals.originals.length).toBeGreaterThan(0);
       expect(new Set(v.originals.originals.map((o) => o.grade?.words))).toEqual(new Set([hit ? PROP_HIT_LABEL : PROP_MISS_LABEL]));
     }
+  });
+});
+
+// ─── FINAL run totals (the binding) ────────────────────────────────────────
+
+type Json = Record<string, unknown>;
+/** REAL: the whole retained matrix of this game's own game-markets body, a fresh copy each call. */
+const ownMatrix = (): Json => clone(runTotalsFixture.game_question_matrix) as unknown as Json;
+/**
+ * CONSTRUCTED admission: the reduced markets body with a `game_question_matrix`
+ * joined on. With `ownMatrix()` it is the same retained body's own member put
+ * back; anything else passed here is a TEST MUTATION, named where made.
+ */
+const withMatrix = (matrix: unknown, body: GameMarketsResponse = finalMarkets): GameMarketsResponse =>
+  mutate(body, { game_question_matrix: matrix });
+const isFullGameRuns = (q: Json) =>
+  q.kind === "count_threshold" && (q.quantity as Json | null)?.key === "runs" && (q.period as Json | null)?.key === "full_game";
+const LINE_TEXTS = ["2.5", "3.5", "4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5", "11.5", "12.5", "13.5", "14.5"];
+const KEY_2_5 = "o:244311416";
+const KEY_9_5 = "o:244311417";
+const KEY_10_5 = "o:244311422";
+const KEY_11_5 = "o:244311421";
+const AXIS_15 = { step: 5, upper: 15, labels: [0, 5, 10, 15] };
+
+describe("FINAL run totals: the card's input, after the final only, from this game's own matrix", () => {
+  const finalWith = (rest = finalHostRest(), gameMarkets: GameMarketsResponse | null = withMatrix(ownMatrix())) =>
+    build(finalDetail, FINAL_NOW, rest, { gameMarkets });
+
+  it("REAL final 3–7: 13 full-game lines, total 10, 9.5 by default, every pregame chance Unavailable, the source's own results", () => {
+    const v = finalWith();
+    const rt = v.runTotals;
+    expect(rt).not.toBeNull();
+    expect(rt!.kind).toBe("final");
+    expect(rt!.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
+    // Full-game lines only: the matrix's five first-five-innings run lines are not among them.
+    expect(rt!.lines.every((l) => l.questionKey.startsWith("q:count|runs|game|full_game|"))).toBe(true);
+    expect(rt!.total).toBe(10);
+    expect(rt!.bar).toEqual({ kind: "stacked", home: 3, away: 7 });
+    expect(rt!.axis).toEqual(AXIS_15);
+    expect(rt!.defaultKey).toBe(KEY_9_5);
+    // The SAME names the built headline uses.
+    expect([rt!.homeName, rt!.awayName]).toEqual([v.headline.home.name, v.headline.away.name]);
+    expect([rt!.homeName, rt!.awayName]).toEqual(["Houston Astros", "Chicago White Sox"]);
+    expect(rt!.lines.every((l) => l.pregame === null && l.pregameText === MLB_RUN_TOTAL_WORDS.unavailable)).toBe(true);
+    // The venue's own grade per line (won through 9.5, lost from 10.5), never graded here from the runs.
+    expect(rt!.lines.map((l) => l.result)).toEqual([...LINE_TEXTS.slice(0, 8).map(() => true), ...LINE_TEXTS.slice(8).map(() => false)]);
+    const byDefault = mlbRunSelected(rt!, null);
+    expect(byDefault?.optionKey).toBe(KEY_9_5);
+    expect(byDefault?.result).toBe(true);
+    expect(mlbRunComparison(rt!.total, byDefault!)).toBe("Final 10 runs · above this line");
+    const chosen = mlbRunSelected(rt!, KEY_10_5);
+    expect(chosen?.result).toBe(false);
+    expect(mlbRunComparison(rt!.total, chosen!)).toBe("Final 10 runs · below this line");
+    // Exactly S1's answer for the same matrix, pair and names: the binding computes nothing of its own.
+    expect(rt).toEqual(
+      mlbFinalTotals(mlbRunLines(runTotalsFixture.game_question_matrix), { home: 3, away: 7 }, { home: "Houston Astros", away: "Chicago White Sox" }),
+    );
+  });
+
+  it("nothing else moves with the matrix: headline, history and the complete All props catalogue are unchanged", () => {
+    const without = build(finalDetail, FINAL_NOW, finalHostRest());
+    // The reduced fixture carries no matrix member, so the core checkpoint's own build has no card.
+    expect(without.runTotals).toBeNull();
+    const withIt = finalWith();
+    expect(withIt.runTotals).not.toBeNull();
+    expect({ ...withIt, runTotals: null }).toEqual(without);
+    expect(withIt.originals.originals.length).toBe(without.originals.originals.length);
+  });
+
+  it("the total is the headline's DISPLAYED pair, never the raw event final (CONSTRUCTED host pair 4–8 over the row's 3–7)", () => {
+    const rest = { ...finalHostRest(), score: { home: 4, away: 8, observedAt: null } };
+    const v = finalWith(rest);
+    expect([finalDetail.home_score, finalDetail.away_score]).toEqual([3, 7]);
+    expect(texts(v.headline.matrix.rows.map((r) => r.values[1]))).toEqual(["4", "8"]);
+    expect(v.runTotals?.total).toBe(12);
+    expect(v.runTotals?.bar).toEqual({ kind: "stacked", home: 4, away: 8 });
+    expect(v.runTotals?.defaultKey).toBe(KEY_11_5);
+    // The comparison is the pair against the number; the source's result is still the venue's own (11.5 lost).
+    const selected = mlbRunSelected(v.runTotals!, null);
+    expect(mlbRunComparison(v.runTotals!.total, selected!)).toBe("Final 12 runs · above this line");
+    expect(selected?.result).toBe(false);
+    // TEST MUTATION: an event row that disagrees again changes nothing in the card.
+    const otherRow = build(mutate(finalDetail, { home_score: 9, away_score: 1 }), FINAL_NOW, rest, {
+      gameMarkets: withMatrix(ownMatrix()),
+    });
+    expect(otherRow.runTotals).toEqual(v.runTotals);
+  });
+
+  it("a missing, partial or invalid displayed pair gives no total and no bar, never a zero or the row's 3–7, with every line still offered", () => {
+    // CONSTRUCTED host pairs; the event row stays the real final 3–7 and is never a fallback.
+    const pairs: Array<{ home: number | null; away: number | null } | null> = [
+      null,
+      { home: 3, away: null },
+      { home: null, away: 7 },
+      { home: -1, away: 7 },
+      { home: 3.5, away: 7 },
+      { home: Number.MAX_SAFE_INTEGER, away: 1 },
+    ];
+    for (const pair of pairs) {
+      const rt = finalWith({ ...finalHostRest(), score: pair && { ...pair, observedAt: null } }).runTotals;
+      expect({ pair, total: rt?.total, bar: rt?.bar }).toEqual({ pair, total: null, bar: { kind: "none" } });
+      expect(rt?.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
+      expect(rt?.defaultKey).toBe(KEY_2_5);
+      expect(rt?.axis).toEqual(AXIS_15);
+    }
+  });
+
+  it("another event's body, a matrix not scoped to the game, fewer than three full-game lines or no matrix gives no card; the own matrix restores it", () => {
+    const scoped = (value: unknown) => ({ ...ownMatrix(), display_scope: value });
+    const twoLines = ownMatrix();
+    // TEST MUTATION: two full-game lines left; the five first-five-innings run lines stay and do not count.
+    twoLines.questions = (twoLines.questions as Json[]).filter((q) => !isFullGameRuns(q) || ["2.5", "3.5"].includes(String((q.predicate as Json).line)));
+    const refusals: Array<[string, GameMarketsResponse | null]> = [
+      ["another event's body (TEST MUTATION: event_id 1)", mutate(withMatrix(ownMatrix()), { event_id: 1 })],
+      ["a series-scoped matrix (TEST MUTATION)", withMatrix(scoped("series"))],
+      ["a malformed scope (TEST MUTATION)", withMatrix(scoped(7))],
+      ["two full-game lines", withMatrix(twoLines)],
+      ["the reduced body, which has no matrix member", finalMarkets],
+      ["a null matrix (TEST MUTATION)", withMatrix(null)],
+      ["no markets body", null],
+    ];
+    for (const [name, gameMarkets] of refusals) {
+      expect({ name, runTotals: finalWith(finalHostRest(), gameMarkets).runTotals }).toEqual({ name, runTotals: null });
+    }
+    expect(finalWith().runTotals?.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
+  });
+
+  it("before first pitch and during play there is no run-total card, even with the final matrix supplied (CONSTRUCTED)", () => {
+    const markets = withMatrix(ownMatrix());
+    const before = build(beforeDetail, BEFORE_NOW, beforeHostRest(), { gameMarkets: markets });
+    const live = build(liveDetail, LIVE_NOW, liveHostRest(), { gameMarkets: markets });
+    const unbacked = build(liveDetail, LIVE_NOW, liveHostRest({ liveClaimUnbacked: true }), { gameMarkets: markets });
+    expect([before.phase, live.phase, unbacked.phase]).toEqual(["before", "live", "live"]);
+    for (const v of [before, live, unbacked]) expect(v.runTotals).toBeNull();
+    // The live page is exactly what it was without the matrix.
+    expect(live).toEqual(build(liveDetail, LIVE_NOW, liveHostRest()));
+  });
+
+  it("a refresh in the same scope builds the same card (CONSTRUCTED refresh clock)", () => {
+    const first = finalWith();
+    const later = build(finalDetail, new Date(Date.parse(FINAL_NOW) + 60_000).toISOString(), finalHostRest(), {
+      gameMarkets: withMatrix(ownMatrix()),
+    });
+    expect(later.scope).toBe(first.scope);
+    expect(later.runTotals).toEqual(first.runTotals);
   });
 });
 

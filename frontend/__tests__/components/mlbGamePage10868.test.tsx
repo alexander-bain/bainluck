@@ -16,15 +16,29 @@
  * (jsdom lays nothing out, so these prove the arrangement steps and the
  * enlarged-text branch, never real fit — that is the later 375 / 393 / 1280 px,
  * 100% / 200% browser check on the exact committed export).
+ *
+ * THE FINAL RUN-TOTAL CARD (binding): its matrix is the REAL whole
+ * `game_question_matrix` of the same retained game-markets body, kept in
+ * `__tests__/lib/mlbRunTotals10868.fixtures.json` (final only) and joined onto
+ * the reduced markets body here — a CONSTRUCTED admission, since the reduced
+ * fixture omits the member; neither fixture is edited. CONSTRUCTED, and named
+ * where used: other displayed pairs, a withdrawn line, a duplicated key, a
+ * wrong scope, a two-line matrix, another event's id, the before and live
+ * events given the final matrix, and a live model handed a final card. The
+ * row's side-by-side or stacked fit is not provable in jsdom (owed to the
+ * browser check); these prove its order, its contents and what it holds.
  */
 import React, { act } from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { createRoot, type Root } from "react-dom/client";
 import fixtures from "../lib/mlbGame10868.fixtures.json";
+import runTotalsFixture from "../lib/mlbRunTotals10868.fixtures.json";
 import type { EventDetailResponse, EventHistoryResponse } from "@/lib/types";
 import type { GameMarketsResponse } from "@/lib/api";
-import { PROP_HIT_LABEL } from "@/lib/propGrade";
+import { PROP_HIT_LABEL, PROP_MISS_LABEL } from "@/lib/propGrade";
+import { HISTORY_WORDS } from "@/lib/eventPage10868/hockeyJourneyHistory";
+import { MLB_RUN_TOTAL_WORDS } from "@/lib/eventPage10868/mlbRunTotals";
 import {
   MLB_ORIGINALS_WORDS,
   MLB_WORDS,
@@ -400,6 +414,268 @@ describe("All props", () => {
     expect(host.textContent).toContain("History unavailable");
     expect(host.textContent).toContain(MLB_ORIGINALS_WORDS.emptyWords);
     expect(detailsButtons()).toHaveLength(0);
+  });
+});
+
+// ─── The final run-total card beside the history (binding) ─────────────────
+
+type Json = Record<string, unknown>;
+/** REAL: the whole retained matrix of this game's own game-markets body, a fresh copy each call. */
+const ownMatrix = (): Json => clone(runTotalsFixture.game_question_matrix) as unknown as Json;
+/** CONSTRUCTED admission: the reduced markets body with a matrix joined on (anything but `ownMatrix()` is a TEST MUTATION). */
+const withMatrix = (matrix: unknown, body: GameMarketsResponse = finalMarkets): GameMarketsResponse =>
+  mutate(body, { game_question_matrix: matrix });
+const isFullGameRuns = (q: Json) =>
+  q.kind === "count_threshold" && (q.quantity as Json | null)?.key === "runs" && (q.period as Json | null)?.key === "full_game";
+const lineOf = (q: Json) => (q.predicate as Json).line;
+/** TEST MUTATION: the own matrix with only the full-game lines `keep` (every other question kept). */
+function matrixKeeping(keep: number[]): Json {
+  const m = ownMatrix();
+  m.questions = (m.questions as Json[]).filter((q) => !isFullGameRuns(q) || keep.includes(lineOf(q) as number));
+  return m;
+}
+const LINE_TEXTS = ["2.5", "3.5", "4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5", "11.5", "12.5", "13.5", "14.5"];
+const KEY_2_5 = "o:244311416";
+const KEY_9_5 = "o:244311417";
+const KEY_10_5 = "o:244311422";
+const KEY_11_5 = "o:244311421";
+
+const historyRow = () => host.querySelector("[data-mlb-history-row]");
+const rowItems = () => Array.from(historyRow()?.children ?? []).map((el) => el.getAttribute("data-mlb-row-item"));
+const historyChart = () => historyRow()?.children[0]?.querySelector("section") ?? null;
+const historyDisclosure = () => Array.from(host.querySelectorAll("button")).find((b) => b.textContent === HISTORY_WORDS.details) ?? null;
+const runCard = () => host.querySelector("[data-mlb-run-totals]");
+const runText = (selector: string) => runCard()?.querySelector(selector)?.textContent ?? null;
+const runChoices = () => Array.from(host.querySelectorAll<HTMLButtonElement>("[data-run-choice]"));
+function runChoice(key: string): HTMLButtonElement {
+  const found = host.querySelector<HTMLButtonElement>(`[data-run-choice="${key}"]`);
+  if (!found) throw new Error(`no run line ${key}`);
+  return found;
+}
+const pressedRuns = () =>
+  runChoices()
+    .filter((b) => b.getAttribute("aria-pressed") === "true")
+    .map((b) => b.getAttribute("data-run-choice"));
+const runSegments = () =>
+  Array.from(host.querySelectorAll("[data-run-segment]")).map((el) => [
+    el.getAttribute("data-run-segment"),
+    el.getAttribute("data-run-from"),
+    el.getAttribute("data-run-to"),
+  ]);
+const sourceSays = (verdict: string) => `${MLB_RUN_TOTAL_WORDS.sourceResult} ${verdict}`;
+
+describe("the final run-total card beside the history", () => {
+  /** CONSTRUCTED: native `beforeEdits` over the real final, one minute before first pitch, with no hero pair. */
+  const beforeDetail = mutate(finalDetail, {
+    status: "scheduled",
+    completed_at: null,
+    home_score: null,
+    away_score: null,
+    hero_settled_result: null,
+    hero_probability: null,
+    hero_probability_away: null,
+    hero_probability_source: null,
+  });
+  const beforeHost: MlbGameHost = { ...finalHost, nowMs: Date.parse("2026-09-30T20:59:00Z"), score: null };
+
+  it("REAL final 3–7: history then card in one row; total 10, 13 lines, 9.5 by default with its HIT, 10.5 with its MISS", () => {
+    const m = model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) });
+    render(m);
+    expect(rowItems()).toEqual(["history", "runTotals"]);
+    expect(historyChart()?.querySelector("h3")?.textContent).toBe(view(m).history.title);
+    expect(historyRow()?.children[1]?.querySelector("[data-mlb-run-totals]")).toBe(runCard());
+    expect(runCard()?.getAttribute("data-mlb-run-totals")).toBe("mlb:15321836:final");
+    expect(runCard()?.querySelector("h3")?.textContent).toBe(MLB_RUN_TOTAL_WORDS.title);
+    expect(runCard()?.textContent).toContain(MLB_RUN_TOTAL_WORDS.eyebrow(13));
+    expect(runText("[data-run-total]")).toBe("10");
+    expect(runText("[data-run-pregame]")).toBe(MLB_RUN_TOTAL_WORDS.unavailable);
+    expect(runText('[data-run-key="home"]')).toBe("Houston Astros 3");
+    expect(runText('[data-run-key="away"]')).toBe("Chicago White Sox 7");
+    expect(runChoices().map((b) => b.textContent)).toEqual(LINE_TEXTS);
+    expect(pressedRuns()).toEqual([KEY_9_5]);
+    expect(runText("[data-run-heading]")).toBe("Over 9.5 runs");
+    expect(runText("[data-run-comparison]")).toBe("Final 10 runs · above this line");
+    expect(runText("[data-run-source]")).toBe(sourceSays(PROP_HIT_LABEL));
+    // Each line carries the venue's own result, independent of the comparison: 8 HIT, then 5 MISS.
+    const labels = runChoices().map((b) => b.getAttribute("aria-label") ?? "");
+    expect(labels.filter((l) => l.endsWith(`${PROP_HIT_LABEL}.`))).toHaveLength(8);
+    expect(labels.filter((l) => l.endsWith(`${PROP_MISS_LABEL}.`))).toHaveLength(5);
+    click(runChoice(KEY_10_5));
+    expect(pressedRuns()).toEqual([KEY_10_5]);
+    expect(runText("[data-run-heading]")).toBe("Over 10.5 runs");
+    expect(runText("[data-run-comparison]")).toBe("Final 10 runs · below this line");
+    expect(runText("[data-run-source]")).toBe(sourceSays(PROP_MISS_LABEL));
+    // No reader and no Details on the new card in this increment.
+    expect(runCard()?.querySelector("[aria-expanded]")).toBeNull();
+    expect(Array.from(runCard()?.querySelectorAll("button") ?? []).some((b) => /Details/.test(b.textContent ?? ""))).toBe(false);
+  });
+
+  it("the card changes nothing around it: the headline (D1 = B), the away-first rows and All props read the same with and without it", () => {
+    render(model(finalDetail, finalHost));
+    expect(runCard()).toBeNull();
+    const headlineBefore = host.querySelector("[data-hockey-matrix]")?.outerHTML;
+    const stateBefore = host.querySelector("header")?.outerHTML;
+    const entryBefore = entryButton().textContent;
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(runCard()).not.toBeNull();
+    expect(host.querySelector("[data-hockey-matrix]")?.outerHTML).toBe(headlineBefore);
+    expect(host.querySelector("header")?.outerHTML).toBe(stateBefore);
+    expect(host.querySelector("[data-matrix-shared-absences]")?.textContent).toBe(
+      `${BOTH_TEAMS_LABEL}${MLB_WORDS.pregameProjectedFinal}:${MLB_WORDS.unavailable}`,
+    );
+    const rows = Array.from(host.querySelectorAll("table tbody tr"));
+    expect(rows.map((r) => r.querySelector("th")?.textContent ?? "")).toEqual([
+      expect.stringContaining("Chicago White Sox"),
+      expect.stringContaining("Houston Astros"),
+    ]);
+    expect(entryButton().textContent).toBe(entryBefore);
+    // All props comes after the row, and its exact Details still open.
+    const following = historyRow()?.compareDocumentPosition(entryButton()) ?? 0;
+    expect(following & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    click(entryButton());
+    click(penaDetails(model(finalDetail, finalHost))!);
+    expect(openDetails()).toHaveLength(1);
+  });
+
+  it("the card says the headline's DISPLAYED pair, not the raw event final (CONSTRUCTED host pair 4–8 over the row's 3–7)", () => {
+    render(model(finalDetail, { ...finalHost, score: { home: 4, away: 8, observedAt: null } }, { gameMarkets: withMatrix(ownMatrix()) }));
+    const rows = Array.from(host.querySelectorAll("table tbody tr"));
+    const cells = rows.map((r) => Array.from(r.querySelectorAll("td")).map((td) => td.textContent ?? ""));
+    expect(cells[0][1]).toContain("8 runs"); // away first
+    expect(cells[1][1]).toContain("4 runs");
+    expect(runText("[data-run-total]")).toBe("12");
+    expect(runText('[data-run-key="home"]')).toBe("Houston Astros 4");
+    expect(runText('[data-run-key="away"]')).toBe("Chicago White Sox 8");
+    expect(runSegments()).toEqual([
+      ["home", "0", "4"],
+      ["away", "4", "12"],
+    ]);
+    expect(pressedRuns()).toEqual([KEY_11_5]);
+    expect(runText("[data-run-comparison]")).toBe("Final 12 runs · above this line");
+    // The venue graded 11.5 on the real game (lost); the card never regrades it from the pair.
+    expect(runText("[data-run-source]")).toBe(sourceSays(PROP_MISS_LABEL));
+  });
+
+  it("a partial or missing displayed pair: Unavailable total and no bar, never a zero, every line still offered (CONSTRUCTED host)", () => {
+    for (const score of [{ home: 3, away: null, observedAt: null }, null]) {
+      render(model(finalDetail, { ...finalHost, score }, { gameMarkets: withMatrix(ownMatrix()) }));
+      expect(runText("[data-run-total]")).toBe(MLB_RUN_TOTAL_WORDS.unavailable);
+      expect(runCard()?.querySelector("[data-run-total]")?.getAttribute("data-run-total")).toBe("unavailable");
+      expect(runSegments()).toEqual([]);
+      expect(host.querySelector('[data-run-key="home"]')).toBeNull();
+      expect(host.querySelector('[data-run-key="away"]')).toBeNull();
+      expect(host.querySelector("[data-run-comparison]")).toBeNull();
+      expect(runChoices().map((b) => b.textContent)).toEqual(LINE_TEXTS);
+      expect(pressedRuns()).toEqual([KEY_2_5]);
+      expect(runCard()?.textContent).not.toMatch(/Final 0|Final 3 runs|Final 10 runs/);
+    }
+  });
+
+  it("no card for another event's body, a wrong scope, two full-game lines or no matrix: the history stays alone; the own matrix restores it", () => {
+    const refusals: Array<[string, GameMarketsResponse]> = [
+      ["another event's body (TEST MUTATION: event_id 1)", mutate(withMatrix(ownMatrix()), { event_id: 1 })],
+      ["a series-scoped matrix (TEST MUTATION)", withMatrix({ ...ownMatrix(), display_scope: "series" })],
+      ["two full-game lines (TEST MUTATION)", withMatrix(matrixKeeping([2.5, 3.5]))],
+      ["the reduced body, with no matrix member", finalMarkets],
+    ];
+    for (const [name, gameMarkets] of refusals) {
+      render(model(finalDetail, finalHost, { gameMarkets }));
+      expect({ name, card: runCard(), items: rowItems() }).toEqual({ name, card: null, items: ["history"] });
+      expect(runChoices()).toHaveLength(0);
+    }
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(rowItems()).toEqual(["history", "runTotals"]);
+    expect(runChoices()).toHaveLength(13);
+  });
+
+  it("before first pitch and during play the leaf never shows, even with the final matrix supplied; a live model handed a final card draws none (CONSTRUCTED)", () => {
+    const markets = withMatrix(ownMatrix());
+    render(model(beforeDetail, beforeHost, { gameMarkets: markets }));
+    expect(host.querySelector("section[data-mlb-game='before']")).not.toBeNull();
+    expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
+    render(model(liveDetail, liveHost, { gameMarkets: markets }));
+    expect(host.querySelector("section[data-mlb-game='live']")).not.toBeNull();
+    expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
+    // CONSTRUCTED misuse: the real final's card placed on a live model. The page draws a card for a final only.
+    const finalCard = view(model(finalDetail, finalHost, { gameMarkets: markets })).runTotals;
+    expect(finalCard).not.toBeNull();
+    render({ ...view(model(liveDetail, liveHost)), runTotals: finalCard });
+    expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
+  });
+
+  it("a same-scope refresh keeps the chosen line; a withdrawn or duplicated key never substitutes, and the line returns by its key", () => {
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    click(runChoice(KEY_10_5));
+    // CONSTRUCTED refresh: a minute later, every object rebuilt, the same scope.
+    render(model(finalDetail, { ...finalHost, nowMs: FINAL_NOW + 60_000 }, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(pressedRuns()).toEqual([KEY_10_5]);
+    // TEST MUTATIONS: 10.5 withdrawn; 12.5's option carrying 10.5's key.
+    const withdrawn = matrixKeeping([2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 11.5, 12.5, 13.5, 14.5]);
+    const duplicated = ownMatrix();
+    const at12 = (duplicated.questions as Json[]).find((q) => isFullGameRuns(q) && lineOf(q) === 12.5) as Json;
+    ((at12.options as Json[])[0] as Json).option_key = KEY_10_5;
+    for (const changed of [withdrawn, duplicated]) {
+      render(model(finalDetail, finalHost, { gameMarkets: withMatrix(changed) }));
+      expect(runText("[data-run-heading]")).toBe(MLB_RUN_TOTAL_WORDS.selectedUnavailable);
+      expect(pressedRuns()).toEqual([]); // never the default 9.5 or a neighbour
+      expect(host.querySelector("[data-run-source]")).toBeNull();
+      expect(host.querySelector("[data-run-comparison]")).toBeNull();
+      expect(host.querySelector("[data-run-marker]")).toBeNull();
+      expect(runChoices().map((b) => b.textContent)).not.toContain("10.5");
+      render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+      expect(pressedRuns()).toEqual([KEY_10_5]);
+      expect(runText("[data-run-heading]")).toBe("Over 10.5 runs");
+    }
+  });
+
+  it("a new event or phase resets the chosen line (CONSTRUCTED: the same bodies under another id; final → live → final)", () => {
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    click(runChoice(KEY_10_5));
+    const otherId = 15321837;
+    render(
+      model(mutate(finalDetail, { id: otherId }), finalHost, {
+        history: mutate(finalHistory, { event_id: otherId }),
+        gameMarkets: withMatrix(ownMatrix(), mutate(finalMarkets, { event_id: otherId })),
+      }),
+    );
+    expect(runCard()?.getAttribute("data-mlb-run-totals")).toBe("mlb:15321837:final");
+    expect(pressedRuns()).toEqual([KEY_9_5]);
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    click(runChoice(KEY_10_5));
+    render(model(liveDetail, liveHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(runCard()).toBeNull();
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(pressedRuns()).toEqual([KEY_9_5]);
+  });
+
+  it("the history chart and its open disclosure survive the card arriving and leaving in the same scope; a new event resets them", () => {
+    render(model(finalDetail, finalHost)); // the reduced body: no card
+    expect(rowItems()).toEqual(["history"]);
+    const chart = historyChart();
+    const disclosure = historyDisclosure();
+    expect(chart).not.toBeNull();
+    expect(disclosure).not.toBeNull();
+    click(disclosure!);
+    expect(disclosure!.getAttribute("aria-expanded")).toBe("true");
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) })); // the card arrives
+    expect(rowItems()).toEqual(["history", "runTotals"]);
+    expect(historyChart()).toBe(chart);
+    expect(historyDisclosure()).toBe(disclosure);
+    expect(disclosure!.getAttribute("aria-expanded")).toBe("true");
+    render(model(finalDetail, finalHost, { gameMarkets: finalMarkets })); // the card leaves
+    expect(rowItems()).toEqual(["history"]);
+    expect(historyChart()).toBe(chart);
+    expect(historyDisclosure()?.getAttribute("aria-expanded")).toBe("true");
+    // CONSTRUCTED: the same bodies under another id — a new scope, a new reading.
+    const otherId = 15321837;
+    render(
+      model(mutate(finalDetail, { id: otherId }), finalHost, {
+        history: mutate(finalHistory, { event_id: otherId }),
+        gameMarkets: withMatrix(ownMatrix(), mutate(finalMarkets, { event_id: otherId })),
+      }),
+    );
+    expect(historyChart()).not.toBe(chart);
+    expect(historyDisclosure()?.getAttribute("aria-expanded")).toBe("false");
   });
 });
 

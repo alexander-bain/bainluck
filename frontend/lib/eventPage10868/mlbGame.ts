@@ -5,14 +5,17 @@
  * PILLARS: FORMATTING / TRUTH / DISCOVER. SHIP: a baseball fan's web event page
  * shows both teams' win chances, the score the page displays and the projected
  * final the page already admits together, with the two-team win history and
- * every original prop's exact Details.
+ * every original prop's exact Details. BINDING INCREMENT SHIP: after a baseball
+ * game, the event page shows the actual run total against the offered lines,
+ * alongside its win-probability history (`runTotals`, final only).
  *
  * THIS IS NOT THE FULL MLB PAGE. Held, not dropped (Design admission
  * 2026-10-31): the live home-run and strikeout player cards
- * (`mlbGamePlayers.ts`, `MlbGameStories.tsx`), the five story families (run
- * totals, home runs, strikeouts, extra innings, series), frozen milestone
- * Details, inning guides, the pregame and final forecast comparisons, the
- * full-size readers and every production binding. See MOUNT-MLB.md.
+ * (`mlbGamePlayers.ts`, `MlbGameStories.tsx`), the run totals before and
+ * during play, the home-run, strikeout, extra-innings and series stories,
+ * frozen milestone Details, inning guides, the pregame and final forecast
+ * comparisons, the full-size readers and every production binding. See
+ * MOUNT-MLB.md.
  *
  * The web port of native `BaseballGamePageAdapter10868` (headline),
  * `BaseballHistoryAdapter10868` (history) and `BaseballOriginalsAdapter10868`
@@ -87,6 +90,18 @@
  *                     this event's (`ownHockeyMarkets`), with native
  *                     `BaseballOriginalsAdapter10868`'s scope and its three word
  *                     changes; every reading, grade, id and Details row is H4's.
+ *   - run totals      FINAL ONLY (`runTotals`): the accepted S1 leaf,
+ *                     `mlbRunLines` over THIS event's own `/game-markets`
+ *                     `game_question_matrix` (the same `ownHockeyMarkets` body;
+ *                     another event's body gives none), then `mlbFinalTotals`
+ *                     with the host's DISPLAYED pair — the one the "Final runs"
+ *                     column prints — and the built headline's own team names.
+ *                     No event-row score, no other total, nothing read off a
+ *                     line, a result or the price history. A missing, foreign,
+ *                     not-game-scoped or too-short matrix gives no card; a
+ *                     missing, partial or unrepresentable pair gives S1's
+ *                     "Unavailable" total and no bar, every offered line still
+ *                     listed. Before first pitch and during play it is null.
  *   - names / tints   `teamShortNames`, `teamTextColor`.
  *
  * DISPLAY ORDER: the model is in canonical storage order (home first, every row
@@ -134,6 +149,7 @@ import {
   type HockeyJourneyHeroPair,
 } from "./hockeyJourney";
 import { hockeyJourneyHistory, ownHockeyHistory } from "./hockeyJourneyHistory";
+import { mlbFinalTotals, mlbRunLines, type MlbFinalTotals } from "./mlbRunTotals";
 import {
   CONTRIBUTION_WORDS,
   ORIGINALS_WORDS,
@@ -258,6 +274,13 @@ export interface MlbGameView {
   marketsForeign: boolean;
   /** "All 41 original outcomes"; null when none. */
   allPropsLabel: string | null;
+  /**
+   * The final run-total card's input, FINAL ONLY: `mlbFinalTotals` over this
+   * event's own matrix (`mlbRunLines`), the headline's displayed pair and the
+   * headline's names. Null before and during play, and when the matrix offers
+   * no card (missing, foreign, not game-scoped, fewer than three full-game lines).
+   */
+  runTotals: MlbFinalTotals | null;
 }
 
 export type MlbGameRefusalReason = "notBaseball" | "unknownState" | "stopped" | "voided";
@@ -626,6 +649,7 @@ export function mlbGameOriginals(
  * answer. Ownership of each held body is decided once here, by exact
  * `event_id`; H2 and H4 check it again themselves. A missing history leaves
  * only the chart unavailable; a foreign body reads exactly as a missing one.
+ * The run-total card reads the same owned markets body, after the final only.
  */
 export function buildMlbGame({ event, history, gameMarkets, host }: MlbGameInput): MlbGameModel {
   const applies = mlbGameApplicability(event, host.nowMs);
@@ -635,17 +659,27 @@ export function buildMlbGame({ event, history, gameMarkets, host }: MlbGameInput
   const ownMarkets = ownHockeyMarkets(gameMarkets, event);
   const state = mlbGameState(event, phase, host);
   const matrix = mlbGameMatrix(event, phase, host, state.noReportedResult);
+  const headline = mlbGameHeadline(event, state, matrix);
   const originals = mlbGameOriginals(event, ownMarkets, phase, host.nowMs);
+  // FINAL ONLY: this event's own matrix, with the SAME displayed pair and names the headline uses.
+  const runTotals =
+    phase === "final"
+      ? mlbFinalTotals(mlbRunLines(ownMarkets?.game_question_matrix), host.score, {
+          home: headline.home.name,
+          away: headline.away.name,
+        })
+      : null;
   return {
     kind: "game",
     eventId: event.id,
     phase,
     scope: `mlb:${event.id}:${phase}`,
-    headline: mlbGameHeadline(event, state, matrix),
+    headline,
     history: hockeyJourneyHistory(ownHistory, event, phase, host.nowMs),
     historyForeign: !!history && ownHistory === null,
     originals,
     marketsForeign: !!gameMarkets && ownMarkets === null,
     allPropsLabel: allPropsLabel(originals.originals.length),
+    runTotals,
   };
 }

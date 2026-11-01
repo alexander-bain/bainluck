@@ -6,21 +6,25 @@
  * PILLARS: FORMATTING / TRUTH / DISCOVER. SHIP: a baseball fan's web event page
  * shows both teams' win chances, the score the page displays and the projected
  * final the page already admits together, with the two-team win history and
- * every original prop's exact Details.
+ * every original prop's exact Details. BINDING INCREMENT SHIP: after a baseball
+ * game, the event page shows the actual run total against the offered lines,
+ * alongside its win-probability history.
  *
  * PRESENTATION ONLY. It draws the model `buildMlbGame`
  * (lib/eventPage10868/mlbGame.ts) built from values the page already holds,
- * through the accepted shared components, unchanged: `HockeyJourneyMatrix`
- * (the team-paired headline, its measured arrangement steps and its
+ * through the accepted components, unchanged: `HockeyJourneyMatrix` (the
+ * team-paired headline, its measured arrangement steps and its
  * once-for-both-teams absence lines), `HockeyJourneyHistoryChart` (the
- * two-team history and its own Details) and `HockeyJourneyAllProps` (every
- * original with its exact Details). No fetch, subscription, SWR key, timer,
- * effect or animation is added here; the only state is inside those three.
+ * two-team history and its own Details), `MlbRunTotalsCard` (after the final
+ * only: the run total against every offered line, its selection held inside
+ * it) and `HockeyJourneyAllProps` (every original with its exact Details). No
+ * fetch, subscription, SWR key, timer, effect or animation is added here; the
+ * only state is inside those four.
  *
  * ORDER, top to bottom (native `BaseballEventPagePresentation10868`): the state
  * lines → the matrix, each column's source and clock said once under it (native
  * draws the provenance under the matrix; there is no About control) → the
- * history → All props.
+ * history, with the final run-total card beside or under it → All props.
  *
  * DISPLAY ORDER: AWAY FIRST (Design D2, native baseball's order). The model is
  * in storage order (home first, each row and series tagged with its `side`);
@@ -48,14 +52,22 @@
  * phase does — so an open Details, an open list or a chart disclosure never
  * survives into another game or another phase, and a refresh in the same scope
  * keeps every one of them (All props holds each open Details by the original's
- * exact key). Never give this section a key that changes per refresh.
+ * exact key). The run-total card is given the same `scope` and NO key: it
+ * holds its chosen line by option key and resets itself on a new scope. Never
+ * give this section a key that changes per refresh.
  *
- * FUTURE (Design D4, NOT built here; no empty panel): when the approved story
- * cards land, they sit BESIDE the history at regular width when both keep
- * native's minimum widths (`anchorMinWidth` 460 pt / `storiesMinWidth` 360 pt,
- * BaseballEventPagePresentation10868.swift, as 28.75rem / 22.5rem bases in a
- * wrapping row), and stack history-then-stories on phones and at enlarged text.
- * The insertion point is marked below (`data-mlb-history-row`).
+ * THE HISTORY ROW (Design D4, built for the FINAL run-total card only; no empty
+ * panel). `data-mlb-history-row` is a wrapping flex row with a 1.5rem gap. The
+ * history is ALWAYS its first item, at the same place in the tree, so its chart
+ * and disclosures never remount when the card comes or goes. The card is a
+ * second item only for a final model whose `runTotals` is non-null. Each item
+ * grows from native's minimum readable width (`anchorMinWidth` 460 pt /
+ * `storiesMinWidth` 360 pt, BaseballEventPagePresentation10868.swift, as
+ * 28.75rem / 22.5rem flex bases) and may shrink below it (`min-w-0`): the two
+ * sit side by side only while the row holds 28.75 + 1.5 + 22.5 = 52.75rem; below
+ * that, the card wraps under the history and each takes the full row width.
+ * Rem bases grow with the reader's text, so enlarged text stacks them. With no
+ * card, the history alone fills the row exactly as before.
  */
 
 import type { HockeyJourneyHeadline, HockeyJourneyHistory } from "@/lib/eventPage10868/hockeyJourneyTypes";
@@ -64,6 +76,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import HockeyJourneyMatrix, { matrixSharedAbsences } from "./HockeyJourneyMatrix";
 import HockeyJourneyHistoryChart from "./HockeyJourneyHistoryChart";
 import HockeyJourneyAllProps from "./HockeyJourneyAllProps";
+import MlbRunTotalsCard from "./MlbRunTotalsCard";
 import { inDisplayOrder } from "./FootballJourneySection";
 
 export default function MlbGamePage({ model }: { model: MlbGameModel }) {
@@ -99,6 +112,8 @@ export default function MlbGamePage({ model }: { model: MlbGameModel }) {
     home: headline.home.tint ? "rgb(var(--team-home-primary))" : "var(--series-1)",
     away: headline.away.tint ? "rgb(var(--team-away-primary))" : "var(--series-2)",
   };
+  // The final run-total card: a FINAL model with a built card only (the builder already holds it to the final).
+  const runTotals = model.phase === "final" ? model.runTotals : null;
 
   return (
     <section
@@ -127,9 +142,16 @@ export default function MlbGamePage({ model }: { model: MlbGameModel }) {
         <HockeyJourneyMatrix headline={headline} inlineProvenance compactColumns />
       </div>
 
-      {/* D4 insertion point: the approved stories join this row beside the history (see header). */}
-      <div data-mlb-history-row="">
-        <HockeyJourneyHistoryChart key={model.scope} history={history} colors={lineColors} />
+      {/* D4: the history, then (final only) the run-total card; side by side while both bases fit (see header). */}
+      <div data-mlb-history-row="" className="flex flex-wrap gap-6">
+        <div data-mlb-row-item="history" className="min-w-0 grow basis-[28.75rem]">
+          <HockeyJourneyHistoryChart key={model.scope} history={history} colors={lineColors} />
+        </div>
+        {runTotals && (
+          <div data-mlb-row-item="runTotals" className="min-w-0 grow basis-[22.5rem]">
+            <MlbRunTotalsCard totals={runTotals} scope={model.scope} colors={lineColors} />
+          </div>
+        )}
       </div>
 
       <HockeyJourneyAllProps key={model.originals.scope} originals={model.originals} entryLabel={model.allPropsLabel} />

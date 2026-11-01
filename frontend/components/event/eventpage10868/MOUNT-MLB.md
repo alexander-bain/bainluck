@@ -6,14 +6,20 @@ Ship: a baseball fan's web event page shows both teams' win chances, the score t
 the projected final the page already admits together, with the two-team win history and every
 original prop's exact Details.
 
-Nothing below is applied. `app/events/[id]/page.tsx` is untouched; no source in this checkpoint
-reads or edits it. The page owner applies this under its own grant (OB-10) after the web gates
-(`npm run build` → `npm run typecheck` → `npx jest --testPathPatterns='mlbGame|settledVocabulary'`)
-and real browser views. Line numbers are approximate (page.tsx 4,347 lines at 91d79dcb). This mirrors
-`MOUNT.md` (hockey) and `MOUNT-SOCCER.md`.
+Binding increment ship: after a baseball game, the event page shows the actual run total against the
+offered lines, alongside its win-probability history. FINAL run totals are PREPARED in this
+checkpoint (source, tests and this note); see "Final run totals" below. A source package is not app
+integration.
 
-This is a CORE checkpoint, not the full MLB page. What it does not carry is listed under "Held, not
-dropped" below; none of it is claimed.
+Nothing below is applied. `app/events/[id]/page.tsx` is untouched and stays PROPOSED only; no source
+in this checkpoint reads or edits it. The page owner applies this under its own grant (OB-10) after
+the web gates (`npm run build` → `npm run typecheck` →
+`npx jest --testPathPatterns='mlbGame|mlbRunTotals|settledVocabulary'`) and real browser views. Line
+numbers are approximate (page.tsx 4,347 lines at 91d79dcb). This mirrors `MOUNT.md` (hockey) and
+`MOUNT-SOCCER.md`.
+
+This is a CORE checkpoint plus the final run-total card, not the full MLB page. What it does not
+carry is listed under "Held, not dropped" below; none of it is claimed.
 
 ## Design disposition
 
@@ -70,6 +76,9 @@ const mlbGame = event && mlbGameApplies(event.sport)
   : null;
 ```
 
+The final run-total card adds NO host key: it reads the `gameMarkets` body and the `score` pair
+already passed above.
+
 ## 3. JSX: in place of the MLB hero probability block and the win-probability card
 
 ```tsx
@@ -85,7 +94,8 @@ const mlbGame = event && mlbGameApplies(event.sport)
 Never give the section a `key` that changes per refresh. Its history and All props are keyed by the
 model's own `scope` (`mlb:<event>:<phase>`), so an open list, an open Details or a chart disclosure
 survives a refresh in the same scope (each Details is held by the original's exact key) and resets on
-a new event or phase. `resetKey={event}` only retries a failed section; it does not remount it.
+a new event or phase. The run-total card gets the same `scope` and no key; it holds its chosen line
+itself. `resetKey={event}` only retries a failed section; it does not remount it.
 
 ## Owner-binding debt (all UNPAID)
 
@@ -112,33 +122,82 @@ a new event or phase. `resetKey={event}` only retries a failed section; it does 
    reaches `lib/propGrade.ts` through `HockeyJourneyAllProps` and is enrolled at the end of
    `__tests__/lib/settledVocabulary.test.tsx` `SURFACES` with one CONSTRUCTED forced pair. No
    existing line changed. Its non-vacuity check is in `__tests__/lib/mlbGame10868.test.ts`.
+   `MlbRunTotalsCard.tsx` (the leaf) is enrolled there too, by the S1 commit; this binding does not
+   edit the census. The page's census entry builds over the reduced fixture, which has no matrix,
+   so it draws no card and its differential is unchanged.
 5. **Checks under grant.** `npm run build`, `npm run typecheck`, the focused jest files, then real
    browser views on the exact committed export at 375 px, 393 px and 1280 px with 100% and 200% text:
    no clipped value, no tiny or grey substitute figure, no word split, no horizontal page scroll; the
    four live columns stay aligned on a normal phone (full, short, then content-sized names-above
    grid) and fall back to one labelled block per team only when a measured grid does not fit or at
-   an enlarged text size.
+   an enlarged text size. For the final card: history then card stacked at 375 / 393 px, normal and
+   enlarged text, with no miniature history; side by side at wide width only when both bases fit;
+   choosing a line works and never rescales the bar; the headline and history are unchanged.
 
 ## What a reader sees on real inputs today (event 15321836, final 3–7)
 
 - Headline, away first: White Sox 41% pregame, 7 final runs, Won; Astros 59%, 3, Lost; "Pre-match"
-  and "Final score" under the matrix; "Projected final: Projected final unavailable" said once for
-  both teams. The settled 0 / 1 hero is never printed as a chance.
+  and "Final score" under the matrix; "Pregame projected final: Unavailable" said once for both
+  teams. The settled 0 / 1 hero is never printed as a chance.
 - History: the Bain Luck blend, Astros traced, White Sox drawn as the documented other side of the
   same line (with H2's visible note), gaps blank, no settlement row, no inning guides.
+- Run totals (when the body carries its matrix, which the retained body does): "Where the total
+  finished", final total 10 (Astros 3, White Sox 7), 13 full-game lines 2.5 to 14.5, opening on 9.5
+  ("Final 10 runs · above this line", source result HIT); 10.5 reads "below this line", MISS. Every
+  pregame chance is "Unavailable". The matrix's five first-five-innings run lines are not drawn.
 - All props: every original in the page's catalogue with its readings, grades in the one settled
   vocabulary, and exact Details (Market ID, Outcome ID).
 
-## Future insertion, D4 (documented only; NOT built, no empty panel)
+## Final run totals (FINAL only; prepared in this checkpoint, not mounted)
 
-When the approved story cards land (their own admission), they sit BESIDE the history at regular
-width when both panels keep native's minimum readable widths (`anchorMinWidth` 460 pt /
-`storiesMinWidth` 360 pt, BaseballEventPagePresentation10868.swift, as 28.75rem / 22.5rem bases in a
-wrapping row, so the bases grow with the reader's text), and stack history-then-stories on phones and
-at enlarged text. No miniature chart and no squeezed card. The insertion point is the
-`data-mlb-history-row` wrapper in `MlbGamePage.tsx`; it belongs to the new page presentation, not to
-a shared mount change. Whether the page's content column at 1280 px holds both bases at 100% is
-measured in the browser lab, not assumed.
+- **Model.** `MlbGameView.runTotals: MlbFinalTotals | null` (`lib/eventPage10868/mlbRunTotals.ts`,
+  S1, unchanged). Non-null only when the phase is `final` AND the matrix offers a card. Before first
+  pitch and during play it is null, whatever body is passed.
+- **Exact input.** `mlbFinalTotals(mlbRunLines(ownMarkets?.game_question_matrix), host.score,
+  { home: headline.home.name, away: headline.away.name })`. `ownMarkets` is
+  `ownHockeyMarkets(gameMarkets, event)`, the same exact-`event_id` body All props reads.
+  `host.score` is the displayed pair the "Final runs" column prints. The names are the built
+  headline's.
+- **Never read.** `event.home_score` / `away_score`, any other total, the price history, or a line or
+  result taken as the actual.
+- **Matrix (S1's rules).** Contract `10238.v1`; the envelope's `display_scope` absent, null or
+  "game". Lines are typed `count_threshold` questions (quantity `runs`, subject `game`, period
+  `full_game`, relation `ge`) with exactly one `over` option. A repeated option key or line value
+  refuses both copies, and fewer than 3 lines gives null. Another event's body, no body, no matrix
+  or a refused matrix gives NO card and no empty panel.
+- **Pair.** Two whole, non-negative counts whose sum is a safe integer give the total and a stacked
+  home/away bar. Anything else (missing, partial, negative, fractional, unrepresentable) gives total
+  "Unavailable" and no bar. Every line is still offered, opening on the lowest. A missing side is
+  never 0.
+- **Lines.**
+  - Default: the highest line below the total, else the lowest.
+  - Pregame chance: the comparable baseline, else the admitted pregame reading, else
+    "Unavailable".
+  - Source result: the venue's won / lost in `propVerdictLabel` words, else "Result unavailable".
+    It is never graded from the runs; the comparison ("above / below / on this line") is the pair
+    against the number.
+- **Page.** `<MlbRunTotalsCard totals={model.runTotals} scope={model.scope} colors={lineColors} />`
+  with no key, drawn only for a final model with a non-null card. The chosen line is held inside
+  the card by option key:
+  - a same-scope refresh keeps it;
+  - a withdrawn or duplicated key reads "Selected line unavailable", never a substitute, and the
+    line returns when it is offered again;
+  - a new event or phase resets it;
+  - if the card itself leaves (its matrix is gone) and comes back, it opens on the default line.
+- **The row (D4, built for this card).** `data-mlb-history-row` is a wrapping flex row with a 1.5rem
+  gap.
+  - The history is always its first item, in the same tree position, so the chart and its
+    disclosure never remount when the card comes or goes.
+  - Each item grows from a flex base taken from native's minimum readable widths: history 28.75rem
+    (`anchorMinWidth` 460 pt), card 22.5rem (`storiesMinWidth` 360 pt). Either may shrink below
+    its base (`min-w-0`).
+  - They sit side by side only while the row holds 52.75rem. Below that, the card wraps under the
+    history and each takes the full row.
+  - The rem bases grow with the reader's text, so enlarged text stacks them.
+  - With no card, the history alone fills the row as before.
+  - Whether the page's content column at 1280 px holds both bases at 100% is measured in the
+    browser lab, not assumed.
+- **Not in this increment.** A reader or Details on the card; run totals before or during play.
 
 ## Held, not dropped (the next increments toward the same full route)
 
@@ -146,9 +205,12 @@ measured in the browser lab, not assumed.
   During `10236.v1`, with exact-once player and milestone identity.
 - OB-1 (the hockey card's signature-only boundary), OB-11 (the During baseline owner extraction),
   OB-13 (frozen milestone Details).
-- The five story families: run totals, home runs, strikeouts, extra innings, series.
+- Run totals BEFORE first pitch and DURING play (only the FINAL card is prepared here), and the
+  player (home runs, strikeouts), extra-innings and series stories.
 - G1 (no typed pregame player channel), G2 (no live count), G3 (no role-qualified identity), M1 (no
   genuine live HR/K specimen).
-- The pregame and final forecast comparisons; inning guides (OB-3); full-size readers; the
-  league eyebrow (web's event type declares no `metadata.league`); native fidelity, interaction and
-  accessibility parity; production bindings and mount; carried TestFlight acceptance.
+- The pregame and final forecast comparisons; inning guides (OB-3); full-size readers (including
+  any reader or Details on the run-total card); the league eyebrow (web's event type declares no
+  `metadata.league`); native fidelity, interaction and accessibility parity.
+- The owner bindings OB-8 and OB-10, the production mount (page.tsx stays PROPOSED), and every
+  native, device and TestFlight obligation.
