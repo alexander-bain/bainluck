@@ -396,6 +396,12 @@ TERMINAL_READ_RETRY_S = 30.0
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
 RECEIPT_QUOTE_RETENTION_S = 60.0
+#: #10090 DNPL: a LIVE event whose inputs reach the page at receipt (its graph
+#: kept, `preview_at_receipt` on) is persisted at most this often. The page
+#: does not wait for that write; a headline input on a fallback stays urgent
+#: (`URGENT_STAMP_MIN_S`). Below the arm's own floor this changes nothing
+#: (Polymarket's is 5 s); `LIVE_BLEND_RECEIPT_STAMP_FLOOR_S=0` turns it off.
+RECEIPT_STAMP_FLOOR_S = float(os.getenv("LIVE_BLEND_RECEIPT_STAMP_FLOOR_S", "5"))
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -3955,6 +3961,8 @@ class LiveBlendRefresher:
         self._own_writes: dict[int, dict] = {}
         #: event id -> `_mono` of its terminal-read retirement (`TERMINAL_READ_RETRY_S`).
         self._terminal_reads: dict[int, float] = {}
+        #: `receipt ambiguous` attribution lines left this minute.
+        self._ambiguous_logged = 0
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -3970,7 +3978,14 @@ class LiveBlendRefresher:
         last = self._last_refresh_at.get(event_id)
         if last is None:
             return True
-        floor = self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
+        floor = self.min_refresh_interval_s
+        if RECEIPT_STAMP_FLOOR_S > floor:
+            cached = getattr(self, "_preview_graphs", {}).get(event_id)
+            if (cached is not None and getattr(cached[1], "status", None) == "live"
+                    and getattr(cached[1], "completed_at", None) is None
+                    and _preview_at_receipt(self.source, event_id)):
+                floor = RECEIPT_STAMP_FLOOR_S
+        floor -= FLUSH_CLOCK_SLACK_S
         if now - last >= floor:  # the caller's clock on both sides, as before
             return True
         urgent = getattr(self, "_urgent_stamp", None)
@@ -8996,6 +9011,7 @@ class LiveBlendRefresher:
                     del self._graph_unstamped[eid]
                 for eid in [e for e in self._hl_commit_at if e not in self._hl_pending]:
                     del self._hl_commit_at[eid]
+                self._ambiguous_logged = 0
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -9323,6 +9339,20 @@ class LiveBlendRefresher:
                         stats["ambiguous"] += 1
                         self._note_receipt_class("ambiguous", event_id)
                         self._hl_mark(event_id, "ambiguous")
+                        if self._ambiguous_logged < 12:
+                            # #10090: which stored row made it ambiguous (own
+                            # write unrecorded, older/newer seq, or foreign).
+                            self._ambiguous_logged += 1
+                            logger.info(
+                                "live_blend_refresh[%s]: receipt ambiguous event=%s outcome=%s "
+                                "stored_at=%.6f bound=%.6f stored_p=%s quote_p=%s quote_seq=%s "
+                                "own=%s graph_age_ms=%d",
+                                self.source, event_id, row.id, stored.timestamp(), bound,
+                                current, price, getattr(mark, "seq", None),
+                                ",".join("%.6f:%s:%s" % (k, v[0], v[1])
+                                         for k, v in (own or {}).items()) or "-",
+                                int((now - read_at) * 1000),
+                            )
                         return None
                     # #10090: this process stored that row from an input older
                     # than this quote (seq order is receipt order), so the quote
