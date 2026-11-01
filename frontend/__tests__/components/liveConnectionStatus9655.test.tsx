@@ -116,11 +116,12 @@ describe('#10200 the status button', () => {
       expect(m.button['aria-expanded']).toBe('true');
       expect(m.details().hidden).toBeUndefined();
       const text = m.details().textContent;
-      expect(text).toContain('Probability observed');
-      expect(text).toContain('Oct 2, 7:59:52.000 PM UTC · 8s ago');
-      expect(text).toContain('Score confirmed');
+      expect(text).toContain('Latest source update');
+      expect(text).toContain('Oct 2, 7:59:52 PM UTC · 8s ago');
+      expect(text).toContain('Score');
       expect(text).toContain('Oct 2, 7:53:00 PM UTC · 7m ago');
-      expect(text).toContain('Oldest on screenThe score');
+      // Alex 2026-10-31: two rows; no derived 'oldest' row.
+      expect(text).not.toContain('Oldest on screen');
       m.click();
       expect(m.button['aria-expanded']).toBe('false');
     } finally {
@@ -182,8 +183,8 @@ describe('#10200 the tap facts', () => {
     const html = renderToStaticMarkup(
       <LiveConnectionStatus {...props({ scoreShown: false, oldestFact: 'price' })} />,
     );
-    expect(html).toContain('Probability observed');
-    expect(html).not.toContain('Score confirmed');
+    expect(html).toContain('Latest source update');
+    expect(html).not.toContain('>Score</dt>');
     expect(html).not.toContain('Oldest on screen');
   });
 

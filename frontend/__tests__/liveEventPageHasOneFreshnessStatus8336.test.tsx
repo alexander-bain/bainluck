@@ -257,9 +257,9 @@ describe("#10200 the status never lets a healthy socket hide old evidence", () =
     const html = draw(true, { event: { score_observed_at: agoIso(10 * MINUTE) } });
     expect(statusWords(html)).toBe("Score may be old");
     const status = html.slice(html.indexOf(STATUS));
-    expect(status).toContain("Score confirmed");
-    expect(status).toContain("10m ago");
-    expect(status).toContain("Oldest on screen</dt><dd>The score");
+    // Alex 2026-10-31: the pop-up's "Score" row carries the score's clock.
+    expect(status).toMatch(/Score<\/dt><dd><span><time dateTime="[^"]+">[^<]+ UTC<\/time><span class="text-text-muted"> · 10m ago/);
+    expect(status).not.toContain("Oldest on screen");
   });
 
   it("an open socket never turns a scheduled match Live", () => {

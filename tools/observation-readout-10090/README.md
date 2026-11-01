@@ -22,7 +22,9 @@ the value currently displayed; it is **not** the rollout configuration flag.
 
 In the existing `cua_repl` Node runtime, after the owner has selected a current
 `tab` using the documented CUA API, and the user/operator has opened the
-“Probability observed” disclosure so its timestamp is visibly displayed:
+status pop-up (its “Latest source update” row, formerly “Probability observed”)
+so its timestamp is visibly displayed. The recorder reads only the
+`data-observation-*` attributes, which the 2026-10-31 wording change kept:
 
 ```js
 var recorder = await import('/Users/bain/.codex-personal/worktrees/observation-readout/bainluck/tools/observation-readout-10090/capture.mjs');

@@ -2181,8 +2181,9 @@ export default function EventPage({ params }: EventPageProps) {
   // #10090 decision J under a preview (native #11816's rule, web half).
   // `confirmed_at` vouches for the committed pair, so while a preview is up it
   // is claimed only if the hero prints that same pair: a same-number preview
-  // keeps "Probability confirmed", a different-number one shows none. Every
-  // reader of the words "Probability confirmed" / "Connected" takes this value.
+  // keeps the confirmation (the pop-up's "Latest source update"), a
+  // different-number one shows none. Every reader of that row and of
+  // "Connected" takes this value.
   // The header badge's age (`heroStampInputs`) is the source-staleness policy,
   // not a confirmation claim, and keeps the raw stream value unchanged.
   const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);

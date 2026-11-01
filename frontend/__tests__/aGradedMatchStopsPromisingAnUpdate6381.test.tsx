@@ -242,7 +242,7 @@ test("a graded suspended detail without blend authority keeps its verdict but no
   expect(html).not.toContain(PROMISE);
   expect(html).toContain('data-status="Finished"');
   expect(html).toContain('data-probability=""');
-  expect(html).toContain("Probability observed</dt><dd><span>Time unavailable</span>");
+  expect(html).toContain("Latest source update</dt><dd><span>Time unavailable</span>");
   expect(html).toContain('data-observation-at=""');
   expect(html).toContain('data-observation-count="0"');
   expect(html).toContain('data-observation-delivery="unknown"');

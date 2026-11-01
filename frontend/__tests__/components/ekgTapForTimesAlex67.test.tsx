@@ -2,8 +2,9 @@
  * #10090 Alex 67 — "I say yes to the extras."
  *
  *   1. TAP THE EKG FOR THE EXACT TIMES. The heartbeat is a labelled button that
- *      opens the SAME panel the chart's status opens (observed, confirmed and
- *      score times, each with its time zone; "Time unavailable", never a guess).
+ *      opens the SAME panel the chart's status opens (when a source last spoke,
+ *      and the score's time, each with its time zone; "Time unavailable", never
+ *      a guess). Alex 2026-10-31: two rows, never the database write stamp.
  *      One model, two places (#8336, #4469). Escape closes and focus returns.
  *   2. THE CHART'S STATUS SPEAKS ONLY WHEN SOMETHING IS WRONG. While the EKG is
  *      showing, a healthy socket draws no status; reconnecting, an old price or
@@ -99,7 +100,7 @@ describe("Alex 67 — tap the EKG for the exact times", () => {
     expect(html).toContain(`<div id="${id}" hidden=""`);
   });
 
-  it("a tap opens the panel with the observed, confirmed and score rows, each zoned", () => {
+  it("a tap opens the panel with the latest source update and the score, each zoned", () => {
     const m = mount(props());
     try {
       expect(m.panel().hidden).toBe("");
@@ -107,9 +108,11 @@ describe("Alex 67 — tap the EKG for the exact times", () => {
       expect(m.button["aria-expanded"]).toBe("true");
       expect(m.panel().hidden).toBeUndefined();
       const text = m.panel().textContent;
-      expect(text).toContain("Probability observedOct 2, 7:59:52.000 PM UTC · 8s ago");
-      expect(text).toContain("Probability confirmedOct 2, 7:59:58 PM UTC · 2s ago");
-      expect(text).toContain("Score confirmedOct 2, 7:53:00 PM UTC · 7m ago");
+      // The newer of the observation and its confirmation: the last time a source spoke.
+      expect(text).toContain("Latest source updateOct 2, 7:59:58 PM UTC · 2s ago");
+      expect(text).toContain("ScoreOct 2, 7:53:00 PM UTC · 7m ago");
+      expect(text).not.toContain("Probability observed");
+      expect(text).not.toContain("Probability confirmed");
       m.click();
       expect(m.button["aria-expanded"]).toBe("false");
     } finally {
