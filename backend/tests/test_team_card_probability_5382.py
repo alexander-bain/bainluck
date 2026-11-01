@@ -244,9 +244,12 @@ class TestTheCardIsTheHero:
         away_p = _format_event_brief(event, AWAY_TEAM)["win_probability"]
 
         # The fixture's models favour the HOME side (mlb .693, espn .642,
-        # stat_model .7186 against kalshi .485 / polymarket .285).
-        assert home_p > 0.5, f"home should be favoured on this fixture, got {home_p}"
-        assert away_p < 0.5, f"away should be the underdog on this fixture, got {away_p}"
+        # stat_model .7186) and its markets the AWAY side (kalshi .485 /
+        # polymarket .285). Live, the markets carry the sportsbook's 3.0 since
+        # #10090 decision D, so the blend favours AWAY (home 0.489); before D
+        # the models carried it. Either way exactly one side is named.
+        assert home_p < 0.5, f"away should be favoured on this fixture, got home {home_p}"
+        assert away_p > 0.5, f"home should be the underdog on this fixture, got away {away_p}"
 
 
 class TestSettledMeansSettled:

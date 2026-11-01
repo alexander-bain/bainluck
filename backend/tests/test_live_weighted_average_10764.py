@@ -37,9 +37,12 @@ def history(values, **kwargs):
     )[-1].home_probability
 
 
+# #10090 decision D: live, kalshi carries the sportsbook's 3.0, so a fresh
+# betting/kalshi pair averages at equal weight (0.263421 / 0.346342 / 0.361079
+# at kalshi's old 0.8).
 @pytest.mark.parametrize(
     "betting,kalshi,expected",
-    [(0.255, 0.295, 0.263421), (0.3587, 0.30, 0.346342), (0.3587, 0.37, 0.361079)],
+    [(0.255, 0.295, 0.275), (0.3587, 0.30, 0.32935), (0.3587, 0.37, 0.36435)],
 )
 def test_live_updates_contribute_to_hero_and_history(betting, kalshi, expected):
     values = {"betting": betting, "kalshi": kalshi}
@@ -98,11 +101,15 @@ def test_refused_and_withdrawn_source_stays_excluded():
 
 
 def test_three_source_effective_cap_is_used_by_live_average():
-    values = {"betting": 0.255, "kalshi": 0.295, "polymarket": 0.30}
+    # Two 3.0s (betting, and kalshi since #10090 decision D) beside espn's 1.5:
+    # both are capped to a 35% share, x / (2x + 1.5) = 0.35 (the triple with
+    # polymarket used here before D no longer binds the cap: three equal 3.0s).
+    values = {"betting": 0.255, "kalshi": 0.295, "espn": 0.30}
     keys, _, weights = effective_source_weights(event(values))
     capped = dict(zip(keys, weights))
-    assert capped["betting"] == pytest.approx(1.6 * 0.35 / 0.65)
-    expected = round(0.255 * 0.35 + 0.295 * 0.325 + 0.30 * 0.325, 6)
+    assert capped["betting"] == pytest.approx(1.5 * 0.35 / 0.30)
+    assert capped["kalshi"] == pytest.approx(1.5 * 0.35 / 0.30)
+    expected = round(0.255 * 0.35 + 0.295 * 0.35 + 0.30 * 0.30, 6)
     assert compute_aggregate_probability(event(values)) == expected
     assert history(values, live_blend=True) == expected
 

@@ -143,11 +143,12 @@ def test_why_the_writer_must_retire_a_frozen_reading_8522():
     # RESTATED for #10764: on the live weighted AVERAGE the frozen 50% no
     # longer IS the headline; it pulls it 13 points off the market (0.606667
     # against 0.74). Inside the 10-minute grace no recency rule can refuse it,
-    # so the retirement below is still required.
+    # so the retirement below is still required. RESTATED for #10090 decision
+    # D (live kalshi carries the sportsbook's 3.0): 0.68, still 6 points off.
     for age in (60, MAX_STALENESS + 60):
         row = _row(_model_then_market(model_age_seconds=age))
         assert compute_aggregate_probability(row, "live") == pytest.approx(
-            0.606667, abs=1e-6
+            0.68, abs=1e-6
         )
         assert compute_aggregate_probability(row, "live") != pytest.approx(
             KALSHI_JUST_BEFORE

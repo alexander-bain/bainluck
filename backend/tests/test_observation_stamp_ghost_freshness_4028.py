@@ -361,7 +361,9 @@ class TestTheHeroThePageWouldPrint:
         )
 
         assert "polymarket" in keys, "the demoted source was dropped, not decayed"
-        assert weights[keys.index("polymarket")] == pytest.approx(0.08)
+        # The 0.1 floor of polymarket's live base weight: the sportsbook's 3.0
+        # since #10090 decision D (0.8 before it, so 0.08).
+        assert weights[keys.index("polymarket")] == pytest.approx(0.3)
         assert weights[keys.index("betting")] == pytest.approx(3.0)
 
     def test_pregame_the_ghost_is_not_demoted_at_all_and_still_loses(self):

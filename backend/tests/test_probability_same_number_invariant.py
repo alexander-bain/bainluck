@@ -71,7 +71,9 @@ class TestAlexSpecimenReproduces:
         wholesale would reverse #10764's accepted undated contract
         (`test_live_average_retains_the_betting_share_cap`). The stamped shape
         every writer has produced since 2026-08-14 reads 95/5 live
-        (`test_live_average_stale_eligibility_1829.py`)."""
+        (`test_live_average_stale_eligibility_1829.py`). RESTATED 2026-11-01
+        (#10090 decision D): live, the day-old kalshi 0.565 carries the
+        sportsbook's 3.0, so the unstamped bag reads 77/23."""
         for status in ("completed", "suspended"):
             home = compute_aggregate_probability(
                 _FakeEvent(ALEX_SPECIMEN_SOURCES, status)
@@ -79,7 +81,7 @@ class TestAlexSpecimenReproduces:
             # Rendered: away – home, rounded to whole points.
             assert (round((1 - home) * 100), round(home * 100)) == (99, 1)
         home = compute_aggregate_probability(_FakeEvent(ALEX_SPECIMEN_SOURCES))
-        assert (round((1 - home) * 100), round(home * 100)) == (88, 12)
+        assert (round((1 - home) * 100), round(home * 100)) == (77, 23)
 
     def test_the_weight_share_that_caused_it_is_recorded_and_now_capped(self):
         """Why it happened, kept executable.

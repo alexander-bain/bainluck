@@ -211,8 +211,10 @@ class TestCadenceInvariance:
         # RESTATED 2026-10-10 (#10764, #1829). Under the median the sweep ran
         # the whole spread, betting to kalshi. On the live average it runs from
         # the fresh pair's proportional blend (0.589921) to kalshi alone: from
-        # 40 minutes behind, `betting` carries no weight at all.
-        assert max(heroes.values()) == pytest.approx(0.589921, abs=1e-6)
+        # 40 minutes behind, `betting` carries no weight at all. RESTATED for
+        # #10090 decision D (live kalshi carries the sportsbook's 3.0): the
+        # fresh pair's blend is 0.52945.
+        assert max(heroes.values()) == pytest.approx(0.52945, abs=1e-6)
         assert min(heroes.values()) == pytest.approx(KALSHI_VALUE)
 
 

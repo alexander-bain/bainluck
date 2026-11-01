@@ -164,25 +164,25 @@ async def load_sports_markets(
     reused = False
     try:
         async with db.begin_nested():
-            result = await db.execute(
+            probe = await db.execute(
                 select(FuturesMarket.id, *_proof_columns()).where(
                     FuturesMarket.id.in_(market_ids)
                 )
             )
-            probe_rows = list(result.all())
+            probe_rows = list(probe.all())
             if not probe_rows:
                 return []
             expected = _identity(probe_rows, 1)
             key = (FORMAT_VERSION, MARKET_COLUMNS, *expected)
 
             async def build() -> dict[str, Any]:
-                result = await db.execute(
+                fresh = await db.execute(
                     select(
                         *(getattr(FuturesMarket, name) for name in MARKET_COLUMNS),
                         *_proof_columns(),
                     ).where(FuturesMarket.id.in_(market_ids))
                 )
-                fresh_rows = list(result.all())
+                fresh_rows = list(fresh.all())
                 # No ORM identity-map read and no outcome-derived values.
                 if not fresh_rows:
                     raise _MetadataMoved(
