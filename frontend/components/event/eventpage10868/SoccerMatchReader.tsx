@@ -13,19 +13,24 @@
  * page. It is rendered only while open, so a closed reader adds nothing to the
  * page's markup.
  *
- * MODAL: one local native `<dialog>` opened with `showModal()`. The browser's
- * top layer makes the rest of the page inert (no pointer, no keyboard focus)
- * while it is open; this file touches no ancestor, no shared modal layer and
- * no global history. Escape arrives as the dialog's `cancel`, which is
- * cancelled and turned into the owner's controlled close, as is any `close`
- * the browser makes on its own. Where `showModal` does not exist the dialog is
- * opened by its `open` attribute and Escape closes it (no background
- * isolation there: no current browser lacks `showModal`).
+ * MODAL ONLY: one local native `<dialog>` opened with `showModal()`. The
+ * browser's top layer makes the rest of the page inert (no pointer, no
+ * keyboard focus) while it is open; this file touches no ancestor, no shared
+ * modal layer and no global history. Escape arrives as the dialog's `cancel`,
+ * which is cancelled and turned into the owner's controlled close, as is any
+ * `close` the browser makes on its own. There is NO unisolated fallback: when
+ * `showModal` is missing or throws, the dialog is never shown (no `open`
+ * attribute, no overlay, no body style). The shell tells its owner
+ * (`onUnavailable`), which closes the attempt, re-enables its entries and says
+ * so by the entry; focus goes back to that entry without a scroll.
  *
- * While open: the page's own vertical scroll is held (prior `body` overflow
- * kept and restored); the reader's body scrolls inside the dialog, Close stays
- * in the persistent top bar, and content with its own horizontal scroll (the
- * exact-score map) keeps it. No swipe and no key but Escape is handled here.
+ * While a true modal is open: the page's own vertical scroll is held (prior
+ * `body` overflow kept and restored on every cleanup); the reader's body
+ * scrolls inside the dialog, Close stays in the persistent top bar, and content
+ * with its own horizontal scroll (the exact-score map) keeps it. The named
+ * Previous / Next sit at the START of the scrolling body, right after the
+ * compact context and before the long card, and scroll with it (no fixed
+ * footer). No swipe and no key is handled here.
  *
  * RETURN: a close the reader asked for (Close, Escape, cancel) puts the page
  * back at the scroll it had when the reader opened and focuses the owner's
@@ -46,6 +51,8 @@ export const SOCCER_READER_WORDS = {
   fullChart: "Full chart",
   /** Native SoccerPageInputAdapter10868.Words.storyUnavailable, verbatim. */
   storyUnavailable: "This story isn’t available for this match state. Every original is still in All props.",
+  /** The entry's own status when the full-size view could not open as a modal. */
+  fullSizeUnavailable: "Full-size view unavailable. You can still explore this on the page.",
   previous: "Previous",
   next: "Next",
 } as const;
@@ -84,6 +91,7 @@ export default function SoccerMatchReader({
   next = null,
   navLabel,
   onClose,
+  onUnavailable,
   returnTo,
   children,
 }: {
@@ -98,6 +106,8 @@ export default function SoccerMatchReader({
   navLabel?: string;
   /** The owner's controlled close: it stops rendering the reader. */
   onClose: () => void;
+  /** The modal could not open (`showModal` missing or throwing): the owner stops rendering the reader and says so by its entry. */
+  onUnavailable: () => void;
   /** The element focus returns to, read after the owner's close has committed. */
   returnTo: () => HTMLElement | null;
   children: ReactNode;
@@ -106,10 +116,9 @@ export default function SoccerMatchReader({
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const closing = useRef(false);
-  const modal = useRef(false);
-  const latest = useRef({ onClose, returnTo });
+  const latest = useRef({ onClose, onUnavailable, returnTo });
   useIsomorphicLayoutEffect(() => {
-    latest.current = { onClose, returnTo };
+    latest.current = { onClose, onUnavailable, returnTo };
   });
 
   /** Close, Escape, cancel or the browser's own close: once, through the owner. */
@@ -125,35 +134,43 @@ export default function SoccerMatchReader({
     if (!el) return;
     closing.current = false;
     const page = { x: window.scrollX, y: window.scrollY };
+    /** After the owner's update commits: focus its return target without scrolling; scroll back only for a close the reader asked for. */
+    const sendFocus = (mode: "asked" | "owner" | "unavailable") =>
+      queueMicrotask(() => {
+        const active = document.activeElement;
+        const lost = !active || active === document.body || !active.isConnected;
+        if (mode === "asked") window.scrollTo(page.x, page.y);
+        else if (mode === "owner" && !lost) return;
+        const target = latest.current.returnTo();
+        if (target?.isConnected) target.focus({ preventScroll: true });
+      });
+    let modal = false;
+    if (typeof el.showModal === "function") {
+      try {
+        el.showModal();
+        modal = el.open;
+      } catch {
+        modal = false;
+      }
+    }
+    if (!modal) {
+      // Never shown: no `open`, no overlay, no body style. A stray close event is not a request.
+      closing.current = true;
+      latest.current.onUnavailable();
+      return () => sendFocus("unavailable");
+    }
+    // Only a true modal holds the page still.
     const body = document.body;
     const priorOverflow = body.style.overflow;
     body.style.overflow = "hidden";
-    modal.current = false;
-    if (typeof el.showModal === "function") {
-      try {
-        if (!el.open) el.showModal();
-        modal.current = true;
-      } catch {
-        modal.current = false;
-      }
-    }
-    if (!modal.current && !el.hasAttribute("open")) el.setAttribute("open", "");
     closeButton.current?.focus({ preventScroll: true });
     return () => {
       const asked = closing.current;
       // From here on a close event is the shell's own leaving, not a request.
       closing.current = true;
-      if (modal.current && el.open && typeof el.close === "function") el.close();
-      else el.removeAttribute("open");
+      if (el.open && typeof el.close === "function") el.close();
       body.style.overflow = priorOverflow;
-      queueMicrotask(() => {
-        const active = document.activeElement;
-        const lost = !active || active === document.body || !active.isConnected;
-        if (asked) window.scrollTo(page.x, page.y);
-        else if (!lost) return;
-        const target = latest.current.returnTo();
-        if (target?.isConnected) target.focus({ preventScroll: true });
-      });
+      sendFocus(asked ? "asked" : "owner");
     };
   }, []);
 
@@ -167,12 +184,6 @@ export default function SoccerMatchReader({
         requestClose();
       }}
       onClose={requestClose}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !modal.current) {
-          event.preventDefault();
-          requestClose();
-        }
-      }}
       // Phone: the whole viewport. Wider: a centred panel, so a wide page never opens a phone-sized reader.
       // The margins are important: the dialog sits inside its owner's `space-y-*` stack, whose sibling margin must not move it.
       className="fixed inset-0 z-[100] !m-0 hidden h-[100dvh] max-h-none w-full max-w-none flex-col overflow-hidden border-0 bg-surface-card p-0 text-text-primary backdrop:bg-surface-deep/60 open:flex sm:!m-auto sm:h-fit sm:max-h-[85dvh] sm:max-w-2xl sm:rounded-xl sm:border sm:border-surface-border sm:shadow-lg"
@@ -196,19 +207,20 @@ export default function SoccerMatchReader({
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-[16px]" data-soccer-reader-body="">
         {context}
-        {children}
+        {/* Named navigation before the long card, so it is found without scrolling past a tall map or chart; it scrolls with the content. */}
         {previous && next && (
-          <nav aria-label={navLabel} className="flex flex-wrap justify-between gap-2 border-t border-surface-border pt-[12px]">
-            <button type="button" onClick={previous.go} className={CONTROL}>
+          <nav aria-label={navLabel} className="flex flex-wrap justify-between gap-2 border-b border-surface-border pb-[12px]">
+            <button type="button" onClick={previous.go} className={`${CONTROL} max-w-full text-left`}>
               {SOCCER_READER_WORDS.previous}
               <span className="font-normal text-text-secondary">{` · ${previous.name}`}</span>
             </button>
-            <button type="button" onClick={next.go} className={CONTROL}>
+            <button type="button" onClick={next.go} className={`${CONTROL} max-w-full text-left`}>
               {SOCCER_READER_WORDS.next}
               <span className="font-normal text-text-secondary">{` · ${next.name}`}</span>
             </button>
           </nav>
         )}
+        {children}
       </div>
     </dialog>
   );

@@ -69,7 +69,10 @@
  * reader, by name and place, in the offered order with wrap; the page's shown
  * story never moves, and the page stream's controls rest while any reader of
  * the page is open. The open reader belongs to the reading scope: a new event
- * or phase closes it with everything else.
+ * or phase closes it with everything else. The reader is a true modal or
+ * nothing: when it cannot open as one, the attempt is dropped, the stream's
+ * controls come back and the entry says the full-size view is unavailable
+ * (until a later attempt opens or the scope changes).
  *
  * Card-level Details is not in this increment: every original's exact Details
  * is in All props.
@@ -1418,9 +1421,11 @@ interface SoccerReading {
   held: Held;
   /** The exact card id open in the full-size reader; null when it is closed. Never moves `shownId`. */
   readerId: string | null;
+  /** The last attempt could not open as a modal: the entry says so until a later attempt or a new scope. */
+  readerUnavailable: boolean;
 }
 
-const freshReading = (scope: string): SoccerReading => ({ scope, shownId: null, held: {}, readerId: null });
+const freshReading = (scope: string): SoccerReading => ({ scope, shownId: null, held: {}, readerId: null, readerUnavailable: false });
 
 const STREAM_CONTROL =
   "min-h-11 rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand";
@@ -1450,7 +1455,7 @@ export default function SoccerMatchStories({
   // scope's choices; no effect, timer or key.
   if (stored.scope !== stream.scope) setStored(freshReading(stream.scope));
   const reading = stored.scope === stream.scope ? stored : freshReading(stream.scope);
-  const { shownId, held, readerId } = reading;
+  const { shownId, held, readerId, readerUnavailable } = reading;
   const write = (change: (current: SoccerReading) => SoccerReading) =>
     setStored((prev) => change(prev.scope === stream.scope ? prev : freshReading(stream.scope)));
   const setShownId = (id: string) => write((current) => ({ ...current, shownId: id }));
@@ -1477,12 +1482,17 @@ export default function SoccerMatchStories({
   const openReader = (id: string) => {
     if (resting) return;
     openedIn.current = stream.scope;
-    write((current) => ({ ...current, readerId: id }));
+    write((current) => ({ ...current, readerId: id, readerUnavailable: false }));
     onReaderOpenChange?.(true);
   };
   const moveReader = (id: string) => write((current) => ({ ...current, readerId: id }));
   const closeReader = () => {
     write((current) => ({ ...current, readerId: null }));
+    onReaderOpenChange?.(false);
+  };
+  // No modal, no reader: drop the attempt (the stream and the page's entries come back) and say so by the entry.
+  const readerFailed = () => {
+    write((current) => ({ ...current, readerId: null, readerUnavailable: true }));
     onReaderOpenChange?.(false);
   };
   // Back to the opener only in the scope it opened in; else this match's surviving entry.
@@ -1523,17 +1533,23 @@ export default function SoccerMatchStories({
       )}
 
       {card && (
-        <button
-          ref={opener}
-          type="button"
-          disabled={resting}
-          aria-label={`${SOCCER_READER_WORDS.openCard}: ${card.name}`}
-          onClick={() => openReader(card.id)}
-          data-soccer-reader-entry="story"
-          className={`${STREAM_CONTROL} w-full sm:w-auto`}
-        >
-          {SOCCER_READER_WORDS.openCard}
-        </button>
+        <div>
+          <button
+            ref={opener}
+            type="button"
+            disabled={resting}
+            aria-label={`${SOCCER_READER_WORDS.openCard}: ${card.name}`}
+            onClick={() => openReader(card.id)}
+            data-soccer-reader-entry="story"
+            className={`${STREAM_CONTROL} w-full sm:w-auto`}
+          >
+            {SOCCER_READER_WORDS.openCard}
+          </button>
+          {/* A live region that is always present, so the words are announced when they appear. */}
+          <p role="status" className={readerUnavailable ? "mt-2 text-sm text-text-secondary" : undefined} data-soccer-reader-status="story">
+            {readerUnavailable ? SOCCER_READER_WORDS.fullSizeUnavailable : null}
+          </p>
+        </div>
       )}
 
       {previous && next && (
@@ -1559,6 +1575,7 @@ export default function SoccerMatchStories({
           next={readerNext && { name: readerNext.name, go: () => moveReader(readerNext.id) }}
           navLabel={stream.storiesLabel}
           onClose={closeReader}
+          onUnavailable={readerFailed}
           returnTo={readerReturn}
         >
           {readerCard ? (

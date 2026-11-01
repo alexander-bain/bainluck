@@ -24,7 +24,10 @@
  * history has a plot to show (native `expand`). The story stream's "Open full
  * card" reader gets the same compact context. One reader at a time: while one
  * is open the other's entry rests, and a new event or phase closes both (the
- * stream's reading-scope rule, `match.stories.scope`).
+ * stream's reading-scope rule, `match.stories.scope`). A reader is a true modal
+ * or nothing: when Full chart cannot open as one, the attempt is dropped and
+ * the entry says the full-size view is unavailable (until a later attempt
+ * opens or the scope changes).
  *
  * Accessibility: headings in document order, real buttons, labelled values,
  * no motion, layouts that wrap at 375 px and at 200% text.
@@ -76,14 +79,15 @@ function ReaderContext({ header, figures }: { header: SoccerMatchHeader; figures
   );
 }
 
-/** Which of the page's readers is open, in one reading scope. */
+/** Which of the page's readers is open, in one reading scope, and whether Full chart's last attempt could not open. */
 interface SoccerPageReaders {
   scope: string;
   history: boolean;
   story: boolean;
+  historyUnavailable: boolean;
 }
 
-const closedReaders = (scope: string): SoccerPageReaders => ({ scope, history: false, story: false });
+const closedReaders = (scope: string): SoccerPageReaders => ({ scope, history: false, story: false, historyUnavailable: false });
 
 export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel }) {
   const headingId = useId();
@@ -127,7 +131,7 @@ export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel
   const openHistory = () => {
     if (readers.story || readers.history) return;
     openedIn.current = scope;
-    setReaders({ history: true });
+    setReaders({ history: true, historyUnavailable: false });
   };
   const historyReturn = () => {
     const own = chartEntry.current;
@@ -193,17 +197,23 @@ export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel
       <div className="space-y-3">
         <SoccerMatchHistoryChart history={match.history} colors={lineColors} />
         {plotted && (
-          <button
-            ref={chartEntry}
-            type="button"
-            disabled={readers.story || readers.history}
-            aria-label={`${SOCCER_READER_WORDS.fullChart}: ${match.history.title}`}
-            onClick={openHistory}
-            data-soccer-reader-entry="history"
-            className="min-h-11 w-full rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand sm:w-auto"
-          >
-            {SOCCER_READER_WORDS.fullChart}
-          </button>
+          <div>
+            <button
+              ref={chartEntry}
+              type="button"
+              disabled={readers.story || readers.history}
+              aria-label={`${SOCCER_READER_WORDS.fullChart}: ${match.history.title}`}
+              onClick={openHistory}
+              data-soccer-reader-entry="history"
+              className="min-h-11 w-full rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand sm:w-auto"
+            >
+              {SOCCER_READER_WORDS.fullChart}
+            </button>
+            {/* A live region that is always present, so the words are announced when they appear. */}
+            <p role="status" className={readers.historyUnavailable ? "mt-2 text-sm text-text-secondary" : undefined} data-soccer-reader-status="history">
+              {readers.historyUnavailable ? SOCCER_READER_WORDS.fullSizeUnavailable : null}
+            </p>
+          </div>
         )}
       </div>
 
@@ -224,6 +234,7 @@ export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel
           title={match.history.title}
           context={readerContext}
           onClose={() => setReaders({ history: false })}
+          onUnavailable={() => setReaders({ history: false, historyUnavailable: true })}
           returnTo={historyReturn}
         >
           <SoccerMatchHeadline headline={headline} />

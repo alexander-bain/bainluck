@@ -20,7 +20,9 @@
  * WIRING (what opens, what it shows, what closes it, where focus and scroll are
  * sent). They do NOT prove real browser focus, background isolation, scroll
  * locking, layout at 375 / 393 px or 200% text, or Back behaviour; only a
- * browser check proves those (owed).
+ * browser check proves those (owed). The safe-failure tests remove or break
+ * that stub (CONSTRUCTED) to prove the reader is a true modal or nothing; they
+ * are no more browser proof than the stub itself.
  */
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -84,6 +86,11 @@ const names = (stream: SoccerStoryStream) => stream.cards.map((c) => c.name);
 let host: HTMLDivElement;
 let root: Root;
 let showModalCalls: number;
+/** CONSTRUCTED jsdom dialog stub (see header): state only, no browser modality. */
+function stubShowModal(this: HTMLDialogElement) {
+  showModalCalls += 1;
+  this.setAttribute("open", "");
+}
 let pageScroll: jest.SpyInstance;
 const dialogProto = HTMLDialogElement.prototype as unknown as { showModal?: () => void; close?: () => void };
 
@@ -92,12 +99,8 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  // CONSTRUCTED jsdom dialog stub (see header): state only, no browser modality.
   showModalCalls = 0;
-  dialogProto.showModal = function (this: HTMLDialogElement) {
-    showModalCalls += 1;
-    this.setAttribute("open", "");
-  };
+  dialogProto.showModal = stubShowModal;
   dialogProto.close = function (this: HTMLDialogElement) {
     if (!this.hasAttribute("open")) return;
     this.removeAttribute("open");
@@ -239,20 +242,6 @@ describe("Open full card: one modal reader over the page, and Close returns the 
     expect(reader().open).toBe(true);
   });
 
-  it("without showModal the dialog opens by its attribute and Escape closes it", async () => {
-    delete dialogProto.showModal;
-    showPage(livePage);
-    click(opener());
-    expect(reader().hasAttribute("open")).toBe(true);
-    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
-    await act(async () => {
-      button(SOCCER_READER_WORDS.close, reader()).dispatchEvent(escape);
-    });
-    expect(escape.defaultPrevented).toBe(true);
-    expect(dialogs()).toHaveLength(0);
-    expect(document.activeElement).toBe(opener());
-  });
-
   it("the page going away while a reader is open releases the page and moves nothing", async () => {
     showPage(livePage);
     click(opener());
@@ -262,6 +251,89 @@ describe("Open full card: one modal reader over the page, and Close returns the 
     expect(dialogs()).toHaveLength(0);
     expect(document.body.style.overflow).toBe("");
     expect(pageScroll).not.toHaveBeenCalled();
+  });
+});
+
+// ─── A true modal or nothing ───────────────────────────────────────────────
+//
+// CONSTRUCTED failures of the stub: `showModal` removed (unsupported) or
+// throwing (an opening that fails in a browser that has it). The reader must
+// never show an unisolated dialog: no `open`, no overlay, no body lock, no
+// stuck reader flag; the page stays usable, the entry says so, focus returns to
+// it without a scroll, and a later attempt opens once the modal works.
+
+describe("when the modal cannot open, nothing opens: the page stays usable and the entry says so", () => {
+  const failures = {
+    missing: () => {
+      delete dialogProto.showModal;
+    },
+    throwing: () => {
+      dialogProto.showModal = function () {
+        showModalCalls += 1;
+        throw new DOMException("CONSTRUCTED opening failure", "InvalidStateError");
+      };
+    },
+  };
+  const status = (kind: "story" | "history") => host.querySelector(`[data-soccer-reader-status="${kind}"]`)!;
+  const entryOf = (kind: "story" | "history") => (kind === "story" ? opener() : chartEntry()!);
+  const otherOf = (kind: "story" | "history") => (kind === "story" ? chartEntry()! : opener());
+
+  it.each([
+    ["missing", "story"],
+    ["throwing", "story"],
+    ["missing", "history"],
+    ["throwing", "history"],
+  ] as const)("showModal %s, %s entry: no dialog, no lock, no stuck flag, a visible status, focus back unscrolled, and a later retry opens", async (failure, kind) => {
+    document.body.style.overflow = "clip"; // CONSTRUCTED prior page style: never replaced by a failed attempt
+    showPage(livePage);
+    failures[failure]();
+    const focus = jest.spyOn(HTMLElement.prototype, "focus");
+    await clickAndSettle(entryOf(kind));
+    // Nothing was shown: no dialog element, nothing open, no overlay, the page's style untouched.
+    expect(dialogs()).toHaveLength(0);
+    expect(document.querySelector("[open], [aria-modal]")).toBeNull();
+    expect(document.body.style.overflow).toBe("clip");
+    expect(showModalCalls).toBe(failure === "throwing" ? 1 : 0);
+    // No stuck flag: every entry and the stream are usable again, and the stream still moves.
+    expect(entryOf(kind).disabled).toBe(false);
+    expect(otherOf(kind).disabled).toBe(false);
+    expect(streamNav().every((b) => !b.disabled)).toBe(true);
+    // The entry says so, visibly and as a status, and only that entry.
+    expect(status(kind).getAttribute("role")).toBe("status");
+    expect(status(kind).textContent).toBe(SOCCER_READER_WORDS.fullSizeUnavailable);
+    expect(status(kind === "story" ? "history" : "story").textContent).toBe("");
+    expect(entryOf(kind).parentElement?.contains(status(kind))).toBe(true);
+    // Focus is back on the entry, without a scroll jump.
+    expect(document.activeElement).toBe(entryOf(kind));
+    expect(focus.mock.contexts.at(-1)).toBe(entryOf(kind));
+    expect(focus.mock.calls.at(-1)).toEqual([{ preventScroll: true }]);
+    expect(pageScroll).not.toHaveBeenCalled();
+    click(button(SOCCER_READER_WORDS.next));
+    expect(pageCard().getAttribute("data-soccer-card")).toBe("both");
+    expect(status(kind).textContent).toBe(SOCCER_READER_WORDS.fullSizeUnavailable);
+    // The modal works again: a later attempt opens as a true modal, and the status clears.
+    dialogProto.showModal = stubShowModal;
+    click(entryOf(kind));
+    expect(reader().open).toBe(true);
+    expect(reader().getAttribute("data-soccer-reader")).toBe(kind);
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(status(kind).textContent).toBe("");
+    expect(document.activeElement).toBe(button(SOCCER_READER_WORDS.close, reader()));
+  });
+
+  it("a new event or phase clears the status", async () => {
+    showPage(livePage);
+    failures.missing();
+    await clickAndSettle(opener());
+    await clickAndSettle(chartEntry()!);
+    expect(status("story").textContent).toBe(SOCCER_READER_WORDS.fullSizeUnavailable);
+    expect(status("history").textContent).toBe(SOCCER_READER_WORDS.fullSizeUnavailable);
+    // The same scope's refresh keeps it.
+    showPage(clone(livePage));
+    expect(status("story").textContent).toBe(SOCCER_READER_WORDS.fullSizeUnavailable);
+    showPage(finalPage);
+    expect(status("story").textContent).toBe("");
+    expect(status("history").textContent).toBe("");
   });
 });
 
@@ -293,6 +365,43 @@ describe("reader Previous / Next: by name and place, in the offered order with w
     await clickAndSettle(button(SOCCER_READER_WORDS.close, reader()));
     expect(pageCard().getAttribute("data-soccer-card")).toBe("goals");
     expect(document.activeElement).toBe(opener());
+  });
+
+  it("the named Previous / Next come first in the reader body: after the compact context, before the card", () => {
+    showPage(livePage);
+    click(opener());
+    const body = reader().querySelector("[data-soccer-reader-body]")!;
+    const parts = Array.from(body.children);
+    expect(parts[0].hasAttribute("data-soccer-reader-context")).toBe(true);
+    expect(parts[1].tagName).toBe("NAV");
+    expect(parts[1].getAttribute("aria-label")).toBe(livePage.stories.storiesLabel);
+    const nav = parts[1];
+    const cardEl = body.querySelector("[data-soccer-card]")!;
+    expect(nav.compareDocumentPosition(cardEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Tab order: Close, then the two named neighbours, then the card's own controls.
+    const focusable = Array.from(reader().querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex="0"]'));
+    expect(focusable.slice(0, 3).map((el) => el.textContent)).toEqual([
+      SOCCER_READER_WORDS.close,
+      `${SOCCER_READER_WORDS.previous} · ${third}`,
+      `${SOCCER_READER_WORDS.next} · ${second}`,
+    ]);
+    expect(focusable.slice(3).every((el) => cardEl.contains(el))).toBe(true);
+    expect(nav.closest("[data-soccer-reader-body]")).toBe(body);
+  });
+
+  it("before a long exact map too: the neighbours precede the map region in the scrolling body", () => {
+    showStream(hullPage.stories);
+    click(opener());
+    click(button(SOCCER_READER_WORDS.next, reader()));
+    expect(readerCardId()).toBe("exact");
+    const body = reader().querySelector("[data-soccer-reader-body]")!;
+    const nav = body.querySelector("nav")!;
+    const region = body.querySelector("[data-exact-scroller]")!;
+    expect(nav.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(Array.from(nav.querySelectorAll("button")).map((b) => b.textContent)).toEqual([
+      `${SOCCER_READER_WORDS.previous} · ${hullPage.stories.cards[0].name}`,
+      `${SOCCER_READER_WORDS.next} · ${hullPage.stories.cards[0].name}`,
+    ]);
   });
 
   it("opens on the story the page moved to, and the page keeps it after the reader roams", async () => {
