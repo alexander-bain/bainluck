@@ -39,6 +39,10 @@ import XCTest
 /// phase; and the before-first-pitch and during-play inputs, which are
 /// same-game phase-safety checks built from the retained values and earn no
 /// route credit of their own.
+///
+/// The live player home-run and strikeout inputs are the adapter's output on
+/// the CONSTRUCTED During rows of `BaseballLivePlayers10868` (every row, clock
+/// and admission constructed; no genuine live HR/K body is retained).
 @MainActor
 final class BaseballEventPagePresentation10868Tests: XCTestCase {
     private typealias F = BaseballRetained10868
@@ -819,5 +823,137 @@ final class BaseballEventPagePresentation10868Tests: XCTestCase {
         let quiet = Page(input: input)
         XCTAssertNil(quiet.extraInningsContent(activation: Self.activation(input, .extraInnings, log: record))?.onSelect)
         XCTAssertNil(quiet.extraInningsContent()?.onDetails)
+    }
+
+    // MARK: Live player milestones — CONSTRUCTED rows (`BaseballLivePlayers10868`)
+
+    private static func livePlayers() throws -> (homeRuns: PlayerContributionInput10868,
+                                                 strikeouts: PlayerContributionInput10868) {
+        (try XCTUnwrap(try BaseballLivePlayers10868.players(.homeRuns)).input,
+         try XCTUnwrap(try BaseballLivePlayers10868.players(.strikeouts)).input)
+    }
+
+    private static func with(_ input: BaseballEventPageInput10868, homeRuns: PlayerContributionInput10868?,
+                             strikeouts: PlayerContributionInput10868?) -> BaseballEventPageInput10868 {
+        var input = input
+        input.livePlayerHomeRuns = homeRuns
+        input.livePlayerStrikeouts = strikeouts
+        return input
+    }
+
+    private static func links(_ cards: [BaseballEventPageCard10868]) -> [BaseballEventPageStory10868] {
+        cards.map { BaseballEventPageStory10868(cardID: $0.rawValue, card: $0) }
+    }
+
+    func testDuringPlayTheLivePlayerInputsMountTheSharedVisualUnderTheSameCardsAndNeverOutsideTheirPhase() throws {
+        let stories = try Self.stories()
+        let live = try Self.livePlayers()
+        let input = Self.with(Self.page(.live, stories: stories, links: Self.links([.homeRuns, .strikeouts, .totals, .series])),
+                              homeRuns: live.homeRuns, strikeouts: live.strikeouts)
+        let model = Model(input)
+        XCTAssertEqual(model.livePlayerHomeRuns, live.homeRuns)
+        XCTAssertEqual(model.livePlayerStrikeouts, live.strikeouts)
+        XCTAssertNil(model.homeRuns, "the final comparison stays final-only")
+        XCTAssertNil(model.strikeouts)
+        XCTAssertTrue(model.isMounted(.homeRuns))
+        XCTAssertTrue(model.isMounted(.strikeouts))
+        XCTAssertEqual(model.storyCard("homeRuns"), .homeRuns)
+        XCTAssertEqual(model.storyCard("strikeouts"), .strikeouts)
+        let view = Page(input: input)
+        XCTAssertEqual(view.livePlayerHomeRunsContent()?.input, live.homeRuns, "the owner's input, unchanged")
+        XCTAssertEqual(view.livePlayerStrikeoutsContent()?.input, live.strikeouts)
+        XCTAssertNil(view.homeRunsContent())
+        XCTAssertNil(view.strikeoutsContent())
+        XCTAssertTrue(view.controlsReady(.strikeouts), "the live visual draws without callbacks")
+        XCTAssertEqual(view.storyKind("strikeouts"), .strikeouts)
+
+        // Before first pitch and after the final the live inputs are never mounted.
+        for phase in [BaseballEventPagePhase10868.before, .final] {
+            let other = Self.with(Self.page(phase, stories: stories), homeRuns: live.homeRuns, strikeouts: live.strikeouts)
+            XCTAssertNil(Model(other).livePlayerHomeRuns, "\(phase)")
+            XCTAssertNil(Page(input: other).livePlayerStrikeoutsContent(), "\(phase)")
+        }
+        let finalPage = Self.with(Self.page(.final, stories: stories), homeRuns: live.homeRuns, strikeouts: live.strikeouts)
+        XCTAssertEqual(Page(input: finalPage).homeRunsContent()?.card, stories.homeRuns.card, "the final story, unchanged")
+
+        // An input that is not in its during phase is not mounted.
+        let hr = live.homeRuns
+        let wrong = PlayerContributionInput10868(
+            phase: .before, orientation: hr.orientation, eyebrow: hr.eyebrow, title: hr.title,
+            definition: hr.definition, player: hr.player, selectedMilestoneID: hr.selectedMilestoneID,
+            chartTitle: hr.chartTitle, ticks: hr.ticks, chooser: hr.chooser, timing: hr.timing)
+        let mismatched = Model(Self.with(Self.page(.live, stories: stories), homeRuns: wrong, strikeouts: nil))
+        XCTAssertNil(mismatched.livePlayerHomeRuns)
+        XCTAssertFalse(mismatched.isMounted(.homeRuns))
+    }
+
+    func testLivePlayerActionsAndDisclosuresInTheStreamRequestTheHoldFirstAndReadersPassThrough() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        var choices = false
+        var timing = false
+        let choicesOwner = Binding<Bool>(get: { choices }, set: { record("choices:\($0)"); choices = $0 })
+        let timingOwner = Binding<Bool>(get: { timing }, set: { record("timing:\($0)"); timing = $0 })
+        let live = try Self.livePlayers()
+        let input = Self.with(Self.page(.live, stories: try Self.stories()),
+                              homeRuns: live.homeRuns, strikeouts: live.strikeouts)
+        func view(_ mode: BaseballEventPageMode10868) -> Page {
+            Page(input: input, mode: mode,
+                 onPlayerHomeRunSelect: { record("homeRunSelect:\($0)") },
+                 onPlayerHomeRunChoose: { record("homeRunChoose:\($0)") },
+                 onPlayerHomeRunDetails: { record("homeRunDetails:\($0)") },
+                 playerHomeRunChoicesExpanded: choicesOwner,
+                 playerHomeRunTimingExpanded: timingOwner,
+                 onPlayerStrikeoutSelect: { record("strikeoutSelect:\($0)") },
+                 onPlayerStrikeoutChoose: { record("strikeoutChoose:\($0)") },
+                 onPlayerStrikeoutDetails: { record("strikeoutDetails:\($0)") })
+        }
+
+        let leaf = try XCTUnwrap(view(.page).livePlayerHomeRunsContent(
+            activation: Self.activation(input, .homeRuns, log: record)))
+        XCTAssertEqual(log, [], "building the leaf asks for nothing")
+        let id = try XCTUnwrap(live.homeRuns.selectedMilestoneID)
+        leaf.onSelect?(id)
+        leaf.onChoosePlayer?(BaseballLivePlayers10868.cam)
+        leaf.onDetails?(id)
+        leaf.choicesExpanded!.wrappedValue = true
+        leaf.timingExpanded!.wrappedValue = true
+        XCTAssertEqual(log, ["hold:homeRuns", "homeRunSelect:\(id)",
+                             "hold:homeRuns", "homeRunChoose:\(BaseballLivePlayers10868.cam)",
+                             "hold:homeRuns", "homeRunDetails:\(id)",
+                             "hold:homeRuns", "choices:true",
+                             "hold:homeRuns", "timing:true"])
+
+        log = []
+        let full = try XCTUnwrap(view(.reader(.strikeouts)).livePlayerStrikeoutsContent())
+        full.onDetails?("k")
+        full.onSelect?("k")
+        full.onChoosePlayer?(BaseballLivePlayers10868.brown)
+        XCTAssertEqual(log, ["strikeoutDetails:k", "strikeoutSelect:k", "strikeoutChoose:\(BaseballLivePlayers10868.brown)"],
+                       "full-size content adds no hold")
+
+        let bare = try XCTUnwrap(Page(input: input).livePlayerHomeRunsContent(
+            activation: Self.activation(input, .homeRuns, log: record)))
+        XCTAssertNil(bare.onSelect)
+        XCTAssertNil(bare.onChoosePlayer)
+        XCTAssertNil(bare.onDetails)
+        XCTAssertNil(bare.choicesExpanded)
+        XCTAssertNil(bare.timingExpanded)
+    }
+
+    func testWithNoLivePlayerInputEveryPhaseMountsExactlyAsBefore() throws {
+        let stories = try Self.stories()
+        for phase in [BaseballEventPagePhase10868.before, .live, .final] {
+            let input = Self.page(phase, stories: stories)
+            XCTAssertNil(input.livePlayerHomeRuns)
+            XCTAssertNil(input.livePlayerStrikeouts)
+            let model = Model(input)
+            XCTAssertEqual(model.isMounted(.homeRuns), phase == .final, "\(phase)")
+            XCTAssertEqual(model.isMounted(.strikeouts), phase == .final, "\(phase)")
+            XCTAssertNil(Page(input: input).livePlayerHomeRunsContent())
+            XCTAssertNil(Page(input: input).livePlayerStrikeoutsContent())
+        }
+        XCTAssertFalse(Page(input: Self.page(.final, stories: stories)).controlsReady(.strikeouts),
+                       "the final ladder still needs its select callback")
     }
 }

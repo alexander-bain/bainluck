@@ -62,6 +62,15 @@ import SwiftUI
 // route's five story families: strikeouts, extra innings, home runs, run
 // totals and the series.
 //
+// During play only, the same home-run and strikeout cards may instead carry
+// the shared player-milestone visual (`PlayerContributionPresentation10868`)
+// with the owner's live player input (`livePlayerHomeRuns`,
+// `livePlayerStrikeouts`, built by `BaseballPlayerMilestonesAdapter10868`):
+// each player's stored pregame chance beside the current chance, the count in
+// its own unavailable words. Before first pitch and after the final those
+// inputs are never mounted; the final comparisons above stay the final
+// stories, unchanged.
+//
 // The host supplies each leaf's own immutable input, already admitted for the
 // same snapshot, including every selection: the strikeout target, the run
 // line or milestone, the extra-innings outcome, and the series market and
@@ -364,6 +373,12 @@ struct BaseballEventPageInput10868: Equatable {
     let stream: StoryStreamPresentation10868
     let stories: [BaseballEventPageStory10868]
     let copy: BaseballEventPageCopy10868
+    /// During play only: each player's stored pregame chance of a home run
+    /// beside the current chance (`BaseballPlayerMilestonesAdapter10868`).
+    /// Nil keeps the page exactly as before.
+    var livePlayerHomeRuns: PlayerContributionInput10868? = nil
+    /// During play only: the same for strikeouts, the producer's generic stat.
+    var livePlayerStrikeouts: PlayerContributionInput10868? = nil
 }
 
 /// The owner's retained originals behind "All props", for the catalogue and
@@ -517,6 +532,21 @@ struct BaseballEventPageModel10868: Equatable {
         input.phase == .final ? input.strikeouts : nil
     }
 
+    /// During play only, and only an input in its own during phase.
+    var livePlayerHomeRuns: PlayerContributionInput10868? {
+        Self.live(input.livePlayerHomeRuns, phase: input.phase)
+    }
+
+    var livePlayerStrikeouts: PlayerContributionInput10868? {
+        Self.live(input.livePlayerStrikeouts, phase: input.phase)
+    }
+
+    static func live(_ players: PlayerContributionInput10868?,
+                     phase: BaseballEventPagePhase10868) -> PlayerContributionInput10868? {
+        guard phase == .live, let players, players.phase == .during else { return nil }
+        return players
+    }
+
     var totals: BaseballTotalsStory10868? {
         guard let totals = input.totals, totals.belongs(to: input.phase) else { return nil }
         return totals
@@ -529,8 +559,8 @@ struct BaseballEventPageModel10868: Equatable {
     func isMounted(_ card: BaseballEventPageCard10868) -> Bool {
         switch card {
         case .history: true
-        case .homeRuns: homeRuns != nil
-        case .strikeouts: strikeouts != nil
+        case .homeRuns: homeRuns != nil || livePlayerHomeRuns != nil
+        case .strikeouts: strikeouts != nil || livePlayerStrikeouts != nil
         case .totals: totals != nil
         case .extraInnings: extraInnings != nil
         case .series: series != nil
@@ -634,6 +664,22 @@ struct BaseballEventPagePresentation10868: View {
     /// Page-owned run milestones timing disclosure. Full-size content gets it
     /// unchanged; a card in the stream gets it through `relay(_:through:)`.
     var totalTimingExpanded: Binding<Bool>? = nil
+    /// During play: a live home-run milestone's exact id (the producer's
+    /// `questionKey`).
+    var onPlayerHomeRunSelect: ((String) -> Void)? = nil
+    /// During play: a home-run player's exact `subject.key`.
+    var onPlayerHomeRunChoose: ((String) -> Void)? = nil
+    /// During play: the selected home-run milestone's id, for its Details.
+    var onPlayerHomeRunDetails: ((String) -> Void)? = nil
+    /// Page-owned home-run player choices and timing disclosures.
+    var playerHomeRunChoicesExpanded: Binding<Bool>? = nil
+    var playerHomeRunTimingExpanded: Binding<Bool>? = nil
+    /// The same four for the live strikeout milestones.
+    var onPlayerStrikeoutSelect: ((String) -> Void)? = nil
+    var onPlayerStrikeoutChoose: ((String) -> Void)? = nil
+    var onPlayerStrikeoutDetails: ((String) -> Void)? = nil
+    var playerStrikeoutChoicesExpanded: Binding<Bool>? = nil
+    var playerStrikeoutTimingExpanded: Binding<Bool>? = nil
 
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -692,7 +738,8 @@ struct BaseballEventPagePresentation10868: View {
         case .history, .homeRuns, .extraInnings:
             return true
         case .strikeouts:
-            return onStrikeoutSelect != nil
+            // The live player visual draws without callbacks; the final ladder's strip always acts.
+            return model.livePlayerStrikeouts != nil || onStrikeoutSelect != nil
         case .totals:
             if case .finalTargets? = model.totals { return onTotalSelect != nil && onTotalLineDetails != nil }
             return true
@@ -751,6 +798,35 @@ struct BaseballEventPagePresentation10868: View {
         return MLBStrikeoutComparison11284(
             card: story.card, selectedRowID: story.selectedRowID, color: story.color, expanded: expanded,
             onSelect: select, onDetails: Self.relay(onStrikeoutDetails, through: activation))
+    }
+
+    /// During play: the live home-run player milestones, with the host's
+    /// exact callbacks after the stream's activation hook.
+    func livePlayerHomeRunsContent(activation: StoryStreamCardActivation10868? = nil)
+        -> PlayerContributionPresentation10868? {
+        model.livePlayerHomeRuns.map {
+            PlayerContributionPresentation10868(
+                input: $0,
+                onSelect: Self.relay(onPlayerHomeRunSelect, through: activation),
+                onChoosePlayer: Self.relay(onPlayerHomeRunChoose, through: activation),
+                onDetails: Self.relay(onPlayerHomeRunDetails, through: activation),
+                choicesExpanded: Self.relay(playerHomeRunChoicesExpanded, through: activation),
+                timingExpanded: Self.relay(playerHomeRunTimingExpanded, through: activation))
+        }
+    }
+
+    /// During play: the live strikeout player milestones, the same way.
+    func livePlayerStrikeoutsContent(activation: StoryStreamCardActivation10868? = nil)
+        -> PlayerContributionPresentation10868? {
+        model.livePlayerStrikeouts.map {
+            PlayerContributionPresentation10868(
+                input: $0,
+                onSelect: Self.relay(onPlayerStrikeoutSelect, through: activation),
+                onChoosePlayer: Self.relay(onPlayerStrikeoutChoose, through: activation),
+                onDetails: Self.relay(onPlayerStrikeoutDetails, through: activation),
+                choicesExpanded: Self.relay(playerStrikeoutChoicesExpanded, through: activation),
+                timingExpanded: Self.relay(playerStrikeoutTimingExpanded, through: activation))
+        }
     }
 
     func totalMilestonesContent(activation: StoryStreamCardActivation10868? = nil) -> TotalMilestonePresentation10868? {
@@ -1124,9 +1200,17 @@ struct BaseballEventPagePresentation10868: View {
         case .history:
             historyContent(reader: true)
         case .homeRuns:
-            homeRunsContent(activation: activation)
+            if let live = livePlayerHomeRunsContent(activation: activation) {
+                live
+            } else {
+                homeRunsContent(activation: activation)
+            }
         case .strikeouts:
-            strikeoutsContent(activation: activation, expanded: expanded)
+            if let live = livePlayerStrikeoutsContent(activation: activation) {
+                live
+            } else {
+                strikeoutsContent(activation: activation, expanded: expanded)
+            }
         case .totals:
             if let milestones = totalMilestonesContent(activation: activation) {
                 milestones

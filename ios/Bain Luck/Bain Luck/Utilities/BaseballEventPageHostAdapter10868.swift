@@ -64,6 +64,16 @@ import SwiftUI
 /// card and originals of the SAME build. Every original stays reachable
 /// through All props.
 ///
+/// LIVE PLAYER MILESTONES. During play only, the home-run and strikeout cards
+/// carry the shared player-milestone visual over the typed During rows
+/// (`BaseballPlayerMilestonesAdapter10868`). Each stat has its own held player
+/// and milestone here (`Reading.homeRunPlayer`, `Reading.strikeoutPlayer`);
+/// choosing a player clears that stat's held milestone, because a milestone
+/// belongs to one player. A milestone's Details (`playerHomeRunDetails`,
+/// `playerStrikeoutDetails`) open the exact original built in the SAME pass as
+/// the card, frozen as tapped, with no hold of their own. At the final these
+/// inputs are gone and the final comparisons are the stories, unchanged.
+///
 /// ONE HOLD PER ACTION (`routes`). The page's hold (`onInteraction`) is asked
 /// for exactly once before each page action lands, and never by a routing
 /// callback after it. A story card's select, Details and disclosure write
@@ -124,6 +134,10 @@ struct BaseballEventPageHost10868: View {
         /// drawn from, with the exact original behind each drawn row. Nil after
         /// the final or with no run ladder.
         let milestones: BaseballRunMilestonesAdapter10868.Milestones?
+        /// During play: the live player cards and the exact originals behind
+        /// their milestones, one result each. Nil otherwise.
+        var homeRunPlayers: BaseballPlayerMilestonesAdapter10868.Players? = nil
+        var strikeoutPlayers: BaseballPlayerMilestonesAdapter10868.Players? = nil
     }
 
     /// The screen's own reading state, as the builders take it.
@@ -133,6 +147,10 @@ struct BaseballEventPageHost10868: View {
         var selection: OriginalMarketDetails9483.Selection? = nil
         var readerOpen = false
         var wide = false
+        /// During play: each stat's held player (`subject.key`) and milestone
+        /// (`questionKey`), passed through unchanged.
+        var homeRunPlayer = BaseballPlayerMilestonesAdapter10868.Held()
+        var strikeoutPlayer = BaseballPlayerMilestonesAdapter10868.Held()
     }
 
     @State private var presented: Presented?
@@ -140,6 +158,12 @@ struct BaseballEventPageHost10868: View {
     @State private var selections = BaseballStoriesAdapter10868.Selections()
     @State private var selection: OriginalMarketDetails9483.Selection?
     @State private var totalTiming = false
+    @State private var homeRunPlayer = BaseballPlayerMilestonesAdapter10868.Held()
+    @State private var strikeoutPlayer = BaseballPlayerMilestonesAdapter10868.Held()
+    @State private var homeRunChoices = false
+    @State private var homeRunTiming = false
+    @State private var strikeoutChoices = false
+    @State private var strikeoutTiming = false
     /// A story original's Details over the page, and over a full-size reader.
     @State private var pageStoryOriginal: MLBOriginal11284?
     @State private var readerStoryOriginal: MLBOriginal11284?
@@ -201,7 +225,18 @@ struct BaseballEventPageHost10868: View {
             onSeriesDetails: routes.storyDetails,
             onExtraInningsSelect: { selections.extraInnings = $0 },
             onExtraInningsDetails: routes.storyDetails,
-            totalTimingExpanded: $totalTiming)
+            totalTimingExpanded: $totalTiming,
+            onPlayerHomeRunSelect: { homeRunPlayer.milestone = $0 },
+            // A milestone belongs to one player: choosing a player clears it.
+            onPlayerHomeRunChoose: { homeRunPlayer = BaseballPlayerMilestonesAdapter10868.Held(player: $0) },
+            onPlayerHomeRunDetails: routes.playerHomeRunDetails,
+            playerHomeRunChoicesExpanded: $homeRunChoices,
+            playerHomeRunTimingExpanded: $homeRunTiming,
+            onPlayerStrikeoutSelect: { strikeoutPlayer.milestone = $0 },
+            onPlayerStrikeoutChoose: { strikeoutPlayer = BaseballPlayerMilestonesAdapter10868.Held(player: $0) },
+            onPlayerStrikeoutDetails: routes.playerStrikeoutDetails,
+            playerStrikeoutChoicesExpanded: $strikeoutChoices,
+            playerStrikeoutTimingExpanded: $strikeoutTiming)
     }
 
     /// Where each page action lands, with the page's one hold.
@@ -222,6 +257,10 @@ struct BaseballEventPageHost10868: View {
         /// A run milestone's Details, by the row's exact id: no hold of its
         /// own, for the same reasons as `storyDetails`.
         let milestoneDetails: (String) -> Void
+        /// A live player milestone's Details, by its exact `questionKey`: no
+        /// hold of its own, for the same reasons as `storyDetails`.
+        var playerHomeRunDetails: (String) -> Void = { _ in }
+        var playerStrikeoutDetails: (String) -> Void = { _ in }
     }
 
     /// One pass's routes — pure: building them calls nothing. `hold` is the
@@ -274,6 +313,18 @@ struct BaseballEventPageHost10868: View {
                     id, totals: input.totals, phase: input.phase, milestones: built.milestones,
                     eventID: built.eventID) else { return }
                 show(original)
+            },
+            playerHomeRunDetails: { id in
+                guard let original = BaseballPlayerMilestonesAdapter10868.details(
+                    id, drawn: input.livePlayerHomeRuns, phase: input.phase, players: built.homeRunPlayers,
+                    eventID: built.eventID) else { return }
+                show(original)
+            },
+            playerStrikeoutDetails: { id in
+                guard let original = BaseballPlayerMilestonesAdapter10868.details(
+                    id, drawn: input.livePlayerStrikeouts, phase: input.phase, players: built.strikeoutPlayers,
+                    eventID: built.eventID) else { return }
+                show(original)
             })
     }
 
@@ -294,7 +345,8 @@ struct BaseballEventPageHost10868: View {
                    probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
                    now: now,
                    reading: Reading(story: story, selections: selections, selection: selection,
-                                    readerOpen: presented != nil, wide: sizeClass == .regular))
+                                    readerOpen: presented != nil, wide: sizeClass == .regular,
+                                    homeRunPlayer: homeRunPlayer, strikeoutPlayer: strikeoutPlayer))
     }
 
     /// The page input and originals from the passed values alone — pure, so
@@ -343,11 +395,19 @@ struct BaseballEventPageHost10868: View {
             event, markets: markets,
             host: BaseballOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
             tint: BaseballGamePageAdapter10868.tints(event).home, selection: reading.selection)
+        // During play: each live player card and its exact originals, ONE result per stat.
+        let playersHost = BaseballPlayerMilestonesAdapter10868.Host(now: now, calendar: calendar, locale: locale)
+        let homeRunPlayers = BaseballPlayerMilestonesAdapter10868.players(
+            event, markets: markets, stat: .homeRuns, host: playersHost, held: reading.homeRunPlayer)
+        let strikeoutPlayers = BaseballPlayerMilestonesAdapter10868.players(
+            event, markets: markets, stat: .strikeouts, host: playersHost, held: reading.strikeoutPlayer)
         let input = BaseballPageInputAdapter10868.input(
             event, history: historyInput, homeRuns: homeRuns, strikeouts: strikeouts, totals: totals,
             extraInnings: extra, series: series, originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
-            host: host)
-        return Built(input: input, originals: originals, eventID: event.id, milestones: milestones)
+            host: host,
+            livePlayerHomeRuns: homeRunPlayers?.input, livePlayerStrikeouts: strikeoutPlayers?.input)
+        return Built(input: input, originals: originals, eventID: event.id, milestones: milestones,
+                     homeRunPlayers: homeRunPlayers, strikeoutPlayers: strikeoutPlayers)
     }
 }

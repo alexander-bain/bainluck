@@ -10,6 +10,10 @@ import XCTest
 /// The stream is manual: no owner ranks or auto-advances baseball story cards,
 /// so the held card is shown, Previous and Next name the others, and nothing
 /// offers playback, dwell or a timer.
+///
+/// The live player cards use the adapter's output on the CONSTRUCTED During
+/// rows of `BaseballLivePlayers10868` (every row, clock and admission
+/// constructed; no genuine live HR/K body is retained).
 @MainActor
 final class BaseballPageInputAdapter10868Tests: XCTestCase {
     private typealias F = BaseballRetained10868
@@ -141,5 +145,37 @@ final class BaseballPageInputAdapter10868Tests: XCTestCase {
         let order = P.offeredCards(phase: .final, homeRuns: final.homeRuns, strikeouts: final.strikeouts,
                                    totals: final.totals, extraInnings: live.extraInnings, series: final.series)
         XCTAssertEqual(order, [.homeRuns, .strikeouts, .totals, .extraInnings, .series])
+    }
+
+    /// CONSTRUCTED live player inputs (`BaseballLivePlayers10868`).
+    func testDuringPlayTheLivePlayerCardsTakeTheDecksSlotsUnderGenericNamesAndNowhereElse() throws {
+        let hr = try XCTUnwrap(try BaseballLivePlayers10868.players(.homeRuns)).input
+        let k = try XCTUnwrap(try BaseballLivePlayers10868.players(.strikeouts)).input
+        let deal = try built(try F.finalEvent(), now: F.finalNow).input
+        XCTAssertEqual(P.offeredCards(phase: .live, homeRuns: nil, strikeouts: nil, totals: nil, series: deal.series,
+                                      livePlayerHomeRuns: hr, livePlayerStrikeouts: k), [.homeRuns, .strikeouts, .series])
+        XCTAssertEqual(P.offeredCards(phase: .before, homeRuns: nil, strikeouts: nil, totals: nil, series: deal.series,
+                                      livePlayerHomeRuns: hr, livePlayerStrikeouts: k), [.series])
+        XCTAssertEqual(P.offeredCards(phase: .final, homeRuns: nil, strikeouts: nil, totals: nil, series: nil,
+                                      livePlayerHomeRuns: hr, livePlayerStrikeouts: k), [])
+        XCTAssertEqual(P.offeredCards(phase: .final, homeRuns: deal.homeRuns, strikeouts: deal.strikeouts,
+                                      totals: deal.totals, series: deal.series,
+                                      livePlayerHomeRuns: hr, livePlayerStrikeouts: k),
+                       [.homeRuns, .strikeouts, .totals, .series], "the final deal, unchanged")
+        XCTAssertEqual(P.name(.homeRuns, strikeouts: nil), "Home runs")
+        XCTAssertEqual(P.name(.strikeouts, strikeouts: nil), "Strikeouts", "generic: no player or pitching role")
+
+        // Through the host's pure builder on the CONSTRUCTED live body.
+        let live = Host.build(event: try F.liveEvent(), history: nil, markets: try BaseballLivePlayers10868.markets(),
+                              related: try F.related(), probabilityObservedAt: nil, now: BaseballLivePlayers10868.now,
+                              calendar: F.pacific, locale: F.locale).input
+        XCTAssertEqual(live.stream.cards.map(\.id), ["homeRuns", "strikeouts", "series"],
+                       "this constructed body serves no run lines, so no milestones")
+        XCTAssertEqual(live.stream.cards.map(\.name), ["Home runs", "Strikeouts", "The series"])
+        XCTAssertEqual(live.stream.position, "1 of 3")
+        XCTAssertEqual(live.livePlayerHomeRuns, hr)
+        XCTAssertEqual(live.livePlayerStrikeouts, k)
+        XCTAssertNil(live.homeRuns)
+        XCTAssertNil(live.strikeouts)
     }
 }

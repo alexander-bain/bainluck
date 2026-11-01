@@ -24,6 +24,12 @@ import XCTest
 /// selection, story or mode write, and the value handed over is the one
 /// tapped. Which sheet shows it, and that the sheet keeps it until closed, is
 /// SwiftUI state and is not driven here.
+///
+/// The live player home-run and strikeout cards are pinned the same way on
+/// the CONSTRUCTED During rows of `BaseballLivePlayers10868` (every row,
+/// clock and admission constructed; no genuine live HR/K body is retained):
+/// one result per stat, one hold before each page action, none full-size, the
+/// exact original of the same pass frozen as tapped, nothing at the final.
 @MainActor
 final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
     private typealias F = BaseballRetained10868
@@ -189,7 +195,13 @@ final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
             onSeriesOption: { log("seriesOption:\($0):\($1)") },
             onSeriesDetails: routes.storyDetails,
             onExtraInningsSelect: { log("extraSelect:\($0)") },
-            onExtraInningsDetails: routes.storyDetails)
+            onExtraInningsDetails: routes.storyDetails,
+            onPlayerHomeRunSelect: { log("homeRunSelect:\($0)") },
+            onPlayerHomeRunChoose: { log("homeRunChoose:\($0)") },
+            onPlayerHomeRunDetails: routes.playerHomeRunDetails,
+            onPlayerStrikeoutSelect: { log("strikeoutMilestone:\($0)") },
+            onPlayerStrikeoutChoose: { log("strikeoutChoose:\($0)") },
+            onPlayerStrikeoutDetails: routes.playerStrikeoutDetails)
     }
 
     /// The hook the actual stream view hands its displayed card, sending to
@@ -330,6 +342,8 @@ final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
         }
         routes.storyDetails("not-an-original")
         routes.milestoneDetails("not-a-milestone")
+        routes.playerHomeRunDetails("not-a-player-milestone")
+        routes.playerStrikeoutDetails("not-a-player-milestone")
         XCTAssertEqual(log, [])
     }
 
@@ -517,5 +531,141 @@ final class BaseballEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(tapped, Self.composed(built, Self.elevenPlus))
         routes.milestoneDetails(Self.elevenPlus)
         XCTAssertEqual(shown, [tapped, tapped])
+    }
+
+    // MARK: Live player milestones
+
+    private typealias LP = BaseballLivePlayers10868
+
+    /// The CONSTRUCTED live page over the CONSTRUCTED During rows, built as the
+    /// host builds each pass.
+    private static func livePlayers(_ reading: Host.Reading = Host.Reading(),
+                                    rows: [[String: Any]]? = nil) throws -> Host.Built {
+        Host.build(event: try F.liveEvent(), history: nil, markets: try LP.markets(rows), related: try F.related(),
+                   probabilityObservedAt: nil, now: LP.now, reading: reading, calendar: F.pacific, locale: F.locale)
+    }
+
+    private static let homeRun1 = LP.key(LP.benintendi, "home_runs", 1)
+    private static let homeRun2 = LP.key(LP.benintendi, "home_runs", 2)
+    private static let strikeout6 = LP.key(LP.brown, "strikeouts", 6)
+
+    /// CONSTRUCTED live page.
+    func testDuringPlayEachLivePlayerCardIsOneResultOfThisPassAndItsDetailsHoldOnceOnThePage() throws {
+        var log: [String] = []
+        var shown: [MLBOriginal11284] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.livePlayers(Host.Reading(story: .homeRuns))
+        let players = try XCTUnwrap(built.homeRunPlayers)
+        XCTAssertEqual(built.input.livePlayerHomeRuns, players.input, "the drawn card is the result's card")
+        XCTAssertEqual(built.input.livePlayerStrikeouts, built.strikeoutPlayers?.input)
+        XCTAssertNotNil(built.strikeoutPlayers)
+        XCTAssertEqual(players, BaseballPlayerMilestonesAdapter10868.players(
+            try F.liveEvent(), markets: try LP.markets(), stat: .homeRuns, host: LP.host))
+
+        let routes = Self.wired(built, log: record, shown: { shown.append($0) })
+        let primary = try XCTUnwrap(built.input.stream.primary)
+        XCTAssertEqual(primary.id, "homeRuns")
+        let card = try XCTUnwrap(Self.drawn(built, routes, log: record)
+            .livePlayerHomeRunsContent(activation: Self.activation(built, primary, routes: routes)))
+        XCTAssertEqual(log, [], "building the routes, the page and the card asks for nothing")
+
+        card.onDetails?(Self.homeRun1)
+        let original = try XCTUnwrap(players.origins.first { $0.milestoneID == Self.homeRun1 }?.original)
+        XCTAssertEqual(log, ["hold", "original:mlb-o:15321836:during:\(Self.homeRun1)"])
+        XCTAssertEqual(shown, [original])
+
+        log = []
+        card.onSelect?(Self.homeRun2)
+        card.onChoosePlayer?(LP.cam)
+        XCTAssertEqual(log, ["hold", "homeRunSelect:\(Self.homeRun2)", "hold", "homeRunChoose:\(LP.cam)"],
+                       "one hold before each action")
+    }
+
+    /// CONSTRUCTED live page, full size.
+    func testFullSizeLivePlayerDetailsShowTheSameOriginalWithNoHold() throws {
+        var log: [String] = []
+        var shown: [MLBOriginal11284] = []
+        let record: (String) -> Void = { log.append($0) }
+        let built = try Self.livePlayers(Host.Reading(story: .strikeouts, readerOpen: true,
+                                                      strikeoutPlayer: .init(milestone: Self.strikeout6)))
+        let routes = Self.wired(built, log: record, shown: { shown.append($0) })
+        let full = try XCTUnwrap(Self.drawn(built, routes, mode: .reader(.strikeouts), log: record)
+            .livePlayerStrikeoutsContent())
+        full.onDetails?(Self.strikeout6)
+        full.onSelect?(Self.strikeout6)
+        let original = try XCTUnwrap(built.strikeoutPlayers?.origins.first { $0.milestoneID == Self.strikeout6 }?.original)
+        XCTAssertEqual(log, ["original:\(original.id)", "strikeoutMilestone:\(Self.strikeout6)"],
+                       "full-size content is already held")
+        XCTAssertEqual(shown, [original])
+    }
+
+    /// CONSTRUCTED live page; the RETAINED final; the RETAINED final body on the CONSTRUCTED live event.
+    func testAtTheFinalAndWithNoTypedDuringRowsThereIsNoLiveCardAndTheFinalStoriesAreUnchanged() throws {
+        var log: [String] = []
+        let record: (String) -> Void = { log.append($0) }
+        let finalPass = try Self.final()
+        XCTAssertNil(finalPass.homeRunPlayers)
+        XCTAssertNil(finalPass.strikeoutPlayers)
+        XCTAssertNil(finalPass.input.livePlayerHomeRuns)
+        XCTAssertNil(finalPass.input.livePlayerStrikeouts)
+        let event = try F.finalEvent()
+        let cards = BaseballStoriesAdapter10868.finalCards(event, markets: try F.markets(), related: try F.related())
+        XCTAssertEqual(finalPass.input.homeRuns, BaseballStoriesAdapter10868.homeRuns(cards, event: event))
+        XCTAssertEqual(finalPass.input.strikeouts, BaseballStoriesAdapter10868.strikeouts(cards, event: event, selected: nil))
+        XCTAssertEqual(finalPass.input.stream.cards.map(\.id), ["homeRuns", "strikeouts", "totals", "series"])
+        let finalRoutes = Self.wired(finalPass, log: record)
+        finalRoutes.playerHomeRunDetails(Self.homeRun1)
+        finalRoutes.playerStrikeoutDetails(Self.strikeout6)
+        XCTAssertEqual(log, [])
+        XCTAssertNil(Self.drawn(finalPass, finalRoutes, log: record).livePlayerHomeRunsContent())
+        XCTAssertNotNil(Self.drawn(finalPass, finalRoutes, log: record).homeRunsContent())
+
+        // The real final body serves no During rows: during play it builds no live card.
+        let retained = Host.build(event: try F.liveEvent(), history: nil, markets: try F.markets(),
+                                  related: try F.related(), probabilityObservedAt: nil, now: F.liveNow,
+                                  calendar: F.pacific, locale: F.locale)
+        XCTAssertNil(retained.homeRunPlayers)
+        XCTAssertNil(retained.strikeoutPlayers)
+        XCTAssertEqual(retained.input.stream.cards.map(\.id), ["totals", "series"])
+    }
+
+    /// CONSTRUCTED live page.
+    func testEachStatsHeldPlayerAndMilestoneAreItsOwnAndPassThroughUnchanged() throws {
+        let built = try Self.livePlayers(Host.Reading(homeRunPlayer: .init(player: LP.cam),
+                                                      strikeoutPlayer: .init(milestone: Self.strikeout6)))
+        XCTAssertEqual(built.input.livePlayerHomeRuns?.player?.id, LP.cam)
+        XCTAssertEqual(built.input.livePlayerStrikeouts?.player?.id, LP.brown)
+        XCTAssertEqual(built.input.livePlayerStrikeouts?.selectedMilestoneID, Self.strikeout6)
+
+        let removed = try Self.livePlayers(Host.Reading(homeRunPlayer: .init(player: "ghost")))
+        XCTAssertNil(removed.input.livePlayerHomeRuns?.player)
+        XCTAssertEqual(removed.input.livePlayerHomeRuns?.selectionNotice, "Selected player unavailable.")
+        XCTAssertEqual(removed.input.livePlayerStrikeouts, try Self.livePlayers().input.livePlayerStrikeouts,
+                       "the other stat is untouched")
+    }
+
+    /// CONSTRUCTED live page, then the same page with Benintendi 1+'s quote moved to 0.20.
+    func testALivePlayerDetailsValueStaysAsTappedAndANewPassComposesItsOwn() throws {
+        var log: [String] = []
+        var shown: [MLBOriginal11284] = []
+        let record: (String) -> Void = { log.append($0) }
+        let reading = Host.Reading(story: .homeRuns)
+        let built = try Self.livePlayers(reading)
+        let routes = Self.wired(built, log: record, shown: { shown.append($0) })
+        routes.playerHomeRunDetails(Self.homeRun1)
+        XCTAssertEqual(log, ["original:mlb-o:15321836:during:\(Self.homeRun1)"], "no hold, mode, selection or story write")
+        let tapped = try XCTUnwrap(shown.first)
+
+        var moved = LP.standardRows()
+        moved[0]["current"] = LP.quoted(0.20)
+        let next = try Self.livePlayers(reading, rows: moved)
+        let fresh = try XCTUnwrap(BaseballPlayerMilestonesAdapter10868.details(
+            Self.homeRun1, drawn: next.input.livePlayerHomeRuns, phase: next.input.phase,
+            players: next.homeRunPlayers, eventID: next.eventID))
+        XCTAssertEqual(fresh.id, tapped.id)
+        XCTAssertNotEqual(fresh.sections.first, tapped.sections.first, "a new reading is a new value")
+        routes.playerHomeRunDetails(Self.homeRun1)
+        XCTAssertEqual(shown, [tapped, tapped], "the old pass's route resolves against its own result")
+        XCTAssertEqual(try Self.livePlayers(reading).input, built.input, "the held reading is untouched")
     }
 }

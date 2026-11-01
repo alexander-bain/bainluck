@@ -22,6 +22,11 @@ import Foundation
 /// "Home runs", "<pitcher> · <stat>", "Run totals", "Extra innings", "The
 /// series").
 ///
+/// During play only, the home-run and strikeout slots are also offered for the
+/// owner's live player input (`BaseballPlayerMilestonesAdapter10868`), passed
+/// in. Their names are "Home runs" and the generic "Strikeouts" — no player or
+/// pitching role is typed. Nil keeps every phase exactly as before.
+///
 /// THE STREAM IS MANUAL, exactly as hockey's and soccer's: the only owner that
 /// ranks and auto-advances story cards is NBA's (`NBAStoryStreamPolicy9483`).
 /// Baseball has no such owner — the reference's `baseballMomentOrder` ranking
@@ -74,11 +79,15 @@ enum BaseballPageInputAdapter10868 {
         series: BaseballSeriesStory10868?,
         originalsCount: Int?,
         stream state: StreamState,
-        host: BaseballGamePageAdapter10868.Host
+        host: BaseballGamePageAdapter10868.Host,
+        livePlayerHomeRuns: PlayerContributionInput10868? = nil,
+        livePlayerStrikeouts: PlayerContributionInput10868? = nil
     ) -> BaseballEventPageInput10868 {
         let phase = BaseballGamePageAdapter10868.phase(event, now: host.now)
         let offered = offeredCards(phase: phase, homeRuns: homeRuns, strikeouts: strikeouts,
-                                   totals: totals, extraInnings: extraInnings, series: series)
+                                   totals: totals, extraInnings: extraInnings, series: series,
+                                   livePlayerHomeRuns: livePlayerHomeRuns,
+                                   livePlayerStrikeouts: livePlayerStrikeouts)
         return BaseballEventPageInput10868(
             phase: phase,
             headline: BaseballGamePageAdapter10868.headline(event, host: host),
@@ -91,7 +100,9 @@ enum BaseballPageInputAdapter10868 {
             stream: stream(scope: scope(event, phase: phase), offered: offered, strikeouts: strikeouts,
                            state: state),
             stories: stories(offered),
-            copy: copy(originalsCount: originalsCount))
+            copy: copy(originalsCount: originalsCount),
+            livePlayerHomeRuns: livePlayerHomeRuns,
+            livePlayerStrikeouts: livePlayerStrikeouts)
     }
 
     /// One owner scope per event and phase, as the stream requires.
@@ -105,10 +116,14 @@ enum BaseballPageInputAdapter10868 {
                              strikeouts: BaseballStrikeoutsStory10868?,
                              totals: BaseballTotalsStory10868?,
                              extraInnings: BaseballExtraInningsStory10868? = nil,
-                             series: BaseballSeriesStory10868?) -> [BaseballEventPageCard10868] {
+                             series: BaseballSeriesStory10868?,
+                             livePlayerHomeRuns: PlayerContributionInput10868? = nil,
+                             livePlayerStrikeouts: PlayerContributionInput10868? = nil) -> [BaseballEventPageCard10868] {
         var cards: [BaseballEventPageCard10868] = []
-        if phase == .final, homeRuns != nil { cards.append(.homeRuns) }
-        if phase == .final, strikeouts != nil { cards.append(.strikeouts) }
+        let liveHomeRuns = BaseballEventPageModel10868.live(livePlayerHomeRuns, phase: phase) != nil
+        let liveStrikeouts = BaseballEventPageModel10868.live(livePlayerStrikeouts, phase: phase) != nil
+        if (phase == .final && homeRuns != nil) || liveHomeRuns { cards.append(.homeRuns) }
+        if (phase == .final && strikeouts != nil) || liveStrikeouts { cards.append(.strikeouts) }
         if let totals, totals.belongs(to: phase) { cards.append(.totals) }
         if extraInnings != nil { cards.append(.extraInnings) }
         if series != nil { cards.append(.series) }
