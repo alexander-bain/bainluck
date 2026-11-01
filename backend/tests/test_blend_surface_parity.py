@@ -111,8 +111,9 @@ class TestLiveSurfaceParity:
         # And it is the real blend, not whatever the series happened to end on.
         # RESTATED for #10764: the live blend is the capped weighted AVERAGE of
         # the five readings (0.632434), no longer the median that landed on
-        # betting's 0.5956.
-        assert edge == pytest.approx(0.632434, abs=1e-6)
+        # betting's 0.5956. RESTATED for #10090 decision D: live, kalshi's
+        # 0.375 carries the sportsbook's 3.0 (was 0.8), so 0.568398.
+        assert edge == pytest.approx(0.568398, abs=1e-6)
 
     def test_integer_rounded_surfaces_agree(self):
         """What the user actually reads: the rounded percentage on each surface."""

@@ -3956,6 +3956,8 @@ class LiveBlendRefresher:
         self._hl_late = 0
         #: Inputs received after their game's recorded end (`_hl_settle_finished`).
         self._hl_settled = 0
+        #: Inputs refused while the live book offered no price (`_hl_no_price`).
+        self._hl_nobook = 0
         self._hl_fallback: dict[str, int] = {}
         #: event id -> mono when its receipt proposal was composed (split timing).
         self._hl_composed: dict[int, float] = {}
@@ -6468,7 +6470,9 @@ class LiveBlendRefresher:
                 for entry in group:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
-        self._hl_settle_finished(grouped)
+        settle = getattr(self, "_hl_settle_finished", None)
+        if settle is not None:  # (a refresher, not a bare rig standing in for one)
+            settle(grouped)
         if preview_ticket is not None:
             self._remember_preview_graphs(grouped, original_rows, read_started,
                                           stamp_read=overlay_held)
@@ -9284,6 +9288,56 @@ class LiveBlendRefresher:
         except Exception:
             pass
 
+    def _home_book_empty(self, event, patched) -> bool:
+        """#10090: the bundled Challenger home leg's live book offers no price
+        at all: every socket carrying its ticker has no primary price, no
+        midpoint and no selected input (a one-sided book at 0.99/0.01). No
+        subscribed socket at all is not this (a gap is a defect, not a price).
+        Never raises."""
+        try:
+            reader = getattr(self, "current_book_signature", None)
+            if reader is None:
+                return False
+            from app.utils.live_blend import _is_unique_named_home_quote
+
+            for entry in patched:
+                ticker = (getattr(entry.market, "external_id", None) or "").upper()
+                if not ticker.startswith("KXATPCHALLENGERMATCH-"):
+                    continue
+                for row in entry.outcomes:
+                    if not _is_unique_named_home_quote(
+                            entry, row, event.home_team_name, event.away_team_name):
+                        continue
+                    sig = reader(getattr(row, "external_id", None) or "")
+                    socks = sig[1] if sig else ()
+                    return bool(socks) and all(
+                        s[1] is None and s[2] is None and s[3] is None for s in socks)
+        except Exception:
+            pass
+        return False
+
+    def _hl_no_price(self, event_id) -> None:
+        """#10090: a receipt the live book cannot price (`_home_book_empty`).
+        Alex 10/31: "If there's no valid price to show, I won't count that as
+        a miss." The stamp cannot read one either, so the input leaves the clock
+        and the next input starts its own (07:05Z 11/01: a 0.01 tick on a
+        one-sided Delaney-Wang book was charged 1.99 s, until a later tick
+        priced it). An entry an earlier refusal already holds was a real wait
+        and ends here at its age (`stamp_nobook`). Never raises."""
+        try:
+            entry = self._hl_pending.get(event_id)
+            if entry is None:
+                return
+            if entry[1] == "receipt":
+                self._hl_pending.pop(event_id, None)
+                self._hl_composed.pop(event_id, None)
+                self._hl_commit_at.pop(event_id, None)
+                self._hl_nobook += 1
+            else:
+                self._hl_resolve(event_id, "stamp_nobook")
+        except Exception:
+            pass
+
     def _hl_settle_finished(self, grouped) -> None:
         """#10090: a read sees an input's event finished. Alex 10/31: "If
         there's no valid price to show, I won't count that as a miss." An input
@@ -9344,16 +9398,17 @@ class LiveBlendRefresher:
         samples, self._hl_samples = self._hl_samples, []
         late, self._hl_late = self._hl_late, 0
         settled, self._hl_settled = self._hl_settled, 0
+        nobook, self._hl_nobook = self._hl_nobook, 0
         fallback, self._hl_fallback = self._hl_fallback, {}
         if not samples:
-            return "n=0 late=%d settled=%d" % (late, settled)
+            return "n=0 late=%d settled=%d nobook=%d" % (late, settled, nobook)
         ordered = sorted(x[0] for x in samples)
         pick = lambda q: int(round(ordered[min(len(ordered) - 1, int(q * len(ordered)))] * 1000))
         worst = sorted(samples, key=lambda x: -x[0])[:5]
-        return "n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d settled=%d" % (
+        return "n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d settled=%d nobook=%d" % (
             len(samples), pick(0.5), pick(0.9), int(round(ordered[-1] * 1000)),
             ",".join("%s:%d:%s" % (eid, int(round(lat * 1000)), how) for lat, eid, how in worst),
-            ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late, settled)
+            ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late, settled, nobook)
 
     def _note_receipt_class(self, kind: str, event_id) -> None:
         """Count one receipt composition outcome against its event (stats line)."""
@@ -9596,6 +9651,10 @@ class LiveBlendRefresher:
             self._receipt_speaking[event_id] = frozenset()
         if reading is None or not has_proven_home_orientation(reading):
             stats["not_admitted"] += 1
+            if proof_kwargs and self._home_book_empty(event, patched):
+                self._note_receipt_class("na_nobook", event_id)
+                self._hl_no_price(event_id)
+                return None
             self._note_receipt_class("not_admitted", event_id)
             self._hl_mark(event_id, "na_proof" if proof_kwargs else "na_orientation")
             if proof_kwargs and self._na_proof_logged < 6:
