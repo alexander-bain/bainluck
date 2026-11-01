@@ -510,8 +510,32 @@ function KeyMark({ kind }: { kind: "hollow" | "filled" | "rule" }) {
 
 // ─── Goals: the milestone profile (TotalMilestonePresentation10868) ────────
 
-function GoalsCard({ card, held, hold, details }: { card: SoccerGoalsCard; held: Held; hold: Hold; details: CardDetails | null }) {
-  const selection = selectExactlyOnce(card.milestones, soccerRequestedId(held.goals, card.defaultId, card.milestones));
+function GoalsCard({
+  card,
+  held,
+  hold,
+  details,
+  firstRowFallback = true,
+}: {
+  card: SoccerGoalsCard;
+  held: Held;
+  hold: Hold;
+  details: CardDetails | null;
+  /**
+   * With no explicit choice and no owner default, open the first milestone
+   * (soccer's behaviour, the default). `CountMilestoneCard` turns it off:
+   * then nothing is chosen (native `TotalMilestonePresentation10868`), through
+   * `selectExactlyOnce`'s own "none" — no made-up id, no substitute row and no
+   * "unavailable" when nobody chose anything.
+   */
+  firstRowFallback?: boolean;
+}) {
+  const requested = firstRowFallback
+    ? soccerRequestedId(held.goals, card.defaultId, card.milestones)
+    : held.goals !== undefined
+      ? held.goals
+      : card.defaultId;
+  const selection = selectExactlyOnce(card.milestones, requested);
   const chosen = chosenRow(selection);
   const [plot, setPlot] = useState<HTMLDivElement | null>(null);
   const count = card.actual?.kind === "count" ? card.actual : null;
@@ -661,6 +685,46 @@ function GoalsCard({ card, held, hold, details }: { card: SoccerGoalsCard; held:
         </div>
       )}
     </article>
+  );
+}
+
+/**
+ * #10868 S2a — the milestone profile for any count (first use: baseball run
+ * milestones), drawn by the EXISTING goals leaf above with its private chart,
+ * axis, key and strip helpers (nothing copied or moved). A thin, stateless
+ * bridge:
+ *
+ *   - `card` is the leaf's own card shape without its soccer discriminator; the
+ *     wrapper supplies `id: "goals"` only so the existing renderer accepts it.
+ *     Every word, reading and quantity still comes from `card` (no market rule
+ *     or formatter is added here).
+ *   - `heldId` is the host's explicit choice (undefined = none yet). It is
+ *     resolved by the leaf exactly once; a missing or duplicated id is the
+ *     leaf's own "unavailable" state, with no substitute.
+ *   - `onChoose(id)` is called once per deliberate tap. The wrapper holds no
+ *     state, so it moves only when the host passes a new `heldId`.
+ *   - Details are LITERALLY off (`details={null}`): no Details prop, no owner
+ *     pass, no soccer admission. No `data-soccer-details-entry` can render.
+ *   - No first-row fallback: with no `heldId` and a null `defaultId`, no
+ *     milestone is chosen (native parity).
+ */
+export function CountMilestoneCard({
+  card,
+  heldId,
+  onChoose,
+}: {
+  card: Omit<SoccerGoalsCard, "id">;
+  heldId: string | undefined;
+  onChoose: (id: string) => void;
+}) {
+  return (
+    <GoalsCard
+      card={{ ...card, id: "goals" }}
+      held={heldId === undefined ? {} : { goals: heldId }}
+      hold={(_card: string, id: string) => onChoose(id)}
+      details={null}
+      firstRowFallback={false}
+    />
   );
 }
 
