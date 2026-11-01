@@ -3923,6 +3923,8 @@ class LiveBlendRefresher:
         self._receipt_lock_wait = [0, 0.0, 0.0, 0]
         #: Receipt publish passes this minute: (count, longest s, its plans).
         self._receipt_pass_max = [0, 0.0, 0]
+        #: Claim-lock holds this minute: label -> [count, total s, max s].
+        self._claim_holds: dict[str, list] = {}
         #: event id -> `_mono` its stamp became urgent (`URGENT_STAMP_MIN_S`).
         self._urgent_stamp: dict[int, float] = {}
         self.urgent_stamp_stats: dict[str, int] = {"marked": 0, "bypassed": 0}
@@ -8875,14 +8877,17 @@ class LiveBlendRefresher:
                 )
                 lw, self._receipt_lock_wait = self._receipt_lock_wait, [0, 0.0, 0.0, 0]
                 pm, self._receipt_pass_max = self._receipt_pass_max, [0, 0.0, 0]
+                holds, self._claim_holds = self._claim_holds, {}
                 for eid in [e for e, at in self._urgent_stamp.items() if now - at > 60.0]:
                     del self._urgent_stamp[eid]
-                logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s",
+                logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
                             lw[0], int(lw[1] * 1000), int(lw[2] * 1000), lw[3],
                             pm[0], int(pm[1] * 1000), pm[2],
-                            ",".join("%s:%d" % kv for kv in self.urgent_stamp_stats.items()))
+                            ",".join("%s:%d" % kv for kv in self.urgent_stamp_stats.items()),
+                            ",".join("%s:%d/%d/%d" % (k, v[0], int(v[1] * 1000), int(v[2] * 1000))
+                                     for k, v in sorted(holds.items())) or "-")
             due, deferred = [], {}
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
@@ -8959,6 +8964,18 @@ class LiveBlendRefresher:
             # `contributor` recomposes and re-sends at once (observed again);
             # anything else (fenced, refused, local_*) is a real miss: name it.
             self._hl_mark(event_id, "ledger_%s" % status[:20])
+
+    def _note_claim_hold(self, label: str, held_from: float) -> None:
+        """#10090: how long one claim-lock holder kept it (minute line `holds=`)."""
+        try:
+            held = _mono() - held_from
+            stat = self._claim_holds.setdefault(label, [0, 0.0, 0.0])
+            stat[0] += 1
+            stat[1] += held
+            if held > stat[2]:
+                stat[2] = held
+        except Exception:
+            pass
 
     def _hl_mutate_refused(self, event_id, status) -> None:
         """A proposal's ledger call composed no frame. ``ok``: accepted with
@@ -10114,6 +10131,24 @@ class LiveBlendRefresher:
         if not items or not any("ledger_op" in item for item in items):
             return items
         idle = [item for item in items if item.get("ledger_op") in ("retire_idle", "retire_policy")]
+        if not idle and len(items) > PREVIEW_PUBLISH_CHUNK:
+            # #10090: as `_publish_previews`: a big settlement batch takes the
+            # claim lock per chunk (one event's items stay together), so a
+            # receipt preview waits for one chunk, not the batch (2026-11-01
+            # 01:24Z: a 593 ms claim-lock wait made a 1.4 s receipt wait). Each
+            # item is its own atomic ledger call either way; a failure still
+            # costs only its own chunk's preview frames.
+            prepared: list = []
+            chunk: list = []
+            for item in items:
+                if (len(chunk) >= PREVIEW_PUBLISH_CHUNK
+                        and _frame_event(item) != _frame_event(chunk[-1])):
+                    prepared.extend(await self._prepare_ledger_previews(chunk))
+                    chunk = []
+                chunk.append(item)
+            if chunk:
+                prepared.extend(await self._prepare_ledger_previews(chunk))
+            return prepared
         send_before = min((item["send_before"] for item in idle), default=None)
         try:
             from app.utils.blend_preview import registry
@@ -10125,6 +10160,7 @@ class LiveBlendRefresher:
                     preview.claim_lock = asyncio.Lock()
                 pool = self._client().connection_pool
                 async with preview.claim_lock:
+                    held_from = _mono()
                     connection = await _checkout(pool)
                     first_error = None
                     try:
@@ -10150,6 +10186,7 @@ class LiveBlendRefresher:
                                 first_error = cleanup_error
                         raise first_error
                     finally:
+                        self._note_claim_hold("led_idle" if idle else "led_settle", held_from)
                         try:
                             await pool.release(connection)
                         except BaseException as cleanup_error:
@@ -10226,6 +10263,9 @@ class LiveBlendRefresher:
                         lw[0] += 1
                         lw[1] += waited
                         lw[2] = max(lw[2], waited)
+                    held_from = _mono()
+                    hold_label = ("pub_receipt" if refused is not None
+                                  else "pub_prep" if prepare_frames is not None else "pub_frames")
                     connection = await _checkout(pool)
                     try:
                         if preview.unclaimed(self.source):
@@ -10276,6 +10316,7 @@ class LiveBlendRefresher:
                         await connection.disconnect()
                         raise
                     finally:
+                        self._note_claim_hold(hold_label, held_from)
                         await pool.release(connection)
             revokes = sum(1 for f in frames if f["preview"]["kind"] == "revoke")
             self.preview_stats["revoked"] += revokes
