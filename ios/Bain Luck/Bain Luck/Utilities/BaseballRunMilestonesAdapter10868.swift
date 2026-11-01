@@ -51,6 +51,23 @@ import Foundation
 /// declines it), so `projection` is nil. The host passes the event,
 /// `/game-markets`, now, the reader's calendar and its held milestone; nothing
 /// here fetches.
+///
+/// DETAILS (`milestones`, `details`). A drawn milestone's Details open the
+/// exact original `MLBTotalsCard11284.build` already made for that line
+/// (`MLBOriginal11284.option`, the original the final run-line card opens).
+/// It is kept beside the option key it was built for. The card and those
+/// originals come from ONE `lines()` result.
+///
+/// A tapped id opens Details only when it names exactly one drawn row and
+/// exactly one kept original of the same result, event and phase. Anything
+/// else opens nothing and never retargets.
+///
+/// Details first say the chance the card showed for that milestone, in the
+/// card's own words, figure and clock, or its own absence words. Then come
+/// the original's sections, verbatim. There the producer's stored pin is
+/// labelled `Words.pinLabel`, never "Pregame chance", so the two readings
+/// are never called one. A missing card chance stays missing whatever the
+/// pin says.
 enum BaseballRunMilestonesAdapter10868 {
 
     /// What the host already holds, passed in unchanged.
@@ -86,6 +103,9 @@ enum BaseballRunMilestonesAdapter10868 {
         static let savedBeforeStart = "Saved before first pitch"
         static let scoreObserved = "Score observed"
         static let timingSuffix = "chance timing"
+        /// The producer's stored pregame pin in a milestone's Details, named
+        /// apart from the pregame chance the card shows (Design, 2026-11-01).
+        static let pinLabel = "Recorded pregame reference"
 
         static func more(_ count: Int, label: String) -> String {
             "\(count) more for \(label)"
@@ -100,22 +120,48 @@ enum BaseballRunMilestonesAdapter10868 {
         TotalMilestoneTick10868(value: 1, text: "100%"),
     ]
 
-    /// One admitted line and the matrix option behind it.
+    /// One admitted line, the matrix option behind it, and the exact original
+    /// the run-line card built for that option.
     struct Line {
         let line: Double
         let option: QuestionMatrixOption
+        /// `MLBTotalsCard11284.Line.original`, kept rather than dropped.
+        let original: MLBOriginal11284
+    }
+
+    /// The exact original behind one drawn milestone, keyed by the row's own id
+    /// (the option key) — never by a title, a label or a threshold.
+    struct Origin: Equatable {
+        let milestoneID: String
+        let original: MLBOriginal11284
+    }
+
+    /// The card and the originals behind its rows, from ONE `lines()` result.
+    struct Milestones: Equatable {
+        let eventID: Int
+        let input: TotalMilestoneInput10868
+        /// In the card's row order, one per drawn row.
+        let origins: [Origin]
     }
 
     /// The card before first pitch and during play; nil after the final, off
     /// this event, or when the app admits no run ladder.
     static func input(_ event: EventDetail, markets: GameMarketsResponse?, host: Host,
                       selectedMilestoneID: String? = nil) -> TotalMilestoneInput10868? {
+        milestones(event, markets: markets, host: host, selectedMilestoneID: selectedMilestoneID)?.input
+    }
+
+    /// `input`, together with the exact original behind each drawn row, both
+    /// read from the same `lines()` result. Nil exactly when `input` is nil.
+    static func milestones(_ event: EventDetail, markets: GameMarketsResponse?, host: Host,
+                           selectedMilestoneID: String? = nil) -> Milestones? {
         let phase = BaseballGamePageAdapter10868.phase(event, now: host.now)
         guard phase != .final else { return nil }
         let found = lines(event, markets: markets)
         guard !found.isEmpty else { return nil }
         let runs = phase == .live ? BaseballGamePageAdapter10868.scorePair(event).map { $0.home + $0.away } : nil
         let rows = found.map { row($0, event: event, phase: phase, runs: runs, host: host) }
+        let origins = found.map { Origin(milestoneID: $0.option.optionKey, original: $0.original) }
 
         let chosen = selectedMilestoneID
             ?? PlayerPropsFamily.defaultTarget(probabilities: rows.map { $0.before?.probability }).map { rows[$0].id }
@@ -125,7 +171,7 @@ enum BaseballRunMilestonesAdapter10868 {
         let timing = chosen.flatMap { id in
             Self.timing(id, rows: rows, phase: phase)
         }
-        return TotalMilestoneInput10868(
+        let input = TotalMilestoneInput10868(
             phase: phase.totalPhase,
             eyebrow: Words.eyebrow,
             title: phase == .before ? Words.beforeTitle : Words.liveTitle,
@@ -140,20 +186,80 @@ enum BaseballRunMilestonesAdapter10868 {
             chanceTicks: chanceTicks,
             timing: timing,
             markStyle: .stems)
+        return Milestones(eventID: event.id, input: input, origins: origins)
     }
 
     /// The app's own admitted run lines for THIS event, each with its one
-    /// matrix option. An option key the matrix does not carry exactly once is
-    /// dropped, never guessed.
+    /// matrix option and the card's own original for it. An option key the
+    /// matrix does not carry exactly once is dropped, never guessed.
     static func lines(_ event: EventDetail, markets: GameMarketsResponse?) -> [Line] {
         guard let markets, markets.eventId == event.id, let matrix = markets.gameQuestionMatrix,
-              let card = MLBTotalsCard11284.build(matrix, actualTotal: nil, eventID: event.id) else { return [] }
+              let card = MLBTotalsCard11284.build(matrix, actualTotal: nil, eventID: event.id,
+                                                  pinLabel: Words.pinLabel) else { return [] }
         let options = matrix.questions.flatMap(\.options)
         return card.lines.compactMap { line in
             let matches = options.filter { $0.optionKey == line.optionKey }
             guard matches.count == 1, let option = matches.first else { return nil }
-            return Line(line: line.line, option: option)
+            return Line(line: line.line, option: option, original: line.original)
         }
+    }
+
+    // MARK: - Details
+
+    /// The Details a tapped milestone opens, or nil. `totals` and `phase` are
+    /// the page input the card was drawn from; `milestones` is the result that
+    /// card came from, for the page's event.
+    ///
+    /// The tapped id must occur exactly once among the drawn rows AND exactly
+    /// once among that result's originals. The drawn card must be exactly that
+    /// result's card, in a phase it belongs to. Anything else (unknown,
+    /// duplicated, removed, replaced, another event's, another phase's or a
+    /// final run line's id) is nil, never a neighbour.
+    ///
+    /// Details are the original's own identity and title. The first section is
+    /// the card's reading of that row (`cardReading`); then come the
+    /// original's sections, verbatim.
+    static func details(_ id: String, totals: BaseballTotalsStory10868?, phase: BaseballEventPagePhase10868,
+                        milestones: Milestones?, eventID: Int) -> MLBOriginal11284? {
+        guard let milestones, milestones.eventID == eventID,
+              let totals, totals.belongs(to: phase),
+              case .milestones(let drawn) = totals, drawn == milestones.input else { return nil }
+        let rows = drawn.milestones.filter { $0.id == id }
+        let origins = milestones.origins.filter { $0.milestoneID == id }
+        guard rows.count == 1, let row = rows.first, origins.count == 1, let origin = origins.first else { return nil }
+        return MLBOriginal11284(
+            id: origin.original.id, title: origin.original.title,
+            sections: [cardReading(row, phase: drawn.phase)] + origin.original.sections)
+    }
+
+    /// The card's own reading of one row, in the order and words of its
+    /// timing lines (`timing`). The pregame chance is the row's figure with its
+    /// own clock and source, or its own absence words. It is never filled from
+    /// the producer's pin, which stays in the original's own section under
+    /// `Words.pinLabel`. During play, the row's in-game state follows: the
+    /// recorded chance with its own clock, or the row's own words. Already
+    /// formatted strings are joined; nothing is read back from one.
+    static func cardReading(_ row: TotalMilestoneRow10868,
+                            phase: TotalMilestonePhase10868) -> MLBOriginal11284.Section {
+        typealias T = TotalMilestoneInput10868
+        var fields = [MLBOriginal11284.Field(label: T.pregameTitle,
+                                             value: row.before.map { reading($0) } ?? row.beforeMissing)]
+        if phase == .during {
+            switch row.current {
+            case .recorded(let observation, _):
+                fields.append(MLBOriginal11284.Field(label: T.recordedTitle, value: reading(observation)))
+            case .unavailable(let words), .withheld(let words):
+                fields.append(MLBOriginal11284.Field(label: T.currentStatusTitle, value: words))
+            case .reached(let words):
+                fields.append(MLBOriginal11284.Field(label: T.actualSoFarTitle, value: words))
+            }
+        }
+        return MLBOriginal11284.Section(title: row.title, fields: fields)
+    }
+
+    /// The card's figure beside its own full clock and source.
+    static func reading(_ observation: TotalMilestoneObservation10868) -> String {
+        BaseballGamePageAdapter10868.joined([observation.text, observation.accessibilityDetail]) ?? observation.text
     }
 
     // MARK: - One milestone

@@ -56,9 +56,13 @@ import SwiftUI
 /// Controls: Full chart opens the full-size history; Details and Inspect on the
 /// history are offered unavailable until their owner contracts exist. A
 /// story's Details opens that story original's existing Details
-/// (`MLBOriginalDetails11284`), frozen as it was on screen; a run milestone
-/// has no Details route yet (nil — no button), and every original stays
-/// reachable through All props.
+/// (`MLBOriginalDetails11284`), frozen as it was on screen. A run milestone's
+/// Details (`milestoneDetails`), before first pitch and during play, open the
+/// exact original its run line was built with. They first say the chance the
+/// card showed, with its own clock or absence words
+/// (`BaseballRunMilestonesAdapter10868.details`), and are resolved against the
+/// card and originals of the SAME build. Every original stays reachable
+/// through All props.
 ///
 /// ONE HOLD PER ACTION (`routes`). The page's hold (`onInteraction`) is asked
 /// for exactly once before each page action lands, and never by a routing
@@ -114,6 +118,12 @@ struct BaseballEventPageHost10868: View {
     struct Built {
         let input: BaseballEventPageInput10868
         let originals: BaseballEventPageOriginals10868
+        /// The event this pass was built for.
+        let eventID: Int
+        /// Before first pitch and during play: the result `input.totals` was
+        /// drawn from, with the exact original behind each drawn row. Nil after
+        /// the final or with no run ladder.
+        let milestones: BaseballRunMilestonesAdapter10868.Milestones?
     }
 
     /// The screen's own reading state, as the builders take it.
@@ -177,7 +187,7 @@ struct BaseballEventPageHost10868: View {
             onStrikeoutSelect: { selections.strikeout = $0 },
             onStrikeoutDetails: routes.storyDetails,
             onTotalSelect: { selections.total = $0 },
-            onTotalMilestoneDetails: nil,
+            onTotalMilestoneDetails: routes.milestoneDetails,
             onTotalLineDetails: routes.storyDetails,
             onSeriesMarket: { question in
                 // A market change resets the outcome: an outcome belongs to one market.
@@ -209,14 +219,19 @@ struct BaseballEventPageHost10868: View {
         /// A story original's Details: no hold of its own — on the page the
         /// card's stream hook already asked, and full-size content is held.
         let storyDetails: (String) -> Void
+        /// A run milestone's Details, by the row's exact id: no hold of its
+        /// own, for the same reasons as `storyDetails`.
+        let milestoneDetails: (String) -> Void
     }
 
     /// One pass's routes — pure: building them calls nothing. `hold` is the
     /// page's hold; `present`, `select`, `browse` and `show` are the host's
     /// own writes, each handed the exact mode, selection, card or original. A
     /// Details id resolves only an original this pass's stories carry
-    /// (`BaseballStoriesAdapter10868.original`), never a neighbour; an id
-    /// that resolves none shows nothing.
+    /// (`BaseballStoriesAdapter10868.original`), never a neighbour. A run
+    /// milestone's id resolves only against this pass's drawn card and the
+    /// originals of the same result (`BaseballRunMilestonesAdapter10868
+    /// .details`). An id that resolves none shows nothing.
     static func routes(_ built: Built, hold: (() -> Void)?,
                        present: @escaping (BaseballEventPageMode10868) -> Void,
                        select: @escaping (OriginalMarketDetails9483.Selection) -> Void,
@@ -252,6 +267,12 @@ struct BaseballEventPageHost10868: View {
             },
             storyDetails: { id in
                 guard let original = BaseballStoriesAdapter10868.original(id, in: input) else { return }
+                show(original)
+            },
+            milestoneDetails: { id in
+                guard let original = BaseballRunMilestonesAdapter10868.details(
+                    id, totals: input.totals, phase: input.phase, milestones: built.milestones,
+                    eventID: built.eventID) else { return }
                 show(original)
             })
     }
@@ -299,9 +320,18 @@ struct BaseballEventPageHost10868: View {
         } ?? BaseballHistoryAdapter10868.unavailable(event: event, phase: phase)
         let cards = BaseballStoriesAdapter10868.finalCards(event, markets: markets, related: related)
         let picked = reading.selections
-        let totals = BaseballStoriesAdapter10868.totals(
-            event, markets: markets, cards: cards, selected: picked.total,
-            host: BaseballRunMilestonesAdapter10868.Host(now: now, calendar: calendar, locale: locale))
+        let runHost = BaseballRunMilestonesAdapter10868.Host(now: now, calendar: calendar, locale: locale)
+        // Before first pitch and during play, the run milestones card and the
+        // originals behind its rows are ONE result, so Details resolve against
+        // the very card drawn. After the final, the stories adapter's final
+        // run-line card, unchanged. Either way the same `totals` the stories
+        // adapter would have given.
+        let milestones = phase == .final ? nil : BaseballRunMilestonesAdapter10868.milestones(
+            event, markets: markets, host: runHost, selectedMilestoneID: picked.total)
+        let totals: BaseballTotalsStory10868? = phase == .final
+            ? BaseballStoriesAdapter10868.totals(event, markets: markets, cards: cards, selected: picked.total,
+                                                 host: runHost)
+            : milestones.map { BaseballTotalsStory10868.milestones($0.input) }
         let homeRuns = BaseballStoriesAdapter10868.homeRuns(cards, event: event)
         let strikeouts = BaseballStoriesAdapter10868.strikeouts(cards, event: event, selected: picked.strikeout)
         let series = BaseballStoriesAdapter10868.series(event, related: related, question: picked.seriesQuestion,
@@ -318,6 +348,6 @@ struct BaseballEventPageHost10868: View {
             extraInnings: extra, series: series, originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)
-        return Built(input: input, originals: originals)
+        return Built(input: input, originals: originals, eventID: event.id, milestones: milestones)
     }
 }

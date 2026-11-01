@@ -173,13 +173,19 @@ struct MLBOriginal11284: Equatable, Identifiable {
     /// leg prints only beside a `quoted` published value — never as the quote
     /// of a settled option (`QuestionMatrixSourceEvidence`) — and only when it
     /// is dated and not terminal.
+    ///
+    /// `pinLabel` is display only: the words beside the producer's pin. The
+    /// pin, its value, its stamp and every other field are the same whatever
+    /// it says. Every existing caller keeps the default; #10868's run
+    /// milestones name it apart from the chance their card shows.
     static func option(_ question: QuestionMatrixQuestion, _ option: QuestionMatrixOption,
-                       pin: (probability: Double, at: String)?, eventID: Int) -> MLBOriginal11284 {
+                       pin: (probability: Double, at: String)?, eventID: Int,
+                       pinLabel: String = "Pregame chance") -> MLBOriginal11284 {
         var fields = [Field(label: "Original side", value: option.label.isEmpty ? question.label : option.label)]
         if let venue = SourceLabels.label(for: option.published.source) {
             fields.append(Field(label: "Venue", value: venue))
         }
-        fields.append(Field(label: "Pregame chance",
+        fields.append(Field(label: pinLabel,
                             value: pin.map { "\(formatProbability($0.probability)) · \(stamp($0.at))" } ?? "Unavailable"))
         for evidence in option.published.quotedValue == nil ? [] : option.sourceEvidence ?? [] {
             guard let value = recorded(evidence.rawProbability, at: evidence.observedAt) else { continue }
@@ -663,7 +669,11 @@ struct MLBTotalsCard11284: Equatable {
         return "Final \(actualTotal) runs · \(total > line.line ? "above" : "below") this line"
     }
 
-    static func build(_ matrix: EventQuestionMatrix?, actualTotal: Int?, eventID: Int) -> MLBTotalsCard11284? {
+    /// `pinLabel` reaches each line original's pin field only (`MLBOriginal11284
+    /// .option`); the lines, their order, pins, results and identities do not
+    /// depend on it. The final deck keeps the default.
+    static func build(_ matrix: EventQuestionMatrix?, actualTotal: Int?, eventID: Int,
+                      pinLabel: String = "Pregame chance") -> MLBTotalsCard11284? {
         guard let matrix, matrix.contract == NBAEventCards9483.matrixContract,
               matrix.displayScope == nil || matrix.displayScope == QuestionMatrixScope.game.rawValue
         else { return nil }
@@ -680,7 +690,8 @@ struct MLBTotalsCard11284: Equatable {
             lines.append(Line(optionKey: option.optionKey, line: line,
                               label: "Over \(NBALadderCard9483.number(line)) runs",
                               pregame: pin?.probability, venueResult: .producer(option.result),
-                              original: MLBOriginal11284.option(question, option, pin: pin, eventID: eventID)))
+                              original: MLBOriginal11284.option(question, option, pin: pin, eventID: eventID,
+                                                                pinLabel: pinLabel)))
         }
         var counts: [Double: Int] = [:]
         for line in lines { counts[line.line, default: 0] += 1 }

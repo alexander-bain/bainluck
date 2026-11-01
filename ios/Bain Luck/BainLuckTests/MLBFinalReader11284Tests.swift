@@ -627,4 +627,65 @@ final class MLBFinalReader11284Tests: XCTestCase {
         XCTAssertEqual(state.mlbSelection("15321836|mlb:totals"), "o:244311417")
         XCTAssertNil(state.mlbSelection("15321837|mlb:totals"), "another event's slot is its own")
     }
+
+    // MARK: - #10868: the pin's label is words only
+
+    /// RETAINED: the captured deck and series keep "Pregame chance" (the
+    /// extra-innings `other` row's own hard-coded words are pinned above).
+    /// CONSTRUCTED: 11+ given a stored producer pin (0.47, 20:55:00Z,
+    /// `pregame_pin`, naming its own one contributor), so the named field
+    /// carries a value. A named label changes that field's label and nothing
+    /// else: no line, order, pin, result, value, title or identity.
+    func testThePinLabelIsTheDefaultForEveryExistingCallerAndANamedOneChangesOnlyThoseWords() throws {
+        let named = "Recorded pregame reference"
+        let cards = try captured()
+        let deckTotals = try XCTUnwrap(totals(cards))
+        let deckSeries = try XCTUnwrap(series(cards))
+        for original in deckTotals.lines.map(\.original) + deckSeries.questions.flatMap(\.options).map(\.original) {
+            XCTAssertEqual(value("Pregame chance", in: original), ["Unavailable"], original.id)
+            XCTAssertEqual(value(named, in: original), [], original.id)
+        }
+        let served = try decode(GameMarketsResponse.self, object(Self.capturedMarkets)).gameQuestionMatrix
+        XCTAssertEqual(MLBTotalsCard11284.build(served, actualTotal: 10, eventID: 15321836), deckTotals,
+                       "the deck's own call is the default")
+
+        let body = try editingOption(object(Self.capturedMarkets), matrix: "game_question_matrix",
+                                     question: "q:count|runs|game|full_game|ge:11", option: "o:244311422") {
+            $0["pregame_reading"] = ["state": "available", "reason": NSNull(), "probability": 0.47,
+                                     "observed_at": "2026-09-30T20:55:00+00:00", "basis": "pregame_pin",
+                                     "outcome_id": 244311422] as [String: Any]
+        }
+        let pinned = try decode(GameMarketsResponse.self, body).gameQuestionMatrix
+        for matrix in [served, pinned] {
+            let plain = try XCTUnwrap(MLBTotalsCard11284.build(matrix, actualTotal: 10, eventID: 15321836))
+            let renamed = try XCTUnwrap(MLBTotalsCard11284.build(matrix, actualTotal: 10, eventID: 15321836,
+                                                                 pinLabel: named))
+            XCTAssertEqual(renamed.lines.map(\.optionKey), plain.lines.map(\.optionKey))
+            XCTAssertEqual(renamed.lines.map(\.line), plain.lines.map(\.line))
+            XCTAssertEqual(renamed.lines.map(\.label), plain.lines.map(\.label))
+            XCTAssertEqual(renamed.lines.map(\.pregame), plain.lines.map(\.pregame))
+            XCTAssertEqual(renamed.lines.map(\.venueResult), plain.lines.map(\.venueResult))
+            XCTAssertEqual(renamed.lines.map(\.original.id), plain.lines.map(\.original.id))
+            XCTAssertEqual(renamed.lines.map(\.original.title), plain.lines.map(\.original.title))
+            XCTAssertEqual(renamed.actualTotal, plain.actualTotal)
+            XCTAssertEqual(renamed.defaultIndex, plain.defaultIndex)
+            for (line, base) in zip(renamed.lines, plain.lines) {
+                XCTAssertEqual(line.original.sections.map(\.title), base.original.sections.map(\.title))
+                XCTAssertEqual(fields(line.original).map(\.value), fields(base.original).map(\.value), line.optionKey)
+                XCTAssertEqual(fields(line.original).map(\.label),
+                               fields(base.original).map { $0.label == "Pregame chance" ? named : $0.label },
+                               line.optionKey)
+            }
+        }
+
+        let stamp = try XCTUnwrap(SourceAge.preciseStamp("2026-09-30T20:55:00+00:00"))
+        let base = try XCTUnwrap(MLBTotalsCard11284.build(pinned, actualTotal: 10, eventID: 15321836)?
+            .lines.first { $0.optionKey == "o:244311422" })
+        let line = try XCTUnwrap(MLBTotalsCard11284.build(pinned, actualTotal: 10, eventID: 15321836, pinLabel: named)?
+            .lines.first { $0.optionKey == "o:244311422" })
+        XCTAssertEqual(line.pregame, 0.47)
+        XCTAssertEqual(value("Pregame chance", in: base.original), ["\(formatProbability(0.47)) · \(stamp)"])
+        XCTAssertEqual(value(named, in: line.original), ["\(formatProbability(0.47)) · \(stamp)"])
+        XCTAssertEqual(value("Pregame chance", in: line.original), [])
+    }
 }
