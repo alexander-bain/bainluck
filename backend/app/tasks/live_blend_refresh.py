@@ -8897,14 +8897,14 @@ class LiveBlendRefresher:
             return None
         route = self.receipt_route
         token = route() if route is not None else 0
-        if (token is None or event.status != "live" or event.completed_at is not None
+        gate = (token is None or event.status != "live" or event.completed_at is not None
                 or getattr(event, "preview_read_ticket", None) is None
                 or type(getattr(event, "preview_rev", None)) is not int
-                or not _preview_at_receipt(self.source, event_id)
-                or self._current_reading_proof(event_id, group, [], park_refused=False)):
+                or not _preview_at_receipt(self.source, event_id))
+        if gate or self._current_reading_proof(event_id, group, [], park_refused=False):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
-            self._hl_mark(event_id, "not_admitted")
+            self._hl_mark(event_id, "na_gate" if gate else "na_proof")
             return None
         quotes = self._receipt_quotes
         patched, overlaid, newest = [], set(), None
@@ -8955,7 +8955,7 @@ class LiveBlendRefresher:
         if reading is None or not has_proven_home_orientation(reading):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
-            self._hl_mark(event_id, "not_admitted")
+            self._hl_mark(event_id, "na_orientation")
             return None
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
@@ -8976,7 +8976,7 @@ class LiveBlendRefresher:
                for entry in {id(rows[oid][0]): rows[oid][0] for oid in ids}.values()):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
-            self._hl_mark(event_id, "not_admitted")
+            self._hl_mark(event_id, "na_settled")
             return None
         value = round(reading.home_probability, 4)
         basis = observation_basis(contributing)
@@ -8985,7 +8985,7 @@ class LiveBlendRefresher:
                 getattr(event, "win_probability_sources", None), self.source):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
-            self._hl_mark(event_id, "not_admitted")
+            self._hl_mark(event_id, "na_basis")
             return None
         pending = preview.pending_entry(event_id, self.source)
         if self._last_written_value.get(event_id) == value:
