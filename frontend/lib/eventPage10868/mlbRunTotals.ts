@@ -50,10 +50,60 @@
  * never the selection, so choosing a line never rescales the bar. Step 5 up to
  * 25, 10 up to 50, else ceil(top / 5); upper = max(step, ceil(top / step) ·
  * step); labels every step from 0.
+ *
+ * BEFORE FIRST PITCH AND DURING PLAY (S2b, `mlbRunMilestones`). Native
+ * `BaseballRunMilestonesAdapter10868`: the SAME admitted lines drawn as run
+ * milestones ("10+ runs") in the approved milestone visual (S2a's
+ * `CountMilestoneCard`). Pure, over lines the CALLER owns: this helper never
+ * sees the markets envelope, so it cannot prove which event the lines belong
+ * to — the binding passes only lines `mlbRunLines` admitted from this event's
+ * own body (`ownHockeyMarkets`). Each reading is an existing owner's,
+ * composed as native composes it:
+ *
+ *   - N+            `milestoneCount(line)` (Over 9.5 is "10+"), titled in the
+ *                   sport's unit words (`sportVocab`).
+ *   - before        Pregame chance = the decoder's `quoted` value only while
+ *                   its own clock is readable and recent (`isRecentQuote`),
+ *                   "Recorded <clock> · <venue>". The pin NEVER fills it.
+ *   - live pregame  S1's pin (comparable baseline, else the admitted reading)
+ *                   on its own readable clock, "Saved before first pitch <clock>
+ *                   · <venue>". No start filter of its own (native has none).
+ *   - live current  the `quoted` value only while recent, observed at or after
+ *                   a READABLE start (a missing start refuses) and not under the
+ *                   page's own `noReportedResult`; otherwise "In-game chance
+ *                   unavailable". `soccerCurrent` is not used (it lets a missing
+ *                   start pass).
+ *   - runs so far   during play only, from the host's DISPLAYED pair through
+ *                   the same RT1 guard as the final total (one private helper),
+ *                   dated only by the pair's own `observedAt`. Never the event
+ *                   row; a partial pair is no count, never 0. A reached line
+ *                   (count ≥ line, native `rungVerdict`) says "Reached so far" —
+ *                   performance, never 100% and never a result; otherwise "k more
+ *                   for N+". No source result is shown before or during play.
+ *   - default       `defaultRungIndex` over the SHOWN pregame chances only
+ *                   (nearest even odds, ties to the lower line); none shown is
+ *                   no default, so no row is chosen until the reader chooses.
+ *   - words         native baseball's, below; the leaf's statics are S2a's
+ *                   `GOALS_WORDS` (`TotalMilestoneInput10868`), never copied.
  */
 
+import type { EventDetailResponse } from "@/lib/types";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { decodeQuestionMatrix, MIN_LADDER_LINES, type MatrixOption, type MatrixQuestion } from "@/lib/nbaEventCards";
+import { defaultRungIndex, isRecentQuote, type MilestoneCard, type MilestoneRung } from "@/lib/nflEventCardDeck";
+import { sourceLabel } from "@/lib/sourceLabels";
+import { sportVocab } from "@/lib/marketMapUtils";
+import { clockWords, parseMs, timeWords } from "./hockeyJourneyCore";
+import { GOALS_WORDS, milestoneCount, observation } from "./soccerMatchStories";
+import type { HockeyJourneyPhase } from "./hockeyJourneyTypes";
+import type {
+  SoccerCurrent,
+  SoccerGoalsActual,
+  SoccerGoalsCard,
+  SoccerGoalsMilestone,
+  SoccerPregame,
+  SoccerTiming,
+} from "./soccerMatchTypes";
 
 /** Native's words (MLBTotalTargetsPresentation11284 / CardView11284), verbatim where web has them. */
 export const MLB_RUN_TOTAL_WORDS = {
@@ -67,6 +117,20 @@ export const MLB_RUN_TOTAL_WORDS = {
   resultUnavailable: "Result unavailable",
   strip: "Offered run lines",
   markerKey: (lineText: string) => `Selected line · ${lineText}`,
+  // Before / live: native `BaseballRunMilestonesAdapter10868.Words`, verbatim.
+  milestonesEyebrow: "TOTAL RUNS · BOTH TEAMS",
+  beforeTitle: "How many runs?",
+  liveTitle: "Runs so far against the milestones",
+  axisTitle: "Total runs in the game",
+  /** `TotalMilestoneInput10868.selectorTitle`: the strip's name. */
+  stripName: "Choose milestone",
+  pregameUnavailable: "Pregame chance unavailable",
+  inGameUnavailable: "In-game chance unavailable",
+  scoreUnavailable: "Score unavailable",
+  recorded: "Recorded",
+  savedBeforeStart: "Saved before first pitch",
+  scoreObserved: "Score observed",
+  more: (count: number, label: string) => `${count} more for ${label}`,
 } as const;
 
 /** One offered full-game run line. */
@@ -86,6 +150,12 @@ export interface MlbRunLine {
   pregameText: string;
   /** The source's verdict: true won, false lost, null open / unknown / void / none. */
   result: boolean | null;
+  /** The decoder's published value, only while `quoted` (`MatrixOption.quoted`), verbatim. */
+  quoted: number | null;
+  /** The published value's own clock (`MatrixOption.observedAt`), verbatim. */
+  observedAt: string | null;
+  /** The published row's source key (`MatrixOption.source`), verbatim. */
+  source: string | null;
 }
 
 /** The displayed pair, structurally `MlbDisplayedScore`: each side may be null. */
@@ -117,7 +187,25 @@ export interface MlbFinalTotals {
   awayName: string;
 }
 
-const lineText = (line: number): string => (Number.isInteger(line) ? String(line) : line.toFixed(1));
+/** The displayed pair WITH its own observation clock: structurally the page's `MlbDisplayedScore`. */
+export interface MlbRunObservedScore extends MlbRunScore {
+  observedAt: string | null;
+}
+
+/** The event fields the milestones read, exactly as the page holds them: the listed start and the sport. */
+export type MlbRunEvent = Pick<EventDetailResponse, "commence_time" | "sport">;
+
+/** The before / live leaf's built input: S2a's `CountMilestoneCard` card, in this leaf's own wrapper. */
+export interface MlbRunMilestones {
+  kind: "milestones";
+  phase: "before" | "live";
+  card: Omit<SoccerGoalsCard, "id">;
+}
+
+/** What `MlbRunTotalsCard` draws: the final leaf, or the before / live milestones. */
+export type MlbRunTotalsInput = MlbFinalTotals | MlbRunMilestones;
+
+const lineText =(line: number): string => (Number.isInteger(line) ? String(line) : line.toFixed(1));
 
 /** Native L678: absent, null or "game" passes; anything else — a malformed value included — refuses. */
 function gameScoped(envelope: unknown): boolean {
@@ -153,6 +241,10 @@ function lineOf(question: MatrixQuestion): MlbRunLine | null {
     pregameObservedAt: pin?.observedAt ?? null,
     pregameText: pin ? formatProbabilityPercent(pin.probability) : MLB_RUN_TOTAL_WORDS.unavailable,
     result: option.result,
+    // Verbatim from the unchanged shared decoder: no re-decode and no admission of their own.
+    quoted: option.quoted,
+    observedAt: option.observedAt,
+    source: option.source,
   };
 }
 
@@ -174,6 +266,21 @@ export function mlbRunLines(envelope: unknown): MlbRunLine[] | null {
 
 const count = (value: number | null): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
 
+/**
+ * The ONE runs rule, shared by the final total and the runs so far: two whole,
+ * non-negative counts from the displayed pair whose sum is exact (RT1,
+ * `Number.isSafeInteger`), or null. A missing side is never 0, and the event
+ * row is never read.
+ */
+function wholePair(score: MlbRunScore | null): { home: number; away: number; total: number } | null {
+  const home = score?.home ?? null;
+  const away = score?.away ?? null;
+  if (!count(home) || !count(away)) return null;
+  // RT1: the sum itself must be exact. Both sides are >= 0, so a safe sum also means each side is safe.
+  const total = home + away;
+  return Number.isSafeInteger(total) ? { home, away, total } : null;
+}
+
 /** The runs axis from every line and the total (native L76-85); never from the selection. */
 export function mlbRunAxis(lines: readonly number[], total: number | null): MlbRunAxis {
   const top = Math.max(0, ...lines, ...(total === null ? [] : [total]));
@@ -194,14 +301,9 @@ export function mlbFinalTotals(
   names: { home: string; away: string },
 ): MlbFinalTotals | null {
   if (!lines || lines.length < MIN_LADDER_LINES) return null;
-  const home = score?.home ?? null;
-  const away = score?.away ?? null;
-  // Two whole, non-negative counts, or nothing: a missing side is never 0.
-  const sides = count(home) && count(away) ? { home, away } : null;
-  // RT1: the sum itself must be exact. Both sides are >= 0, so a safe sum also means each side is safe.
-  const sum = sides ? sides.home + sides.away : null;
-  const pair = sides && sum !== null && Number.isSafeInteger(sum) ? sides : null;
-  const total = pair && sum !== null ? sum : null;
+  // Two whole, non-negative counts with an exact sum, or nothing (the shared RT1 rule).
+  const pair = wholePair(score);
+  const total = pair ? pair.total : null;
   const sorted = [...lines].sort((a, b) => a.line - b.line);
   let defaultIndex = 0;
   if (total !== null) {
@@ -235,4 +337,182 @@ export function mlbRunSelected(totals: MlbFinalTotals, held: string | null): Mlb
   if (key === null) return null;
   const found = totals.lines.filter((l) => l.optionKey === key);
   return found.length === 1 ? found[0] : null;
+}
+
+// ─── Before first pitch and during play: the run milestones (S2b) ──────────
+
+const MW = MLB_RUN_TOTAL_WORDS;
+
+/** Before first pitch: the `quoted` value while its own clock is readable and recent (native L296-304). Never the pin. */
+function beforeChance(line: MlbRunLine, nowMs: number): SoccerPregame {
+  const at = parseMs(line.observedAt);
+  if (line.quoted === null || at === null || !isRecentQuote(line.observedAt, nowMs)) {
+    return { kind: "missing", words: MW.pregameUnavailable };
+  }
+  return { kind: "value", observation: observation(line.quoted, at, MW.recorded, sourceLabel(line.source)) };
+}
+
+/** Once play starts: S1's pin (baseline, else admitted reading) on its own readable clock (native L305-306). */
+function pinChance(line: MlbRunLine): SoccerPregame {
+  const at = parseMs(line.pregameObservedAt);
+  if (line.pregame === null || at === null) return { kind: "missing", words: MW.pregameUnavailable };
+  return { kind: "value", observation: observation(line.pregame, at, MW.savedBeforeStart, sourceLabel(line.source)) };
+}
+
+/**
+ * During play (native L311-321): the `quoted` value only while recent, observed
+ * at or after a READABLE start, and not under the page's own `noReportedResult`
+ * (its `isSuspended`, which already withholds the projected final).
+ */
+function inGameChance(line: MlbRunLine, startMs: number | null, noReportedResult: boolean, nowMs: number): SoccerCurrent {
+  const at = parseMs(line.observedAt);
+  if (
+    line.quoted === null ||
+    at === null ||
+    !isRecentQuote(line.observedAt, nowMs) ||
+    startMs === null || // a missing or unreadable start refuses
+    at < startMs || // a quote from before the start is never the in-game chance
+    noReportedResult
+  ) {
+    return { kind: "unavailable", words: MW.inGameUnavailable };
+  }
+  return { kind: "recorded", observation: observation(line.quoted, at, MW.recorded, sourceLabel(line.source)) };
+}
+
+/** Native `timing`: each reading under its leaf title, joined from words already built. */
+function milestoneTiming(title: string, pregame: SoccerPregame, current: SoccerCurrent | null): SoccerTiming {
+  const lines = [`${GOALS_WORDS.pregameTitle}: ${pregame.kind === "value" ? pregame.observation.detail : pregame.words}`];
+  if (current) {
+    const lead =
+      current.kind === "recorded"
+        ? GOALS_WORDS.recordedTitle
+        : current.kind === "reached"
+          ? GOALS_WORDS.actualSoFarTitle
+          : GOALS_WORDS.currentStatusTitle;
+    lines.push(`${lead}: ${current.kind === "recorded" ? current.observation.detail : current.words}`);
+  }
+  return { title: `${title} · ${GOALS_WORDS.timingSuffix}`, lines };
+}
+
+/** The sport's unit for a count ("run" / "runs"), never a trailing space when the sport declares none. */
+function unitFor(n: number, sport: string | null | undefined): string {
+  const vocab = sportVocab(sport || undefined);
+  return n === 1 ? vocab.unitSingular : vocab.unit;
+}
+
+function milestoneRow(
+  line: MlbRunLine,
+  phase: "before" | "live",
+  startMs: number | null,
+  runs: number | null,
+  sport: string | null | undefined,
+  noReportedResult: boolean,
+  nowMs: number,
+): SoccerGoalsMilestone {
+  const n = milestoneCount(line.line);
+  const label = `${n}+`;
+  const unit = unitFor(n, sport);
+  const title = unit ? `${label} ${unit}` : label;
+  const pregame = phase === "before" ? beforeChance(line, nowMs) : pinChance(line);
+  let current: SoccerCurrent | null = null;
+  let performance: string | null = null;
+  if (phase === "live") {
+    // `PlayerPropsCardView.rungVerdict` on the runs so far: performance, never 100% and never a result.
+    const reached = runs !== null && runs >= line.line;
+    current = reached ? { kind: "reached", words: GOALS_WORDS.reachedSoFar } : inGameChance(line, startMs, noReportedResult, nowMs);
+    performance = reached || runs === null ? null : MW.more(Math.max(1, n - runs), label);
+  }
+  return {
+    id: line.optionKey,
+    label: title,
+    quantity: n,
+    quantityLabel: label,
+    pregame,
+    current,
+    // The source's grade belongs to the final leaf only; it is never inferred from reaching a line.
+    result: null,
+    performance,
+    timing: milestoneTiming(title, pregame, current),
+  };
+}
+
+/** Native `actual`: during play the displayed pair's total, dated only by the pair's own clock; else its absence. */
+function runsSoFar(runs: number | null, observedAt: string | null, sport: string | null | undefined): SoccerGoalsActual {
+  if (runs === null) return { kind: "unavailable", words: MW.scoreUnavailable };
+  const unit = unitFor(runs, sport);
+  const at = parseMs(observedAt);
+  return {
+    kind: "count",
+    title: GOALS_WORDS.countSoFarTitle,
+    quantity: runs,
+    text: `${runs}`,
+    unit,
+    clock: at === null ? null : timeWords(at),
+    ruleLabel: `${runs} so far`,
+    detail: at === null ? `${runs}${unit ? ` ${unit}` : ""} so far` : `${MW.scoreObserved} ${clockWords(at) ?? ""}`,
+  };
+}
+
+/**
+ * The before / live run milestones for S2a's `CountMilestoneCard`, or null
+ * after the final, for any other phase, or with fewer than three lines.
+ *
+ * `lines` must be `mlbRunLines` over THIS event's own body (the caller proves
+ * ownership; this helper cannot). `event` gives only the listed start and the
+ * sport; `score` is the host's displayed pair with its own `observedAt` (the
+ * page's `score`); `noReportedResult` is the page's own answer.
+ */
+export function mlbRunMilestones(
+  lines: readonly MlbRunLine[] | null,
+  phase: HockeyJourneyPhase,
+  event: MlbRunEvent,
+  score: MlbRunObservedScore | null,
+  noReportedResult: boolean,
+  nowMs: number,
+): MlbRunMilestones | null {
+  if (phase !== "before" && phase !== "live") return null;
+  if (!lines || lines.length < MIN_LADDER_LINES) return null;
+  const sorted = [...lines].sort((a, b) => a.line - b.line);
+  const startMs = parseMs(event.commence_time);
+  // During play only, and only from the displayed pair (the same RT1 rule as the final total).
+  const runs = phase === "live" ? (wholePair(score)?.total ?? null) : null;
+  const rows = sorted.map((line) => milestoneRow(line, phase, startMs, runs, event.sport, noReportedResult, nowMs));
+  // The milestone cards' own default over the SHOWN pregame chances; only `rungs[].chance` is read by it.
+  const shown: MilestoneCard = {
+    kind: "milestone",
+    id: "mlb-run-milestones",
+    player: "",
+    stat: "",
+    side: "unknown",
+    basis: phase === "before" ? "pregamePrice" : "pregameMark",
+    rungs: rows.map(
+      (row, i): MilestoneRung => ({
+        threshold: sorted[i].line,
+        chance: row.pregame.kind === "value" ? row.pregame.observation.probability : null,
+        observedAt: null,
+        rowId: row.id,
+        hit: null,
+      }),
+    ),
+    actual: null,
+  };
+  const opening = defaultRungIndex(shown);
+  return {
+    kind: "milestones",
+    phase,
+    card: {
+      name: MW.stripName,
+      eyebrow: MW.milestonesEyebrow,
+      chartTitle: GOALS_WORDS.chartTitle,
+      quantityAxisTitle: MW.axisTitle,
+      titles: { pregame: GOALS_WORDS.pregameTitle, current: GOALS_WORDS.currentStatusTitle, result: GOALS_WORDS.resultTitle },
+      currentTitles: { recorded: GOALS_WORDS.recordedTitle, status: GOALS_WORDS.currentStatusTitle, reached: GOALS_WORDS.actualSoFarTitle },
+      spoken: { hollow: GOALS_WORDS.spokenHollow, filled: GOALS_WORDS.spokenFilled, rule: GOALS_WORDS.spokenRule, strip: GOALS_WORDS.spokenStrip },
+      title: phase === "before" ? MW.beforeTitle : MW.liveTitle,
+      milestones: rows,
+      defaultId: opening === null ? null : rows[opening].id,
+      selectionUnavailable: GOALS_WORDS.selectionUnavailable,
+      actual: phase === "live" ? runsSoFar(runs, score?.observedAt ?? null, event.sport) : null,
+    },
+  };
 }

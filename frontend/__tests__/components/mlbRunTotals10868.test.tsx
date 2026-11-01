@@ -18,14 +18,27 @@
  * jsdom draws no layout: these tests prove what the card states and holds and
  * where each mark is placed on the runs axis (as data), not how it looks at
  * 375 / 393 px or 200% text; only a browser check proves that (owed).
+ *
+ * BEFORE / LIVE (S2b): the same card given `mlbRunMilestones`' input draws
+ * S2a's `CountMilestoneCard`. Every before/live quote, pin, clock, start,
+ * displayed pair and `noReportedResult` is CONSTRUCTED on a copy of the REAL
+ * matrix and named where made; no genuine before/live specimen is claimed.
  */
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fixture from "../lib/mlbRunTotals10868.fixtures.json";
 import mlbFixtures from "../lib/mlbGame10868.fixtures.json";
 import { propVerdictLabel } from "@/lib/propGrade";
-import { MLB_RUN_TOTAL_WORDS, mlbFinalTotals, mlbRunLines, type MlbFinalTotals } from "@/lib/eventPage10868/mlbRunTotals";
-import MlbRunTotalsCard from "@/components/event/eventpage10868/MlbRunTotalsCard";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import {
+  MLB_RUN_TOTAL_WORDS,
+  mlbFinalTotals,
+  mlbRunLines,
+  mlbRunMilestones,
+  type MlbFinalTotals,
+  type MlbRunMilestones,
+} from "@/lib/eventPage10868/mlbRunTotals";
+import MlbRunTotalsCard, { type MlbRunTotalsSelection } from "@/components/event/eventpage10868/MlbRunTotalsCard";
 
 type Json = Record<string, unknown>;
 const matrix = (): Json => JSON.parse(JSON.stringify(fixture.game_question_matrix)) as Json;
@@ -226,5 +239,212 @@ describe("CONSTRUCTED: the displayed pair and the axis", () => {
     click(choice(KEY_2_5));
     expect(text("[data-run-heading]")).toBe("Over 2.5 runs");
     expect(scale()).toEqual(before);
+  });
+});
+
+// ─── S2b: before first pitch and during play (CONSTRUCTED phases) ──────────
+
+/** CONSTRUCTED clocks: a listed first pitch, ten minutes before it, and twenty minutes into play. */
+const START_ISO = "2026-09-30T23:10:00.000Z";
+const START = Date.parse(START_ISO);
+const MIN = 60_000;
+const BEFORE_NOW = START - 10 * MIN;
+const LIVE_NOW = START + 20 * MIN;
+const iso = (ms: number) => new Date(ms).toISOString();
+/** CONSTRUCTED event fields and displayed pair (2 + 3 = 5 runs, on its own clock). */
+const EVENT = { commence_time: START_ISO, sport: "baseball_mlb" };
+const LIVE_PAIR = { home: 2, away: 3, observedAt: iso(LIVE_NOW - MIN) };
+const BEFORE_SCOPE = "mlb:15321836:before";
+const LIVE_SCOPE = "mlb:15321836:live";
+const KEY_11_5 = "o:244311421";
+const KEY_12_5 = "o:244311420";
+const MILESTONE_LABELS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((n) => `${n}+ runs`);
+
+const overAt = (m: Json, line: number): Json => (fullGameAt(m, line).options as Json[])[0];
+/** CONSTRUCTED: the line's Over option published as `state` with `value`, on its own clock. */
+function publish(m: Json, line: number, value: unknown, observedAt: string | null, state = "quoted"): void {
+  const o = overAt(m, line);
+  o.published = { ...(o.published as Json), value, value_state: state, observed_at: observedAt };
+}
+/** CONSTRUCTED: an admitted pregame pin (comparable baseline). */
+function pinLine(m: Json, line: number, probability: number, observedAt: string): void {
+  overAt(m, line).comparison = {
+    state: "comparable",
+    reason: null,
+    baseline: { basis: "pregame_pin", probability, observed_at: observedAt },
+    latest: null,
+    delta_points: null,
+  };
+}
+/** CONSTRUCTED live matrix: pins on 9.5 (30%), 10.5 (45%) and 12.5 (20%); a recorded in-game quote on 11.5 (35%). */
+function liveMatrix(): Json {
+  const m = matrix();
+  pinLine(m, 9.5, 0.3, iso(START - 30 * MIN));
+  pinLine(m, 10.5, 0.45, iso(START - 30 * MIN));
+  pinLine(m, 12.5, 0.2, iso(START - 30 * MIN));
+  publish(m, 11.5, 0.35, iso(LIVE_NOW - 2 * MIN));
+  return m;
+}
+/** The ACTUAL helper over the ACTUAL admission, with the CONSTRUCTED phase inputs. */
+function milestonesOf(m: Json, phase: "before" | "live", now = phase === "before" ? BEFORE_NOW : LIVE_NOW): MlbRunMilestones {
+  const built = mlbRunMilestones(mlbRunLines(m), phase, EVENT, phase === "live" ? LIVE_PAIR : null, false, now);
+  if (!built) throw new Error("no run milestones");
+  return built;
+}
+const showMs = (input: MlbRunMilestones, scope: string, selection?: MlbRunTotalsSelection) =>
+  act(() => root.render(<MlbRunTotalsCard totals={input} scope={scope} selection={selection} />));
+const msChips = () => Array.from(host.querySelectorAll<HTMLButtonElement>('[data-soccer-card="goals"] li > button[aria-pressed]'));
+const msLabel = (b: HTMLButtonElement) => b.querySelector("span")?.textContent ?? null;
+const msPressed = () => msChips().filter((b) => b.getAttribute("aria-pressed") === "true").map(msLabel);
+const msChosen = () => host.querySelector("[data-soccer-chosen]")?.getAttribute("data-soccer-chosen") ?? null;
+const msUnavailable = () => host.querySelector("[data-soccer-selection-unavailable]");
+function msChip(label: string): HTMLButtonElement {
+  const found = msChips().filter((b) => msLabel(b) === label);
+  if (found.length !== 1) throw new Error(`expected one milestone ${label}`);
+  return found[0];
+}
+const readoutTitles = () => Array.from(host.querySelectorAll("[data-soccer-chosen] dt")).map((dt) => dt.textContent);
+const readoutValues = () => Array.from(host.querySelectorAll("[data-soccer-chosen] dd")).map((dd) => dd.textContent);
+const detailsOffered = () =>
+  host.querySelectorAll("[data-soccer-details-entry]").length +
+  Array.from(host.querySelectorAll("button")).filter((b) => (b.textContent ?? "").startsWith("Details")).length;
+
+describe("S2b: before first pitch and during play, the same card draws S2a's milestone visual (CONSTRUCTED phases)", () => {
+  it("BEFORE (CONSTRUCTED quotes): every line as a milestone in the card's own wrapper, phase words, the shown default, no final markup and no Details", () => {
+    const m = matrix();
+    publish(m, 9.5, 0.4, iso(BEFORE_NOW - 5 * MIN));
+    publish(m, 10.5, 0.55, iso(BEFORE_NOW - 5 * MIN));
+    showMs(milestonesOf(m, "before"), BEFORE_SCOPE);
+    const wrapper = host.querySelector("[data-mlb-run-totals]");
+    expect(wrapper?.getAttribute("data-mlb-run-totals")).toBe(BEFORE_SCOPE);
+    expect(wrapper?.getAttribute("data-mlb-run-milestones")).toBe("before");
+    expect(host.querySelectorAll('[data-soccer-card="goals"]')).toHaveLength(1);
+    expect(host.querySelector("h4")?.textContent).toBe("How many runs?");
+    expect(wrapper?.textContent).toContain("TOTAL RUNS · BOTH TEAMS");
+    expect(host.querySelector("ul[aria-label]")?.getAttribute("aria-label")).toBe("Choose milestone");
+    expect(msChips().map(msLabel)).toEqual(MILESTONE_LABELS);
+    // Only the two shown quotes are marks; the others keep their own words; nothing in-game and no count before first pitch.
+    expect(host.querySelectorAll('[data-mark="pregame"]')).toHaveLength(2);
+    expect(host.querySelectorAll('[data-mark="current"]')).toHaveLength(0);
+    expect(host.querySelector('[data-mark="actual-rule"]')).toBeNull();
+    expect(msChip("11+ runs").textContent).toContain(formatProbabilityPercent(0.55));
+    expect(msChip("3+ runs").textContent).toContain("Pregame chance unavailable");
+    // The shown quote nearest even odds opens (55% over 40%).
+    expect(msPressed()).toEqual(["11+ runs"]);
+    expect(msChosen()).toBe(KEY_10_5);
+    // None of the final leaf, no source result, no Details.
+    expect(host.querySelector("[data-run-total]")).toBeNull();
+    expect(host.querySelector("[data-run-source]")).toBeNull();
+    expect(host.textContent).not.toContain(propVerdictLabel(true));
+    expect(host.textContent).not.toContain(propVerdictLabel(false));
+    expect(detailsOffered()).toBe(0);
+  });
+
+  it("LIVE: the pin as pregame, the recorded in-game quote, reached performance and the runs so far, each in its own words", () => {
+    showMs(milestonesOf(liveMatrix(), "live"), LIVE_SCOPE);
+    expect(host.querySelector("[data-mlb-run-totals]")?.getAttribute("data-mlb-run-milestones")).toBe("live");
+    expect(host.querySelector("h4")?.textContent).toBe("Runs so far against the milestones");
+    expect(msChip("3+ runs").textContent).toContain("Reached so far");
+    expect(msChip("6+ runs").textContent).toContain("1 more for 6+");
+    expect(host.querySelectorAll('[data-mark="current"]')).toHaveLength(1);
+    expect(host.querySelector(`[data-milestone="${KEY_11_5}"] [data-mark="current"]`)).not.toBeNull();
+    expect(host.querySelector('[data-axis-labels="actual"] [data-axis-label="actual"]')?.textContent).toBe("5 so far");
+    expect(Array.from(host.querySelectorAll("[data-goals-key-item]")).map((el) => el.getAttribute("data-goals-key-item"))).toEqual([
+      "pregame",
+      "current",
+      "actual",
+    ]);
+    // The pin nearest even odds opens (10.5 at 45%); its readout keeps pregame and in-game apart.
+    expect(msChosen()).toBe(KEY_10_5);
+    expect(readoutTitles()).toEqual(["Pregame chance", "In-game chance"]);
+    expect(readoutValues()).toEqual([formatProbabilityPercent(0.45), "In-game chance unavailable"]);
+    click(msChip("12+ runs"));
+    expect(msChosen()).toBe(KEY_11_5);
+    expect(readoutTitles()).toEqual(["Pregame chance", "Recorded in-game"]);
+    expect(readoutValues()).toEqual(["Pregame chance unavailable", formatProbabilityPercent(0.35)]);
+    expect(detailsOffered()).toBe(0);
+  });
+
+  it("no shown pregame chance: nothing is chosen until the reader chooses, and no unavailable message", () => {
+    showMs(milestonesOf(matrix(), "before"), BEFORE_SCOPE);
+    expect(msPressed()).toEqual([]);
+    expect(msChosen()).toBeNull();
+    expect(msUnavailable()).toBeNull();
+    expect(host.textContent).not.toContain("Selected milestone unavailable.");
+    click(msChip("9+ runs"));
+    expect(msPressed()).toEqual(["9+ runs"]);
+    expect(detailsOffered()).toBe(0);
+  });
+
+  it("uncontrolled: the chosen line holds through a refresh and a reorder; withdrawn or duplicated it is unavailable with no substitute; its return restores it; a new scope resets", () => {
+    showMs(milestonesOf(liveMatrix(), "live"), LIVE_SCOPE);
+    click(msChip("13+ runs"));
+    expect(msChosen()).toBe(KEY_12_5);
+    showMs(milestonesOf(liveMatrix(), "live", LIVE_NOW + 30_000), LIVE_SCOPE); // CONSTRUCTED refresh 30 s later
+    expect(msChosen()).toBe(KEY_12_5);
+    const reordered = liveMatrix();
+    reordered.questions = [...questionsOf(reordered)].reverse();
+    showMs(milestonesOf(reordered, "live"), LIVE_SCOPE);
+    expect(msChosen()).toBe(KEY_12_5);
+    // TEST MUTATIONS: 12.5 withdrawn; 13.5's option carrying 12.5's key (S1's admission drops both).
+    const withdrawn = liveMatrix();
+    withdrawn.questions = questionsOf(withdrawn).filter((q) => q !== fullGameAt(withdrawn, 12.5));
+    const duplicated = liveMatrix();
+    overAt(duplicated, 13.5).option_key = KEY_12_5;
+    for (const changed of [withdrawn, duplicated]) {
+      showMs(milestonesOf(changed, "live"), LIVE_SCOPE);
+      expect(msUnavailable()?.textContent).toBe("Selected milestone unavailable.");
+      expect(msPressed()).toEqual([]); // never the 10.5 default or a neighbour
+      expect(msChosen()).toBeNull();
+      expect(msChips().map(msLabel)).not.toContain("13+ runs");
+      showMs(milestonesOf(liveMatrix(), "live"), LIVE_SCOPE);
+      expect(msChosen()).toBe(KEY_12_5);
+      expect(msPressed()).toEqual(["13+ runs"]);
+      expect(msUnavailable()).toBeNull();
+    }
+    // A new phase is a new reading: before first pitch nothing is shown, so nothing is chosen.
+    showMs(milestonesOf(matrix(), "before"), BEFORE_SCOPE);
+    expect(msChosen()).toBeNull();
+    expect(msPressed()).toEqual([]);
+    // Back to live: a new reading again, on the live default.
+    showMs(milestonesOf(liveMatrix(), "live"), LIVE_SCOPE);
+    expect(msChosen()).toBe(KEY_10_5);
+  });
+
+  it("controlled (the B1 seam): one onSelect per tap, the card shows only the host's key, and nothing is chosen on the host's behalf", () => {
+    const onSelect = jest.fn();
+    const input = milestonesOf(liveMatrix(), "live");
+    showMs(input, LIVE_SCOPE, { held: null, onSelect });
+    expect(msChosen()).toBe(KEY_10_5); // no host choice yet: the shown default
+    expect(onSelect).not.toHaveBeenCalled();
+    click(msChip("13+ runs"));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenLastCalledWith(KEY_12_5);
+    expect(msChosen()).toBe(KEY_10_5); // the host has not moved its key yet
+    showMs(input, LIVE_SCOPE, { held: KEY_12_5, onSelect });
+    expect(msChosen()).toBe(KEY_12_5);
+    const withdrawn = liveMatrix();
+    withdrawn.questions = questionsOf(withdrawn).filter((q) => q !== fullGameAt(withdrawn, 12.5));
+    showMs(milestonesOf(withdrawn, "live"), LIVE_SCOPE, { held: KEY_12_5, onSelect });
+    expect(msUnavailable()).not.toBeNull();
+    expect(msPressed()).toEqual([]);
+    showMs(input, LIVE_SCOPE, { held: KEY_12_5, onSelect });
+    expect(msChosen()).toBe(KEY_12_5);
+    showMs(milestonesOf(matrix(), "before"), BEFORE_SCOPE, { held: null, onSelect });
+    expect(msChosen()).toBeNull();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("the final input still draws the S1 final leaf in the same component; phases switch between the two without crossing", () => {
+    show(REAL());
+    expect(text("[data-run-total]")).toBe("10");
+    expect(host.querySelector("[data-soccer-card]")).toBeNull();
+    expect(host.querySelector("[data-mlb-run-milestones]")).toBeNull();
+    showMs(milestonesOf(liveMatrix(), "live"), LIVE_SCOPE);
+    expect(host.querySelector("[data-run-total]")).toBeNull();
+    expect(host.querySelectorAll('[data-soccer-card="goals"]')).toHaveLength(1);
+    show(REAL());
+    expect(pressed()).toEqual([KEY_9_5]);
+    expect(host.querySelector("[data-soccer-card]")).toBeNull();
   });
 });

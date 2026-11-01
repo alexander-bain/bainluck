@@ -38,6 +38,16 @@
  * carry exactly once is "Selected line unavailable", never the default. With
  * no `selection` the card behaves exactly as above.
  *
+ * BEFORE FIRST PITCH AND DURING PLAY (S2b). Given `mlbRunMilestones`' input
+ * (`kind: "milestones"`), the card draws S2a's `CountMilestoneCard` — the
+ * approved milestone visual — instead of the final leaf, inside the same
+ * `data-mlb-run-totals` wrapper. The chosen line is the SAME held option key
+ * (the host's `selection`, else the internal per-scope state): no held key is
+ * passed as `undefined`, never a made-up id, so with no shown pregame chance
+ * nothing is chosen. Each tap routes once (to `onSelect`, or to the internal
+ * state). Details stay off inside the wrapper. The final input draws exactly
+ * the final leaf below.
+ *
  * The axis never depends on the selection, so choosing a line never rescales
  * the bar. No chart library, fetch, timer or subscription; tokens and the
  * host's team colours only. The plot is hidden from screen readers: every
@@ -50,8 +60,9 @@ import {
   MLB_RUN_TOTAL_WORDS as W,
   mlbRunComparison,
   mlbRunSelected,
-  type MlbFinalTotals,
+  type MlbRunTotalsInput,
 } from "@/lib/eventPage10868/mlbRunTotals";
+import { CountMilestoneCard } from "./SoccerMatchStories";
 
 /** The host's team colours (its own contrast-checked tints, else series tokens). */
 export interface MlbRunTotalsColors {
@@ -78,8 +89,11 @@ export default function MlbRunTotalsCard({
   colors = DEFAULT_COLORS,
   selection,
 }: {
-  /** `mlbFinalTotals(mlbRunLines(matrix), displayedScore, names)` for THIS event's final. */
-  totals: MlbFinalTotals;
+  /**
+   * THIS event's built input: `mlbFinalTotals(…)` after the final, or
+   * `mlbRunMilestones(…)` before first pitch and during play.
+   */
+  totals: MlbRunTotalsInput;
   /** `mlb:<event id>:<phase>`: a change resets the held line. */
   scope: string;
   colors?: MlbRunTotalsColors;
@@ -93,6 +107,15 @@ export default function MlbRunTotalsCard({
   if (stored.scope !== scope) setStored({ scope, held: null });
   const held = selection ? selection.held : stored.scope === scope ? stored.held : null;
   const choose = (key: string) => (selection ? selection.onSelect(key) : setStored({ scope, held: key }));
+
+  if (totals.kind === "milestones") {
+    // Before / live: S2a's wrapper over the approved milestone visual, on the same held key (none = undefined).
+    return (
+      <div className="min-w-0" data-mlb-run-totals={scope} data-mlb-run-milestones={totals.phase}>
+        <CountMilestoneCard card={totals.card} heldId={held === null ? undefined : held} onChoose={choose} />
+      </div>
+    );
+  }
 
   const selected = mlbRunSelected(totals, held);
   const { total, bar, axis } = totals;

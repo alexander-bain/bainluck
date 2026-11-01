@@ -19,6 +19,12 @@
  *
  * Expected ids are literal option keys read from the capture; nothing here
  * derives an identity, a price, a grade or a clock.
+ *
+ * BEFORE / LIVE (S2b, `mlbRunMilestones`): the REAL capture is a final, so
+ * every before/live case is CONSTRUCTED — published quotes, pins, clocks, the
+ * listed start, the displayed pair and the page's `noReportedResult` are set
+ * in-test on a copy of the matrix and named where made. No genuine before or
+ * live specimen is claimed.
  */
 
 import { createElement } from "react";
@@ -27,15 +33,22 @@ import fixture from "./mlbRunTotals10868.fixtures.json";
 import mlbFixtures from "./mlbGame10868.fixtures.json";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { propVerdictLabel } from "@/lib/propGrade";
+import { decodeQuestionMatrix } from "@/lib/nbaEventCards";
+import { sourceLabel } from "@/lib/sourceLabels";
+import { clockWords, timeWords } from "@/lib/eventPage10868/hockeyJourneyCore";
+import { GOALS_WORDS } from "@/lib/eventPage10868/soccerMatchStories";
+import type { SoccerGoalsCard, SoccerGoalsMilestone } from "@/lib/eventPage10868/soccerMatchTypes";
 import {
   MLB_RUN_TOTAL_WORDS,
   mlbFinalTotals,
   mlbRunAxis,
   mlbRunComparison,
   mlbRunLines,
+  mlbRunMilestones,
   mlbRunSelected,
   type MlbFinalTotals,
   type MlbRunLine,
+  type MlbRunObservedScore,
 } from "@/lib/eventPage10868/mlbRunTotals";
 import MlbRunTotalsCard from "@/components/event/eventpage10868/MlbRunTotalsCard";
 
@@ -435,5 +448,321 @@ describe("CONSTRUCTED: a held line resolves exactly once and never falls back", 
     expect(mlbRunSelected(duplicated, KEY_10_5)).toBeNull();
     const noDefault: MlbFinalTotals = { ...totals, defaultKey: null }; // CONSTRUCTED model
     expect(mlbRunSelected(noDefault, null)).toBeNull();
+  });
+});
+
+// ─── S2b: before first pitch and during play (CONSTRUCTED phases) ──────────
+
+/** CONSTRUCTED clocks: a listed first pitch, ten minutes before it, and twenty minutes into play. */
+const START_ISO = "2026-09-30T23:10:00.000Z";
+const START = Date.parse(START_ISO);
+const MIN = 60_000;
+const BEFORE_NOW = START - 10 * MIN;
+const LIVE_NOW = START + 20 * MIN;
+const iso = (ms: number) => new Date(ms).toISOString();
+/** CONSTRUCTED event fields: only the listed start and the sport, as the page holds them. */
+const EVENT = { commence_time: START_ISO, sport: "baseball_mlb" };
+/** CONSTRUCTED displayed pair during play: 2 + 3 = 5 runs, dated a minute ago by its own clock. */
+const PAIR_AT = iso(LIVE_NOW - MIN);
+const LIVE_PAIR: MlbRunObservedScore = { home: 2, away: 3, observedAt: PAIR_AT };
+const COUNTS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const KEY_12_5 = "o:244311420";
+const keyAt = (line: number) => KEYS[LINES.indexOf(line)];
+
+/** CONSTRUCTED: the line's Over option published as `state` with `value`, on its own clock. */
+function publish(m: Json, line: number, value: unknown, observedAt: string | null, state = "quoted"): void {
+  const o = overOf(fullGameAt(m, line));
+  o.published = { ...(o.published as Json), value, value_state: state, observed_at: observedAt };
+}
+/** CONSTRUCTED: an admitted pregame pin (comparable baseline) on the line's Over option. */
+function pinLine(m: Json, line: number, probability: number, observedAt: string): void {
+  overOf(fullGameAt(m, line)).comparison = {
+    state: "comparable",
+    reason: null,
+    baseline: { basis: "pregame_pin", probability, observed_at: observedAt },
+    latest: null,
+    delta_points: null,
+  };
+}
+const copyOf = (m: Json): Json => JSON.parse(JSON.stringify(m)) as Json;
+
+type MilestoneOptions = { score?: MlbRunObservedScore | null; noReportedResult?: boolean; now?: number; event?: { commence_time: string; sport: string | null } };
+/** The ACTUAL helper over the ACTUAL admission, with the CONSTRUCTED phase inputs above unless overridden. */
+function built(m: Json, phase: "before" | "live", o: MilestoneOptions = {}): Omit<SoccerGoalsCard, "id"> {
+  const result = mlbRunMilestones(
+    mlbRunLines(m),
+    phase,
+    o.event ?? EVENT,
+    o.score === undefined ? LIVE_PAIR : o.score,
+    o.noReportedResult ?? false,
+    o.now ?? (phase === "before" ? BEFORE_NOW : LIVE_NOW),
+  );
+  if (!result) throw new Error("no run milestones");
+  expect(result.phase).toBe(phase);
+  return result.card;
+}
+function rowOf(card: Omit<SoccerGoalsCard, "id">, line: number): SoccerGoalsMilestone {
+  const found = card.milestones.filter((r) => r.id === keyAt(line));
+  if (found.length !== 1) throw new Error(`expected one milestone for ${line}`);
+  return found[0];
+}
+/** A shown reading: the figure in web's one percent rule, the short clock, and "<lead> <full clock> · Kalshi". */
+const obs = (lead: string, probability: number, atMs: number) => ({
+  probability,
+  text: formatProbabilityPercent(probability),
+  clock: timeWords(atMs),
+  detail: `${lead} ${clockWords(atMs)} · Kalshi`,
+});
+const PREGAME_UNAVAILABLE = { kind: "missing", words: "Pregame chance unavailable" };
+const IN_GAME_UNAVAILABLE = { kind: "unavailable", words: "In-game chance unavailable" };
+const REACHED = { kind: "reached", words: "Reached so far" };
+
+describe("S2b: the run milestones before first pitch and during play (CONSTRUCTED phases over the REAL admission)", () => {
+  it("only before and live, with at least three lines: the same 13 admitted lines as 3+ … 15+ runs, in native's words, with no source result", () => {
+    const lines = realLines();
+    expect(mlbRunMilestones(lines, "final", EVENT, LIVE_PAIR, false, LIVE_NOW)).toBeNull();
+    expect(mlbRunMilestones(null, "live", EVENT, LIVE_PAIR, false, LIVE_NOW)).toBeNull();
+    expect(mlbRunMilestones(lines.slice(0, 2), "before", EVENT, null, false, BEFORE_NOW)).toBeNull();
+    expect(sourceLabel("kalshi")).toBe("Kalshi");
+    for (const phase of ["before", "live"] as const) {
+      const card = built(matrix(), phase);
+      expect(card.milestones.map((r) => r.id)).toEqual(KEYS);
+      expect(card.milestones.map((r) => r.quantity)).toEqual(COUNTS);
+      expect(card.milestones.map((r) => r.quantityLabel)).toEqual(COUNTS.map((n) => `${n}+`));
+      expect(card.milestones.map((r) => r.label)).toEqual(COUNTS.map((n) => `${n}+ runs`));
+      // The capture grades every line; before and during play no grade is shown or inferred.
+      expect(card.milestones.every((r) => r.result === null)).toBe(true);
+      expect([card.eyebrow, card.name, card.quantityAxisTitle, card.chartTitle]).toEqual([
+        "TOTAL RUNS · BOTH TEAMS",
+        "Choose milestone",
+        "Total runs in the game",
+        GOALS_WORDS.chartTitle,
+      ]);
+      expect(card.titles).toEqual({ pregame: "Pregame chance", current: "In-game chance", result: "Final result" });
+      expect(card.currentTitles).toEqual({ recorded: "Recorded in-game", status: "In-game chance", reached: "Actual so far" });
+      expect(card.selectionUnavailable).toBe(GOALS_WORDS.selectionUnavailable);
+    }
+    expect(built(matrix(), "before").title).toBe("How many runs?");
+    expect(built(matrix(), "live").title).toBe("Runs so far against the milestones");
+  });
+
+  it("each line carries the shared decoder's quoted, observedAt and source verbatim (no re-decode)", () => {
+    const m = matrix();
+    publish(m, 9.5, 0.42, iso(BEFORE_NOW - 5 * MIN)); // CONSTRUCTED quote
+    const options = decodeQuestionMatrix(m).flatMap((q) => q.options);
+    const lines = mlbRunLines(m)!;
+    for (const l of lines) {
+      const o = options.filter((x) => x.optionKey === l.optionKey);
+      expect(o).toHaveLength(1);
+      expect({ key: l.optionKey, quoted: l.quoted, observedAt: l.observedAt, source: l.source }).toEqual({
+        key: l.optionKey,
+        quoted: o[0].quoted,
+        observedAt: o[0].observedAt,
+        source: o[0].source,
+      });
+    }
+    expect(lineAt(lines, 9.5).quoted).toBe(0.42);
+    expect(lineAt(realLines(), 9.5)).toMatchObject({ quoted: null, observedAt: "2026-10-09T04:12:27.146416+00:00", source: "kalshi" });
+  });
+
+  it("BEFORE: a quoted value on its own readable, recent clock is the pregame chance; stale, undated, unreadable and unquoted are not; 0 and 1 are real quotes; a pin never fills it", () => {
+    const m = matrix();
+    const recent = BEFORE_NOW - 5 * MIN;
+    publish(m, 9.5, 0.45, iso(recent));
+    publish(m, 10.5, 0.3, iso(BEFORE_NOW - 30 * MIN)); // exactly 30 minutes old: still recent
+    publish(m, 11.5, 0.2, iso(BEFORE_NOW - 30 * MIN - 1)); // one millisecond past: stale
+    publish(m, 12.5, 0.1, null); // undated
+    publish(m, 13.5, 0.05, iso(recent), "result"); // not quoted
+    publish(m, 14.5, 0.02, "not a time"); // unreadable clock
+    publish(m, 2.5, 1, iso(recent)); // a real 100% quote
+    publish(m, 3.5, 0, iso(recent)); // a real 0% quote
+    pinLine(m, 11.5, 0.33, iso(START - 60 * MIN)); // a pin beside the stale quote
+    pinLine(m, 4.5, 0.6, iso(START - 60 * MIN)); // a pin with no quote at all
+    const card = built(m, "before");
+    expect(rowOf(card, 9.5).pregame).toEqual({ kind: "value", observation: obs("Recorded", 0.45, recent) });
+    expect(rowOf(card, 10.5).pregame).toEqual({ kind: "value", observation: obs("Recorded", 0.3, BEFORE_NOW - 30 * MIN) });
+    expect(rowOf(card, 2.5).pregame).toEqual({ kind: "value", observation: obs("Recorded", 1, recent) });
+    expect(rowOf(card, 3.5).pregame).toEqual({ kind: "value", observation: obs("Recorded", 0, recent) });
+    for (const line of [11.5, 12.5, 13.5, 14.5, 4.5]) {
+      expect({ line, pregame: rowOf(card, line).pregame }).toEqual({ line, pregame: PREGAME_UNAVAILABLE });
+    }
+    // Before first pitch there is no in-game slot, no count and no performance.
+    expect(card.milestones.every((r) => r.current === null && r.performance === null)).toBe(true);
+    expect(card.actual).toBeNull();
+    expect(built(m, "before", { score: LIVE_PAIR }).actual).toBeNull();
+    // Timing: the pregame reading only, in the leaf's own words.
+    expect(rowOf(card, 9.5).timing).toEqual({ title: "10+ runs · chance timing", lines: [`Pregame chance: Recorded ${clockWords(recent)} · Kalshi`] });
+    expect(rowOf(card, 12.5).timing.lines).toEqual(["Pregame chance: Pregame chance unavailable"]);
+  });
+
+  it("LIVE pregame: the pin (baseline, else the admitted reading) on its own clock, never the quote; no start filter of its own", () => {
+    const m = matrix();
+    const pinAt = START - 45 * MIN;
+    pinLine(m, 9.5, 0.41, iso(pinAt));
+    pinLine(m, 11.5, 0.22, iso(START + 5 * MIN)); // stamped after the start: native applies no filter here
+    overOf(fullGameAt(m, 12.5)).pregame_reading = {
+      state: "available",
+      reason: null,
+      basis: "pregame_pin",
+      probability: 0.18,
+      observed_at: iso(pinAt),
+      outcome_id: 244311420,
+    };
+    publish(m, 10.5, 0.37, iso(LIVE_NOW - 2 * MIN)); // a live quote but no pin
+    const card = built(m, "live");
+    expect(rowOf(card, 9.5).pregame).toEqual({ kind: "value", observation: obs("Saved before first pitch", 0.41, pinAt) });
+    expect(rowOf(card, 11.5).pregame).toEqual({ kind: "value", observation: obs("Saved before first pitch", 0.22, START + 5 * MIN) });
+    expect(rowOf(card, 12.5).pregame).toEqual({ kind: "value", observation: obs("Saved before first pitch", 0.18, pinAt) });
+    expect(rowOf(card, 10.5).pregame).toEqual(PREGAME_UNAVAILABLE);
+    expect(rowOf(card, 10.5).current).toEqual({ kind: "recorded", observation: obs("Recorded", 0.37, LIVE_NOW - 2 * MIN) });
+  });
+
+  it("LIVE current: a recent quote at or after a readable start is Recorded in-game; pre-start, stale, undated, unquoted, a missing start and noReportedResult are not", () => {
+    const m = matrix();
+    publish(m, 9.5, 0.6, iso(LIVE_NOW - 2 * MIN)); // recent, after the start
+    publish(m, 10.5, 0.4, iso(START)); // exactly at the start
+    publish(m, 11.5, 0.3, iso(START - 1)); // recent but a millisecond before the start
+    publish(m, 12.5, 0.2, null); // undated
+    publish(m, 13.5, 0.1, iso(LIVE_NOW - MIN), "result"); // not quoted
+    publish(m, 14.5, 0, iso(LIVE_NOW - MIN)); // a real 0% in-game quote
+    const card = built(m, "live");
+    expect(rowOf(card, 9.5).current).toEqual({ kind: "recorded", observation: obs("Recorded", 0.6, LIVE_NOW - 2 * MIN) });
+    expect(rowOf(card, 10.5).current).toEqual({ kind: "recorded", observation: obs("Recorded", 0.4, START) });
+    expect(rowOf(card, 14.5).current).toEqual({ kind: "recorded", observation: obs("Recorded", 0, LIVE_NOW - MIN) });
+    for (const line of [11.5, 12.5, 13.5]) expect({ line, current: rowOf(card, line).current }).toEqual({ line, current: IN_GAME_UNAVAILABLE });
+    // The pin and the quote stay apart: no pin here, so the pregame slot says so beside the recorded quote.
+    expect(rowOf(card, 9.5).pregame).toEqual(PREGAME_UNAVAILABLE);
+    expect(rowOf(card, 9.5).timing.lines).toEqual([
+      "Pregame chance: Pregame chance unavailable",
+      `Recorded in-game: Recorded ${clockWords(LIVE_NOW - 2 * MIN)} · Kalshi`,
+    ]);
+    expect(rowOf(card, 11.5).timing.lines[1]).toBe("In-game chance: In-game chance unavailable");
+    // Stale after the start (CONSTRUCTED later clock).
+    const later = START + 60 * MIN;
+    const stale = matrix();
+    publish(stale, 9.5, 0.6, iso(later - 30 * MIN - 1));
+    expect(rowOf(built(stale, "live", { now: later }), 9.5).current).toEqual(IN_GAME_UNAVAILABLE);
+    // A missing or unreadable start refuses every quote (CONSTRUCTED event fields).
+    for (const start of ["", "not a time"]) {
+      const noStart = built(m, "live", { event: { ...EVENT, commence_time: start } });
+      for (const line of [9.5, 10.5, 14.5]) {
+        expect({ start, line, current: rowOf(noStart, line).current }).toEqual({ start, line, current: IN_GAME_UNAVAILABLE });
+      }
+    }
+    // The page's own noReportedResult withholds every quote; a reached line stays performance.
+    const withheld = built(m, "live", { noReportedResult: true });
+    for (const line of [9.5, 10.5, 14.5]) expect({ line, current: rowOf(withheld, line).current }).toEqual({ line, current: IN_GAME_UNAVAILABLE });
+    expect(rowOf(withheld, 2.5).current).toEqual(REACHED);
+  });
+
+  it("LIVE runs so far: only the displayed pair, dated by its own clock; reached lines are performance; others say k more for N+", () => {
+    const card = built(matrix(), "live");
+    const at = Date.parse(PAIR_AT);
+    expect(card.actual).toEqual({
+      kind: "count",
+      title: "Count so far",
+      quantity: 5,
+      text: "5",
+      unit: "runs",
+      clock: timeWords(at),
+      ruleLabel: "5 so far",
+      detail: `Score observed ${clockWords(at)}`,
+    });
+    for (const line of [2.5, 3.5, 4.5]) {
+      expect({ line, current: rowOf(card, line).current, performance: rowOf(card, line).performance }).toEqual({ line, current: REACHED, performance: null });
+    }
+    expect(rowOf(card, 2.5).timing.lines[1]).toBe("Actual so far: Reached so far");
+    expect([5.5, 9.5, 14.5].map((line) => rowOf(card, line).performance)).toEqual(["1 more for 6+", "5 more for 10+", "10 more for 15+"]);
+    // An undated pair: no clock, the count in words; one run is singular.
+    expect(built(matrix(), "live", { score: { home: 2, away: 3, observedAt: null } }).actual).toMatchObject({ clock: null, detail: "5 runs so far" });
+    expect(built(matrix(), "live", { score: { home: 1, away: 0, observedAt: null } }).actual).toMatchObject({ quantity: 1, unit: "run", detail: "1 run so far" });
+    // A real zero is a count: nothing reached yet.
+    const zero = built(matrix(), "live", { score: { home: 0, away: 0, observedAt: PAIR_AT } });
+    expect(zero.actual).toMatchObject({ kind: "count", quantity: 0, text: "0", ruleLabel: "0 so far" });
+    expect(rowOf(zero, 2.5).performance).toBe("3 more for 3+");
+    expect(zero.milestones.some((r) => r.current?.kind === "reached")).toBe(false);
+  });
+
+  it("LIVE: a missing, partial, invalid or unrepresentable pair is no count (never 0); the event row is never read", () => {
+    for (const score of [
+      null,
+      { home: 3, away: null, observedAt: PAIR_AT },
+      { home: null, away: 7, observedAt: PAIR_AT },
+      { home: -1, away: 7, observedAt: PAIR_AT },
+      { home: 3.5, away: 7, observedAt: PAIR_AT },
+      { home: Number.MAX_SAFE_INTEGER, away: 1, observedAt: PAIR_AT },
+      { home: Number.MAX_VALUE, away: Number.MAX_VALUE, observedAt: PAIR_AT },
+    ]) {
+      const card = built(matrix(), "live", { score });
+      expect({ score, actual: card.actual }).toEqual({ score, actual: { kind: "unavailable", words: "Score unavailable" } });
+      expect(card.milestones.every((r) => r.performance === null && r.current?.kind !== "reached")).toBe(true);
+      expect(JSON.stringify(card)).not.toMatch(/Infinity|NaN/);
+    }
+    // CONSTRUCTED event row that disagrees with the displayed pair: the count is the pair's, or none.
+    const rowSays = { ...EVENT, home_score: 9, away_score: 9 };
+    expect(built(matrix(), "live", { event: rowSays }).actual).toMatchObject({ kind: "count", quantity: 5 });
+    expect(built(matrix(), "live", { event: rowSays, score: null }).actual).toEqual({ kind: "unavailable", words: "Score unavailable" });
+  });
+
+  it("the final total and the runs so far are ONE rule over the same pair (the shared RT1 guard); the final leaf is unchanged", () => {
+    for (const pair of [
+      { home: 3, away: 7 },
+      { home: 0, away: 0 },
+      { home: 3, away: null },
+      { home: -1, away: 7 },
+      { home: Number.MAX_SAFE_INTEGER, away: 1 },
+      { home: Number.MAX_SAFE_INTEGER - 1, away: 1 },
+    ]) {
+      const final = totalsOf(realLines(), pair).total;
+      const live = built(matrix(), "live", { score: { ...pair, observedAt: null } }).actual;
+      expect({ pair, final, live: live?.kind === "count" ? live.quantity : null }).toEqual({ pair, final, live: final });
+    }
+  });
+
+  it("the default is the nearest even odds among SHOWN pregame chances, ties to the lower line; none shown is no default", () => {
+    const tie = matrix();
+    publish(tie, 9.5, 0.25, iso(BEFORE_NOW - MIN));
+    publish(tie, 10.5, 0.75, iso(BEFORE_NOW - MIN));
+    publish(tie, 13.5, 0.5, iso(BEFORE_NOW - 31 * MIN)); // even odds, but stale: not shown, cannot win
+    expect(built(tie, "before").defaultId).toBe(keyAt(9.5));
+    const reversed = matrix();
+    publish(reversed, 9.5, 0.75, iso(BEFORE_NOW - MIN));
+    publish(reversed, 10.5, 0.25, iso(BEFORE_NOW - MIN));
+    expect(built(reversed, "before").defaultId).toBe(keyAt(9.5));
+    publish(tie, 12.5, 0.375, iso(BEFORE_NOW - MIN)); // nearer than either
+    expect(built(tie, "before").defaultId).toBe(KEY_12_5);
+    // During play the pins decide; an even in-game quote does not.
+    const live = matrix();
+    pinLine(live, 11.5, 0.25, iso(START - 30 * MIN));
+    pinLine(live, 13.5, 0.625, iso(START - 30 * MIN));
+    publish(live, 9.5, 0.5, iso(LIVE_NOW - MIN));
+    expect(built(live, "live").defaultId).toBe(keyAt(13.5));
+    // No shown pregame chance: no default, before or live.
+    expect(built(matrix(), "before").defaultId).toBeNull();
+    expect(built(matrix(), "live").defaultId).toBeNull();
+    const notShown = matrix();
+    publish(notShown, 9.5, 0.5, iso(BEFORE_NOW - 31 * MIN));
+    pinLine(notShown, 10.5, 0.5, iso(START - 60 * MIN));
+    expect(built(notShown, "before").defaultId).toBeNull();
+    expect(built(notShown, "live").defaultId).toBe(KEY_10_5);
+  });
+
+  it("identity is the option key: a reorder builds the same card; a withdrawn line leaves; a key carried twice is dropped by S1's admission", () => {
+    const m = matrix();
+    publish(m, 9.5, 0.4, iso(BEFORE_NOW - MIN));
+    const base = built(m, "before");
+    expect(new Set(base.milestones.map((r) => r.id)).size).toBe(13);
+    const reordered = copyOf(m);
+    reordered.questions = [...questionsOf(reordered)].reverse();
+    expect(built(reordered, "before")).toEqual(base);
+    const withdrawn = copyOf(m);
+    withdrawn.questions = questionsOf(withdrawn).filter((q) => q !== fullGameAt(withdrawn, 10.5));
+    expect(built(withdrawn, "before").milestones.map((r) => r.id)).toEqual(KEYS.filter((k) => k !== KEY_10_5));
+    const duplicated = copyOf(m);
+    overOf(fullGameAt(duplicated, 12.5)).option_key = KEY_10_5;
+    const dup = built(duplicated, "before");
+    expect(dup.milestones.map((r) => r.id)).not.toContain(KEY_10_5);
+    expect(dup.milestones.map((r) => r.id)).not.toContain(KEY_12_5);
+    expect(dup.milestones).toHaveLength(11);
   });
 });
