@@ -865,3 +865,20 @@ async def test_a_wide_book_on_a_headline_leg_still_takes_the_preview_back(r):
 
     [settle] = ops(r.sent, "settle")
     assert (settle["reason"], settle["through"]) == ("withdrawn", opened["local_seq"])
+
+
+async def test_back_at_the_committed_bag_value_retires_the_preview_after_a_restart(r):
+    """11/01 18:50Z: after a restart (no memory of its own writes) inputs that
+    composed back to the stored number waited 26-29 s as na_basis."""
+    assert not r._last_written_value
+    read(r, event(), legs())  # the committed bag holds polymarket 0.46
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+
+    receive(r, 0.46)
+    await drained(r)
+
+    [settle] = ops(r.sent, "settle")
+    assert (settle["reason"], settle["through"]) == ("returned", opened["local_seq"])
+    assert EV not in r._hl_pending

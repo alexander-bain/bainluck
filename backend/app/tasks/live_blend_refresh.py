@@ -9875,14 +9875,19 @@ class LiveBlendRefresher:
             self._hl_mark(event_id, "na_settled")
             return None
         value = round(reading.home_probability, 4)
-        if self._last_written_value.get(event_id) == value:
+        bag = (getattr(event, "win_probability_sources", None) or {}).get(self.source)
+        stored = bag.get("value") if isinstance(bag, dict) else None
+        if self._last_written_value.get(event_id) == value or (
+                isinstance(stored, (int, float)) and round(stored, 4) == value):
             # Back at the stored value: retire any receipt preview so the page
             # shows the committed one. Records nothing, so the #5661 restamp
             # gate below (which refuses re-dating an unchanged value) does not
             # apply; checked first so a stale receipt preview never outlives it.
-            bag = (getattr(event, "win_probability_sources", None) or {}).get(self.source)
-            return ("returned", value, bag.get("value") if isinstance(bag, dict) else None,
-                    getattr(event, "preview_rev", None))
+            # #10090 11/01 18:50Z: also the graph's committed bag, not only this
+            # process's memory of its own writes, which a restart empties: after
+            # one, Villanova's inputs that composed to the stored number waited
+            # 26-29 s as na_basis for a stamp that wrote nothing.
+            return ("returned", value, stored, getattr(event, "preview_rev", None))
         basis = observation_basis(contributing)
         if not basis or restamp_records_no_observation(
                 value, oldest_observation_time(contributing),
