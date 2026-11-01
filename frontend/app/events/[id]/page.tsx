@@ -83,6 +83,7 @@ import {
   priceAgeClock,
   stepConnectionTracker,
   type ConnectionTracker,
+  marketUpdateClock,
 } from "@/lib/event/liveConnectionStatus";
 import {
   eventTournamentKey,
@@ -2180,8 +2181,9 @@ export default function EventPage({ params }: EventPageProps) {
   // #10090 decision J under a preview (native #11816's rule, web half).
   // `confirmed_at` vouches for the committed pair, so while a preview is up it
   // is claimed only if the hero prints that same pair: a same-number preview
-  // keeps "Probability confirmed", a different-number one shows none. Every
-  // reader of the words "Probability confirmed" / "Connected" takes this value.
+  // keeps the confirmation (the pop-up's "Latest source update"), a
+  // different-number one shows none. Every reader of that row and of
+  // "Connected" takes this value.
   // The header badge's age (`heroStampInputs`) is the source-staleness policy,
   // not a confirmation claim, and keeps the raw stream value unchanged.
   const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
@@ -2522,6 +2524,15 @@ export default function EventPage({ params }: EventPageProps) {
     scoreShown: Boolean(liveGamesLine) || heroScorePairPresent,
     scoreConfirmedAt: heroStampInputs.scoreStamp,
     oldestFact: displayedOldestFact,
+    // #10090 (Alex 2026-10-31): the newest moment a source spoke — a live
+    // market's receipt (instant update or confirmed quote), never the time
+    // our database stored it; polled sources by their own update stamp.
+    marketUpdatedAt: acceptedPriceClock === null ? null : marketUpdateClock({
+      sources: event?.win_probability_sources as Record<string, unknown> | null | undefined,
+      previewObservedAt: observationDelivery === "dnpl" ? acceptedPriceClock : null,
+      confirmedAt: typeof confirmedAtShown === "string" ? confirmedAtShown : null,
+      fallback: acceptedPriceClock,
+    }),
   };
   // #10090 Alex 67 — while the EKG is on screen it is the one calm signal; the
   // chart's status speaks only when something is wrong. The fullscreen view

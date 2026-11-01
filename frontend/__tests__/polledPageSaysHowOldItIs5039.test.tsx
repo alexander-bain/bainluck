@@ -179,7 +179,7 @@ describe("#5039 the polled live header says how old its number is", () => {
 
     expect(html).toContain('data-status="Checking for updates"');
     // The tap details: the real clock with its zone, and the age.
-    expect(status).toMatch(/Probability observed<\/dt><dd><span><time dateTime="[^"]+">[^<]+ UTC<\/time>/);
+    expect(status).toMatch(/Latest source update<\/dt><dd><span><time dateTime="[^"]+">[^<]+ UTC<\/time>/);
     expect(status).toContain("8s ago");
     // #10200: no seconds in the headline any more.
     expect(html).not.toContain(AGE);
@@ -193,7 +193,7 @@ describe("#5039 the polled live header says how old its number is", () => {
     };
     const html = draw();
     expect(html).toContain('data-probability=""');
-    expect(html).toContain("Probability observed</dt><dd><span>Time unavailable</span>");
+    expect(html).toContain("Latest source update</dt><dd><span>Time unavailable</span>");
     expect(html).toContain('data-observation-at=""');
     expect(html).toContain('data-observation-count="0"');
     expect(html).not.toContain("8s ago");

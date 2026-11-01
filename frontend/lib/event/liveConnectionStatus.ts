@@ -269,6 +269,49 @@ export function connectionStatusIsHealthy(
  * No or unparseable confirmation (an old server) ⇒ the adopted clock,
  * unchanged, so the page is exactly today's.
  */
+/**
+ * #10090 Alex 2026-10-31 — "Latest source update": when a source last told us
+ * the number on screen, never when we saved it.
+ *
+ * The venue sockets (Kalshi, Polymarket) store `updated_at` when Bain Luck
+ * WRITES their price — a database time, behind the market by the save. They
+ * are dated instead by the stream's `confirmed_at` (the newest venue input that
+ * agreed with what is published) or, while a preview is on screen, by that
+ * preview's own observation. Polled sources (sportsbooks, ESPN, the stats
+ * model) keep `updated_at`: the poll is when we learned their price. Newest
+ * wins; with none readable, `fallback` (the accepted price clock) stands.
+ */
+const SOCKET_SOURCES = new Set(['kalshi', 'polymarket']);
+
+export function marketUpdateClock({
+  sources,
+  previewObservedAt,
+  confirmedAt,
+  fallback,
+}: {
+  sources: Record<string, unknown> | null | undefined;
+  previewObservedAt: string | null | undefined;
+  confirmedAt: string | null | undefined;
+  fallback: string | null | undefined;
+}): string | null {
+  const candidates: unknown[] = [previewObservedAt, confirmedAt];
+  for (const [key, entry] of Object.entries(sources ?? {})) {
+    if (SOCKET_SOURCES.has(key) || !entry || typeof entry !== 'object') continue;
+    candidates.push((entry as { updated_at?: unknown }).updated_at);
+  }
+  let best: string | null = null;
+  let bestMs = -Infinity;
+  for (const at of candidates) {
+    const ms = parseClock(typeof at === 'string' ? at : null);
+    if (ms !== null && ms > bestMs) {
+      best = at as string;
+      bestMs = ms;
+    }
+  }
+  if (best !== null) return best;
+  return parseClock(fallback) !== null ? (fallback as string) : null;
+}
+
 export function priceAgeClock(
   adoptedAt: string | null | undefined,
   confirmedAt: string | null | undefined,
