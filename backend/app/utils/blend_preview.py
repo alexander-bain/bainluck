@@ -907,6 +907,45 @@ def _basis_observation_time(basis: Any) -> Optional[datetime]:
         return None
 
 
+#: #10090 `preview_at_receipt`: the stamp-settlement reasons that say nothing
+#: about a value previewed at receipt. The stamp read its graph before that
+#: price arrived, so its own reading being unchanged, stale, unobserved,
+#: throttled or lock-held does not withdraw the newer one.
+AT_RECEIPT_SOFT_REFUSALS = frozenset({"unchanged", "stale", "unobserved", "lock", "preview_only"})
+
+
+def _basis_newer(newer: Optional[dict], older: Optional[dict]) -> bool:
+    """#10090: whether ``newer`` saw any row it shares with ``older`` later
+    (both `aggregation.observation_basis`). Abstains (False) with no basis on
+    either side or no shared row, like `reading_regresses_stored_observation`."""
+    if not newer or not older:
+        return False
+    try:
+        return any(key in older and float(seen) > float(older[key])
+                   for key, seen in newer.items())
+    except (TypeError, ValueError):
+        return False
+
+
+def _commit_carries(basis: Optional[dict], sources: Any, source: str) -> bool:
+    """#10090: whether a committed bag's ``source`` entry saw every row it
+    shares with ``basis`` at or after ``basis`` did. Abstains (True: the commit
+    retires the pending value, as before) when either side has no basis or
+    they share no row."""
+    from app.utils.aggregation import stored_observation_basis
+
+    if not basis or not isinstance(sources, dict):
+        return True
+    stored = stored_observation_basis(sources, source)
+    if not stored:
+        return True
+    try:
+        shared = [key for key in basis if key in stored]
+        return not shared or all(stored[key] >= float(basis[key]) for key in shared)
+    except (TypeError, ValueError):
+        return True
+
+
 @dataclass
 class _Pending:
     value: float
@@ -920,6 +959,9 @@ class _Pending:
     # Local hint only: unknown, refused, or accepted for this ledger chain.
     ledger_admission: str = "unknown"
     ledger_open_attempt: int = 0  # newest recovery dispatch; older refusals cannot rearm it
+    #: #10090 `preview_at_receipt`: proposed from the socket's memory before
+    #: the price write (`LiveBlendRefresher._preview_at_receipt_rows`).
+    at_receipt: bool = False
 
 
 @dataclass
@@ -999,6 +1041,11 @@ class PreviewRegistry:
         state = self._events.get(event_id)
         entry = state.pending.get(source) if state is not None else None
         return None if entry is None else entry.seq
+
+    def pending_entry(self, event_id: int, source: str) -> Optional[_Pending]:
+        """#10090: this source's pending value for the event, read only."""
+        state = self._events.get(event_id)
+        return state.pending.get(source) if state is not None else None
 
     # ── composition ──────────────────────────────────────────────────────
     def _drop_regressed(self, state: _EventState) -> list[str]:
@@ -1140,12 +1187,18 @@ class PreviewRegistry:
         self, event_id: int, source: str, *, value: float, event: Any,
         row_sources: Any, row_rev: Any, eligibility: Any = None,
         observed_basis: Optional[dict] = None, stamped_at: Optional[datetime] = None,
-        observation_only: bool = False,
+        observation_only: bool = False, at_receipt: bool = False,
     ) -> list[dict]:
         """A reading passed every check and is about to be persisted.
 
         Returns the frames to publish now: one preview, or a revoke when the
         event left a quote status / cannot be ordered against a revision.
+
+        ``at_receipt`` (#10090 `preview_at_receipt`): composed from prices
+        still in the socket's memory, before their write. Any other proposal
+        whose rows this pending value saw later (`_basis_newer`) is dropped
+        here, so a stamp that read before the price arrived never puts the
+        older reading back on screen.
         """
         state = self._state(event_id)
         self._context(state, event)
@@ -1196,15 +1249,30 @@ class PreviewRegistry:
                     if self._drop_regressed(state):
                         return self._after_drop(event_id, state, "stale", source)
                     return []
+        prior = state.pending.get(source)
+        if (not at_receipt and prior is not None and prior.at_receipt
+                and _basis_newer(prior.observed_basis, observed_basis)):
+            return []  # the receipt's newer observation stays on screen
         if source in state.expired:
             if state.expired[source] == value:
                 # The same value outlived the limit and is still uncommitted:
                 # a retry may not open it a fresh lifetime.
                 return []
             del state.expired[source]  # a different value: a new chain
-        return self._admit(event_id, state, source, value, eligibility=eligibility,
-                           observed_basis=observed_basis, stamped_at=stamped_at,
-                           row_sources=row_sources, row_rev=row_rev)
+        frames = self._admit(event_id, state, source, value, eligibility=eligibility,
+                             observed_basis=observed_basis, stamped_at=stamped_at,
+                             row_sources=row_sources, row_rev=row_rev)
+        entry = state.pending.get(source)
+        if entry is not None and entry is not prior:
+            entry.at_receipt = at_receipt
+        return frames
+
+    @staticmethod
+    def _kept_at_receipt(entry: Optional[_Pending], sources: Any, source: str) -> bool:
+        """#10090: a value previewed at receipt that this commit did not carry
+        (it stored an older observation of the same rows) stays pending."""
+        return (entry is not None and entry.at_receipt
+                and not _commit_carries(entry.observed_basis, sources, source))
 
     def committed(
         self, event_id: int, source: str, *, seq: Optional[int], sources: Any,
@@ -1227,7 +1295,8 @@ class PreviewRegistry:
         # same source — one this commit does not carry — stays pending.
         state.expired.pop(source, None)
         entry = state.pending.get(source)
-        if entry is not None and (seq is None or entry.seq <= seq):
+        if (entry is not None and (seq is None or entry.seq <= seq)
+                and not self._kept_at_receipt(entry, sources, source)):
             del state.pending[source]
         if not state.pending:
             return []
@@ -1239,6 +1308,9 @@ class PreviewRegistry:
         """This source's pending value no longer stands (see module doc)."""
         state = self._events.get(event_id)
         if state is None:
+            return []
+        entry = state.pending.get(source)
+        if entry is not None and entry.at_receipt and reason in AT_RECEIPT_SOFT_REFUSALS:
             return []
         state.expired.pop(source, None)
         if source not in state.pending:
@@ -1819,13 +1891,19 @@ class LedgerRegistry(PreviewRegistry):
             state.expired.pop(source, None)
             state.expired_through.pop(source, None)
         entry = state.pending.get(source)
+        through, kept = seq, False
         if entry is not None and (seq is None or entry.seq <= seq):
-            self._forget(event_id, source)
-        op = self._settle_op(event_id, source, seq, "unorderable",
+            if self._kept_at_receipt(entry, sources, source):
+                # #10090: settle only below the receipt's own entry, so Redis
+                # keeps it and recomposes it on this newer committed base.
+                through, kept = entry.seq - 1, True
+            else:
+                self._forget(event_id, source)
+        op = self._settle_op(event_id, source, through, "unorderable",
                              self._base(sources, rev, state))
         chain = self._chains.get((event_id, source))
-        if (entry is not None and chain is not None and _revision(seq) is not None
-                and chain <= seq < entry.seq):
+        if (not kept and entry is not None and chain is not None
+                and _revision(seq) is not None and chain <= seq < entry.seq):
             op.update(mode="commit", chain=chain, owner=self.claims.get(source))
         return [op]
 
@@ -1833,9 +1911,11 @@ class LedgerRegistry(PreviewRegistry):
         state = self._events.get(event_id)
         if state is None:
             return []
+        entry = state.pending.get(source)
+        if entry is not None and entry.at_receipt and reason in AT_RECEIPT_SOFT_REFUSALS:
+            return []
         state.expired.pop(source, None)
         state.expired_through.pop(source, None)
-        entry = state.pending.get(source)
         if entry is None:
             return []
         self._forget(event_id, source)

@@ -61,6 +61,17 @@ counts in ``live_moved_late`` (and ``unpreviewed``), so a wait pushed past
 Counters read at the close are those up to the closing flush, at most one
 flush past the boundary.
 
+AT RECEIPT (#10090 `preview_at_receipt`). A blend composed from a price still
+in the socket's memory publishes BEFORE that price's write commits, so no
+committed revision is waiting to be charged when it goes out. The proposal
+names its pending entry and the newest input it carries (`carried`); when that
+blend publishes, it is remembered, and a committed revision that arrives later
+and is no newer than the carried input is charged then, at the blend's own
+publish instant, with the blend's own live/moved/first classification. The
+stamp's later blend for that revision then finds nothing to charge. Every
+field keeps its meaning: recv→publish of the first blend that carried it,
+counted in the minute its revision is handed over committed.
+
 VOLUME. One fixed-size line per arm per minute the refresher flushed in — a
 ZERO line when nothing happened, so a missing line means nothing rolled it (no
 flush), never "no previews". No per-event lists beyond ``worst``.
@@ -167,6 +178,18 @@ def _value(p: Any) -> Optional[float]:
         return None
 
 
+def _carries_at_receipt(frame: dict, source: str, stamped_at: str) -> bool:
+    """Whether a published blend carries the at-receipt pending entry dated
+    ``stamped_at`` for ``source`` (`carried`)."""
+    entry = ((frame.get("preview") or {}).get("pending_entries") or {}).get(source)
+    if not isinstance(entry, dict):
+        return False
+    try:
+        return datetime.fromisoformat(entry.get("updated_at")) == datetime.fromisoformat(stamped_at)
+    except (TypeError, ValueError):
+        return False
+
+
 class PreviewReceipt:
     """The per-minute preview receipt of one refresher arm (module doc).
 
@@ -190,6 +213,12 @@ class PreviewReceipt:
         self._awaiting: dict[int, Any] = {}
         #: event id -> the value of the last blend this arm published for it.
         self._last_value: dict[int, Optional[float]] = {}
+        #: #10090 at receipt: event id -> (its pending entry's ``updated_at``,
+        #: the newest input mark it carries) for a proposal not yet published.
+        self._carrying: dict[int, tuple] = {}
+        #: event id -> (publish mono, carried mark, live, moved, first) of a
+        #: published at-receipt blend whose revision has not committed yet.
+        self._early: dict[int, tuple] = {}
         self.lines = 0
         self._reset()
 
@@ -203,11 +232,24 @@ class PreviewReceipt:
 
     # ── the refresher's side ─────────────────────────────────────────────────
 
+    def carried(self, event_id: int, stamped_at: str, mark: Any) -> None:
+        """#10090 at receipt: the blend about to publish for ``event_id`` is
+        the one whose pending entry is dated ``stamped_at``; it carries every
+        input of the event up to ``mark``."""
+        self._carrying[event_id] = (stamped_at, mark)
+
     def committed(self, staged: dict) -> None:
         """Input marks a flush committed, per event the newest (`TailReceipts.
         observe`'s ``staged``). The same mark twice counts once."""
         self._roll(self._wall())
         for event_id, mark in staged.items():
+            early = self._early.get(event_id)
+            if early is not None and mark.recv_mono <= early[1].recv_mono:
+                # Already on screen at receipt: charged at that publish.
+                del self._early[event_id]
+                self._committed += 1
+                self._charge(early[0] - mark.recv_mono, event_id, *early[2:])
+                continue
             held = self._awaiting.get(event_id)
             if held is not None:
                 if mark.recv_mono <= held.recv_mono:
@@ -233,12 +275,23 @@ class PreviewReceipt:
         if not known and len(self._last_value) >= PREVIEW_RECEIPT_MAX_EVENTS:
             self._last_value.clear()
         self._last_value[event_id] = value
+        live = frame.get("status") == "live"
+        moved = known and value is not None and before is not None and value != before
+        carrying = self._carrying.get(event_id)
+        if carrying is not None and _carries_at_receipt(frame, self.source, carrying[0]):
+            del self._carrying[event_id]
+            held = self._awaiting.get(event_id)
+            if held is None or held.recv_mono < carrying[1].recv_mono:
+                self._early[event_id] = (now, carrying[1], live, moved, not known)
         mark = self._awaiting.pop(event_id, None)
         if mark is None:
             return
-        latency = max(0.0, now - mark.recv_mono)
-        live = frame.get("status") == "live"
-        moved = known and value is not None and before is not None and value != before
+        self._charge(now - mark.recv_mono, event_id, live, moved, not known)
+
+    def _charge(self, latency: float, event_id: Any, live: bool, moved: bool,
+                first: bool) -> None:
+        latency = max(0.0, latency)
+        known = not first
         if latency > PREVIEW_RECEIPT_AWAIT_S:
             self._purged += 1  # no blend carried it in time: unpreviewed
             self._live_moved_late += live and moved
@@ -286,6 +339,11 @@ class PreviewReceipt:
                        if now - mark.recv_mono > PREVIEW_RECEIPT_AWAIT_S]
         for event_id in unpreviewed:
             del self._awaiting[event_id]
+        for memo, at in ((self._early, lambda e: e[0]),
+                         (self._carrying, lambda c: c[1].recv_mono)):
+            for event_id in [eid for eid, entry in memo.items()
+                             if now - at(entry) > PREVIEW_RECEIPT_AWAIT_S]:
+                del memo[event_id]
         current = dict(self._counters())
         delta = {}
         for key, value in current.items():

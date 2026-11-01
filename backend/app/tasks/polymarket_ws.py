@@ -4519,6 +4519,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     open_sockets: list = []
     open_run_task = None
     routing_generation = 0
+    # #10090 `preview_at_receipt`: a received quote names the routing it was
+    # accepted under; none is kept or composed while a handover changes it.
+    blend_refresher.receipt_route = lambda: (
+        None if catalog_boundary.changing else routing_generation
+    )
     # #10090: the installed open catalog is a successful `slate` scope, which
     # keeps the catalog-refresh loop even when the scope holds nothing.
     open_scope_installed = False
@@ -6786,6 +6791,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             raise
         async with buffer_lock:
             stranded = len(price_buffer)
+            stranded_ids = list(price_buffer)
         if stranded:
             # Loud: this is the one place a price genuinely cannot be retried
             # again, so it must never be inferable only from a silence.
@@ -6795,6 +6801,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 "attempts — these are lost, not deferred",
                 stranded, FINAL_FLUSH_ATTEMPTS,
             )
+            # #10090 `preview_at_receipt`: no preview outlives a lost write.
+            revoke = getattr(blend_refresher, "revoke_receipt_previews", None)
+            if revoke is not None:
+                await revoke(stranded_ids)
 
     async def join_flushes_then_drain():
         """#10090: producers and every cancelled flush loop finish, then the
@@ -6960,6 +6970,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 held_quotes = getattr(blend_refresher, "held_quotes", None)
                 if held_quotes is not None:
                     held_quotes.release(oid for oid, _bid, _ask in legs)
+                # #10090 `preview_at_receipt`: nor does a preview of its price.
+                note_withdrawn = getattr(blend_refresher, "note_receipt_withdrawn", None)
+                if note_withdrawn is not None:
+                    note_withdrawn([oid for oid, _bid, _ask in legs])
                 wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
                 if wake_outcomes is not None:
                     wake_outcomes(

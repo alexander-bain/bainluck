@@ -100,6 +100,11 @@ SPECS = {
     # rows on the last read graph before the stamp's own read. A per-event
     # change, so `ab` (one event-id parity) compares it as well as `alternate`.
     "preview_from_commit": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0},
+    # `live_blend_refresh.PREVIEW_AT_RECEIPT_SWITCH`, read per accepted input
+    # and per receipt composition: whether a live event's preview is composed
+    # from the prices the socket just received, before their write, for the
+    # venues `PREVIEW_AT_RECEIPT_VENUES` names. Per event, so `ab` compares it.
+    "preview_at_receipt": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")
