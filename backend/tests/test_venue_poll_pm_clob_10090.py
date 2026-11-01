@@ -693,3 +693,30 @@ async def test_a_failed_catalog_read_leaves_every_condition_to_gamma(monkeypatch
                          deadline=time.monotonic() + 20, offset=0.0, stats=stats)
     assert stats["tokens_seed_errors"] == 1 and service.gamma_reads == 1
     assert clob._CATALOG_CHECKED == set(), "unread conditions are tried again next pass"
+
+
+def test_the_default_slice_lets_a_token_read_start():
+    from app.tasks.venue_poll_30s import _MIN_REQUEST_S
+    assert clob.TOKEN_RESOLVE_BUDGET_S > _MIN_REQUEST_S
+
+
+async def test_learning_tokens_gets_a_slice_of_the_pass_not_all_of_it(monkeypatch):
+    """11/01 17:33Z: Gamma token reads ate ~10 s of a 24 s pass and the CLOB got
+    one window. Reads that would start past the slice are not started."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(clob, "TOKEN_RESOLVE_BUDGET_S", 0.05)
+    monkeypatch.setattr(clob, "_CATALOG_CHECKED", set())
+
+    class _Slow(_Service):
+        async def get_markets_by_conditions(self, conditions, *, batch_size=40):
+            await asyncio.sleep(0.2)
+            return await super().get_markets_by_conditions(conditions, batch_size=batch_size)
+
+    units = [v.Unit(str(i), {i: [(i * 10, f"0x{i:04x}")]}) for i in range(1, 400)]
+    service = _Slow({})
+    started = time.monotonic()
+    stats = {"errors": []}
+    await clob.clob_pass(None, service, units, deadline=time.monotonic() + 20,
+                         offset=0.0, stats=stats)
+    assert time.monotonic() - started < 2.0
+    assert service.gamma_reads == 0, "no read starts with less than _MIN_REQUEST_S of its slice left"

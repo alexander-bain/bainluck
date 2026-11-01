@@ -136,6 +136,11 @@ GAMMA_RESERVE_S = _env_float("VENUE_POLL_30S_PM_GAMMA_RESERVE_S", 6.0)
 TOKEN_CONDITIONS_PER_REQUEST = 40
 TOKEN_REQUESTS_PER_PASS = _env_int("VENUE_POLL_30S_PM_TOKEN_REQUESTS", 24)
 TOKEN_CONCURRENCY = 4
+#: #10090 (11/01 17:33Z): Gamma token reads ate ~10 s of a 24 s pass, leaving the
+#: CLOB one window (8 reads, 1,471 legs). Learning tokens is for later passes;
+#: reading the ones already known is this pass's job, so learning gets a slice
+#: (a read starts only with `_MIN_REQUEST_S` left, so the slice must exceed it).
+TOKEN_RESOLVE_BUDGET_S = _env_float("VENUE_POLL_30S_PM_TOKEN_BUDGET_S", 6.0)
 TOKEN_MISS_RETRY_S = 3600
 TOKEN_HASH_TTL_S = 30 * 86400
 _TOKEN_KEY = f"{_KEY_PREFIX}:pm_token0"
@@ -484,7 +489,10 @@ async def clob_pass(session, service, units: list[Unit], *, deadline: float, off
     unknown = [c for c in conditions if c not in known]
     stats["clob_tokens_unknown"] = len(unknown)
     if unknown:
-        await resolve_tokens(service, unknown, deadline=deadline, stats=stats)
+        await resolve_tokens(
+            service, unknown,
+            deadline=min(deadline, time.monotonic() + TOKEN_RESOLVE_BUDGET_S), stats=stats,
+        )
         known = cached_tokens(conditions, now=time.time())
     token_of = {c: t for c, t in known.items() if t}
     priced: set[str] = set()
