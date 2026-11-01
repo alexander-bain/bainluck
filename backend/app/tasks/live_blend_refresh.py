@@ -506,9 +506,15 @@ def _patched_group(group, returned: dict) -> Optional[list]:
         if not changed:
             patched.append(entry)
             continue
-        if [row.rank for row in outcomes] != _field_ranks(
-                [row.current_probability for row in outcomes]):
-            return None
+        ranks = _field_ranks([row.current_probability for row in outcomes])
+        if [getattr(row, "rank", None) for row in outcomes] != ranks:
+            # #10090: the write's re-rank (`rerank_market_fields_stmt`) stores
+            # exactly `_field_ranks` of the market's prices, so the graph takes
+            # those ranks instead of being dropped until the next stamp read (a
+            # favourite flip left a live game with no graph for a whole floor).
+            outcomes = [row if getattr(row, "rank", None) == rank
+                        else SimpleNamespace(**{**vars(row), "rank": rank})
+                        for row, rank in zip(outcomes, ranks)]
         patched.append(_replace(entry, outcomes=outcomes))
     return patched
 
