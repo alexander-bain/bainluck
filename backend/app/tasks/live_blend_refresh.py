@@ -8698,7 +8698,8 @@ class LiveBlendRefresher:
             self._note_receipt_class("not_speaking", event_id)
             return  # kept for the overlay; not a leg of the market that speaks
         if event_id not in self._hl_pending:
-            self._hl_pending[event_id] = [getattr(mark, "recv_mono", now), "receipt"]
+            # [recv mono, how, first composition mono, compositions]
+            self._hl_pending[event_id] = [getattr(mark, "recv_mono", now), "receipt", None, 0]
         self._receipt_due[event_id] = None
         last = self._receipt_last.get(event_id)
         self._wake_receipt(last is None or now - last[0] >= _receipt_interval())
@@ -8798,6 +8799,9 @@ class LiveBlendRefresher:
                 # receipt->compose / compose->publish, ms
                 why = "receipt(c%d,p%d)" % (int((composed - entry[0]) * 1000),
                                              int((_mono() - composed) * 1000))
+            # first composition after receipt (ms) and compositions it took
+            why += "[f%s,a%d]" % ("-" if entry[2] is None else int((entry[2] - entry[0]) * 1000),
+                                   entry[3])
             self._hl_samples.append((max(0.0, _mono() - entry[0]), event_id, why))
 
     def _hl_mark(self, event_id, how: str) -> None:
@@ -9074,6 +9078,11 @@ class LiveBlendRefresher:
         for event_id in due:
             # The interval bounds compositions, not only proposals.
             self._receipt_last[event_id] = (now,)
+            hl = self._hl_pending.get(event_id)
+            if hl is not None:
+                hl[3] += 1
+                if hl[2] is None:
+                    hl[2] = now
             try:
                 plan = self._receipt_preview_plan(event_id, now, preview)
             except Exception:
