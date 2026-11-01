@@ -3910,7 +3910,7 @@ class LiveBlendRefresher:
             "ambiguous": 0, "not_admitted": 0, "returned": 0, "withdrawn": 0, "errors": 0,
             # Skips before composition (counted only; same returns as before):
             "no_bound": 0, "routing": 0, "kept_no_graph": 0, "not_speaking": 0,
-            "own_write": 0,
+            "own_write": 0, "superseded": 0,
         }
         #: Wall seconds spent composing receipt previews (local CPU, no await).
         self.receipt_compose_s = 0.0
@@ -9341,7 +9341,19 @@ class LiveBlendRefresher:
                         outcomes.append(row)  # the row already holds this quote
                         continue
                     own = self._own_writes.get(row.id)
-                    wrote = own.get(stored.timestamp()) if own else None
+                    stored_ts = stored.timestamp()
+                    quote_seq = getattr(mark, "seq", -1)
+                    if own and any(w_seq >= quote_seq and w_at < stored_ts
+                                   for w_at, (_p, w_seq, _n) in own.items()):
+                        # #10090: this process already stored this quote (or
+                        # a newer input) BEFORE the stored row's write, so the
+                        # row is the newer write and the stamp will show it
+                        # (production 03:59Z: 0.99 stored at :37.8, another
+                        # writer's 0.995 at 03:59:00.998 held the event 20 s).
+                        stats["superseded"] += 1
+                        outcomes.append(row)
+                        continue
+                    wrote = own.get(stored_ts) if own else None
                     if (wrote is None or current is None
                             or wrote[0] != round(float(current), 6)
                             or getattr(mark, "seq", -1) <= wrote[1]):
