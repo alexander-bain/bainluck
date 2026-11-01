@@ -894,3 +894,214 @@ async def test_a_move_of_a_tenth_of_a_point_in_the_blend_is_proposed(r):
 
     [opened] = ops(r.sent, "propose")
     assert opened["value"] == 0.465
+
+
+# ── a stale ticket re-reads the event row, not the graph ────────────────────
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+def _context_rig(r, monkeypatch, rows, *, ticket=0, fail=False):
+    """`_drain_context_refresh` against canned event rows and a canned ticket."""
+    from contextlib import asynccontextmanager
+
+    calls = {"tickets": 0, "statements": 0}
+
+    class Session:
+        async def execute(self, _statement):
+            calls["statements"] += 1
+            if fail:
+                raise RuntimeError("db down")
+            return _Rows(rows)
+
+    @asynccontextmanager
+    async def factory():
+        yield Session()
+
+    async def admission():
+        calls["tickets"] += 1
+        return ticket
+
+    full = []
+    r._session_factory = factory
+    monkeypatch.setattr(r, "_preview_admission_read", admission)
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: full.append((tuple(ids), lost)))
+    return calls, full
+
+
+def ctx_row(*, eid=EV, status="live", completed_at=None, sources=None, rev=11, at=None):
+    return (eid, status, completed_at, NOW - timedelta(hours=3),
+            bag(kalshi=0.55) if sources is None else sources, rev, NOW if at is None else at)
+
+
+async def test_a_read_required_refusal_rereads_the_event_row_not_the_graph(r, monkeypatch):
+    """11/01 20:5xZ: Polymarket inputs on live NFL games waited 0.6-2 s as
+    `mutate_read_required`: each refusal re-read the whole graph (~370 markets,
+    ~1,800 legs) for a ticket that only the event row needs."""
+    read(r, event(), legs())
+    full, light = [], []
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: full.append((tuple(ids), lost)))
+    monkeypatch.setattr(r, "_schedule_context_refresh", lambda ids: light.append(tuple(ids)))
+
+    r._hl_mutate_refused(EV, "read_required")
+    r._hl_mutate_refused(EV, "stale_context")
+
+    assert light == [(EV,), (EV,)]
+    assert full == []
+
+
+async def test_a_retirement_refreshes_every_kept_ticket_without_rereading_rows(r, monkeypatch):
+    read(r, event(), legs())
+    read(r, event(eid=EV2), legs(eid=EV2, base=10))
+    light = []
+    monkeypatch.setattr(r, "_schedule_context_refresh", lambda ids: light.append(sorted(ids)))
+
+    r._refetch_all_graphs()
+
+    assert light == [[EV, EV2]]
+
+
+async def test_the_context_reread_patches_the_event_and_keeps_the_rows(r, monkeypatch):
+    read(r, event(ticket=0), legs())
+    read_at, _old, group = r._preview_graphs[EV]
+    receive(r, 0.48)
+    r._hl_pending[EV] = [module._mono() - 0.3, "mutate_read_required", None, 1]
+    r._receipt_due.clear()
+    r._receipt_now.clear()
+    composed = []
+    monkeypatch.setattr(r, "_wake_receipt", lambda now: composed.append(now))
+    calls, full = _context_rig(r, monkeypatch, [ctx_row()], ticket=0)
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    new_at, ev, kept = r._preview_graphs[EV]
+    assert (calls, full) == ({"tickets": 1, "statements": 1}, [])
+    assert new_at == read_at, "the rows' age still bounds the graph"
+    assert kept is group, "no market or leg was re-read"
+    assert (ev.preview_rev, ev.preview_context_at, ev.preview_read_ticket) == (11, NOW, 0)
+    assert ev.preview_sources["kalshi"]["value"] == 0.55
+    assert ev.win_probability_sources == {"polymarket": ev.preview_sources["polymarket"]}
+    assert ev.rows_context_at == READ_AT
+    assert EV in r._receipt_due and EV in r._receipt_now and composed == [True]
+
+
+async def test_the_context_reread_composes_the_waiting_input_on_the_new_bag(r):
+    from contextlib import asynccontextmanager
+
+    read(r, event(), legs())
+    receive(r, 0.48)
+    r._hl_pending[EV] = [module._mono() - 0.3, "mutate_read_required", None, 1]
+    r._receipt_due.clear()
+
+    class Session:
+        async def execute(self, _statement):
+            return _Rows([ctx_row()])
+
+    @asynccontextmanager
+    async def factory():
+        yield Session()
+
+    async def admission():
+        return 0
+
+    r._session_factory = factory
+    r._preview_admission_read = admission
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+    await drained(r)
+
+    assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
+
+
+@pytest.mark.parametrize("row", [
+    pytest.param(dict(status="completed"), id="no-longer-live"),
+    pytest.param(dict(completed_at=datetime(2026, 11, 1, tzinfo=timezone.utc)), id="finished"),
+    pytest.param(dict(at=READ_AT - timedelta(seconds=5)), id="older-context"),
+    pytest.param(dict(rev=9), id="older-revision"),
+    pytest.param(dict(sources=["malformed"]), id="malformed-bag"),
+])
+async def test_an_event_row_the_patch_may_not_carry_falls_back_to_the_full_reread(
+        r, monkeypatch, row):
+    read(r, event(), legs())
+    before = r._preview_graphs[EV]
+    calls, full = _context_rig(r, monkeypatch, [ctx_row(**row)])
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert r._preview_graphs[EV] is before
+    assert full == [((EV,), False)]
+
+
+async def test_an_absent_event_row_falls_back_to_the_full_reread(r, monkeypatch):
+    read(r, event(), legs())
+    _calls, full = _context_rig(r, monkeypatch, [])
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert full == [((EV,), False)]
+
+
+@pytest.mark.parametrize("ticket,fail", [(None, False), (0, True)], ids=["no-ticket", "read-fails"])
+async def test_a_failed_context_reread_falls_back_to_the_full_reread(r, monkeypatch, ticket, fail):
+    read(r, event(), legs())
+    before = r._preview_graphs[EV]
+    _calls, full = _context_rig(r, monkeypatch, [ctx_row()], ticket=ticket, fail=fail)
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert r._preview_graphs[EV] is before
+    assert full == [((EV,), False)]
+    assert r.graph_refetch_stats["errors"] == 1
+
+
+async def test_an_event_without_a_kept_graph_is_not_reread(r, monkeypatch):
+    calls, full = _context_rig(r, monkeypatch, [ctx_row()])
+
+    r._schedule_context_refresh((EV,))
+
+    assert r._context_refresh == {} and r._context_refresh_task is None
+    assert calls["statements"] == 0 and full == []
+
+
+async def test_a_full_read_newer_than_the_patched_rows_still_replaces_them(r, monkeypatch):
+    """The patch carries a newer event context than its rows: a full read that
+    began after those rows (but before the patch) has fresher markets and must
+    not be refused as older."""
+    read(r, event(at=READ_AT - timedelta(seconds=10)), legs())
+    _calls, _full = _context_rig(r, monkeypatch, [ctx_row(at=NOW)])
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+    assert r._preview_graphs[EV][1].preview_context_at == NOW
+
+    fresher = legs(home="0.470000", away="0.530000")
+    read(r, event(at=READ_AT - timedelta(seconds=5)), fresher)
+
+    assert r._preview_graphs[EV][2][0].outcomes[0].current_probability == Decimal("0.470000")
+
+
+async def test_a_waiting_event_with_no_quote_left_is_queued_after_the_context_reread(
+        r, monkeypatch):
+    read(r, event(), legs())
+    r._hl_pending[EV] = [module._mono() - 0.3, "mutate_read_required", None, 1]
+    r._receipt_quotes.clear()
+    r._receipt_due.clear()
+    r._receipt_now.clear()
+    monkeypatch.setattr(r, "_wake_receipt", lambda now: None)
+    _context_rig(r, monkeypatch, [ctx_row()])
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert EV in r._receipt_due and EV in r._receipt_now

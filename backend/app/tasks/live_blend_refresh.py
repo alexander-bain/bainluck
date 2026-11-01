@@ -3997,6 +3997,12 @@ class LiveBlendRefresher:
         self._graph_refetch: dict[int, float] = {}
         self._graph_lost_at: dict[int, float] = {}
         self._graph_refetch_task: Optional[asyncio.Task] = None
+        #: #10090: kept graphs whose read TICKET a ledger refusal staled
+        #: (`read_required` / `stale_context`, or a retirement's barrier) while
+        #: their rows still stand: event id -> `_mono` queued. One worker
+        #: re-reads only their event rows (`_drain_context_refresh`).
+        self._context_refresh: dict[int, float] = {}
+        self._context_refresh_task: Optional[asyncio.Task] = None
         #: event id -> `_mono` this process committed the received price of one
         #: of its waiting headline legs: a stamp whose read began after it
         #: publishes a committed frame that carries that input.
@@ -8648,7 +8654,8 @@ class LiveBlendRefresher:
                 kept = graphs.get(event_id)
                 at = getattr(event, "preview_context_at", None)
                 if kept is not None:
-                    kept_at = getattr(kept[1], "preview_context_at", None)
+                    kept_at = getattr(kept[1], "rows_context_at", None) or getattr(
+                        kept[1], "preview_context_at", None)
                     if isinstance(kept_at, datetime) and (
                             not isinstance(at, datetime) or at < kept_at):
                         continue
@@ -8731,11 +8738,12 @@ class LiveBlendRefresher:
                     del self._preview_graph_outcomes[row.id]
 
     def _refetch_all_graphs(self) -> None:
-        """#10090: re-read every kept live graph (a retirement staled their tickets). Never raises."""
+        """#10090: refresh every kept live graph's ticket (a retirement staled
+        them; their rows still stand: `_schedule_context_refresh`). Never raises."""
         try:
             if _preview_at_receipt_possible(getattr(self, "source", None)) and self._preview_graphs:
                 self.graph_refetch_stats["barrier"] = self.graph_refetch_stats.get("barrier", 0) + 1
-                self._schedule_graph_refetch(list(self._preview_graphs), lost=False)
+                self._schedule_context_refresh(list(self._preview_graphs))
         except Exception:
             self.graph_refetch_stats["errors"] += 1
 
@@ -8818,6 +8826,143 @@ class LiveBlendRefresher:
                         queued = True
             if queued:
                 self._wake_receipt(True)
+
+    def _schedule_context_refresh(self, event_ids) -> None:
+        """#10090: these kept graphs' read ticket is stale, their rows are not
+        (a retirement moved the global barrier, or another venue's stamp moved
+        the event's context). Re-read only their event rows under a fresh
+        ticket (`_drain_context_refresh`), not every market and leg: 11/01
+        20:5xZ a Polymarket input waited 0.6-2 s as `mutate_read_required`
+        behind full NFL graph re-reads (~370 markets). Anything it cannot do
+        falls back to the full re-read. Never raises."""
+        try:
+            pending = self._context_refresh
+            graphs = self._preview_graphs
+            now = _mono()
+            for event_id in event_ids:
+                if event_id is not None and event_id in graphs:
+                    pending.setdefault(event_id, now)
+            if not pending:
+                return
+            task = self._context_refresh_task
+            if task is None or task.done():
+                self._context_refresh_task = asyncio.get_running_loop().create_task(
+                    self._drain_context_refresh(), name=f"context-refresh-{self.source}",
+                )
+        except Exception:
+            self.graph_refetch_stats["errors"] += 1
+            self._schedule_graph_refetch(event_ids, lost=False)
+
+    async def _drain_context_refresh(self) -> None:
+        """The one context re-read worker: a fresh ticket, captured BEFORE one
+        READ COMMITTED statement over the queued events' rows (their bag,
+        revision, status and statement time), patched into each kept graph's
+        event (`_patch_graph_context`) with its rows and read age unchanged.
+        A retirement commits its revision increment before it moves the
+        barrier, so this statement sees every retirement the ticket admits,
+        exactly as a full read's event columns do. Each patched event that
+        waits or holds received quotes is then queued for a composition."""
+        from sqlalchemy import ARRAY, Integer, any_, bindparam, func, select
+        from app.models.models import Event
+        from app.tasks.base import get_task_session
+
+        factory = self._session_factory or get_task_session
+        stats = self.graph_refetch_stats
+        while self._context_refresh:
+            batch = list(self._context_refresh)[:64]
+            for event_id in batch:
+                self._context_refresh.pop(event_id, None)
+            batch = [event_id for event_id in batch if event_id in self._preview_graphs]
+            if not batch:
+                continue
+            try:
+                ticket = await self._preview_admission_read()
+                if ticket is None:
+                    raise RuntimeError("no read ticket")
+                async with factory() as session:
+                    rows = (await session.execute(
+                        select(Event.id, Event.status, Event.completed_at, Event.commence_time,
+                               Event.win_probability_sources,
+                               Event.win_probability_sources_rev,
+                               func.statement_timestamp())
+                        .where(Event.id == any_(bindparam(
+                            "event_ids", list(batch), type_=ARRAY(Integer))))
+                    )).all()
+                stats["ctx_reads"] = stats.get("ctx_reads", 0) + 1
+            except Exception:
+                stats["errors"] += 1
+                logger.warning("live_blend_refresh[%s]: graph context re-read failed", self.source,
+                               exc_info=True)
+                self._schedule_graph_refetch(batch, lost=False)
+                continue
+            patched = set()
+            for row in rows:
+                if self._patch_graph_context(tuple(row), ticket):
+                    patched.add(row[0])
+            stats["ctx_patched"] = stats.get("ctx_patched", 0) + len(patched)
+            rest = [event_id for event_id in batch if event_id not in patched]
+            if rest:
+                # Finished, no longer live, absent or a graph it may not patch:
+                # the full read decides (it forgets and retires as a stamp does).
+                self._schedule_graph_refetch(rest, lost=False)
+            queued = False
+            for quote in list(self._receipt_quotes.values()):
+                if quote[3] in patched and self._preview_graph_outcomes.get(
+                        getattr(quote[2], "outcome_id", None)) == quote[3]:
+                    self._receipt_due[quote[3]] = None
+                    if quote[3] in self._hl_pending:
+                        self._receipt_now.add(quote[3])
+                    queued = True
+            for event_id in patched:
+                if event_id in self._hl_pending and event_id not in self._receipt_due:
+                    self._receipt_due[event_id] = None
+                    self._receipt_now.add(event_id)
+                    queued = True
+            if queued:
+                self._wake_receipt(True)
+
+    def _patch_graph_context(self, row, ticket: int) -> bool:
+        """One event row of `_drain_context_refresh` into its kept graph: the
+        bag, revision, statement time and ticket a full read would carry, the
+        markets and the graph's age (``read_at``) as kept, so the receipt
+        graph-age window still bounds the rows. False (unpatched) for a graph
+        gone or a newer context already kept, and for an event no longer live:
+        the full read handles those. Never raises."""
+        from copy import deepcopy
+        from types import SimpleNamespace
+
+        try:
+            event_id, status, completed_at, commence_time, sources, rev, context_at = row
+            entry = self._preview_graphs.get(event_id)
+            if (entry is None or status != "live" or completed_at is not None
+                    or type(rev) is not int or not isinstance(context_at, datetime)
+                    or not (sources is None or isinstance(sources, dict))):
+                return False
+            read_at, event, group = entry
+            kept_at = getattr(event, "preview_context_at", None)
+            current = getattr(event, "preview_rev", None)
+            if ((isinstance(kept_at, datetime) and context_at <= kept_at)
+                    or (type(current) is int and current > rev)):
+                return False  # a newer context or committed revision is kept
+            sources = {} if sources is None else sources
+            self._preview_graphs[event_id] = (read_at, SimpleNamespace(**{
+                **vars(event),
+                "status": status,
+                "completed_at": completed_at,
+                "commence_time": commence_time,
+                "preview_sources": sources,
+                "preview_rev": rev,
+                "preview_context_at": context_at,
+                "preview_read_ticket": ticket,
+                "win_probability_sources": {self.source: deepcopy(sources.get(self.source))},
+                # The rows' own read: a full read newer than THEM replaces this
+                # graph even when its event context is older than the patch.
+                "rows_context_at": getattr(event, "rows_context_at", kept_at),
+            }), group)
+            return True
+        except Exception:
+            self.graph_refetch_stats["errors"] += 1
+            return False
 
     def note_committed_rows(self, rows, marks=None) -> None:
         """A committed price write's RETURNING rows. Never raises.
@@ -9541,7 +9686,7 @@ class LiveBlendRefresher:
                 return
             self._hl_mark(event_id, "mutate_" + status)
             if status in ("read_required", "stale_context") and event_id in self._preview_graphs:
-                self._schedule_graph_refetch((event_id,), lost=False)
+                self._schedule_context_refresh((event_id,))
         except Exception:
             self.receipt_preview_stats["errors"] += 1
 
