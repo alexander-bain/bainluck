@@ -593,6 +593,22 @@ def _prune_notes(notes: dict, now: float, noted_at) -> None:
         del notes[key]
 
 
+_TRACE_CACHE: list = [None, frozenset()]
+
+
+def _receipt_trace_events() -> frozenset:
+    """`RECEIPT_TRACE_EVENTS` (comma-separated event ids), read once per value."""
+    raw = os.environ.get("RECEIPT_TRACE_EVENTS", "14781143,14969868,15184630")
+    if raw != _TRACE_CACHE[0]:
+        ids = set()
+        for part in raw.split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.add(int(part))
+        _TRACE_CACHE[0], _TRACE_CACHE[1] = raw, frozenset(ids)
+    return _TRACE_CACHE[1]
+
+
 def forget_preview_outcomes(refresher, outcome_ids) -> None:
     """`LiveBlendRefresher.forget_preview_outcomes` on the refresher a writer
     holds, for rows it changed outside a price write. Nothing for a refresher
@@ -9581,6 +9597,25 @@ class LiveBlendRefresher:
         """Count one receipt composition outcome against its event (stats line)."""
         events = self._receipt_class_events.setdefault(kind, {})
         events[event_id] = events.get(event_id, 0) + 1
+        if event_id in _receipt_trace_events():
+            self._receipt_trace(event_id, "class", kind)
+
+    def _receipt_trace(self, event_id, what, *detail) -> None:
+        """#10090 diagnosis (`RECEIPT_TRACE_EVENTS`): one line per receipt step
+        of a traced event, so a venue move the screen never showed (11/01
+        venue-to-screen probe: Bills-Ravens held 0.835 on Polymarket for 6.9 s,
+        the screen kept 0.845) can be followed. At most 3000 lines a minute."""
+        try:
+            minute = int(time.time() // 60)
+            if getattr(self, "_trace_minute", None) != minute:
+                self._trace_minute, self._trace_lines = minute, 0
+            if self._trace_lines >= 3000:
+                return
+            self._trace_lines += 1
+            logger.info("live_blend_refresh[%s]: receipt-trace event=%s %s %s",
+                        self.source, event_id, what, " ".join(str(d) for d in detail))
+        except Exception:
+            pass
 
     def _receipt_class_summary(self) -> str:
         """``kind:event/count,...`` (top 6 per kind) since the last call; resets."""
@@ -9953,6 +9988,18 @@ class LiveBlendRefresher:
                 logger.warning("live_blend_refresh[%s]: receipt preview for event %s not composed",
                                self.source, event_id, exc_info=True)
                 continue
+            if event_id in _receipt_trace_events():
+                pending_now = preview.pending_entry(event_id, self.source)
+                quotes = sorted((oid, getattr(q[2], "probability", None))
+                                for oid, q in self._receipt_quotes.items() if q[3] == event_id)
+                graph = self._preview_graphs.get(event_id)
+                self._receipt_trace(
+                    event_id, "plan", None if plan is None else plan[0],
+                    None if plan is None or len(plan) < 4 else plan[3],
+                    "pending=%s" % getattr(pending_now, "value", None),
+                    "quotes=%s" % quotes[:6],
+                    "graph_age=%s" % (None if graph is None else round(_mono() - graph[0], 1)),
+                    "hl=%s" % (self._hl_pending.get(event_id),))
             if plan is not None:
                 plans.append((event_id, plan))
         self.receipt_compose_s += time.perf_counter() - started
