@@ -3987,6 +3987,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     memory.presence = presence
                 held = memory.presence
                 served = await asyncio.to_thread(served_market_ids)
+                # #10090 (Alex 11/01): the props moving most stay live, as held.
+                from app.tasks.pm_hot_props import hot_market_ids
+
+                hot = await asyncio.to_thread(hot_market_ids)
                 try:
                     async with get_task_session() as session:
                         eligible = [
@@ -3997,7 +4001,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             ).all()
                         ]
                         seed_markets, seed_events = memory.seeds(
-                            set(eligible) | set(served) | held.market_ids
+                            set(eligible) | set(served) | held.market_ids | hot
                             | game_mirror_market_ids(admission, taken_assets),
                             held.event_ids,
                             now=now,
@@ -4026,6 +4030,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     return None, True, {}, False
                 counts = admission.counts
                 counts.update(
+                    scope_hot_markets=len(hot),
                     scope_held_markets=len(held.market_ids),
                     scope_held_events=len(held.event_ids),
                     scope_served_markets=len(served),
@@ -4035,11 +4040,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 logger.info(
                     "Polymarket WS open scope slate: kept %d of %d open assets "
                     "(%d seed tokens, %d seed markets: %d slate, %d held, %d "
-                    "held events, %d served, quiet %ds); mirrored legs kept=%d "
-                    "dropped=%d; presence %s",
+                    "held events, %d served, %d hot props, quiet %ds); mirrored "
+                    "legs kept=%d dropped=%d; presence %s",
                     counts["scope_assets_kept"], full, counts["scope_seed_tokens"],
                     len(seed_markets), len(eligible), len(held.market_ids),
-                    len(held.event_ids), len(served), int(OPEN_SCOPE_QUIET_S),
+                    len(held.event_ids), len(served), len(hot), int(OPEN_SCOPE_QUIET_S),
                     counts["scope_mirrored_legs_kept"],
                     counts["scope_mirrored_legs_dropped"],
                     "read" if presence is not None else "UNREADABLE (last held set kept)",
@@ -7872,6 +7877,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     presence = await asyncio.to_thread(read_reader_presence)
                 except PresenceUnreadable:
                     continue
+                from app.tasks.pm_hot_props import hot_market_ids
+
+                hot = await asyncio.to_thread(hot_market_ids)
+                if hot:
+                    # A prop newly hot asks like a newly held market (Alex 11/01).
+                    presence = type(presence)(
+                        market_ids=frozenset(presence.market_ids) | hot,
+                        event_ids=presence.event_ids,
+                    )
                 markets, events = memory.unseen(
                     presence, legged_market_ids,
                     # Under `PM_WS_PROPS_TO_POLL` the game socket no longer

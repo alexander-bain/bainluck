@@ -2798,3 +2798,28 @@ async def test_polymarket_population_takes_the_socket_games_props_only_when_swit
     assert await _vp_population(db, "polymarket", open_arm=False) == set()
     monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
     assert await _vp_population(db, "polymarket", open_arm=False) == {"0xp01"}
+
+
+async def test_the_props_arm_statements_run_on_postgres_and_agree(poll_db, monkeypatch):
+    """#10090: the open arm's slate seed (switch on) and the hot-props filter
+    are the same window and refusal, compiled by a real engine."""
+    from app.tasks import pm_hot_props
+    from app.tasks.polymarket_open_contracts import open_contract_scope_markets_stmt
+
+    db = poll_db
+    live = await _vp_event(db, status="live", starts_in=timedelta(hours=-1))
+    label = {"content_understanding_v1": {"v": 1, "semantic_type": "total",
+                                          "venue_type": "total"}}
+    win = {"content_understanding_v1": {"v": 1, "semantic_type": "moneyline",
+                                        "venue_type": "moneyline"}}
+    prop, _ = await _vp_market(db, source="polymarket", ext="0xq01", event_id=live,
+                               legs=[("0xq01", False, None)], metadata=label)
+    ml, _ = await _vp_market(db, source="polymarket", ext="0xq02", event_id=live,
+                             legs=[("0xq02", False, None)], metadata=win)
+    await db.commit()
+
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    seeds = {r[0] for r in (await db.execute(open_contract_scope_markets_stmt())).all()}
+    owned = {r[0] for r in (await db.execute(pm_hot_props.props_arm_stmt([prop, ml]))).all()}
+    assert prop not in seeds and ml in seeds
+    assert owned == {prop}

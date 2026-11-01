@@ -1223,6 +1223,7 @@ async def _write_group(
         return
     deferred = DeferredPoints.read(outcome_ids)
     now = datetime.now(timezone.utc)
+    moved: list[int] = []  # #10090 heat: markets sent to the writer
     for unit in group_units:
         unit_found = found if venue == "kalshi" else found.get(unit.key)
         if not unit_found:
@@ -1250,11 +1251,18 @@ async def _write_group(
                     session, venue=venue, market_id=market_id, priced=priced,
                     poll=poll, deferred=deferred, stats=stats,
                 )
+                moved.append(market_id)
             except Exception as exc:  # noqa: BLE001 — gotcha 42: one market, not the pass
                 await session.rollback()
                 stats["market_errors"] = stats.get("market_errors", 0) + 1
                 stats["errors"].append(f"market {market_id}: {str(exc)[:160]}")
     deferred.save()
+    if venue == "polymarket" and moved and history is None:
+        from app.tasks import pm_hot_props
+
+        if pm_hot_props.enabled():
+            stats["hot_moves_recorded"] = stats.get("hot_moves_recorded", 0) + (
+                await pm_hot_props.record_moved(session, moved))
 
 
 _SECOND_LEG = re.compile(r"_(no|side1)$")
