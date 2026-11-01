@@ -1,8 +1,15 @@
 """Architecture selection must use the actual pair, never the host or a guess."""
 
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from tools.watch_simulator_architecture import select
+
+SCRIPT = Path(__file__).resolve().parents[2] / "tools/watch_simulator_architecture.py"
 
 
 def destinations(platform, udid, *architectures):
@@ -177,6 +184,153 @@ class RuntimePairArchitectureTests(unittest.TestCase):
             self.verify(info, pairs, products)
         products["runtime_support"][0]["runtime_build"] = "24R362"
         self.assertEqual(self.verify(info, pairs, products)["architecture"], "arm64")
+
+
+def _devices(info, platform):
+    return info["devices"]["runtime-" + platform]
+
+
+class PreparedPairTests(unittest.TestCase):
+    """#11201: the producer gates on CoreSimulator's exact pair before products exist."""
+
+    # Each refusal is a CoreSimulator state the producer must never build from.
+    REFUSALS = {
+        "watch absent from simctl": lambda i, p: _devices(i, "watchOS").clear(),
+        "phone absent from simctl": lambda i, p: _devices(i, "iOS").clear(),
+        "pair inactive": lambda i, p: p["pairs"]["pair"].update(state="(inactive)"),
+        "pair bound to another phone": lambda i, p: p["pairs"]["pair"].update(
+            phone={"udid": "other"}
+        ),
+        "watch unbooted": lambda i, p: _devices(i, "watchOS")[0].update(
+            state="Shutdown"
+        ),
+        "phone unbooted": lambda i, p: _devices(i, "iOS")[0].update(state="Shutdown"),
+        "watch unavailable": lambda i, p: _devices(i, "watchOS")[0].update(
+            isAvailable=False
+        ),
+        "phone unavailable": lambda i, p: _devices(i, "iOS")[0].update(
+            isAvailable=False
+        ),
+        "watch runtime is not the SDK": lambda i, p: i["runtimes"][0].update(
+            version="26.0"
+        ),
+        "phone runtime is not the SDK": lambda i, p: i["runtimes"][1].update(
+            version="26.0"
+        ),
+        "unsupported device type": lambda i, p: i["runtimes"][0].update(
+            supportedDeviceTypes=[
+                {"identifier": "type-watchOS", "productFamily": "iPhone"}
+            ]
+        ),
+        # A watch-only or union reading would pay this pair (M7a).
+        "watch arm64, phone x86_64": lambda i, p: i["runtimes"][1].update(
+            supportedArchitectures=["x86_64"]
+        ),
+        # Shared set without the size test would pay this pair (M7b).
+        "both arm64 and x86_64": lambda i, p: [
+            runtime.update(supportedArchitectures=["arm64", "x86_64"])
+            for runtime in i["runtimes"]
+        ],
+    }
+
+    def fixture(self):
+        info, pairs, _ = RuntimePairArchitectureTests.fixture(self)
+        return info, pairs
+
+    def prepared(self, info, pairs, watch_sdk="27.0", phone_sdk="27.0"):
+        from tools.watch_simulator_architecture import select_prepared_pair
+
+        return select_prepared_pair(info, pairs, "watch", "phone", watch_sdk, phone_sdk)
+
+    def cli(self, *extra, info=None, pairs=None, watch_sdk="27.0", phone_sdk="27.0"):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        default_info, default_pairs = self.fixture()
+        (root / "simulators.json").write_text(json.dumps(info or default_info))
+        (root / "pairs.json").write_text(json.dumps(pairs or default_pairs))
+        output = root / "simulator-architecture.json"
+        command = [
+            sys.executable,
+            str(SCRIPT),
+            "--prepared-pair",
+            "--watch-id",
+            "watch",
+            "--phone-id",
+            "phone",
+            "--simulators",
+            str(root / "simulators.json"),
+            "--pairs",
+            str(root / "pairs.json"),
+            "--output",
+            str(output),
+        ]
+        if watch_sdk is not None:
+            command += ["--watch-sdk", watch_sdk]
+        if phone_sdk is not None:
+            command += ["--phone-sdk", phone_sdk]
+        command += [
+            str(root / "simulators.json") if arg == "<file>" else arg for arg in extra
+        ]
+        return subprocess.run(command, capture_output=True, text=True), output
+
+    def assert_cli_unpaid(self, run):
+        process, receipt_path = run
+        self.assertNotEqual(process.returncode, 0)
+        self.assertNotIn("Traceback", process.stderr)
+        self.assertNotIn("AttributeError", process.stderr)
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt["verdict"], "UNPAID")
+        self.assertTrue(receipt["reason"])
+        self.assertEqual(process.stdout, "")
+
+    def test_exact_active_booted_pair_passes_its_one_shared_architecture(self):
+        result = self.prepared(*self.fixture())
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["architecture"], "arm64")
+        self.assertEqual((result["watch_id"], result["phone_id"]), ("watch", "phone"))
+        self.assertIn("before products exist", result["scope"])
+        process, output = self.cli()
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(process.stdout, "arm64\n")
+        self.assertEqual(json.loads(output.read_text())["verdict"], "PASS")
+
+    def test_every_unproven_coresimulator_pair_refuses(self):
+        for name, mutate in self.REFUSALS.items():
+            info, pairs = self.fixture()
+            mutate(info, pairs)
+            with self.subTest(name), self.assertRaises(ValueError):
+                self.prepared(info, pairs)
+
+    def test_every_refusal_writes_the_unpaid_receipt(self):
+        for name, mutate in self.REFUSALS.items():
+            info, pairs = self.fixture()
+            mutate(info, pairs)
+            with self.subTest(name):
+                self.assert_cli_unpaid(self.cli(info=info, pairs=pairs))
+
+    def test_phone_runtime_is_checked_against_the_phone_sdk(self):
+        info, pairs = self.fixture()
+        with self.assertRaises(ValueError):
+            self.prepared(info, pairs, watch_sdk="27.0", phone_sdk="27.1")
+        self.assert_cli_unpaid(self.cli(watch_sdk="27.0", phone_sdk="27.1"))
+
+    def test_cli_dispatch_fails_closed_with_a_receipt(self):
+        for name, run in {
+            "both modes": lambda: self.cli("--runtime-pair"),
+            "phone SDK missing": lambda: self.cli(phone_sdk=None),
+            "phone SDK empty": lambda: self.cli(phone_sdk=""),
+            "watch SDK missing": lambda: self.cli(watch_sdk=None),
+            "with --products": lambda: self.cli("--products", "<file>"),
+            "with --watch-destinations": lambda: self.cli(
+                "--watch-destinations", "<file>"
+            ),
+            "with --phone-destinations": lambda: self.cli(
+                "--phone-destinations", "<file>"
+            ),
+        }.items():
+            with self.subTest(name):
+                self.assert_cli_unpaid(run())
 
 
 if __name__ == "__main__":
