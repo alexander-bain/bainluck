@@ -64,11 +64,29 @@ import SwiftUI
 /// Controls: Full chart opens the full-size history; Details and Inspect on the
 /// history are offered unavailable until their owner contracts exist. The
 /// presenter has no About content mode, so `onAbout` is nil (no button that
-/// does nothing). The cards' own Details callbacks are nil until a card-to-
-/// original route exists; every original is reachable through All props. The
+/// does nothing). A card's own Details — goal milestones, both teams, first
+/// team, half by half and the exact-score map — open that row's exact original
+/// in the page's existing Details (`SoccerCardOriginalsAdapter10868`): offered
+/// only where this pass's mounted card and the owner's typed admission
+/// establish it, held as the typed origin plus the exact selection, and shown
+/// only while that origin still revalidates; otherwise the Details' own
+/// unavailable view. Every original stays reachable through All props. The
 /// exact-score map's scope and score choices hold the reader's place; its
 /// recovery is offered only when the selected scope has a score to recover to.
+///
+/// Layers: one sheet. A card's Details open over its full-size card (the sheet
+/// keeps that card's identity, so it is never presented again) and Done returns
+/// to the same card; Details opened from a card on the page return to the page
+/// with Done; an interactive dismissal returns to the page. The card path never
+/// writes the story, outcome, exact-scope or score choices, the All props
+/// selection or a timing disclosure. Holds: in the compact stream the card's
+/// activation has already asked the stream's hold, so the host adds none; in
+/// full-size content the host asks `onInteraction` exactly once, before the
+/// Details open. Still owed, not claimed here: the full-size card's scroll
+/// position and VoiceOver focus after Done.
 struct SoccerEventPageHost10868: View {
+    typealias Cards = SoccerCardOriginalsAdapter10868
+
     let event: EventDetail
     let history: EventHistoryResponse?
     let markets: GameMarketsResponse?
@@ -111,6 +129,71 @@ struct SoccerEventPageHost10868: View {
     struct Built {
         let input: SoccerEventPageInput10868
         let originals: SoccerEventPageOriginals10868
+        /// This pass's card-Details values and lookups, built once from the
+        /// same values as `input` and `originals`.
+        let pass: SoccerCardOriginalsAdapter10868.Pass
+        /// The originals a card's Details show on this pass: the held origin's
+        /// exact selection only while it revalidates, else none (the Details'
+        /// own unavailable view).
+        let cardDetailsOriginals: SoccerEventPageOriginals10868
+    }
+
+    /// The sheet's layers. One sheet: a card's Details open over the full-size
+    /// card they came from, or over the page.
+    struct Session: Equatable {
+        /// The full-size card, All props, or All props' Details; never `.page`.
+        var base: SoccerEventPageMode10868? = nil
+        /// A card's Details, over `base` when one is open, else over the page.
+        var cardDetails: SoccerCardOriginalsAdapter10868.Opened? = nil
+
+        /// The sheet's identity: the base layer's, or the page's under Details
+        /// opened from the page. It does not change while a card's Details open
+        /// or close over that card, so the card's sheet is never presented again.
+        var presented: Presented? {
+            if let base { return Presented(mode: base) }
+            return cardDetails == nil ? nil : Presented(mode: .page)
+        }
+
+        mutating func open(_ mode: SoccerEventPageMode10868) {
+            base = mode == .page ? nil : mode
+            cardDetails = nil
+        }
+
+        mutating func openCardDetails(_ opened: SoccerCardOriginalsAdapter10868.Opened) {
+            cardDetails = opened
+        }
+
+        /// Done: a card's Details return to the card or page they were opened
+        /// over; anything else returns to the page.
+        mutating func close() {
+            if cardDetails != nil {
+                cardDetails = nil
+            } else {
+                base = nil
+            }
+        }
+
+        /// The sheet was dismissed interactively: the page.
+        mutating func dismiss() {
+            cardDetails = nil
+            base = nil
+        }
+    }
+
+    /// The hold a card's Details tap asks for itself: none on the page, whose
+    /// cards sit in the stream and already asked through its activation; the
+    /// page's hold in full-size content, which has no activation.
+    static func detailsHold(_ mode: SoccerEventPageMode10868, _ hold: (() -> Void)?) -> (() -> Void)? {
+        mode == .page ? nil : hold
+    }
+
+    /// Cards render only on the page and in full-size content; All props and
+    /// Details show none, so no card Details callback is built for them.
+    static func showsCards(_ mode: SoccerEventPageMode10868) -> Bool {
+        switch mode {
+        case .page, .reader: true
+        case .catalogue, .original: false
+        }
     }
 
     /// The screen's own reading state, as the builders take it.
@@ -127,9 +210,11 @@ struct SoccerEventPageHost10868: View {
         var selection: OriginalMarketDetails9483.Selection? = nil
         var readerOpen = false
         var wide = false
+        /// A card's open Details; nil: none.
+        var cardDetails: SoccerCardOriginalsAdapter10868.Opened? = nil
     }
 
-    @State private var presented: Presented?
+    @State private var session = Session()
     @State private var story: SoccerEventPageCard10868?
     @State private var goal: String?
     @State private var both: String?
@@ -145,23 +230,44 @@ struct SoccerEventPageHost10868: View {
 
     var body: some View {
         page(make(), mode: .page)
-        .sheet(item: $presented) { shown in
+        .sheet(item: Binding(get: { session.presented },
+                             set: { shown in if shown == nil { session.dismiss() } })) { shown in
             NavigationStack {
                 ScrollView {
-                    page(make(), mode: shown.mode).padding(.horizontal, 16)
+                    sheetContent(shown).padding(.horizontal, 16)
                 }
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { presented = nil }
+                        Button("Done") { session.close() }
                     }
                 }
             }
         }
     }
 
-    private func page(_ built: Built, mode: SoccerEventPageMode10868) -> SoccerEventPagePresentation10868 {
-        SoccerEventPagePresentation10868(
-            input: built.input, mode: mode, originals: built.originals,
+    /// A card's Details over the card or page they came from, else the base
+    /// layer — each over THIS pass's input and originals.
+    private func sheetContent(_ shown: Presented) -> SoccerEventPagePresentation10868 {
+        let built = make()
+        return session.cardDetails == nil
+            ? page(built, mode: shown.mode)
+            : page(built, mode: .original, originals: built.cardDetailsOriginals)
+    }
+
+    private func page(_ built: Built, mode: SoccerEventPageMode10868,
+                      originals: SoccerEventPageOriginals10868? = nil) -> SoccerEventPagePresentation10868 {
+        // A card's Details: offered from this pass's lookups, asking the hold
+        // only in full-size content, opening over the card or page they came from.
+        let hold = Self.detailsHold(mode, onInteraction)
+        let pass: Cards.Pass? = Self.showsCards(mode) ? built.pass : nil
+        let show: (Cards.Opened) -> Void = { session.openCardDetails($0) }
+        let goalDetails = pass.flatMap { Cards.goalDetails(in: $0, hold: hold, show: show) }
+        let bothDetails = pass.flatMap { Cards.bothDetails(in: $0, hold: hold, show: show) }
+        let firstDetails = pass.flatMap { Cards.firstDetails(in: $0, hold: hold, show: show) }
+        let halfDetails = pass.flatMap { Cards.halfDetails(in: $0, hold: hold, show: show) }
+        let exactDetails = pass.flatMap { Cards.exactDetails(in: $0, hold: hold, show: show) }
+        return SoccerEventPagePresentation10868(
+            input: built.input, mode: mode, originals: originals ?? built.originals,
             onAbout: nil,
             onAllProps: { open(.catalogue) },
             onOriginalSelect: { chosen in
@@ -176,19 +282,19 @@ struct SoccerEventPageHost10868: View {
             onHistoryInspectionChoice: nil,
             onHistoryPlotPosition: nil,
             onGoalSelect: { goal = $0 },
-            onGoalDetails: nil,
+            onGoalDetails: goalDetails,
             onBothSelect: { both = $0.outcomeID },
-            onBothDetails: nil,
+            onBothDetails: bothDetails,
             onFirstSelect: { first = $0 },
-            onFirstDetails: nil,
+            onFirstDetails: firstDetails,
             onHalfSelect: { half = $0 },
-            onHalfDetails: nil,
+            onHalfDetails: halfDetails,
             onExactSelectScope: { exactScope = $0 },
             onExactSelectOriginal: { scope, original in
                 exactScope = scope
                 exactOriginals[scope] = original
             },
-            onExactDetails: nil,
+            onExactDetails: exactDetails,
             onExactRecover: Self.recovery(built.input.exact).map { target -> () -> Void in
                 { exactOriginals[target.scope] = target.original }
             },
@@ -206,10 +312,11 @@ struct SoccerEventPageHost10868: View {
         return (scope.id, first)
     }
 
-    /// The hold first, then the exact mode — never the reverse.
+    /// The hold first, then the exact mode — never the reverse. A card's
+    /// Details never come through here.
     private func open(_ mode: SoccerEventPageMode10868) {
         onInteraction?()
-        presented = Presented(mode: mode)
+        session.open(mode)
     }
 
     private func handle(_ intent: StoryStreamPresentation10868.Intent) {
@@ -232,8 +339,8 @@ struct SoccerEventPageHost10868: View {
                    ladderHome: ladderHome, ladderAway: ladderAway, now: now,
                    reading: Reading(story: story, goal: goal, both: both, first: first, half: half,
                                     exactScope: exactScope, exactOriginals: exactOriginals,
-                                    selection: selection, readerOpen: presented != nil,
-                                    wide: sizeClass == .regular))
+                                    selection: selection, readerOpen: session.presented != nil,
+                                    wide: sizeClass == .regular, cardDetails: session.cardDetails))
     }
 
     /// The page input and originals from the passed values alone — pure, so
@@ -288,6 +395,11 @@ struct SoccerEventPageHost10868: View {
             originalsCount: originals.catalogue?.originals.count,
             stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)
-        return Built(input: input, originals: originals)
+        // A card's Details: this pass's lookups, built once, and the held
+        // origin's selection only while it revalidates on this pass.
+        let pass = Cards.Pass(event: event, markets: markets, admitted: admitted, host: props, input: input,
+                              catalogue: originals.catalogue)
+        let cardDetails = Cards.originals(originals, showing: reading.cardDetails.flatMap { Cards.shown($0, in: pass) })
+        return Built(input: input, originals: originals, pass: pass, cardDetailsOriginals: cardDetails)
     }
 }
