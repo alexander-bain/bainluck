@@ -9699,7 +9699,14 @@ class LiveBlendRefresher:
                 return
             self._hl_mark(event_id, "mutate_" + status)
             if status in ("read_required", "stale_context") and event_id in self._preview_graphs:
-                self._schedule_context_refresh((event_id,))
+                ids = [event_id]
+                if status == "read_required":
+                    # The barrier is global: every kept graph's ticket is now
+                    # refused at its next open. Refresh them all in the same
+                    # batch, this event first, instead of one refusal (~0.6-0.8 s
+                    # each, 11/01 21:41Z) per game.
+                    ids.extend(eid for eid in self._preview_graphs if eid != event_id)
+                self._schedule_context_refresh(ids)
         except Exception:
             self.receipt_preview_stats["errors"] += 1
 

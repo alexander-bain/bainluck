@@ -958,6 +958,19 @@ async def test_a_read_required_refusal_rereads_the_event_row_not_the_graph(r, mo
     assert full == []
 
 
+async def test_a_read_required_refreshes_every_kept_ticket_refused_event_first(r, monkeypatch):
+    """The barrier is global: one refusal means every kept ticket is stale."""
+    read(r, event(eid=EV2), legs(eid=EV2, base=10))
+    read(r, event(), legs())
+    light = []
+    monkeypatch.setattr(r, "_schedule_context_refresh", lambda ids: light.append(list(ids)))
+
+    r._hl_mutate_refused(EV2, "read_required")
+    r._hl_mutate_refused(EV2, "stale_context")
+
+    assert light == [[EV2, EV], [EV2]], "stale_context is this event's own, not global"
+
+
 async def test_a_retirement_refreshes_every_kept_ticket_without_rereading_rows(r, monkeypatch):
     read(r, event(), legs())
     read(r, event(eid=EV2), legs(eid=EV2, base=10))
