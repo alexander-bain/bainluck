@@ -570,6 +570,15 @@ def _preview_from_commit(event_id) -> bool:
         return False
 
 
+#: A preview batch larger than this is published in chunks (see `_publish_previews`).
+PREVIEW_PUBLISH_CHUNK = 8
+
+
+def _frame_event(frame) -> Any:
+    """A preview frame's (or ledger operation's) event id, None if it has none."""
+    return frame.get("event_id") if isinstance(frame, dict) else None
+
+
 def _receipt_graph_max_age() -> float:
     """`RECEIPT_GRAPH_MAX_AGE_ENV` when set to 3-900, else the default."""
     try:
@@ -9969,6 +9978,23 @@ class LiveBlendRefresher:
         epoch, no blend.
         """
         if not frames and prepare_frames is None:
+            return
+        if prepare_frames is None and len(frames) > PREVIEW_PUBLISH_CHUNK:
+            # #10090: a big batch (a capacity pass, a settlement sweep) takes the
+            # claim lock per chunk, so a receipt preview waits for one chunk,
+            # not the whole batch (2026-10-31: ~1 s receipt waits behind batches
+            # of hundreds of serial ledger round trips). One event's consecutive
+            # frames stay in one chunk; each item is still prepared and sent
+            # under the lock, so per-item ordering is unchanged.
+            chunk: list = []
+            for frame in frames:
+                if (len(chunk) >= PREVIEW_PUBLISH_CHUNK
+                        and _frame_event(frame) != _frame_event(chunk[-1])):
+                    await self._publish_previews(chunk)
+                    chunk = []
+                chunk.append(frame)
+            if chunk:
+                await self._publish_previews(chunk)
             return
         try:
             import json
