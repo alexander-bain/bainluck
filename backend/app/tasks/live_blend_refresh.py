@@ -3873,6 +3873,8 @@ class LiveBlendRefresher:
         self._hl_samples: list[tuple[float, int, str]] = []
         self._hl_late = 0
         self._hl_fallback: dict[str, int] = {}
+        #: event id -> mono when its receipt proposal was composed (split timing).
+        self._hl_composed: dict[int, float] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -8771,11 +8773,16 @@ class LiveBlendRefresher:
     def _hl_resolve(self, event_id, how: Optional[str] = None) -> None:
         """The headline clock stops: the page now shows this event's inputs."""
         entry = self._hl_pending.pop(event_id, None)
+        composed = self._hl_composed.pop(event_id, None)
         if entry is None:
             return
         if len(self._hl_samples) < 20000:
             # A fallback keeps its reason (why it waited); else how it reached the screen.
             why = entry[1] if entry[1] != "receipt" else (how or "receipt")
+            if composed is not None and why == "receipt":
+                # receipt->compose / compose->publish, ms
+                why = "receipt(c%d,p%d)" % (int((composed - entry[0]) * 1000),
+                                             int((_mono() - composed) * 1000))
             self._hl_samples.append((max(0.0, _mono() - entry[0]), event_id, why))
 
     def _hl_mark(self, event_id, how: str) -> None:
@@ -9092,6 +9099,8 @@ class LiveBlendRefresher:
                     continue  # refused locally (stale, expired value, capacity)
                 stats["proposed"] += 1
                 self._note_receipt_class("proposed", event_id)
+                if event_id in self._hl_pending:
+                    self._hl_composed[event_id] = now
                 if self.preview_receipt is not None and newest is not None:
                     self._receipt_call(self.preview_receipt.carried, event_id,
                                        stamped_at.isoformat(), newest)
