@@ -132,6 +132,18 @@ const soccerMatch = soccerMatchApplies(event.sport)
    earlier capture's arithmetic: the word measures about 265 px in that role against the 293 px the
    page leaves at 375 px. Visual verification is PENDING until the exact corrected-version
    (4d20d5b4) 375/393 frames at 200% text are read; this is not yet resolved on a phone.
+   Exact-map keyboard focus: the 91d79dcb browser lab (browser-lab-91d79dcb-soccer-delta,
+   RESULTS.json → exactContainedScroll and LAB-HANDBACK "Measured finding") found that in 9
+   overflow cases (375/200 full and first-half, 393/200 full, × 3 exact cases) Tab could land on a
+   partly hidden cell, with as little as 21.6 of 80 px shown at 375/200 and 2.6 of 80 px at
+   393/200, which 1–3 arrow presses then revealed; on the first-half scope after a 12 px scroll, two
+   first-column cells sat partly under the sticky row numbers. Correction (on top of f72ad9f7 /
+   00a6030e): keyboard focus on an enabled score cell now moves only that map's own scrollLeft, at
+   once and only as far as needed, so the whole cell and its 2 px focus outline sit inside the map
+   and clear of the sticky row numbers; no page or vertical scroll, selection, focus move or
+   disabled-cell activation, and a pointer or touch press scrolls nothing. Its jest guards use
+   CONSTRUCTED geometry and are not browser proof. Visual verification is PENDING until the exact
+   corrected-version 375/393 frames at 200% text, with Tab, arrow and touch checks, are read.
 
 ## Increment 2 (not built)
 

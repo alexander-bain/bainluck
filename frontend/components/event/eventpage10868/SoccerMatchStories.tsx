@@ -1072,6 +1072,9 @@ function Corners() {
   );
 }
 
+/** The score cells' keyboard focus outline (`focus-visible:outline-2`), kept in view with the cell. */
+const FOCUS_OUTLINE_PX = 2;
+
 /** What occupies one grid coordinate (native `ExactScoreMapSlot10868`). */
 type ExactSlot = { kind: "original"; original: SoccerExactOriginal } | { kind: "notListed" } | { kind: "ambiguous" };
 
@@ -1129,6 +1132,33 @@ function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; sco
     const wider = el.scrollWidth > el.clientWidth + 1;
     setOverflows((prev) => (prev === wider ? prev : wider));
   }, [scrollerWidth, rootFontPx, scope.id, scope.columns.length, scope.rows.length]);
+  // Keyboard focus on a score cell reveals the WHOLE cell and its focus outline
+  // inside this map, clear of the sticky row numbers, by moving only this map's
+  // own scrollLeft, as far as needed and at once: no page or vertical scroll, no
+  // animation, no selection, no focus move. A pointer or touch press reveals
+  // nothing, so the cell under the finger stays the one that is chosen.
+  const pointerPress = useRef(false);
+  const revealFocusedCell = (target: EventTarget) => {
+    const el = scroller.current;
+    if (!el || !(target instanceof HTMLButtonElement) || target.disabled || !target.closest("td") || !el.contains(target)) return;
+    let keyboard = true;
+    try {
+      keyboard = target.matches(":focus-visible");
+    } catch {
+      keyboard = true;
+    }
+    if (pointerPress.current || !keyboard) return;
+    const box = el.getBoundingClientRect();
+    const cell = target.getBoundingClientRect();
+    const rowNumbers = target.closest("tr")?.querySelector('th[scope="row"]')?.getBoundingClientRect();
+    const left = Math.max(box.left + el.clientLeft, rowNumbers ? rowNumbers.right : Number.NEGATIVE_INFINITY);
+    const right = box.left + el.clientLeft + el.clientWidth;
+    const hiddenLeft = cell.left - FOCUS_OUTLINE_PX - left;
+    const hiddenRight = cell.right + FOCUS_OUTLINE_PX - right;
+    // Left first; going right never pushes the cell's own left edge under the row numbers.
+    const delta = hiddenLeft < 0 ? hiddenLeft : hiddenRight > 0 ? Math.min(hiddenRight, hiddenLeft) : 0;
+    if (delta !== 0) el.scrollLeft += delta > 0 ? Math.ceil(delta) : Math.floor(delta);
+  };
   const slotAt = (home: number, away: number): ExactSlot => {
     const found = scope.originals.filter((o) => o.placement.kind === "grid" && o.placement.home === home && o.placement.away === away);
     if (found.length === 0) return { kind: "notListed" };
@@ -1180,6 +1210,22 @@ function ExactScopeMap({ card, scope, held, hold }: { card: SoccerExactCard; sco
         aria-labelledby={captionId}
         aria-describedby={overflows ? hintId : undefined}
         tabIndex={0}
+        onFocus={(event) => revealFocusedCell(event.target)}
+        onPointerDown={() => {
+          pointerPress.current = true;
+        }}
+        onPointerUp={() => {
+          pointerPress.current = false;
+        }}
+        onPointerCancel={() => {
+          pointerPress.current = false;
+        }}
+        onPointerLeave={() => {
+          pointerPress.current = false;
+        }}
+        onKeyDown={() => {
+          pointerPress.current = false;
+        }}
         data-exact-scroller={overflows ? "overflows" : "fits"}
         className="max-w-full overflow-x-auto rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
       >

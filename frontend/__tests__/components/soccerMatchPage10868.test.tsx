@@ -1249,3 +1249,199 @@ describe("the exact-score map speaks in the past tense only after the final", ()
     expect(card.querySelector("[data-exact-actual]")?.textContent).toBe(`${EXACT_WORDS.finalScore}: ${names.home} 2–2 ${names.away}`);
   });
 });
+
+// ─── Exact map keyboard focus: the whole focused cell is shown (91d lab finding) ─
+//
+// The 91d79dcb browser lab measured Tab landing on partly hidden cells at 200%
+// text (as little as 2.6 of 80 px shown at 393/200, 21.6 at 375/200) and
+// first-half cells under the sticky row numbers after a 12 px scroll. jsdom has
+// no layout, so the geometry below is CONSTRUCTED to that shape; it guards the
+// reveal arithmetic and the side effects, and is NOT browser proof.
+
+describe("exact map: keyboard focus reveals the whole cell inside the map, clear of the row numbers", () => {
+  const hullPage = page(detail("hullDetail"), history("hullHistory"), markets("hullExactMarkets"), EXACT_PRE_NOW, HULL_BEFORE_ADMISSION);
+  const exact = () => oneCard(hullPage.stories.cards.find((c) => c.id === "exact")!);
+  const SCROLLER_LEFT = 100;
+  const SCROLLER_WIDTH = 211;
+  const ROW_NUMBERS_RIGHT = 130;
+  const cellLeft = (column: number, scrollLeft: number) => 133 + 83 * column - scrollLeft;
+
+  /**
+   * CONSTRUCTED geometry, shaped like the 375/200 capture: the map's scroller is
+   * 211 px wide at x = 100 and 528 px of map wide; the sticky row numbers fill
+   * x 100–130; score cell n of a row is 80 px wide at 133 + 83n minus the
+   * scroller's own scrollLeft. Every other box is empty.
+   */
+  function withMapGeometry(run: () => void) {
+    const scrolled = new WeakMap<Element, number>();
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, "scrollLeft", {
+      configurable: true,
+      get(this: Element) {
+        return scrolled.get(this) ?? 0;
+      },
+      set(this: Element, value: number) {
+        scrolled.set(this, value);
+      },
+    });
+    Object.defineProperty(proto, "clientWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute("data-exact-scroller") ? SCROLLER_WIDTH : 0;
+      },
+    });
+    Object.defineProperty(proto, "scrollWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute("data-exact-scroller") ? 528 : 0;
+      },
+    });
+    const boxes = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const box = (left: number, width: number) => ({ left, width, right: left + width, top: 0, bottom: 80, height: 80, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
+      if (this.hasAttribute("data-exact-scroller")) return box(SCROLLER_LEFT, SCROLLER_WIDTH);
+      if (this.matches('th[scope="row"]')) return box(SCROLLER_LEFT, ROW_NUMBERS_RIGHT - SCROLLER_LEFT);
+      const td = this.closest("td");
+      if (this instanceof HTMLButtonElement && td?.parentElement) {
+        const column = Array.from(td.parentElement.children).indexOf(td) - 1;
+        const scroller = this.closest("[data-exact-scroller]") as HTMLElement;
+        return box(cellLeft(column, scroller.scrollLeft), 80);
+      }
+      return box(0, 0);
+    });
+    try {
+      run();
+    } finally {
+      boxes.mockRestore();
+      delete proto.scrollLeft;
+      delete proto.clientWidth;
+      delete proto.scrollWidth;
+    }
+  }
+
+  const scroller = () => host.querySelector("[data-exact-scroller]") as HTMLElement;
+  const cellButton = (id: string) => host.querySelector(`td[data-cell="${id}"] button`) as HTMLButtonElement;
+  /** The focused cell with its 2 px outline lies inside the map and right of the row numbers. */
+  const wholeAndClear = (button: HTMLButtonElement) => {
+    const box = button.getBoundingClientRect();
+    return box.left - 2 >= ROW_NUMBERS_RIGHT && box.right + 2 <= SCROLLER_LEFT + SCROLLER_WIDTH;
+  };
+
+  it("past the right edge: the map alone scrolls just far enough, and nothing is selected or moved", () => {
+    const pageScroll = jest.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+      const target = cellButton("242779560"); // 0–3, the fourth cell of the first row
+      expect(wholeAndClear(target)).toBe(false);
+      act(() => target.focus());
+      expect(scroller().scrollLeft).toBe(153);
+      expect(wholeAndClear(target)).toBe(true);
+      expect(document.activeElement).toBe(target);
+      expect(target.getAttribute("aria-pressed")).toBe("false");
+      expect(host.querySelector("[data-soccer-exact-chosen]")).toBeNull();
+      expect(button("Full match").getAttribute("aria-pressed")).toBe("true");
+      expect(host.querySelector("[data-exact-map]")?.getAttribute("data-exact-map")).toBe("full");
+    });
+    expect(pageScroll).not.toHaveBeenCalled();
+  });
+
+  it("past the left edge after the reader scrolled right: scrolls back until the cell clears the row numbers", () => {
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+      // CONSTRUCTED: the reader has already scrolled the map 300 px right.
+      scroller().scrollLeft = 300;
+      const target = cellButton("238846932"); // 0–1
+      act(() => target.focus());
+      expect(scroller().scrollLeft).toBe(84);
+      expect(target.getBoundingClientRect().left - 2).toBe(ROW_NUMBERS_RIGHT);
+      expect(wholeAndClear(target)).toBe(true);
+    });
+  });
+
+  it("first half after a 12 px scroll: a first-column cell under the sticky row numbers comes clear of them", () => {
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+      click(button("First half"));
+      scroller().scrollLeft = 12; // CONSTRUCTED: the lab's 12 px scroll
+      const target = cellButton("244588607"); // first half 0–0
+      expect(wholeAndClear(target)).toBe(false);
+      act(() => target.focus());
+      expect(scroller().scrollLeft).toBe(1);
+      expect(wholeAndClear(target)).toBe(true);
+      expect(host.querySelector("[data-exact-map]")?.getAttribute("data-exact-map")).toBe("first");
+    });
+  });
+
+  it("a cell already whole in view does not move the map", () => {
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+      const target = cellButton("238846934"); // 0–0
+      act(() => target.focus());
+      expect(scroller().scrollLeft).toBe(0);
+    });
+  });
+
+  it("the held score stays selected while focus reveals another cell", () => {
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+      click(cellButton("238846934"));
+      expect(host.querySelector("[data-soccer-exact-chosen]")?.getAttribute("data-soccer-exact-chosen")).toBe("238846934");
+      const target = cellButton("242779560");
+      act(() => target.focus());
+      expect(scroller().scrollLeft).toBe(153);
+      expect(host.querySelector("[data-soccer-exact-chosen]")?.getAttribute("data-soccer-exact-chosen")).toBe("238846934");
+      expect(cellButton("238846934").getAttribute("aria-pressed")).toBe("true");
+      expect(target.getAttribute("aria-pressed")).toBe("false");
+      expect(document.activeElement).toBe(target);
+    });
+  });
+
+  it("a pointer or touch press scrolls nothing, so the cell under the finger is the one chosen", () => {
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+      const target = cellButton("242779560");
+      act(() => {
+        target.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+        target.focus();
+        target.dispatchEvent(new Event("pointerup", { bubbles: true }));
+      });
+      expect(scroller().scrollLeft).toBe(0);
+      click(target);
+      expect(host.querySelector("[data-soccer-exact-chosen]")?.getAttribute("data-soccer-exact-chosen")).toBe("242779560");
+    });
+  });
+
+  it("a press dragged out of the map and released outside leaves no stale guard: the next keyboard focus still reveals", () => {
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={exact()} />));
+      // CONSTRUCTED pointer path: press on a cell, move out of the map to the page, release there (no pointerup here).
+      // React builds pointerleave from pointerout + relatedTarget.
+      act(() => {
+        const pressed = cellButton("238846934");
+        pressed.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+        pressed.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+      });
+      const target = cellButton("242779560");
+      act(() => target.focus());
+      expect(scroller().scrollLeft).toBe(153);
+      expect(wholeAndClear(target)).toBe(true);
+      expect(host.querySelector("[data-soccer-exact-chosen]")).toBeNull();
+    });
+  });
+
+  it("CONSTRUCTED duplicated ids: a disabled cell is never revealed or activated", () => {
+    // CONSTRUCTED payload: the 0–3 original also carries the 0–0 id, so both cells offer no action.
+    const twice = clone(exact());
+    (twice.cards[0] as SoccerExactCard).scopes[0].originals.find((o) => o.id === "242779560")!.id = "238846934";
+    withMapGeometry(() => {
+      act(() => root.render(<SoccerMatchStories stream={twice} />));
+      const disabled = Array.from(host.querySelectorAll<HTMLButtonElement>('td[data-cell="238846934"] button'));
+      expect(disabled).toHaveLength(2);
+      expect(disabled.every((b) => b.disabled)).toBe(true);
+      act(() => {
+        disabled[1].dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      });
+      expect(scroller().scrollLeft).toBe(0);
+      expect(host.querySelector("[data-soccer-exact-chosen]")).toBeNull();
+    });
+  });
+});
