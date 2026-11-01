@@ -320,7 +320,7 @@ async def run_venue(venue):
 
     stop = asyncio.Event()
     _tune_gc_young_generation(venue)
-    sampler = _start_cpu_sampler() if venue == "polymarket" else None
+    sampler = _start_cpu_sampler(venue)
     with _stop_signals(stop):
         logger.info("Starting %s WebSocket process pid=%d", venue, os.getpid())
         tasks = [asyncio.create_task(arm()) for arm in arms]
@@ -345,15 +345,18 @@ async def run_venue(venue):
                 sampler.stop()
 
 
-def _start_cpu_sampler():
-    """#10090 — the PM venue process's low-rate stack sampler, for THIS (the
-    loop's, the main) thread. ON by default; ``PM_CPU_SAMPLER=0`` at process
-    start leaves it off. A sampler that cannot start is logged and skipped: it
-    never stops the venue."""
+def _start_cpu_sampler(venue="polymarket"):
+    """#10090 — each venue process's low-rate stack sampler, for THIS (the
+    loop's, the main) thread: ``pm-cpu-sample`` lines from Polymarket,
+    ``kalshi-cpu-sample`` from Kalshi (11/01: the Kalshi loop ran at 0.6 cpu
+    with no line saying where). ON by default; ``PM_CPU_SAMPLER=0`` at process
+    start leaves both off. A sampler that cannot start is logged and skipped:
+    it never stops the venue."""
     try:
         from app.utils.loop_cpu_sampler import LoopCpuSampler
 
-        sampler = LoopCpuSampler().start()
+        prefix = "pm-cpu-sample" if venue == "polymarket" else f"{venue}-cpu-sample"
+        sampler = LoopCpuSampler(prefix=prefix).start()
         if sampler is not None:
             # Every exit path, not only run_venue's finally: atexit runs before
             # interpreter shutdown resets SIGPROF to SIG_DFL under an armed timer.

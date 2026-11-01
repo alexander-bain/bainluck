@@ -279,14 +279,15 @@ def test_thread_logs_one_line_per_window_and_reads_the_switch_at_each_boundary(r
 @pytest.mark.asyncio
 @pytest.mark.parametrize("venue", ["kalshi", "polymarket"])
 @pytest.mark.parametrize("fails", [False, True])
-async def test_only_the_polymarket_venue_starts_it_and_a_failure_never_stops_the_venue(
+async def test_each_venue_starts_it_under_its_own_prefix_and_a_failure_never_stops_the_venue(
     monkeypatch, venue, fails,
 ):
     events = []
+    prefixes = []
 
     class Fake:
         def __init__(self, **kwargs):
-            pass
+            prefixes.append(kwargs.get("prefix"))
 
         def start(self):
             if fails:
@@ -318,8 +319,10 @@ async def test_only_the_polymarket_venue_starts_it_and_a_failure_never_stops_the
     await asyncio.wait_for(running.wait(), 1)
     callbacks[signal.SIGTERM]()
     await asyncio.wait_for(task, 1)
-    expected = ["start", "stop"] if venue == "polymarket" and not fails else []
+    expected = [] if fails else ["start", "stop"]
     assert events == expected
+    # The lines stay apart: Polymarket's keeps its name, Kalshi's is its own.
+    assert prefixes == [{"polymarket": "pm-cpu-sample", "kalshi": "kalshi-cpu-sample"}[venue]]
     # R2: stop also runs at interpreter exit, whatever path left run_venue.
     assert [f.__name__ for f in registered] == (["stop"] if expected else [])
 
