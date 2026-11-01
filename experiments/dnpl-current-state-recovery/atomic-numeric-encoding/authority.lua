@@ -1,0 +1,208 @@
+-- TEST-ONLY singleton authority prototype. No production imports.
+-- KEYS: global epoch counter, source owner, replay-enabled epoch, event hash, channel.
+-- All keys must be on one Redis server/slot; production key layout is not changed here.
+-- Operations: claim; offer epoch kind seq base chain expiry issued ttl status payload;
+-- committed floor payload; snapshot fresh-DB-floor fresh-DB-status.
+local op = ARGV[1]
+local MAX = 9007199254740991
+-- Redis Lua5.1 tostring uses %.14g: never serialize authority integers with it.
+local function decimal(n) return string.format('%.0f', n) end
+local function uint(s)
+  if type(s) ~= 'string' and type(s) ~= 'number' then return nil end
+  if type(s) == 'string' then
+    if s ~= '0' and not string.match(s, '^[1-9][0-9]*$') then return nil end
+    if #s > 16 or (#s == 16 and s > '9007199254740991') then return nil end
+  end
+  local n = tonumber(s)
+  if not n or n < 0 or n > MAX or n % 1 ~= 0 then return nil end
+  -- Reject decimal fractions/exponents/rounding aliases instead of accepting a
+  -- string that merely rounds to an integer within the supported range.
+  if type(s) == 'string' and decimal(n) ~= s then return nil end
+  return n
+end
+local function good(r) return not (type(r) == 'table' and r.err) end
+local function command(...) return redis.pcall(...) end
+local function get(key)
+  local r = command('GET', key)
+  if not good(r) then return nil, false end
+  return r, true
+end
+local function now_ms()
+  local t = redis.call('TIME')
+  return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+end
+local function disable()
+  -- DEL is allocation-free. If ACL/type/runtime cannot execute this barrier,
+  -- stop: claiming safe delivery plus replay under arbitrary Redis failure is impossible.
+  redis.call('DEL', KEYS[3])
+end
+local function publish(payload)
+  return command('PUBLISH', KEYS[5], payload)
+end
+local function values()
+  local r = command('HMGET', KEYS[4], 'epoch', 'seq', 'kind', 'base', 'chain',
+    'expiry', 'payload', 'floor', 'blocked', 'status')
+  if not good(r) then return nil end
+  -- Present malformed authority is corruption, never an absent/zero fence.
+  for _, i in ipairs({1, 2, 4, 6, 8}) do
+    if r[i] ~= false and r[i] ~= nil and not uint(r[i]) then return nil end
+  end
+  if r[1] and r[1] ~= false and (r[2] == false or r[2] == nil) then return nil end
+  return r
+end
+local function restore(enabled, owner)
+  if not enabled then return false end
+  local r = command('SET', KEYS[3], owner)
+  if not good(r) then disable(); return false end
+  return true
+end
+if op == 'claim' then
+  disable()
+  local current, ok = get(KEYS[1])
+  if not ok or (current and (not uint(current) or uint(current) >= MAX)) then return {'claim_error'} end
+  local e = command('INCR', KEYS[1])
+  if not good(e) or not uint(e) then return {'claim_error'} end
+  local owner = decimal(e)
+  local r = command('SET', KEYS[2], owner)
+  if not good(r) then return {'claim_error'} end
+  if not restore(true, owner) then return {'claimed_replay_disabled', owner} end
+  return {'claimed', owner}
+end
+local owner, owner_ok = get(KEYS[2])
+local marker, marker_ok = get(KEYS[3])
+if owner and not uint(owner) then owner_ok = false end
+if not owner_ok or not marker_ok then
+  disable()
+  -- Cannot establish owner acceptance. Do not bypass the source's fence.
+  -- A failed optional marker read must not erase already-proven owner acceptance.
+  if owner_ok and not marker_ok and (op == 'offer' or op == 'uncached') then
+    local epoch, kind = uint(ARGV[2]), ARGV[3]
+    local payload = op == 'offer' and ARGV[11] or ARGV[4]
+    if epoch and (kind == 'blend' or kind == 'revoke') and type(payload) == 'string'
+      and (kind == 'revoke' or decimal(epoch) == owner) then
+      local p = publish(payload)
+      return {good(p) and 'published_replay_disabled' or 'publish_error'}
+    end
+  end
+  if op == 'committed' and uint(ARGV[2]) and type(ARGV[3]) == 'string' then
+    local p = publish(ARGV[3])
+    return {good(p) and 'committed_replay_disabled' or 'publish_error'}
+  end
+  return {'authority_read_error'}
+end
+local enabled = owner and marker == owner
+if op == 'uncached' then
+  local epoch, kind, payload = uint(ARGV[2]), ARGV[3], ARGV[4]
+  if not epoch or (kind ~= 'blend' and kind ~= 'revoke') or type(payload) ~= 'string' then return {'invalid'} end
+  if kind ~= 'revoke' and decimal(epoch) ~= owner then return {'fenced'} end
+  if decimal(epoch) == owner then disable() end
+  local p = publish(payload)
+  return {good(p) and 'published_replay_disabled' or 'publish_error'}
+elseif op == 'offer' then
+  local epoch, kind, seq = uint(ARGV[2]), ARGV[3], uint(ARGV[4])
+  local base, chain, expiry = uint(ARGV[5]), ARGV[6], uint(ARGV[7])
+  local issued, ttl, status, payload = uint(ARGV[8]), uint(ARGV[9]), ARGV[10], ARGV[11]
+  if not epoch or not seq or seq == 0 or (kind ~= 'blend' and kind ~= 'revoke')
+    or type(payload) ~= 'string' or #payload > 65536 then return {'invalid'} end
+  if kind ~= 'revoke' and decimal(epoch) ~= owner then return {'fenced'} end
+  if kind == 'blend' and (not base or not expiry or not issued or not ttl
+    or ttl > 60000 or expiry > issued + ttl or issued > now_ms() or #chain == 0 or #chain > 160
+    or (status ~= 'live' and status ~= 'scheduled' and status ~= 'suspended')) then
+    disable(); local p = publish(payload)
+    return {good(p) and 'published_replay_disabled' or 'publish_error'}
+  end
+  -- Source allows superseded-owner revokes. Deliver them, never mutate current storage.
+  if decimal(epoch) ~= owner then
+    local p = publish(payload)
+    return {good(p) and 'old_revoke_published' or 'publish_error'}
+  end
+  if not enabled then
+    local p = publish(payload)
+    return {good(p) and 'published_replay_disabled' or 'publish_error'}
+  end
+  local v = values()
+  if not v then
+    disable()
+    local p = publish(payload)
+    return {good(p) and 'published_replay_disabled' or 'publish_error'}
+  end
+  if v[1] == owner and uint(v[2]) and seq <= uint(v[2]) then
+    local p = publish(payload) -- preserves existing live delivery; reader has seq fence
+    return {good(p) and 'published_duplicate_or_older' or 'publish_error'}
+  end
+  local cap = expiry
+  if kind == 'blend' and v[1] == owner and v[5] == chain and uint(v[6]) then
+    cap = math.min(cap, uint(v[6]))
+  end
+  -- No script rollback is assumed. Removing permission precedes PUBLISH and every write.
+  disable()
+  local p = publish(payload)
+  if not good(p) then return {'publish_error_replay_disabled'} end
+  local r
+  if kind == 'revoke' then
+    -- Keep original chain cap across revoke. revoke.seq, not through_seq, orders authority.
+    r = command('HSET', KEYS[4], 'epoch', owner, 'seq', decimal(seq),
+      'kind', kind, 'payload', payload,
+      'chain', v[1] == owner and (v[5] or '') or '',
+      'expiry', v[1] == owner and (v[6] or '0') or '0')
+  else
+    r = command('HSET', KEYS[4], 'epoch', owner, 'seq', decimal(seq), 'kind', kind,
+      'base', decimal(base), 'chain', chain, 'expiry', decimal(cap),
+      'status', status, 'payload', payload)
+  end
+  if not good(r) then return {'published_replay_disabled'} end
+  if not restore(true, owner) then return {'published_replay_disabled'} end
+  return {'published_retained'}
+elseif op == 'committed' then
+  local floor, payload = uint(ARGV[2]), ARGV[3]
+  if not floor or type(payload) ~= 'string' then return {'invalid'} end
+  local v = values()
+  if not v then
+    disable(); local p = publish(payload)
+    return {good(p) and 'committed_replay_disabled' or 'publish_error'}
+  end
+  local previous = uint(v[8]) or 0
+  if floor <= previous then
+    local p = publish(payload)
+    return {good(p) and 'committed_unchanged_floor' or 'publish_error'}
+  end
+  disable()
+  local p = publish(payload)
+  if not good(p) then return {'publish_error_replay_disabled'} end
+  local r = command('HSET', KEYS[4], 'floor', decimal(floor))
+  if not good(r) or not restore(enabled, owner) then return {'committed_replay_disabled'} end
+  return {'committed_floor'}
+elseif op == 'snapshot' then
+  local floor, status = uint(ARGV[2]), ARGV[3]
+  if not floor or type(status) ~= 'string' or #status == 0 then return {'invalid_coverage'} end
+  if not enabled then return {'replay_disabled'} end
+  local v = values()
+  if not v then disable(); return {'storage_error'} end
+  local prior_floor = uint(v[8]) or 0
+  if floor < prior_floor then return {'coverage_behind', owner, prior_floor} end
+  local quote_status = status == 'live' or status == 'scheduled' or status == 'suspended'
+  if floor > prior_floor or not quote_status then
+    disable()
+    local r = command('HSET', KEYS[4], 'floor', decimal(math.max(floor, prior_floor)),
+      'blocked', (not quote_status or v[9] == '1') and '1' or '0')
+    if not good(r) or not restore(true, owner) then return {'storage_error'} end
+    v = values()
+    if not v then disable(); return {'storage_error'} end
+  end
+  local actual_floor = math.max(floor, uint(v[8]) or 0)
+  if v[9] == '1' then return {'nonquote_latched', owner, actual_floor} end
+  if v[1] ~= owner then return {'cold_or_replaced_owner', owner, actual_floor} end
+  local seq = uint(v[2])
+  if not seq then disable(); return {'corrupt_record'} end
+  if v[3] == 'revoke' then return {'revoked', owner, seq, actual_floor, v[7]} end
+  if v[3] ~= 'blend' or not uint(v[4]) or not uint(v[6]) then
+    disable(); return {'corrupt_record'}
+  end
+  if floor < uint(v[4]) then return {'coverage_behind_preview_base', owner, seq, uint(v[4])} end
+  if uint(v[4]) < actual_floor then return {'newer_commit', owner, seq, actual_floor} end
+  if v[10] ~= status then return {'status_mismatch', owner, seq, actual_floor} end
+  local remaining = math.max(0, uint(v[6]) - now_ms())
+  if remaining == 0 then return {'expired', owner, seq, actual_floor, v[5], 0} end
+  return {'valid', owner, seq, actual_floor, v[5], remaining, v[6], v[7]}
+end
+return {'invalid_operation'}
