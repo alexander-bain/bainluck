@@ -3929,6 +3929,10 @@ class LiveBlendRefresher:
         #: event id -> `_mono`. A receipt composition then proposes the
         #: committed rows' reading instead of assuming they are on screen.
         self._graph_unstamped: dict[int, float] = {}
+        #: outcome id -> (`_mono` noted, its committed `COMMIT_PATCH_FIELDS`):
+        #: this process's commits, kept `PREVIEW_NOTE_RETENTION_S` for a
+        #: waiting headline input's composition (never patched into a graph).
+        self._receipt_commits: dict[int, tuple] = {}
         #: Claim-lock holds this minute: label -> [count, total s, max s].
         self._claim_holds: dict[str, list] = {}
         #: event id -> `_mono` its stamp became urgent (`URGENT_STAMP_MIN_S`).
@@ -8551,7 +8555,8 @@ class LiveBlendRefresher:
             self._receipt_call(note_rows, rows)
         graphs = getattr(self, "_preview_graphs", None)
         receipt = _preview_at_receipt_possible(getattr(self, "source", None))
-        if graphs is None or not (receipt or _preview_from_commit_possible()):
+        commit_arm = _preview_from_commit_possible()
+        if graphs is None or not (receipt or commit_arm):
             return
         try:
             now = _mono()
@@ -8564,12 +8569,29 @@ class LiveBlendRefresher:
                 if (oid is None or any(value is _NOT_RETURNED for value in values.values())
                         or values["last_updated"] is None):
                     continue
+                event_id = self._preview_graph_outcomes.get(oid)
+                if receipt:
+                    # #10090: kept aside, never patched into the kept graph (a
+                    # newer stored row would make every quote received during
+                    # this write ambiguous). Only a headline input already
+                    # waiting on a fallback is composed from it, at once.
+                    commits = self._receipt_commits
+                    commits.pop(oid, None)
+                    commits[oid] = (now, values)
+                    entry = self._hl_pending.get(event_id) if event_id is not None else None
+                    if entry is not None and entry[1] != "receipt":
+                        self._receipt_due[event_id] = None
+                        wake = True
+                if not commit_arm:
+                    continue
                 noted.pop(oid, None)
                 noted[oid] = (now, values)
-                event_id = self._preview_graph_outcomes.get(oid)
                 if event_id is not None:
                     patches.setdefault(event_id, {})[oid] = values
-            _prune_notes(noted, now, lambda note: note[0])
+            if receipt:
+                _prune_notes(self._receipt_commits, now, lambda note: note[0])
+            if commit_arm:
+                _prune_notes(noted, now, lambda note: note[0])
             for event_id, returned in patches.items():
                 read_at, event, group = graphs[event_id]
                 patched = _patched_group(group, returned)
@@ -8577,18 +8599,7 @@ class LiveBlendRefresher:
                     # The write's re-rank moved a stored `rank` the resolver sorts by.
                     self._forget_preview_graph(event_id)
                     continue
-                speaking = self._receipt_speaking.get(event_id)
                 self._install_preview_graph(event_id, (read_at, event, patched))
-                if speaking is not None:
-                    self._receipt_speaking[event_id] = speaking  # same markets
-                if receipt:
-                    # #10090: a headline input still waiting (a fallback such as
-                    # `ambiguous`) is composed now from the committed rows,
-                    # before the stamp's read and publish.
-                    self._graph_unstamped[event_id] = now
-                    if event_id in self._hl_pending:
-                        self._receipt_due[event_id] = None
-                        wake = True
                 if _preview_from_commit(event_id):
                     self._commit_preview_due.setdefault(event_id, {}).update(
                         (oid, values["last_updated"]) for oid, values in returned.items()
@@ -9137,6 +9148,17 @@ class LiveBlendRefresher:
             self._note_receipt_class("old_graph", event_id)
             self._hl_mark(event_id, "old_graph")
             return None
+        commit_patched = False
+        waiting = self._hl_pending.get(event_id)
+        if waiting is not None and waiting[1] != "receipt" and self._receipt_commits:
+            commits = self._receipt_commits
+            returned = {row.id: commits[row.id][1]
+                        for entry in group for row in entry.outcomes if row.id in commits}
+            if returned:
+                with_commits = _patched_group(group, returned)
+                if with_commits is not None and any(
+                        new is not old for new, old in zip(with_commits, group)):
+                    group, commit_patched = with_commits, True
         route = self.receipt_route
         token = route() if route is not None else 0
         gate = (token is None or event.status != "live" or event.completed_at is not None
@@ -9192,7 +9214,7 @@ class LiveBlendRefresher:
                 patched.append(_replace(entry, outcomes=outcomes))
             else:
                 patched.append(entry)
-        from_commit = not overlaid and event_id in self._graph_unstamped
+        from_commit = not overlaid and (commit_patched or event_id in self._graph_unstamped)
         if not overlaid and not from_commit:
             # Every received leg is already in the stored rows the graph read:
             # committed and stamped, so on screen (headline clock stops).
