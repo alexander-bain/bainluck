@@ -436,7 +436,11 @@ final class LivePriceActivityTests: XCTestCase {
     func testDrawSportWithholdsAwayAndUsesPlainHomeRounding() throws {
         let value = try event(p: 0.565, sport: "soccer_epl")
         let labels = LivePriceActivity.displayedLabels(in: value)
-        XCTAssertEqual(labels.home, formatProbability(0.565))
+        // #10090 — the printed hero is tenths, un-normalised for a lone side;
+        // the receipt's whole labels keep the plain home rounding.
+        XCTAssertEqual(labels.home, "56.5%")
         XCTAssertNil(labels.away)
+        XCTAssertEqual(LivePriceActivity.wholeLabels(in: value).home, formatProbability(0.565))
+        XCTAssertNil(LivePriceActivity.wholeLabels(in: value).away)
     }
 }

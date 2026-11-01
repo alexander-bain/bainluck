@@ -34,6 +34,9 @@ struct EventDetailView: View {
     /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
     @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
+    /// #10090 (Alex 67) — the heartbeat under the big percentage. Stepped only
+    /// when its evidence moves (`ekgObservation`), never by a render.
+    @State private var ekgTracker = EkgTracker.empty
     @ScaledMetric(relativeTo: .largeTitle) private var eventHeadlineChanceSize9483: CGFloat = 44
     /// v476 — actual score and projected final share one scaled figure style.
     @ScaledMetric(relativeTo: .title2) private var eventHeadlineScoreSize9483: CGFloat = 24
@@ -93,6 +96,15 @@ struct EventDetailView: View {
                                    journey: vm.publicationJourney, key: publicationTaskKey,
                                    remembering: vm, now: displayNow())
     }
+    /// #10090 — what the probability chart below is handed that decides
+    /// which points it draws, for the timing seam's chart mark
+    /// (`EventDetailViewModel.timingPresented`, which reads it only while
+    /// recording): the same windows, range and journey, from the same page.
+    private var timingChartWindow: EventDetailViewModel.TimingChartWindow {
+        .init(forcedDomain: sharedChartDomain, legacyDataDomain: legacyChartDataDomain,
+              selectedRange: chartRange,
+              journey: Self.chartPublicationJourney(vm.publicationJourney, key: publicationTaskKey))
+    }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     /// Reflow the hero before its growing center column squeezes the teams.
@@ -139,12 +151,24 @@ struct EventDetailView: View {
         return (away ? labels.away : labels.home) ?? ""
     }
     /// #10090: `priceActivity` describes committed moves, not a preview's, so
-    /// while one is held the direction is unknown (nil).
+    /// while one is displayed the direction is unknown (nil). One the committed
+    /// revision has passed prints nothing: the commit that replaced it slides
+    /// by its receipt, which starts from the printed preview (C2).
     private func heroRising(away: Bool) -> Bool? {
-        guard vm.blendPreview == nil else { return nil }
-        return (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
+        guard let event = vm.event, !vm.displaysPreview(event) else { return nil }
+        return away ? vm.priceActivity?.awayRising : vm.priceActivity?.homeRising
     }
     private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
+    /// #10090 (Alex 67) — the heartbeat's inputs, the web's two clocks:
+    /// decision J as the page gates it, and the clock of the number the hero
+    /// prints (preview included). See `EkgTracker`.
+    private var ekgObservation: EkgTracker.Observation? {
+        guard let event = vm.event else { return nil }
+        return EkgTracker.Observation(eventId: event.id,
+                                      transportOpen: EkgHeartbeat.transportOpen(vm.liveUpdateStatus),
+                                      confirmedAt: vm.confirmedAtCoveringShown(event),
+                                      priceObservedAt: vm.displayedProbabilityObservedAt(event))
+    }
     private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }
     /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`
     /// already owns, and `suspended` (live/048) matched none of its arms. So
@@ -398,6 +422,13 @@ struct EventDetailView: View {
                 nflCards.resetNBAStream()
                 showProbabilityDetails = false
             }
+            // #10090 (Alex 67) — the EKG beats on evidence: J or the printed
+            // number's clock advancing while the stream delivers. A re-render
+            // or a reconnect moves no input, so it cannot beat.
+            .onChange(of: ekgObservation, initial: true) { _, observation in
+                guard let observation else { return }
+                ekgTracker = ekgTracker.stepped(observation, now: displayNow())
+            }
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
                 // popover is presented above the whole stack, so a link that
@@ -468,6 +499,8 @@ struct EventDetailView: View {
                                          refreshStreaming: refreshIndicator == .streaming,
                                          liveUpdateStatus: vm.liveUpdateStatus,
                                          priceActivity: vm.priceActivity,
+                                         // #10090 C2 — the tip slides like the hero.
+                                         liveEdgeShowsPreview: vm.displaysPreview(event),
                                          // #9436 — the hero's own number, for the
                                          // dot on the end of the line. #10090: the
                                          // number the hero prints, preview included.
@@ -477,12 +510,13 @@ struct EventDetailView: View {
                                          // current, on its own clock: the tick ages them out
                                          // with no new price. A started game the venue has
                                          // already settled is a verdict, never a live quote,
-                                         // whatever its status still says.
+                                         // whatever its status still says. #10090 decision J:
+                                         // aged by a confirmation of the shown price too.
                                          quoteIsCurrent: EventHeadlinePhase9483.isCurrent(
                                              status: event.status, commenceTime: event.commenceTime?.asDate,
                                              isOpeningLine: event.currentOdds.map {
                                                  OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
-                                             observedAt: vm.displayedProbabilityObservedAt(event),
+                                             observedAt: vm.displayedProbabilityAgeClock(event),
                                              deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
                                              now: displayNow(tick.date))
                                              && !EventState.showsVenueSettledVerdict(
@@ -937,7 +971,7 @@ struct EventDetailView: View {
             .modifier(PageScrollPhase9483(signals: nbaStreamSignals))
             // #10090 — the timing seam's view mark: this update handed the hero
             // and chart the value it names. Not a paint (`LiveTimingSeam`).
-            .onChange(of: vm.timingPresented(event)) { old, new in
+            .onChange(of: vm.timingPresented(event, chart: timingChartWindow)) { old, new in
                 LiveTimingSeam.viewUpdated(from: old, to: new)
             }
             // #9483 — a card opened full size: the page stays mounted beneath,
@@ -1055,10 +1089,36 @@ struct EventDetailView: View {
     }
 
     private func movementCaption(_ event: EventDetail) -> String? {
-        guard let delta = vm.priceActivity?.homeDelta, delta != 0 else { return nil }
+        guard let delta = vm.priceActivity?.homeCaptionDelta, delta != 0 else { return nil }
         let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
                                             sportKey: event.sport)
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
+    }
+
+    /// #10090 (Alex 67) — the heartbeat under the big percentage, on by
+    /// default on a live game (`EkgHeartbeat.isVisible`). A tap opens the
+    /// page's one details popover — the same state the info control toggles,
+    /// anchored there — never a copy of it.
+    @ViewBuilder
+    private func heroEkg(_ event: EventDetail, isOpeningLine: Bool) -> some View {
+        if EkgHeartbeat.isVisible(
+            eventStatus: event.status, finished: isFinished,
+            venueSettledVerdict: EventState.showsVenueSettledVerdict(
+                event.status, venueSettled: event.venueSettled,
+                commenceTime: event.commenceTime?.asDate, now: displayNow()),
+            isOpeningLine: isOpeningLine) {
+            Button { showProbabilityDetails = true } label: {
+                EkgHeartbeatView(tracker: ekgTracker, status: vm.liveUpdateStatus, asOf: displayAsOf)
+                    // A 44pt target that lays out as a short row: it overhangs
+                    // the gaps above and below, as the adopted disclosure does.
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .padding(.vertical, -14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the probability update details.")
+            .accessibilityIdentifier("ekg-heartbeat-button")
+        }
     }
 
     /// Routine delivery/confidence details open through the info control.
@@ -1092,7 +1152,9 @@ struct EventDetailView: View {
         // scrolls if even the lower space runs out.
         .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
             FreshnessRevealView(status: vm.liveUpdateStatus,
-                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier,
+                lastReceivedAt: vm.priceActivity?.receivedAt,
+                confirmedAt: vm.event.flatMap { vm.displayedConfirmation($0) },
+                confidenceTier: confidenceTier,
                 forecast: revealForecast11296)
                 // idealWidth: the popover sizes from the IDEAL size; with only a
                 // max it measured the text unwrapped and came out 144pt tall.
@@ -1795,11 +1857,14 @@ struct EventDetailView: View {
                             // derived home re-opens the same 101 from the other side,
                             // and an older deploy can carry one field and not the
                             // other, so the pair falls back whole.
-                            let percents = Self.heroPairPercents(shown, away: away, home: home)
-                            let awayPct = percents.away
-                            let homePct = percents.home
+                            //
+                            // #10090 (ALEX item 39) — in tenths, and the pair
+                            // still sums to 100: the away side is DERIVED from
+                            // the home tenth (`EventHeadlineTenths10090`), which
+                            // is the same promise the whole pair above keeps.
+                            let printed = EventHeadlineTenths10090.pair(home: home, away: away)
                             HStack(spacing: 8) {
-                                Text(formatProbability(away, renderedPercent: awayPct))
+                                Text(printed.away ?? "")
                                     .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.away)
@@ -1809,7 +1874,7 @@ struct EventDetailView: View {
                                 Text("\u{2013}")
                                     .font(.title3)
                                     .foregroundStyle(.secondary.opacity(0.4))
-                                Text(formatProbability(home, renderedPercent: homePct))
+                                Text(printed.home)
                                     .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
@@ -1847,7 +1912,7 @@ struct EventDetailView: View {
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(colors.home)
                                     .lineLimit(1)
-                                Text(formatProbability(home))
+                                Text(EventHeadlineTenths10090.pair(home: home, away: nil).home)
                                     .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
@@ -1856,6 +1921,8 @@ struct EventDetailView: View {
                                                              color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
                         }
+                        // #10090 (Alex 67) — the heartbeat, under the big percentage.
+                        heroEkg(event, isOpeningLine: shown.isOpeningLine)
                         // #9483 — the pair's subject, now that "Win Probability"
                         // sits behind the info button. Live, the pre-game
                         // baseline rides under it (before the off the
@@ -2415,10 +2482,11 @@ struct EventDetailView: View {
         else { return nil }
         // #2085 — the hero pair's own percents, from the one rule both
         // arrangements read.
-        let percents = Self.heroPairPercents(shown, away: away, home: pair.home)
+        // #10090 — in tenths, the away side derived (`EventHeadlineTenths10090`).
+        let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)
         return NFLPairedHeadline9483.priced(
-            awayText: formatProbability(away, renderedPercent: percents.away),
-            homeText: formatProbability(pair.home, renderedPercent: percents.home),
+            awayText: printed.away ?? "",
+            homeText: printed.home,
             live: event.status == "live", score: score, pregame: pregame)
     }
 
@@ -2471,6 +2539,9 @@ struct EventDetailView: View {
                 // chances they describe, above the score/projection divider.
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     nflPairedPhase(event)
+                    // #10090 (Alex 67) — the heartbeat beside the pair's subject.
+                    heroEkg(event, isOpeningLine: false)
+                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                     Spacer(minLength: 0)
                     if priceStreamingEligible { movementCaptionSlot(event, colors: colors) }
                 }
@@ -2479,8 +2550,16 @@ struct EventDetailView: View {
                 // The pair's subject and its age, as the hero words it (#9483
                 // F1), on one line with the delivery control where it fits.
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { nflPairedPhase(event); nflPairedDetails(event) }
-                    VStack(spacing: 2) { nflPairedPhase(event); nflPairedDetails(event) }
+                    HStack(spacing: 8) {
+                        nflPairedPhase(event)
+                        heroEkg(event, isOpeningLine: false)
+                        nflPairedDetails(event)
+                    }
+                    VStack(spacing: 2) {
+                        nflPairedPhase(event)
+                        heroEkg(event, isOpeningLine: false)
+                        nflPairedDetails(event)
+                    }
                 }
             }
             // Before the game the row would hold a lone "vs"; it shows only with a
@@ -2830,7 +2909,8 @@ struct EventDetailView: View {
                 status: event.status, commenceTime: event.commenceTime?.asDate,
                 isOpeningLine: isOpeningLine,
                 // #10090 — a preview's own observation time; unknown is undated.
-                observedAt: vm.displayedProbabilityObservedAt(event),
+                // Decision J: a confirmation of the shown price ages it too.
+                observedAt: vm.displayedProbabilityAgeClock(event),
                 deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
                 now: displayNow(tick.date)) {
                 EventHeadlinePhaseLabel9483(phase: phase, baseline: baseline, maxWidth: maxWidth)
