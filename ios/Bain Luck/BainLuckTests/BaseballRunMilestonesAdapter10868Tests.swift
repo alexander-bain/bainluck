@@ -244,6 +244,26 @@ final class BaseballRunMilestonesAdapter10868Tests: XCTestCase {
         return try XCTUnwrap(card.lines.first { $0.optionKey == id }?.original)
     }
 
+    /// 11+'s served question key in the retained matrix.
+    private static let elevenPlusQuestion = "q:count|runs|game|full_game|ge:11"
+
+    /// CONSTRUCTED: `/game-markets` with exactly the named keys of the one
+    /// game matrix question `questionKey` replaced. Its options and every
+    /// other value are served.
+    private static func markets(editingQuestion questionKey: String,
+                                setting: [String: Any]) throws -> GameMarketsResponse {
+        var body = try XCTUnwrap(JSONSerialization.jsonObject(with: F.fixture(F.marketsFile)) as? [String: Any])
+        var matrix = try XCTUnwrap(body["game_question_matrix"] as? [String: Any])
+        var questions = try XCTUnwrap(matrix["questions"] as? [[String: Any]])
+        let matches = questions.indices.filter { questions[$0]["question_key"] as? String == questionKey }
+        XCTAssertEqual(matches.count, 1, "exactly one question carries \(questionKey)")
+        let index = try XCTUnwrap(matches.first)
+        for (key, value) in setting { questions[index][key] = value }
+        matrix["questions"] = questions
+        body["game_question_matrix"] = matrix
+        return try F.decoder().decode(GameMarketsResponse.self, from: JSONSerialization.data(withJSONObject: body))
+    }
+
     /// Test arithmetic only: `original` with the pin's label put back to the
     /// default, to show that label is the ONLY difference.
     private static func defaultLabelled(_ original: MLBOriginal11284) -> MLBOriginal11284 {
@@ -394,6 +414,48 @@ final class BaseballRunMilestonesAdapter10868Tests: XCTestCase {
         let details = try XCTUnwrap(Self.tap("o:999", replaced, phase: .before))
         XCTAssertEqual(details.id, "mlb-o:15321836:q:q:count|runs|game|full_game|ge:11|o:999")
         XCTAssertEqual(details.sections.first?.title, "11+ runs")
+    }
+
+    /// R6b. CONSTRUCTED: 11+'s question re-keyed — only its `question_key`
+    /// changes; its one option (key, values, label), its line, its title and
+    /// the event are the retained ones. A valid tap in the new result opens
+    /// the new question's original; the old result keeps its own.
+    func testAMilestoneWhoseQuestionKeyChangesOpensTheNewQuestionsOriginalInTheNewResult() throws {
+        let host = F.milestoneHost(F.beforeNow)
+        let newKey = "q:replacement-question"
+        let markets = try Self.markets(editingQuestion: Self.elevenPlusQuestion, setting: ["question_key": newKey])
+        let old = try XCTUnwrap(A.milestones(try F.beforeEvent(), markets: try F.markets(), host: host))
+        let new = try XCTUnwrap(A.milestones(try F.beforeEvent(), markets: markets, host: host))
+        let card = try XCTUnwrap(MLBTotalsCard11284.build(markets.gameQuestionMatrix, actualTotal: nil,
+                                                          eventID: F.eventID, pinLabel: A.Words.pinLabel))
+        let line = try XCTUnwrap(card.lines.first { $0.optionKey == Self.elevenPlus })
+        let newOriginal = "mlb-o:15321836:q:\(newKey)|\(Self.elevenPlus)"
+
+        // The card is drawn exactly as before: the question key is not drawn.
+        XCTAssertEqual(new.input, old.input)
+        XCTAssertEqual(line.original.id, newOriginal, "the same result's card line original")
+
+        let details = try XCTUnwrap(Self.tap(Self.elevenPlus, new, phase: .before), "a valid current option still opens")
+        XCTAssertEqual(details.id, newOriginal)
+        XCTAssertEqual(details.id, line.original.id)
+        XCTAssertNotEqual(details.id, Self.elevenPlusOriginal, "the former original's id is not carried over")
+        XCTAssertEqual(details.title, line.original.title)
+        XCTAssertEqual(Array(details.sections.dropFirst()), line.original.sections, "the new question's fields, verbatim")
+        XCTAssertEqual(new.origins.first { $0.milestoneID == Self.elevenPlus }?.original, line.original)
+        XCTAssertFalse(new.origins.contains { $0.original.id == Self.elevenPlusOriginal })
+        XCTAssertEqual(details.sections.first, Self.tap(Self.elevenPlus, old, phase: .before)?.sections.first,
+                       "the card's own reading of the row is unchanged")
+
+        // The held milestone is still the option id, and still opens the new original.
+        let held = try XCTUnwrap(A.milestones(try F.beforeEvent(), markets: markets, host: host,
+                                              selectedMilestoneID: Self.elevenPlus))
+        XCTAssertEqual(held.input.selectedMilestoneID, Self.elevenPlus)
+        XCTAssertEqual(held.input.timing?.milestoneID, Self.elevenPlus)
+        XCTAssertEqual(Self.tap(Self.elevenPlus, held, phase: .before)?.id, newOriginal)
+
+        // A neighbour is untouched, and the old result keeps its own original.
+        XCTAssertEqual(Self.tap(Self.tenPlus, new, phase: .before), Self.tap(Self.tenPlus, old, phase: .before))
+        XCTAssertEqual(Self.tap(Self.elevenPlus, old, phase: .before)?.id, Self.elevenPlusOriginal)
     }
 
     /// R7. RETAINED: all thirteen originals share one market title.
