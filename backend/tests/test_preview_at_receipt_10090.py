@@ -1105,3 +1105,18 @@ async def test_a_waiting_event_with_no_quote_left_is_queued_after_the_context_re
     await asyncio.wait_for(r._context_refresh_task, 5)
 
     assert EV in r._receipt_due and EV in r._receipt_now
+
+
+def test_a_drop_noop_is_logged_with_the_ledger_state_and_capped(r, caplog):
+    import logging
+    from types import SimpleNamespace
+
+    state = SimpleNamespace(status="live", pending={}, expired={"polymarket": 0.512},
+                            base_rev=12, base_sources={"polymarket": {"value": 0.5}})
+    preview = SimpleNamespace(_events={EV: state})
+    with caplog.at_level(logging.INFO, logger=module.logger.name):
+        for _ in range(25):
+            r._log_drop_noop(preview, EV, 0.512, event())
+    lines = [m for m in caplog.messages if "drop-noop" in m]
+    assert len(lines) == 20
+    assert "expired=0.512" in lines[0] and "stored=0.5" in lines[0] and "base_rev=12" in lines[0]

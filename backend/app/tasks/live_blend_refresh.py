@@ -679,6 +679,13 @@ def _receipt_graph_max_age() -> float:
     return value if 3.0 <= value <= 900.0 else RECEIPT_GRAPH_MAX_AGE_S
 
 
+def _new_claim_lock():
+    """The preview claim lock (#10090): receipt publications go first."""
+    from app.utils.priority_lock import PriorityLock
+
+    return PriorityLock()
+
+
 def _receipt_interval() -> float:
     """`RECEIPT_PREVIEW_INTERVAL_ENV` when set to 0.05-2.0, else the default."""
     try:
@@ -4044,6 +4051,7 @@ class LiveBlendRefresher:
         #: #10090: per-minute budget of `receipt-revoke` diagnosis lines, and the
         #: legs each pending withdrawal named (event id -> outcome ids).
         self._revoke_logged = 0
+        self._noop_logged = 0
         self._withdrawn_why: dict[int, tuple] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
@@ -9434,6 +9442,7 @@ class LiveBlendRefresher:
                 self._ambiguous_logged = 0
                 self._na_proof_logged = 0
                 self._revoke_logged = 0
+                self._noop_logged = 0
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -9689,6 +9698,29 @@ class LiveBlendRefresher:
                 self._schedule_context_refresh((event_id,))
         except Exception:
             self.receipt_preview_stats["errors"] += 1
+
+    def _log_drop_noop(self, preview, event_id, value, event) -> None:
+        """#10090 diagnosis: a receipt proposal the ledger answered with no
+        frame and no refusal (11/01 21:32Z: a Polymarket input waited 3.0 s as
+        `drop_noop`). At most 20 a minute. Never raises."""
+        try:
+            if self._noop_logged >= 20:
+                return
+            self._noop_logged += 1
+            state = getattr(preview, "_events", {}).get(event_id)
+            pending = None if state is None else state.pending.get(self.source)
+            logger.info(
+                "live_blend_refresh[%s]: drop-noop event=%s value=%s ticket=%s status=%s "
+                "pending=%s expired=%s base_rev=%s stored=%s",
+                self.source, event_id, value, getattr(event, "preview_read_ticket", None),
+                None if state is None else state.status,
+                None if pending is None else (pending.value, pending.at_receipt, pending.seq),
+                None if state is None else state.expired.get(self.source),
+                None if state is None else getattr(state, "base_rev", None),
+                None if state is None else ((state.base_sources or {}).get(self.source) or {}).get("value"),
+            )
+        except Exception:
+            pass
 
     def _log_receipt_revoke(self, event_id, reason, entry, *, oids=(), value=()) -> None:
         """#10090 diagnosis: a receipt preview a reader saw is taken back. The
@@ -10224,6 +10256,8 @@ class LiveBlendRefresher:
                                     and n != before.get(key)), "noop")
                     self._note_receipt_class("drop_" + why[:24], event_id)
                     self._hl_mark(event_id, "drop_" + why[:24])
+                    if why == "noop":
+                        self._log_drop_noop(preview, event_id, value, event)
                     if why == "local_ticket" and event_id in self._preview_graphs:
                         self._schedule_context_refresh((event_id,))
                     continue
@@ -10490,7 +10524,7 @@ class LiveBlendRefresher:
             preview = registry()
             async with asyncio.timeout(1):
                 if preview.claim_lock is None:
-                    preview.claim_lock = asyncio.Lock()
+                    preview.claim_lock = _new_claim_lock()
                 async with preview.claim_lock:
                     if preview.unclaimed(self.source):
                         pool = self._client().connection_pool
@@ -10518,7 +10552,7 @@ class LiveBlendRefresher:
 
         preview = registry()
         if preview.claim_lock is None:
-            preview.claim_lock = asyncio.Lock()
+            preview.claim_lock = _new_claim_lock()
         pool = self._client().connection_pool
         # An established claim/authority is stable for this registry. Reading
         # its ticket uses a separate socket and Redis still checks the owner
@@ -11084,7 +11118,7 @@ class LiveBlendRefresher:
             preview = registry()
             async with asyncio.timeout(1):
                 if preview.claim_lock is None:
-                    preview.claim_lock = asyncio.Lock()
+                    preview.claim_lock = _new_claim_lock()
                 pool = self._client().connection_pool
                 async with preview.claim_lock:
                     held_from = _mono()
@@ -11188,10 +11222,14 @@ class LiveBlendRefresher:
             owner_key = fence_owner_key(self.source)
             async with asyncio.timeout(1):
                 if preview.claim_lock is None:
-                    preview.claim_lock = asyncio.Lock()
+                    preview.claim_lock = _new_claim_lock()
                 pool = self._client().connection_pool
                 lock_asked = _mono()
-                async with preview.claim_lock:
+                # #10090: a receipt preview (the price a reader waits for) is
+                # handed the lock before stamp work (`PriorityLock`).
+                urgent = getattr(preview.claim_lock, "urgent", None)
+                async with (urgent() if refused is not None and urgent is not None
+                            else preview.claim_lock):
                     if prepare_frames is not None:
                         waited = _mono() - lock_asked
                         lw = self._receipt_lock_wait
