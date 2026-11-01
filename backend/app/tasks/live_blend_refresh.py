@@ -10225,7 +10225,7 @@ class LiveBlendRefresher:
                     self._note_receipt_class("drop_" + why[:24], event_id)
                     self._hl_mark(event_id, "drop_" + why[:24])
                     if why == "local_ticket" and event_id in self._preview_graphs:
-                        self._schedule_graph_refetch((event_id,), lost=False)
+                        self._schedule_context_refresh((event_id,))
                     continue
                 if pending is None or not pending.at_receipt or pending.value != value:
                     self._hl_mark(event_id, "refused_local")
