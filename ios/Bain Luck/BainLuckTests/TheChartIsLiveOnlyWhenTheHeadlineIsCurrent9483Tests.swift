@@ -91,8 +91,9 @@ final class TheChartIsLiveOnlyWhenTheHeadlineIsCurrent9483Tests: XCTestCase {
         XCTAssertEqual(text.components(separatedBy: "OddsChartView(").count - 1, 1, "control: one chart mount")
         let call = try XCTUnwrap(text.range(of: "quoteIsCurrent: EventHeadlinePhase9483.isCurrent("))
         let args = String(text[call.upperBound...].prefix(600))
-        // #10090 — the displayed number's clock: committed, or a shown preview's own.
-        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityObservedAt(event)"),
+        // #10090 — the displayed number's clock: committed, or a shown preview's own;
+        // decision J: aged by a confirmation of it (`displayedProbabilityAgeClock`).
+        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityAgeClock(event)"),
                       "the chart must read the hero quote's own clock")
         XCTAssertTrue(args.contains("deliveryInterrupted: vm.liveUpdateStatus == .interrupted"))
         // #9483 — on the page's display clock, which is the tick in production.

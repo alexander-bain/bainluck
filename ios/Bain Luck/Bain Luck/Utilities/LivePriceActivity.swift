@@ -14,6 +14,13 @@ nonisolated struct LivePriceActivity: Equatable {
     let previousAwayLabel: String?
     let homeLabel: String?
     let awayLabel: String?
+    /// #10090 — the hero's own printed strings (`displayedLabels`, tenths)
+    /// before and after, for the one thing that must follow what is printed:
+    /// which way the changed text slides. Nil when not recorded.
+    var previousHomePrinted: String? = nil
+    var previousAwayPrinted: String? = nil
+    var homePrinted: String? = nil
+    var awayPrinted: String? = nil
 
     var displayedValueChanged: Bool {
         previousHomeLabel != homeLabel || previousAwayLabel != awayLabel
@@ -29,7 +36,42 @@ nonisolated struct LivePriceActivity: Equatable {
         return awayPercent - previousAwayPercent
     }
 
-    /// Exactly the hero's printed pair, including withheld draw-sport away sides.
+    /// Which way the printed value moved, for the slide of a changed hero or
+    /// tip: the printed tenths when both parse (62.1% → 62.4% is a rise the
+    /// whole delta of 0 calls a fall, and a displayed preview of 70% replaced by
+    /// a committed 66% is a fall whatever the committed prior was), else the
+    /// whole-point delta. Nil when banded, unrecorded or unchanged.
+    var homeRising: Bool? { Self.rising(whole: homeDelta, from: previousHomePrinted, to: homePrinted) }
+    var awayRising: Bool? { Self.rising(whole: awayDelta, from: previousAwayPrinted, to: awayPrinted) }
+
+    /// The "↑2 pts" caption's committed whole points, or nil when they would
+    /// contradict the move the reader saw (a preview 70% → committed 66% after
+    /// a committed 50%: never "↑16 pts" on a visible fall).
+    var homeCaptionDelta: Int? {
+        guard let delta = homeDelta else { return nil }
+        if delta != 0, let rising = homeRising, rising != (delta > 0) { return nil }
+        return delta
+    }
+
+    private static func rising(whole: Int?, from: String?, to: String?) -> Bool? {
+        if let before = from.flatMap(printedTenths), let after = to.flatMap(printedTenths) {
+            return before == after ? nil : after > before
+        }
+        guard let whole, whole != 0 else { return nil }
+        return whole > 0
+    }
+
+    /// "62.4%" → 624; a band ("<1%", ">99%") or anything else → nil.
+    private static func printedTenths(_ text: String) -> Int? {
+        guard text.hasSuffix("%") else { return nil }
+        let parts = text.dropLast().split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[1].count == 1, let whole = Int(parts[0]), let tenth = Int(parts[1]),
+              whole >= 0, tenth >= 0 else { return nil }
+        return whole * 10 + tenth
+    }
+
+    /// The hero's pair in whole percents, including withheld draw-sport away
+    /// sides: the receipt's arithmetic (#10090 prints the hero in tenths).
     static func displayedPercents(in event: EventDetail) -> (home: Int?, away: Int?) {
         guard let odds = event.currentOdds,
               let pair = DrawPricedWinner.printablePair(
@@ -42,7 +84,23 @@ nonisolated struct LivePriceActivity: Equatable {
         return (percents[1], percents[0])
     }
 
+    /// Exactly the hero's printed strings — in tenths since #10090 (ALEX item
+    /// 39, `EventHeadlineTenths10090`) — for what must read the hero's own
+    /// number: its whole-string change and the chart's live-edge label.
     static func displayedLabels(in event: EventDetail) -> (home: String?, away: String?) {
+        guard let odds = event.currentOdds,
+              let pair = DrawPricedWinner.printablePair(
+                away: odds.awayProbability, home: odds.homeProbability, sport: event.sport
+              ) else { return (nil, nil) }
+        let printed = EventHeadlineTenths10090.pair(home: pair.home, away: pair.away)
+        return (printed.home, printed.away)
+    }
+
+    /// The pair in whole percents, as the hero printed it before #10090. The
+    /// receipt's labels keep this: the flash, the arrow and the "↑2 pts"
+    /// caption speak whole points, and `homeDelta`/`awayDelta` are only
+    /// defined over an unbanded whole label.
+    static func wholeLabels(in event: EventDetail) -> (home: String?, away: String?) {
         guard let odds = event.currentOdds,
               let pair = DrawPricedWinner.printablePair(
                 away: odds.awayProbability, home: odds.homeProbability, sport: event.sport

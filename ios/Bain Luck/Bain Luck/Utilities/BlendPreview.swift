@@ -701,18 +701,60 @@ nonisolated enum BlendPreview {
         return next
     }
 
-    /// Wrong-page controls are ignored; malformed controls for this stream
-    /// conservatively withdraw without forgetting any accumulated fences.
-    static func readerAfterCommitFloor(_ reader: BlendPreviewReader, raw: String, eventId: Int) -> BlendPreviewReader {
+    /// A `fold_preview_floor` control: another page's, or this page's floor —
+    /// nil when it is malformed or names none.
+    enum CommitFloorControl: Equatable {
+        case otherPage
+        case floor(FoldRevision?)
+    }
+
+    static func commitFloorControl(raw: String, eventId: Int) -> CommitFloorControl {
         struct Packet: Decodable { let eventId: Int; let floor: [String: Int]? }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         guard raw.utf8.count <= BlendPreviewFrame.maxFrameBytes,
               let data = raw.data(using: .utf8), let packet = try? decoder.decode(Packet.self, from: data) else {
-            return readerAfterCommitFloor(reader, nil)
+            return .floor(nil)
         }
-        guard packet.eventId == eventId else { return reader }
-        return readerAfterCommitFloor(reader, packet.floor.flatMap(validRevision))
+        guard packet.eventId == eventId else { return .otherPage }
+        return .floor(packet.floor.flatMap(validRevision))
+    }
+
+    /// Wrong-page controls are ignored; malformed controls for this stream
+    /// conservatively withdraw without forgetting any accumulated fences.
+    static func readerAfterCommitFloor(_ reader: BlendPreviewReader, raw: String, eventId: Int) -> BlendPreviewReader {
+        switch commitFloorControl(raw: raw, eventId: eventId) {
+        case .otherPage: return reader
+        case .floor(let floor): return readerAfterCommitFloor(reader, floor)
+        }
+    }
+
+    /// #10090 — the longest a folded page's hero keeps a preview a commit
+    /// floor withdrew while that commit's combined result is on its way. Hold C
+    /// (build 92) measured the gap at a median 30 ms and at most 255 ms.
+    static let commitFloorHandover: TimeInterval = 1
+
+    /// #10090 — the preview a folded page's hero keeps across a valid commit
+    /// floor that just withdrew it from `after`, or nil to withdraw it now.
+    ///
+    /// The floor says a commit past the preview's base exists; on a folded page
+    /// that commit reaches the hero only with its combined result, which
+    /// follows the row's raw frame. Withdrawing at the floor showed the OLDER
+    /// committed value in between (hold C: 44 jumps back in 3 minutes). So the
+    /// shown value stays until the page decides that result, never past its own
+    /// lifetime nor `commitFloorHandover`. The reader is not touched: it has
+    /// already withdrawn the preview, so no later frame over the uncovered base
+    /// is admitted, and the display gate drops it the moment the committed
+    /// revision passes its base. A malformed floor, a singleton page and every
+    /// other withdrawal (revoke, invalidate, reconcile, reset, membership,
+    /// fence) withdraw at once, as before.
+    static func heldAcrossCommitFloor(_ shown: BlendPreviewState?, floor: FoldRevision?,
+                                      after: BlendPreviewReader, held: EventDetail?,
+                                      now: TimeInterval) -> BlendPreviewState? {
+        guard floor != nil, after.held == nil, let shown, shown.baseFoldRevision != nil, let held,
+              let committed = LiveEventPriceReconciliation.pairedFoldRevision(in: held), committed.rows.count > 1,
+              displayed(shown, held: held, now: now) != nil else { return nil }
+        return capped(shown, at: now + commitFloorHandover)
     }
 
     /// The reader after `frame` arrives at `now`. A lower epoch of the frame's
@@ -910,7 +952,10 @@ nonisolated enum BlendPreview {
     /// (`extendingServedSourceSeries`) never draws it.
     static func chartFrames(_ frames: [LiveBlendPoint], history: EventHistoryResponse?,
                             state: BlendPreviewState?, held: EventDetail?, now: TimeInterval) -> [LiveBlendPoint] {
-        guard let p = displayed(state, held: held, now: now), let at = state?.observedAt else { return frames }
+        guard let p = displayed(state, held: held, now: now) else {
+            return headlineOverOlderPin(frames, history: history, held: held)
+        }
+        guard let at = state?.observedAt else { return frames }
         let authority = state.flatMap { state in
             state.baseFoldRevision.map { BlendPreviewChartAuthority(eventId: state.eventId, base: $0) }
         }
@@ -927,6 +972,47 @@ nonisolated enum BlendPreview {
         }
         if let last = frames.last, last.date >= at { return frames }
         return frames + [LiveBlendPoint(date: at, homeProbability: p, previewAuthority: authority)]
+    }
+
+    /// #10090 — web's #8749 rule (`appendHeroObservation`, its synthetic-edge
+    /// half) for the committed headline. The history route pins its blend edge
+    /// at the SERVE minute, and the price there can be a detail hero cached a
+    /// TTL earlier, so after a real commit a later read can end the line on the
+    /// value the commit replaced. When the headline was observed strictly after
+    /// the pin's own observation (`blend_edge_observed_at`) and at or before the
+    /// pin, `frames` gains a marker carrying the headline, and the chart
+    /// re-values that one pin in its render copy
+    /// (`OddsChartView.extendingBlendToLiveEdge`). A headline observed after the
+    /// pin is the frames' rule already: a pushed frame past the edge is appended.
+    /// Committed truth only — a displayed preview owns the end
+    /// (`chartFrames`). History and frames are never written.
+    static func headlineOverOlderPin(_ frames: [LiveBlendPoint], history: EventHistoryResponse?,
+                                     held: EventDetail?) -> [LiveBlendPoint] {
+        guard let held, let history, let p = held.heroProbability, p.isFinite, (0...1).contains(p),
+              let at = held.heroProbabilityObservedAt?.asDate,
+              let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: held) else { return frames }
+        let authority = BlendPreviewChartAuthority(eventId: held.id, base: revision)
+        guard olderPinUnderHeadline(history, authority: authority, at: at, p: p) != nil else { return frames }
+        return frames + [LiveBlendPoint(date: at, homeProbability: p, headlineOverPin: authority)]
+    }
+
+    /// The pin a headline observed at `at` re-values, or nil. Every refusal
+    /// leaves the pin as served: an unpinned edge, another event, a pin
+    /// observed at or after the headline (equal or unknown clocks decide
+    /// nothing), a pin past the headline's revision or without one
+    /// (`chartCoversAuthority`), a headline observed after the pin, a pin that
+    /// already prints it, and any served blend point at or after the headline
+    /// that is a reading rather than a carry-forward (`carriedPointsAfter`).
+    static func olderPinUnderHeadline(_ history: EventHistoryResponse, authority: BlendPreviewChartAuthority,
+                                      at: Date, p: Double) -> AggregateLinePoint? {
+        guard chartCoversAuthority(history, authority: authority), history.blendEdgePinned == true,
+              let observed = history.blendEdgeObservedAt?.asDate, observed < at,
+              let revision = history.blendEdgeFoldRevision?.revision,
+              revision.rows.count == authority.base.rows.count, authority.base.covers(revision),
+              let edge = history.aggregateLine?.last, let edgeAt = edge.timestamp.asDate,
+              at <= edgeAt, edge.homeProbability != p,
+              carriedPointsAfter(history, at: at) != nil else { return nil }
+        return edge
     }
 
     /// Revision authority wins even if a newer committed pin has an OLDER

@@ -208,13 +208,73 @@ final class LiveEdgeGlideMemory {
     }
 }
 
+// MARK: - Accepted-value text
+
+/// The hero's printed accepted value: only the CHANGED characters roll, the
+/// rest held still, so 60.4% -> 60.7% moves only the tenths digit. A rise
+/// rolls up, a fall rolls down; nil (direction unknown) rolls up.
+///
+/// Alex, 2026-10-31: the decimal shows the number is alive, but sliding the
+/// whole figure on every tenth made it hard to read. Mid-roll the changed
+/// digit sits between its old and new glyph, which the whole-string slide
+/// below exists to avoid; for the headline he chose the readable roll.
+///
+/// A modifier on the caller's own `Text`; `value` must be the string that
+/// `Text` prints. SwiftUI's numeric content transition compares the old and
+/// new glyphs itself, so kerning, fonts and width stay the caller's.
+///
+/// Rolls only in an active scene with motion allowed and `animates` true;
+/// otherwise the new value is drawn at once. If any of those turns off
+/// mid-roll the roll is CANCELLED, not left to run: the next frame is the
+/// settled new value.
+extension View {
+    func acceptedValueChange(_ value: String, rising: Bool? = nil, animates: Bool = true) -> some View {
+        modifier(AcceptedValueChange(value: value, rising: rising, animates: animates))
+    }
+
+    /// The chart tip label's change: the whole string slides (`AcceptedValueSlide`).
+    /// Its digits do not roll: the label rides the dot's glide, and with a roll
+    /// there the glide's motion samples had no single endpoint (the detector
+    /// finds the dot as a dot-sized blob in the label's colour;
+    /// `testAnAcceptedAppendGlidesTheDotAlongTheLineAndSettles`, 2026-11-01).
+    func acceptedValueSlide(_ value: String, rising: Bool? = nil, animates: Bool = true) -> some View {
+        modifier(AcceptedValueSlide(value: value, rising: rising, animates: animates))
+    }
+}
+
+private struct AcceptedValueChange: ViewModifier {
+    let value: String
+    let rising: Bool?
+    let animates: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    /// Bumped to cancel: a new identity drops a roll in flight, which turning
+    /// the animation off for the next change does not.
+    @State private var epoch = 0
+
+    private var rolls: Bool { animates && !reduceMotion && scenePhase == .active }
+
+    func body(content: Content) -> some View {
+        content
+            .contentTransition(rolls ? .numericText(countsDown: rising == false) : .identity)
+            .animation(rolls ? .easeOut(duration: LiveChartEdgeMarkerPlan.glideDuration) : nil, value: value)
+            .id(epoch)
+            .onChange(of: rolls) { _, allowed in
+                guard !allowed else { return }
+                var still = Transaction()
+                still.disablesAnimations = true
+                withTransaction(still) { epoch += 1 }
+            }
+    }
+}
+
 // MARK: - Whole-value text
 
 /// A printed accepted value that changes as a WHOLE string: the old one
 /// leaves, the new one arrives, each complete. No per-digit roll and no
 /// crossfade in place, either of which can put a mix of the two on screen —
 /// a third number nobody quoted. A rise slides up, a fall slides down; nil
-/// (direction unknown) slides up.
+/// (direction unknown) slides up. The chart tip label's (`acceptedValueSlide`).
 ///
 /// A modifier on the caller's own `Text`, so the text and its fonts stay
 /// where they were; `value` must be the string that `Text` prints. The
@@ -228,13 +288,7 @@ final class LiveEdgeGlideMemory {
 /// Slides only in an active scene with motion allowed and `animates` true. If
 /// any of those turns off mid-slide the slide is CANCELLED, not left to run:
 /// the leaving string goes and the arriving one is drawn settled.
-extension View {
-    func acceptedValueChange(_ value: String, rising: Bool? = nil, animates: Bool = true) -> some View {
-        modifier(AcceptedValueChange(value: value, rising: rising, animates: animates))
-    }
-}
-
-private struct AcceptedValueChange: ViewModifier {
+private struct AcceptedValueSlide: ViewModifier {
     let value: String
     let rising: Bool?
     let animates: Bool
@@ -462,7 +516,7 @@ private struct LiveEdgeTipLayer: View, Animatable {
                     let center = LiveChartEdgeMarkerPlan.labelCenter(tip: local, from: fromLocal,
                                                                     label: labelSize, plot: plotFrame.size)
                     Text(label)
-                        .acceptedValueChange(label, rising: rising)
+                        .acceptedValueSlide(label, rising: rising)
                         .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
                         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
                         .foregroundStyle(lineColor)

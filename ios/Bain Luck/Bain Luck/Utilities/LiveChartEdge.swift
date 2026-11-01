@@ -55,13 +55,27 @@ nonisolated struct LiveBlendPoint: Sendable, Equatable {
     let sourceProbability: Double?
     /// Disposable projection authority; never placed in the committed buffer.
     let previewAuthority: BlendPreviewChartAuthority?
+    /// #10090 — the committed headline's authority to re-value an OLDER pinned
+    /// edge (`BlendPreview.olderPinUnderHeadline`). A render marker, never drawn
+    /// as a point and never placed in the committed buffer.
+    let headlineOverPin: BlendPreviewChartAuthority?
+    /// #10090 — the timing seam's name for the commit this point was appended
+    /// under (`LiveTimingSeam.basis`): the same string its
+    /// `model.chart.appended` mark carried, so the view mark for the drawn end
+    /// names the point's OWN commit, never the newest headline's. Diagnostic
+    /// only; nil on projections and markers, which carry their own authority.
+    let basis: String?
 
     init(date: Date, homeProbability: Double,
          source: String? = nil, sourceProbability: Double? = nil,
-         previewAuthority: BlendPreviewChartAuthority? = nil) {
+         previewAuthority: BlendPreviewChartAuthority? = nil,
+         headlineOverPin: BlendPreviewChartAuthority? = nil,
+         basis: String? = nil) {
         self.date = date
         self.homeProbability = homeProbability
         self.previewAuthority = previewAuthority
+        self.headlineOverPin = headlineOverPin
+        self.basis = basis
         if let source, !source.isEmpty,
            let value = sourceProbability, value.isFinite, (0...1).contains(value) {
             self.source = source

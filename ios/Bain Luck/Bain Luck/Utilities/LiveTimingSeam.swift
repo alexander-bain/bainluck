@@ -43,18 +43,25 @@ import os
 /// frame, never the newest revision the stream has seen.
 ///
 /// IDs, revisions, printed probabilities and source clocks only; no user data.
-/// Not a framework: seven event names, no export, no collector.
+/// Not a framework: seven event names, no export, no collector. The detail
+/// read's clock exchange writes two more lines to the same log
+/// (`ClockExchange`).
 @MainActor
 enum LiveTimingSeam {
     /// One emitted mark. `basis` is `rev:<row>=<n>;…` (rows sorted), else
     /// `clock:<source updated_at>`, else `none`; `null` for an explicit null
     /// folded result; a preview's `v3:<incarnation>/<namespace>/<session>/e<epoch>/s<seq>/b<base_rev>`,
     /// which a folded preview extends with `/o<origin>`, `/f<fold_session>` and
-    /// `/m<row>=<rev>;…` (`previewBasis`).
+    /// `/m<row>=<rev>;…` (`previewBasis`). A chart mark whose drawn end is a
+    /// served history point says `served:` before its basis: the read's pin
+    /// under the revision it was computed from, `served:none` for a point the
+    /// read gives no identity (`drawnChartEnd`).
     /// `stamp` is the exact reference-date Double bit pattern or `-`: the chart
     /// edge on chart marks. `probability` is the home probability the mark
     /// speaks for, or `-`; `observed` is its source observation clock as a
-    /// stamp, or `-`. Receipt (the observer's own clock), observation and
+    /// stamp, or `-`; on a chart mark, the drawn value's own observation,
+    /// which differs from `stamp` when the value re-values an older pin
+    /// (`drawnChartEnd`). Receipt (the observer's own clock), observation and
     /// chart edge stay three separate clocks.
     nonisolated struct Mark: Equatable, Sendable {
         let name: Name
@@ -207,8 +214,8 @@ enum LiveTimingSeam {
 
     /// What the event page's hero and chart print, compared across updates.
     /// Headline and chart are separate: each carries its own identity (the
-    /// displayed preview's, else the committed basis for the headline and `-`
-    /// for a committed chart point), value and clock.
+    /// displayed preview's, else the committed basis for the headline and the
+    /// drawn point's own for the chart, `drawnChartEnd`), value and clock.
     nonisolated struct Presented: Equatable, Sendable {
         let eventId: Int
         let headlineBasis: String
@@ -217,6 +224,7 @@ enum LiveTimingSeam {
         let chartBasis: String
         let chartEdge: Date?
         let chartProbability: Double?
+        var chartObserved: Date? = nil
 
         /// Compares equal to itself, so a page whose marks nobody can see
         /// never fires its `onChange`.
@@ -225,19 +233,68 @@ enum LiveTimingSeam {
     }
 
     /// `committed` is the page's event; `headline` and `observed` what its hero
-    /// prints (`headline(event)`, `displayedProbabilityObservedAt(event)`);
-    /// `chartEnd` the last point its chart draws (`chartFrames(event)`), and
-    /// `projected` whether that point is the preview's projection. `preview`
-    /// is the identity of the displayed preview, nil when the hero prints
-    /// committed truth; it names the chart only when the chart's end is its
-    /// projection.
-    nonisolated static func presented(committed: EventDetail, headline: EventDetail, observed: Date?,
-                                      chartEnd: LiveBlendPoint?, projected: Bool, preview: String?) -> Presented {
-        Presented(eventId: committed.id,
-                  headlineBasis: preview ?? headlineBasis(of: committed),
-                  probability: headline.currentOdds?.homeProbability, observed: observed,
-                  chartBasis: projected ? preview ?? "none" : "-",
-                  chartEdge: chartEnd?.date, chartProbability: chartEnd?.homeProbability)
+    /// prints (`headline(event)`, `displayedProbabilityObservedAt(event)`).
+    /// `drawn` is the point the chart's blend line ends on
+    /// (`OddsChartView.drawnBlendEnd`), built from `frames` (`chartFrames(event)`)
+    /// over `history`; nil when the chart draws no blend. `projected` is whether
+    /// the last of `frames` is the preview's projection, and `preview` the
+    /// identity of the displayed preview, nil when the hero prints committed
+    /// truth; it names the chart only when the drawn end is that projection.
+    static func presented(committed: EventDetail, headline: EventDetail, observed: Date?,
+                          drawn: ChartDataPoint?, frames: [LiveBlendPoint], projected: Bool,
+                          preview: String?, history: EventHistoryResponse?) -> Presented {
+        let chart = drawnChartEnd(drawn, frames: frames, projected: projected, preview: preview, history: history)
+        return Presented(eventId: committed.id,
+                         headlineBasis: preview ?? headlineBasis(of: committed),
+                         probability: headline.currentOdds?.homeProbability, observed: observed,
+                         chartBasis: chart.basis, chartEdge: chart.edge,
+                         chartProbability: chart.probability, chartObserved: chart.observed)
+    }
+
+    /// #10090 — the identity, place, value and observation clock of the point
+    /// the chart draws its blend line to (`drawn`). Each kind of end carries
+    /// its own provenance; none borrows the headline's or the buffer's:
+    /// - a point drawn from one of `frames` (`ChartDataPoint.liveFrameIndex`):
+    ///   - the preview's projection: the displayed preview's identity.
+    ///   - the committed headline's marker over an older pin
+    ///     (`BlendPreview.headlineOverOlderPin`): the marker is never drawn
+    ///     itself; the chart re-values the pin, which keeps its time
+    ///     (`OddsChartView.extendingBlendToLiveEdge`). The basis is the revision
+    ///     the marker carries, which authorized the value drawn there.
+    ///   - a committed buffer frame: the basis it was appended under
+    ///     (`LiveBlendPoint.basis`), or `-` when it carries none.
+    ///   Observed at that frame's own time.
+    /// - a served point: the buffer's last frame sits at or behind the read's
+    ///   edge, so the chart ends on the read (ties go to the served point). The
+    ///   read's pin (`blend_edge_pinned`, its `aggregate_line`'s last point) is
+    ///   `served:` + the revision it was computed from
+    ///   (`blend_edge_fold_revision`), observed at `blend_edge_observed_at`. Any
+    ///   other served bucket is `served:none`, observed `-`: an
+    ///   `aggregate_line` point carries no revision or observation clock of
+    ///   its own on the wire.
+    /// The edge and value are always the drawn point's own.
+    static func drawnChartEnd(_ drawn: ChartDataPoint?, frames: [LiveBlendPoint], projected: Bool,
+                              preview: String?, history: EventHistoryResponse?)
+        -> (basis: String, edge: Date?, probability: Double?, observed: Date?) {
+        guard let drawn else { return ("-", nil, nil, nil) }
+        if let index = drawn.liveFrameIndex, frames.indices.contains(index) {
+            let frame = frames[index]
+            let basis: String
+            if projected && index == frames.count - 1 {
+                basis = preview ?? "none"
+            } else if let authority = frame.headlineOverPin {
+                basis = Self.basis(revision: authority.base, clock: nil)
+            } else {
+                basis = frame.basis ?? "-"
+            }
+            return (basis, drawn.date, drawn.probability, frame.date)
+        }
+        if let history, history.blendEdgePinned == true, let pin = history.aggregateLine?.last,
+           pin.timestamp.asDate == drawn.date, pin.homeProbability == drawn.probability {
+            return ("served:" + basis(revision: history.blendEdgeFoldRevision?.revision, clock: nil),
+                    drawn.date, drawn.probability, history.blendEdgeObservedAt?.asDate)
+        }
+        return ("served:none", drawn.date, drawn.probability, nil)
     }
 
     static func viewUpdated(from old: Presented, to new: Presented) {
@@ -248,9 +305,11 @@ enum LiveTimingSeam {
                       probability: probability(new.probability), observed: stamp(new.observed)))
         }
         if let edge = new.chartEdge,
-           edge != old.chartEdge || new.chartBasis != old.chartBasis || new.chartProbability != old.chartProbability {
+           edge != old.chartEdge || new.chartBasis != old.chartBasis || new.chartProbability != old.chartProbability
+            || new.chartObserved != old.chartObserved {
             emit(Mark(name: .viewChartUpdated, eventId: new.eventId, path: "view", basis: new.chartBasis,
-                      stamp: stamp(edge), probability: probability(new.chartProbability)))
+                      stamp: stamp(edge), probability: probability(new.chartProbability),
+                      observed: stamp(new.chartObserved)))
         }
     }
 
@@ -286,5 +345,84 @@ enum LiveTimingSeam {
     nonisolated private static func message(_ mark: Mark) -> String {
         "event=\(mark.eventId) path=\(mark.path) basis=\(mark.basis) stamp=\(mark.stamp)"
             + " p=\(mark.probability) observed=\(mark.observed)"
+    }
+}
+
+/// #10090 — the detail read's clock exchange: two Default (`notice`) lines in
+/// the `liveTiming` log that bracket one `GET /api/events/<id>` on the same
+/// trace clock as every mark above. The second carries the window the response
+/// read its row in, on the database's own clock (`state_read_not_before` /
+/// `state_read_not_after`), and whether this request's build read it
+/// (`state_read_fresh`). Build 96 had no exchange, so every hold was scored
+/// on an ASSUMED phone↔server clock.
+///
+/// A reader pairs the lines by `seq` and uses only `http=200 fresh=true` with
+/// `echo` equal to `nonce`: the offset θ = database − trace then lies in
+/// (`not_after` − received, `not_before` − sent). The nonce is a fresh UUID
+/// sent as `X-Request-ID`; the server echoes the id it received on every
+/// response, outside the body, so a response replayed from any cache carries
+/// an earlier read's id and anchors nothing.
+///
+/// `sent` is written after the auth token is read and immediately before the
+/// request leaves; `received` immediately after the body lands, from a 3-key
+/// decode of the same bytes. The decode follows the true receipt, so it can
+/// only widen the bracket, never narrow it. A transport failure still answers
+/// its `sent` line, with `http=-`. A local TTL serve never reaches the wire and
+/// prints nothing. IDs and server clocks only; no user data.
+nonisolated enum ClockExchange {
+    private static let log = Logger(subsystem: "com.bainluck", category: "liveTiming")
+
+    /// The event id of a detail read: `/api/events/<digits>` exactly. History,
+    /// publications, game markets and the live list are not exchanges.
+    static func eventId(path: String) -> Int? {
+        let prefix = "/api/events/"
+        guard path.hasPrefix(prefix) else { return nil }
+        let id = path.dropFirst(prefix.count)
+        guard !id.isEmpty, id.allSatisfy({ ("0"..."9").contains($0) }) else { return nil }
+        return Int(id)
+    }
+
+    nonisolated private struct Anchors: Decodable {
+        let fresh: Bool?
+        let notBefore: String?
+        let notAfter: String?
+
+        enum CodingKeys: String, CodingKey {
+            case fresh = "state_read_fresh"
+            case notBefore = "state_read_not_before"
+            case notAfter = "state_read_not_after"
+        }
+    }
+
+    /// The request's nonce goes out in this header and comes back in it.
+    static let nonceHeader = "X-Request-ID"
+
+    /// A body the periodic exchange reads and drops.
+    nonisolated struct Ignored: Decodable, Sendable {}
+
+    static func sentLine(seq: Int, eventId: Int, freshAsk: Bool, nonce: String) -> String {
+        "clock.exchange.sent seq=\(seq) event=\(eventId) fresh_ask=\(freshAsk ? 1 : 0) nonce=\(field(nonce))"
+    }
+
+    /// `status` nil: the transport failed and no response arrived. A body that
+    /// does not decode, or a key it lacks, prints `-`; so does a stamp with a
+    /// space in it, which would split the line. `echo` is the response's own
+    /// `X-Request-ID`, never the nonce that was sent: a reader anchors a pair
+    /// only when the two are equal.
+    static func receivedLine(seq: Int, eventId: Int, status: Int?, body: Data?, echo: String?) -> String {
+        let anchors = body.flatMap { try? JSONDecoder().decode(Anchors.self, from: $0) }
+        return "clock.exchange.received seq=\(seq) event=\(eventId) http=\(status.map(String.init) ?? "-")"
+            + " fresh=\(anchors?.fresh.map { $0 ? "true" : "false" } ?? "-")"
+            + " not_before=\(field(anchors?.notBefore)) not_after=\(field(anchors?.notAfter))"
+            + " echo=\(field(echo))"
+    }
+
+    private static func field(_ value: String?) -> String {
+        guard let value, !value.isEmpty, !value.contains(where: \.isWhitespace) else { return "-" }
+        return value
+    }
+
+    static func emit(_ line: String) {
+        log.notice("\(line, privacy: .public)")
     }
 }

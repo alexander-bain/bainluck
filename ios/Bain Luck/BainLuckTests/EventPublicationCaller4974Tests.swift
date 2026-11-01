@@ -1112,11 +1112,16 @@ final class EventPublicationCaller4974Tests: XCTestCase {
     /// run. Inline and fullscreen share one mount (`PublicationCheckpointChart4974Tests`).
     func testBothChartsTakeTheOneWindowAndKeepTheirFinishClips() throws {
         let page = try code("Bain Luck/Views/EventDetailView.swift")
-        XCTAssertEqual(page.components(separatedBy: "forcedDomain:sharedChartDomain,").count - 1, 2,
-                       "the probability chart and the score chart")
+        // #10090 — the third reader is the timing seam's copy of what the
+        // probability chart is handed (`timingChartWindow`); it draws nothing.
+        XCTAssertEqual(page.components(separatedBy: "forcedDomain:sharedChartDomain,").count - 1, 3,
+                       "the probability chart, the score chart and the timing seam's copy")
         XCTAssertEqual(page.components(
-            separatedBy: "forcedDomain:sharedChartDomain,legacyDataDomain:legacyChartDataDomain,").count - 1, 2,
-                       "both charts take the one axis AND the one legacy ink window")
+            separatedBy: "forcedDomain:sharedChartDomain,legacyDataDomain:legacyChartDataDomain,").count - 1, 3,
+                       "both charts (and the seam's copy) take the one axis AND the one legacy ink window")
+        XCTAssertTrue(page.contains(
+            ".init(forcedDomain:sharedChartDomain,legacyDataDomain:legacyChartDataDomain,selectedRange:chartRange,journey:Self.chartPublicationJourney(vm.publicationJourney,key:publicationTaskKey))"),
+                      "the seam's copy is the probability chart's own window, range and journey")
         XCTAssertTrue(page.contains(
             "privatevarlegacyChartDataDomain:ClosedRange<Date>?{Self.pageLegacyChartDataDomain(event:vm.event,history:vm.history,range:chartRange,journey:vm.publicationJourney,key:publicationTaskKey,remembering:vm,now:displayNow())}"))
         XCTAssertTrue(page.contains(
@@ -1135,7 +1140,7 @@ final class EventPublicationCaller4974Tests: XCTestCase {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
         XCTAssertTrue(chart.contains("ifletforced=forcedDomain{returnforced}"))
         // #10090 — the clip runs in `drawnPoints` on the view's `drawnWindow`.
-        XCTAssertTrue(chart.contains("finishedEnd:EventState.isFinished(status)?gameEndDate:nil"),
+        XCTAssertTrue(chart.contains("finishedEnd:EventState.isFinished(status)?gameEndDate(status:status,history:history):nil"),
                       "the legacy finish clip")
         XCTAssertTrue(chart.contains("ifletendDate=window.finishedEnd{filtered=filtered.filter{$0.date<=endDate}}"),
                       "the legacy finish clip")

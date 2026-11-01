@@ -215,7 +215,7 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
     /// the card's top inset and the row gap, each of which holds it exactly.
     func testTheDisclosureKeepsItsTargetWithoutARowOfItsOwn() throws {
         let page = try pageCode()
-        let button = try span(page, from: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {",
+        let button = try span(page, from: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false, ekgDrawn: Bool = false) -> some View {",
                               to: "// MARK: - Chart Header Bar")
         XCTAssertTrue(button.contains("minHeight: 44"), "control: the 44pt target itself")
         let hero = try span(page, from: "private func heroSection(", to: "static func heroBackdrop(")

@@ -184,6 +184,10 @@ struct LivePriceMovementCaption: View {
 struct FreshnessRevealView: View {
     let status: LiveUpdateStatus
     let lastReceivedAt: Date?
+    /// #10090 decision J — the stream's confirmation of the shown price, when
+    /// it is newer than that price's observation (`displayedConfirmation`).
+    /// A server clock, aged like one: clamped at zero.
+    var confirmedAt: Date? = nil
     var confidenceTier: String? = nil
     /// #11296 — the live headline's forecast, when it prints one: where it came
     /// from, below its own divider so its clocks never read as delivery's.
@@ -222,6 +226,15 @@ struct FreshnessRevealView: View {
             } else {
                 Text("No newer probability update received since opening this page.")
             }
+            if let confirmedAt {
+                if scenePhase == .active {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        confirmation(confirmedAt, now: context.date)
+                    }
+                } else {
+                    confirmation(confirmedAt, now: .now)
+                }
+            }
             if let tier = Confidence.normalize(confidenceTier) {
                 // #10830 — confidence is not delivery: set apart, and described by
                 // the two inputs the hero's tier is computed from.
@@ -250,5 +263,13 @@ struct FreshnessRevealView: View {
 
     private func receipt(_ receivedAt: Date, now: Date) -> some View {
         Text("Last probability update received \(LivePriceFeedbackPresentation.receiptAge(receivedAt: receivedAt, now: now)).")
+    }
+
+    static func confirmationText(_ confirmedAt: Date, now: Date) -> String {
+        "Probability confirmed by the markets \(LivePriceFeedbackPresentation.receiptAge(receivedAt: confirmedAt, now: now))."
+    }
+
+    private func confirmation(_ confirmedAt: Date, now: Date) -> some View {
+        Text(Self.confirmationText(confirmedAt, now: now))
     }
 }
