@@ -8659,7 +8659,13 @@ class LiveBlendRefresher:
                 forgotten = self._forgotten_outcomes
                 if any(forgotten.get(row.id, -math.inf) >= read_started
                        for entry in group for row in entry.outcomes):
-                    self._forget_preview_graph(event_id)
+                    # A read older than a change it carries. A kept graph that
+                    # holds none of the rows changed since this read began
+                    # (pruned by `_prune_preview_graph`) stays; else none does.
+                    if kept is None or any(
+                            forgotten.get(row.id, -math.inf) >= read_started
+                            for entry in kept[2] for row in entry.outcomes):
+                        self._forget_preview_graph(event_id)
                     continue
                 noted = self._noted_commits
                 patched = _patched_group(group, {
@@ -8909,22 +8915,54 @@ class LiveBlendRefresher:
             now = _mono()
             forgotten = self._forgotten_outcomes
             outcome_ids = list(outcome_ids)
-            events = []
+            by_event: dict[int, set] = {}
             for oid in outcome_ids:
                 forgotten.pop(oid, None)
                 forgotten[oid] = now
                 event_id = self._preview_graph_outcomes.get(oid)
                 if event_id is not None:
+                    by_event.setdefault(event_id, set()).add(oid)
+            events, pruned = [], []
+            for event_id, oids in by_event.items():
+                if receipt and self._prune_preview_graph(event_id, oids):
+                    pruned.append(event_id)
+                else:
                     events.append(event_id)
                     self._forget_preview_graph(event_id)
             _prune_notes(forgotten, now, lambda at: at)
             if receipt:
-                self.note_receipt_withdrawn(outcome_ids, events)
+                self.note_receipt_withdrawn(outcome_ids, events, spare=pruned)
                 self._schedule_graph_refetch(events)
+                self._schedule_graph_refetch(pruned, lost=False)
         except Exception:
             self.commit_preview_stats["errors"] += 1
             logger.warning("live_blend_refresh[%s]: changed rows not forgotten", self.source,
                            exc_info=True)
+
+    def _prune_preview_graph(self, event_id: int, oids) -> bool:
+        """#10090: ``oids`` (a settlement or withdrawal) are rows of markets that
+        do not speak this event's headline: drop just their markets from the
+        cached graph and keep it, so the next headline input composes at once
+        instead of waiting for a re-read of every market. False (the caller
+        drops the graph) when the speaking legs are unknown or among ``oids``.
+
+        11/01 18:19-18:24Z: live NFL games (~370 markets, ~1,800 legs) re-read
+        their whole graph for every prop leg the book priced out; a headline
+        input arriving meanwhile waited 0.5-1.4 s as refetch/no_graph.
+        """
+        speaking = self._receipt_speaking.get(event_id)
+        entry = self._preview_graphs.get(event_id)
+        if not speaking or entry is None or not speaking.isdisjoint(oids):
+            return False
+        read_at, event, group = entry
+        kept = [market for market in group
+                if not any(row.id in oids for row in market.outcomes)]
+        if not kept or len(kept) == len(group):
+            return False
+        self._install_preview_graph(event_id, (read_at, event, kept))
+        self._receipt_speaking[event_id] = speaking
+        self.graph_refetch_stats["pruned"] = self.graph_refetch_stats.get("pruned", 0) + 1
+        return True
 
     def _preview_graph_committed(self, event_id: int, sources, rev) -> None:
         """A stamp committed this event's bag at ``rev``: the cached graph's
@@ -9144,10 +9182,12 @@ class LiveBlendRefresher:
         last = self._receipt_last.get(event_id)
         self._wake_receipt(last is None or now - last[0] >= _receipt_interval())
 
-    def note_receipt_withdrawn(self, outcome_ids, event_ids=()) -> None:
+    def note_receipt_withdrawn(self, outcome_ids, event_ids=(), spare=()) -> None:
         """Legs a withdrawal (a book that prices them out) or a settlement took
         away: their received quotes are dropped and a receipt preview still
-        pending for their events is revoked by the worker. Never raises."""
+        pending for their events is revoked by the worker. ``spare``: events
+        whose headline those legs do not speak (`_prune_preview_graph`); their
+        preview stands. Never raises."""
         if not _preview_at_receipt_possible(self.source):
             return
         try:
@@ -9160,6 +9200,8 @@ class LiveBlendRefresher:
                 if event_id is not None:
                     events[event_id] = None
             events.pop(None, None)
+            for event_id in spare:
+                events.pop(event_id, None)
             if events:
                 self._receipt_withdrawn.update(events)
                 self._wake_receipt(True)

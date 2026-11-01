@@ -766,3 +766,69 @@ async def test_a_waiting_event_is_composed_on_its_reread_graph_even_with_no_quot
     # Composed on the re-read rows (their committed price), so the publish
     # that carries it ends the wait (`_hl_published`); the rig records frames.
     assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
+
+
+PROP_MARKET, PROP_LEG = MARKET + 500, HOME_LEG + 500
+
+
+def with_prop(group):
+    """The headline market plus one prop market that does not speak for it."""
+    market = Row(id=PROP_MARKET, source="polymarket", external_id="0x" + "77" * 32, event_id=EV,
+                 name="Reynolds/Watt: total games over 21.5", status="open",
+                 market_metadata={"venue_type": "totals"})
+    rows = [Row(id=PROP_LEG, market_id=PROP_MARKET, name="Over", rank=1,
+                current_probability=Decimal("0.400000"), last_updated=SEEN, is_winner=None,
+                external_id="0x" + "77" * 32, resolution_source=None)]
+    return group + [MarketOutcomes(market, rows, NOW - timedelta(hours=3), False)]
+
+
+async def test_a_prop_leg_withdrawn_keeps_the_graph_and_the_headline_preview(r):
+    """11/01 18:19-18:24Z: every prop leg a book priced out on a live NFL game
+    dropped its whole graph (~1,800 legs), and the next headline input waited
+    0.5-1.4 s for the re-read."""
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+    r.held_quotes.note_input(mark(PROP_LEG, 0.41))  # the prop's own received quote
+    await drained(r)
+    assert PROP_LEG in r._receipt_quotes
+
+    r.forget_preview_outcomes([PROP_LEG])
+    await drained(r)
+
+    assert PROP_LEG not in r._receipt_quotes
+    assert ops(r.sent, "settle") == [], "the headline preview stands"
+    assert EV in r._preview_graphs and EV not in r._graph_lost_at
+    assert PROP_LEG not in r._preview_graph_outcomes
+    assert r.graph_refetch_stats.get("pruned") == 1
+    assert EV in r._graph_refetch, "a full re-read still follows, off the input's path"
+
+    receive(r, 0.44)
+    await drained(r)
+    assert len(ops(r.sent, "propose")) == 2, "the next input composes at once"
+
+
+async def test_a_read_in_flight_across_the_prune_does_not_drop_the_pruned_graph(r):
+    started = module._mono()
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    r.forget_preview_outcomes([PROP_LEG])
+
+    read(r, event(at=NOW), with_prop(legs()), started=started)  # began before the change
+
+    assert EV in r._preview_graphs
+    assert PROP_LEG not in r._preview_graph_outcomes
+
+
+async def test_a_headline_leg_withdrawn_still_drops_the_graph(r):
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+
+    r.forget_preview_outcomes([HOME_LEG, PROP_LEG])
+    await drained(r)
+
+    assert [op["reason"] for op in ops(r.sent, "settle")] == ["withdrawn"]
+    assert EV not in r._preview_graphs and EV in r._graph_lost_at
