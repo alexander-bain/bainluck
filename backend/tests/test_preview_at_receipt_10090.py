@@ -832,3 +832,36 @@ async def test_a_headline_leg_withdrawn_still_drops_the_graph(r):
 
     assert [op["reason"] for op in ops(r.sent, "settle")] == ["withdrawn"]
     assert EV not in r._preview_graphs and EV in r._graph_lost_at
+
+
+async def test_a_wide_book_on_a_prop_leg_leaves_the_headline_preview(r):
+    """11/01 18:50Z: the socket calls `note_receipt_withdrawn` on every wide
+    book; on a prop leg that took back the game's headline preview, and the
+    screen showed the stored number until the next stamp (13.9 s on Bills-
+    Ravens while Polymarket held the new price)."""
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+    r.held_quotes.note_input(mark(PROP_LEG, 0.41))
+    await drained(r)
+
+    r.note_receipt_withdrawn([PROP_LEG])
+    await drained(r)
+
+    assert ops(r.sent, "settle") == [], "the headline preview stands"
+    assert PROP_LEG not in r._receipt_quotes, "the prop's own quote is still dropped"
+    assert r.receipt_preview_stats["withdrawn_spared"] == 1
+
+
+async def test_a_wide_book_on_a_headline_leg_still_takes_the_preview_back(r):
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+
+    r.note_receipt_withdrawn([AWAY_LEG])
+    await drained(r)
+
+    [settle] = ops(r.sent, "settle")
+    assert (settle["reason"], settle["through"]) == ("withdrawn", opened["local_seq"])

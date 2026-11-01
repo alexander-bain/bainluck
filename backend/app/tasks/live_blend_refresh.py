@@ -9196,13 +9196,27 @@ class LiveBlendRefresher:
             return
         try:
             events = dict.fromkeys(event_ids)
+            legs_of: dict = {}
+            outcome_ids = list(outcome_ids)
             for oid in outcome_ids:
                 quote = self._receipt_quotes.pop(oid, None)
-                if quote is not None:
-                    events[quote[3]] = None
                 event_id = self._preview_graph_outcomes.get(oid)
+                if event_id is None and quote is not None:
+                    event_id = quote[3]
                 if event_id is not None:
-                    events[event_id] = None
+                    legs_of.setdefault(event_id, set()).add(oid)
+            for event_id, oids in legs_of.items():
+                speaking = self._receipt_speaking.get(event_id)
+                if speaking and speaking.isdisjoint(oids) and event_id not in events:
+                    # 11/01 18:50Z: every wide book on a PROP leg (common in a
+                    # live game) took back its game's headline preview, so the
+                    # screen fell back to the stored number until the next stamp
+                    # (Bills-Ravens: 13.9 s). A leg the headline does not speak
+                    # leaves the headline as it is.
+                    self.receipt_preview_stats["withdrawn_spared"] = (
+                        self.receipt_preview_stats.get("withdrawn_spared", 0) + 1)
+                    continue
+                events[event_id] = None
             events.pop(None, None)
             for event_id in spare:
                 events.pop(event_id, None)
