@@ -3835,6 +3835,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     if game_override is not None:
         game_period = game_override
         blend_floor = game_period
+    # #10090: the blend stamp floor alone, without touching the price writes.
+    # With previews at receipt the page no longer waits for a stamp, while the
+    # stamps' reads (~78k rows/min) starve the one loop the receipt worker runs
+    # on (loop cpu 0.98, 2026-10-31). Unset keeps the floor above.
+    floor_override = cadence_override("PM_WS_BLEND_FLOOR_SECONDS")
+    if floor_override is not None:
+        blend_floor = floor_override
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
