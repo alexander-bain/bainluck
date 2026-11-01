@@ -3863,6 +3863,13 @@ class LiveBlendRefresher:
         self._receipt_stats_logged_at = 0.0
         #: Per class, event id -> count since the last stats line (top ids logged).
         self._receipt_class_events: dict[str, dict[int, int]] = {}
+        #: #10090 headline clock: event id -> (recv mono of its oldest headline
+        #: input not yet on screen, how it is waiting). A headline input is a
+        #: received leg of the event's kept graph on the market that speaks.
+        self._hl_pending: dict[int, list] = {}
+        self._hl_samples: list[tuple[float, int, str]] = []
+        self._hl_late = 0
+        self._hl_fallback: dict[str, int] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -5024,6 +5031,7 @@ class LiveBlendRefresher:
             trace,
             None if receipt is None else receipt.published,
             getattr(getattr(self, "receipts", None), "note_preview", None),
+            getattr(self, "_hl_published", None),
         ) if fn is not None]
         if not observers:
             return None
@@ -8669,6 +8677,8 @@ class LiveBlendRefresher:
             self.receipt_preview_stats["not_speaking"] += 1
             self._note_receipt_class("not_speaking", event_id)
             return  # kept for the overlay; not a leg of the market that speaks
+        if event_id not in self._hl_pending:
+            self._hl_pending[event_id] = [getattr(mark, "recv_mono", now), "receipt"]
         self._receipt_due[event_id] = None
         last = self._receipt_last.get(event_id)
         self._wake_receipt(last is None or now - last[0] >= _receipt_interval())
@@ -8728,6 +8738,7 @@ class LiveBlendRefresher:
                     self.receipt_compose_s, interval, _receipt_graph_max_age(),
                     self._receipt_class_summary(),
                 )
+                logger.info("live_blend_refresh[%s]: headline-clock %s", self.source, self._hl_summary())
             due, deferred = [], {}
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
@@ -8753,6 +8764,48 @@ class LiveBlendRefresher:
             wake.clear()
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(wake.wait(), max(0.0, wait))
+
+    def _hl_resolve(self, event_id, how: Optional[str] = None) -> None:
+        """The headline clock stops: the page now shows this event's inputs."""
+        entry = self._hl_pending.pop(event_id, None)
+        if entry is None:
+            return
+        if len(self._hl_samples) < 20000:
+            self._hl_samples.append((max(0.0, _mono() - entry[0]), event_id, how or entry[1]))
+
+    def _hl_mark(self, event_id, how: str) -> None:
+        """A headline input that will wait for the stamp path: say why."""
+        entry = self._hl_pending.get(event_id)
+        if entry is not None and entry[1] == "receipt":
+            entry[1] = how
+            self._hl_fallback[how] = self._hl_fallback.get(how, 0) + 1
+
+    def _hl_published(self, frame, meta, reply) -> None:
+        """Ledger observer: any published frame for an event puts its value on screen."""
+        if reply and reply[0] == "published" and isinstance(frame, dict):
+            event_id = frame.get("event_id")
+            if event_id in self._hl_pending:
+                self._hl_resolve(event_id)
+
+    def _hl_summary(self) -> str:
+        """The minute's headline clock: n, p50/p90/max, worst ids with how, fallbacks, late."""
+        now = _mono()
+        for event_id in [eid for eid, entry in self._hl_pending.items() if now - entry[0] > 60.0]:
+            entry = self._hl_pending.pop(event_id)
+            self._hl_late += 1
+            self._hl_samples.append((now - entry[0], event_id, "late:" + entry[1]))
+        samples, self._hl_samples = self._hl_samples, []
+        late, self._hl_late = self._hl_late, 0
+        fallback, self._hl_fallback = self._hl_fallback, {}
+        if not samples:
+            return "n=0 late=%d" % late
+        ordered = sorted(x[0] for x in samples)
+        pick = lambda q: int(round(ordered[min(len(ordered) - 1, int(q * len(ordered)))] * 1000))
+        worst = sorted(samples, key=lambda x: -x[0])[:5]
+        return "n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d" % (
+            len(samples), pick(0.5), pick(0.9), int(round(ordered[-1] * 1000)),
+            ",".join("%s:%d:%s" % (eid, int(round(lat * 1000)), how) for lat, eid, how in worst),
+            ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late)
 
     def _note_receipt_class(self, kind: str, event_id) -> None:
         """Count one receipt composition outcome against its event (stats line)."""
@@ -8834,11 +8887,13 @@ class LiveBlendRefresher:
         if cached is None:
             stats["no_graph"] += 1
             self._note_receipt_class("no_graph", event_id)
+            self._hl_mark(event_id, "no_graph")
             return None
         read_at, event, group = cached
         if now - read_at > _receipt_graph_max_age():
             stats["old_graph"] += 1
             self._note_receipt_class("old_graph", event_id)
+            self._hl_mark(event_id, "old_graph")
             return None
         route = self.receipt_route
         token = route() if route is not None else 0
@@ -8849,6 +8904,7 @@ class LiveBlendRefresher:
                 or self._current_reading_proof(event_id, group, [], park_refused=False)):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
+            self._hl_mark(event_id, "not_admitted")
             return None
         quotes = self._receipt_quotes
         patched, overlaid, newest = [], set(), None
@@ -8868,6 +8924,7 @@ class LiveBlendRefresher:
                         continue
                     stats["ambiguous"] += 1
                     self._note_receipt_class("ambiguous", event_id)
+                    self._hl_mark(event_id, "ambiguous")
                     return None
                 outcomes.append(SimpleNamespace(**{
                     **vars(row), "current_probability": price,
@@ -8895,6 +8952,7 @@ class LiveBlendRefresher:
         if reading is None or not has_proven_home_orientation(reading):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
+            self._hl_mark(event_id, "not_admitted")
             return None
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
@@ -8910,6 +8968,7 @@ class LiveBlendRefresher:
                for entry in {id(rows[oid][0]): rows[oid][0] for oid in ids}.values()):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
+            self._hl_mark(event_id, "not_admitted")
             return None
         value = round(reading.home_probability, 4)
         basis = observation_basis(contributing)
@@ -8918,6 +8977,7 @@ class LiveBlendRefresher:
                 getattr(event, "win_probability_sources", None), self.source):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
+            self._hl_mark(event_id, "not_admitted")
             return None
         pending = preview.pending_entry(event_id, self.source)
         if self._last_written_value.get(event_id) == value:
@@ -8929,6 +8989,7 @@ class LiveBlendRefresher:
         if shown is not None and shown == self._receipt_blend(event, value, eligibility, basis):
             stats["unchanged"] += 1
             self._note_receipt_class("unchanged", event_id)
+            self._hl_resolve(event_id, "unchanged")
             return None
         return ("propose", event, reading, value, contributing, newest)
 
@@ -8994,6 +9055,7 @@ class LiveBlendRefresher:
             for event_id, plan in plans:
                 entry = preview.pending_entry(event_id, self.source)
                 if plan[0] == "returned":
+                    self._hl_resolve(event_id, "returned")
                     if entry is not None and entry.at_receipt:
                         frames.extend(preview.refused(event_id, self.source, "returned"))
                         stats["returned"] += 1
