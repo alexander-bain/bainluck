@@ -123,9 +123,15 @@ const soccerMatch = soccerMatchApplies(event.sport)
    The exact-score map may scroll sideways INSIDE its card when it is wider (native horizontal
    ScrollView, ExactScoreMapPresentation10868.swift:1167): that is the intended contained case,
    with its axis names outside the scroller and the native "Swipe the map sideways…" cue, never a
-   page scroll. Known constraint: at 375 px with 200% text a 15-letter word set in the scoreboard's
-   36 px bold (e.g. "Mönchengladbach") is wider than the 293 px the page leaves, so it can only wrap
-   inside the word until an owner short name or a scoreboard type choice exists.
+   page scroll. Scoreboard long names: the 8c2ab49c lab's CONSTRUCTED long-names case at 375 px with
+   200% text split "Mönchengladbach" inside the word in both the headline and the scoreboard; after
+   the padding correction (91d79dcb) the headline kept it whole, but the 91d79dcb 375/200 capture
+   still split it in the scoreboard, set at 36 px bold. Correction 4d20d5b4: the scoreboard team
+   names now deliberately use the headline's outcome-label role, `text-base font-semibold`, with
+   normal accessibility scaling (no fit-to-width, clamp or short name). Expectation only, from the
+   earlier capture's arithmetic: the word measures about 265 px in that role against the 293 px the
+   page leaves at 375 px. Visual verification is PENDING until the exact corrected-version
+   (4d20d5b4) 375/393 frames at 200% text are read; this is not yet resolved on a phone.
 
 ## Increment 2 (not built)
 
