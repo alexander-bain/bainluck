@@ -658,6 +658,7 @@ function identityOf(match: HockeyJourneyCatalogueMatch): HockeyJourneyOriginalId
   const side = idsText(row.contributor_outcome_ids, "+") ?? `${row.market_name ?? ""}-${row.outcome_name ?? ""}`;
   return { source, market, side };
 }
+export { identityOf as soccerOriginalIdentity };
 
 /** Web hockey's `absenceWords` (H4 `absenceWords`), restated. */
 function absenceWords(match: HockeyJourneyCatalogueMatch, status: string | null | undefined, nowMs: number): string {
