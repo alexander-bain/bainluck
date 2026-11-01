@@ -1,0 +1,1 @@
+{"status":"ok","db":true,"redis":true,"redis_check":{"error":null,"elapsed_ms":15},"commit":"0f3f3a65","uptime_seconds":4710,"dyno":"web.1","process_id":"ea6bfb0f3db6"}

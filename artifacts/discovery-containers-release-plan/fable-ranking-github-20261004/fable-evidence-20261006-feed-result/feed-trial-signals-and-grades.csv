@@ -1,0 +1,27 @@
+card_id,position,card_type,headline,tag,rows,chars,reading_time_s,impressions,visits,liked,would_share,details_opens,first_seen_order,grade,rows_already_seen_earlier_in_feed
+y02,1,movers,Moves this month,,3,235,72.0,3,3,1,0,0,1,fine,0
+y17,2,board,By the end of 2027,,5,322,58.75,3,3,1,0,0,2,fine,0
+y04,3,movers,Moves this month,Culture and sport,3,252,21.0,2,2,0,0,0,3,fine,1
+y10,4,newfav,____ win control of the US Senate in the 2026 midterm elections,,2,83,5.75,3,3,0,0,0,4,fine,0
+y05,5,movers,Fallers this week,,4,342,22.75,1,1,1,0,0,5,fine,1
+y13,6,swing,"____ has the top-ranked AI language model on December 31, 2026",,2,111,0.0,1,1,1,0,0,6,amazing,0
+y30,7,movers,Moves this week,Tech and business,4,353,39.5,1,1,1,0,0,7,fine,1
+y35,8,board,By the end of 2026,,5,307,24.5,1,1,0,0,1,8,fine,1
+y22,9,checklist,The ____ qualify for the NFL playoffs in the 2026-27 season,,4,125,5.5,2,2,1,0,1,9,amazing,0
+y06,10,movers,Moves since yesterday,Culture and sport,4,313,79.75,2,2,0,0,1,10,fine,0
+y11,11,newfav,"In December 2026, US unemployment is below 5% and annual inflation is ____ 3.5%",,2,92,35.5,3,3,0,0,1,11,no,0
+y14,12,swing,____ wins NFL Comeback Player of the Year for the 2026-27 season,,2,91,8.5,1,1,1,0,0,12,fine,1
+y23,13,checklist,Waymo runs paid driverless rides open to the general public in ____ before 2027,,3,99,12.5,3,3,1,0,0,13,amazing,0
+y18,14,board,By mid-2027,,5,317,9.75,1,1,0,0,0,14,no,0
+y00,15,roundup,Division Series: who is likely to advance,MLB playoffs,4,136,2.5,1,1,1,1,0,15,amazing,0
+y08,16,movers,Moves since yesterday,Tech and business,3,277,25.5,1,1,1,0,0,16,fine,1
+y16,17,peer,____ officially announces an IPO before 2027,,3,67,6.75,1,1,1,0,0,17,amazing,0
+y15,18,swing,____ has the biggest domestic (US and Canada) opening week of any 2026 movie,,2,119,0.0,1,1,1,0,0,18,fine,0
+y01,19,roundup,New division favorites this month,NFL,4,102,9.75,1,1,1,1,0,19,fine,0
+y09,20,movers,Moves since yesterday,Washington,3,301,22.25,1,1,0,0,0,20,no,0
+y12,21,newfav,____ wins Best Actor at the 2027 Oscars,,2,63,7.5,1,1,1,0,0,21,fine,0
+y24,22,checklist,____ is nominated for Best Picture at the 2027 Oscars,,3,105,0.0,1,1,0,0,0,22,amazing,0
+y21,23,deadheat,____ win the 2026 National League title and advance to the World Series,,2,107,9.0,1,1,0,0,0,23,fine,0
+y19,24,board,By the end of November,,5,330,13.0,1,1,0,0,0,24,fine,0
+y26,25,band,A coin flip,,4,352,3.75,1,1,0,0,0,25,fine,1
+y25,26,when,Marijuana is moved from Schedule I to a less restrictive federal drug class,,3,120,11.5,1,1,0,0,0,26,fine,0

@@ -1,0 +1,34 @@
+{
+  "revision": "R4",
+  "supplied_sha256_verified": {
+    "FABLE-NFL-DIVISION-ROUNDUP-DESIGN-20261007-R4.md": "565427a23af9892803057e79f1f88b25eb0b0a1b8a9a79ac459a578ec78927a6",
+    "fable-nfl-division-roundup-design-20261006-r4.tar.gz": "f529a42df995e655515ed9b78931fd87828e38515b4d5912c5c806f9eccb88e8"
+  },
+  "manifest_payload_count": 70,
+  "directory_files_including_manifest": 71,
+  "archive_matches_directory": true,
+  "copied_bytes_unchanged": true,
+  "remaining_png_count": 41,
+  "pngs_with_different_encoding_but_identical_rgba": [
+    "reference-images-r3/r3_all8_light_340.png",
+    "reference-images-r3/r3_all8_light_358.png",
+    "reference-images-r3/r3_all8_light_448.png",
+    "reference-images-r3/r3_mixed_light_340.png",
+    "reference-images-r3/r3_mixed_light_358.png",
+    "reference-images-r3/r3_mixed_light_448.png",
+    "reference-images-r3/r3_old_light_340.png",
+    "reference-images-r3/r3_old_light_358.png",
+    "reference-images-r3/r3_old_light_448.png"
+  ],
+  "other_remaining_pngs_byte_identical": true,
+  "removed_images": [
+    "reference-images-r3/r3_partial_light_340.png",
+    "reference-images-r3/r3_partial_light_358.png",
+    "reference-images-r3/r3_partial_light_448.png",
+    "reference-images-r3/r3_three3_light_340.png",
+    "reference-images-r3/r3_three3_light_358.png",
+    "reference-images-r3/r3_three3_light_448.png"
+  ],
+  "scope": "R4 supersedes R3 as design input; previous revisions untouched. Verification only; no render/build scripts run, no implementation or dispatch.",
+  "diff_check_note": "Git diff --check reports existing blank line at EOF in supplied proto_fn.js:141; original retained unchanged as requested."
+}

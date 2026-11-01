@@ -1,0 +1,7 @@
+contrast tag ink #4B5563 on #F0F0F2: 6.64
+contrast --text-secondary #6B7280 on #F0F0F2: 4.25
+contrast age mark #9CA3AF on #FFFFFF: 2.54
+age case old {'card': '7h ago', 'rows': [None, None, None, None]}
+age case mixed {'card': None, 'rows': [None, None, 'yesterday', None]}
+age case edge {'card': None, 'rows': [None, None, None, None]}
+page bytes 302326 md bytes 13118

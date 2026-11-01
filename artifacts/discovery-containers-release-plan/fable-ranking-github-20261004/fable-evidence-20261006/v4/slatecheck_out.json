@@ -1,0 +1,16 @@
+{"contradictions":[
+{"ids":["t0581","t1377"],"why":"Same event (Trump and Putin meet in person by end of 2026) listed from two sources at 79% and 81%, 2 points apart; both appear together in band x37"},
+{"ids":["t0581","t1375"],"why":"Complements of the same event: 'no Trump-Putin meeting by Dec 31, 2026' at 19% implies 81% for a meeting, but the meeting is shown at 79% (2 points apart; total 98%)"},
+{"ids":["t1064","t1475"],"why":"Mutually exclusive outcomes for the same film: Spider-Man: Brand New Day has the biggest 2026 opening weekend (64%) and the second-biggest (39%) sum to 103%, 3 points over the maximum possible"}
+],
+"duplicates":[
+{"first":"x01","second":"x21","why":"Two movers cards sharing three claims (t1147, t1528, t1195)"},
+{"first":"x01","second":"x22","why":"Two movers cards sharing three claims (t1147, t1528, t1195)"},
+{"first":"x21","second":"x22","why":"Two movers cards sharing three claims (t1147, t1528, t1195)"},
+{"first":"x06","second":"x28","why":"Newfav and swing card on the same question (biggest 2026 opening weekend), identical claims t1064 and t1065"},
+{"first":"x24","second":"x27","why":"Newfav and swing card on the same question (2026 American League champion), identical claims t0851 and t0849"}
+],
+"misleading":[
+{"jid":"x32","why":"Trading card is a near-repeat of x30: both pair a Tesla-SpaceX merger announcement (t1193 by Dec 2027 here, t1195 by Jun 2027 there) against the same claim t0971 (Republicans win the Senate), so the reader sees the same swap story twice with different numbers"},
+{"jid":"x04","why":"Shows Spider-Man: Brand New Day at 51% for biggest opening WEEK (t1298, also in band x20 as 'a coin flip') while x06/x28 show the same film at 64% for biggest opening WEEKEND (t1064); near-identical sentences with a 13-point gap read as inconsistent"}
+]}
