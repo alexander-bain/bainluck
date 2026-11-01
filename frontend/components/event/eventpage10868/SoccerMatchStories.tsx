@@ -59,6 +59,18 @@
  * event and phase): a refresh in that scope keeps them; a new event or phase
  * starts a new reading. No timer, no subscription, no key on the payload.
  *
+ * FULL-SIZE READER ("Open full card": native StoryStream's per-card entry and
+ * the host's reader sheet): the shown card opens by its exact id in
+ * `SoccerMatchReader`, drawn by the same `CardBody` with the same held choices,
+ * so a choice made there is the page's choice too. The id resolves exactly
+ * once on every render against the live cards (nothing is copied): a reorder
+ * keeps the card; a withdrawn or duplicated id says the story is unavailable
+ * and shows no other card. The reader's own Previous / Next move only the
+ * reader, by name and place, in the offered order with wrap; the page's shown
+ * story never moves, and the page stream's controls rest while any reader of
+ * the page is open. The open reader belongs to the reading scope: a new event
+ * or phase closes it with everything else.
+ *
  * Card-level Details is not in this increment: every original's exact Details
  * is in All props.
  */
@@ -67,6 +79,7 @@ import { useId, useRef, useState, type ReactNode } from "react";
 import { propVerdictLabel } from "@/lib/propGrade";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { useFrameMeasure, useIsomorphicLayoutEffect } from "./useFrameMeasure";
+import SoccerMatchReader, { SOCCER_READER_WORDS, soccerReaderEntry } from "./SoccerMatchReader";
 import type {
   SoccerBothCard,
   SoccerCurrent,
@@ -1398,26 +1411,46 @@ function CardBody({ card, held, hold, colors }: { card: SoccerStoryCard; held: H
   }
 }
 
-/** The reader's place in one reading scope: the story they moved to and their held choices. */
+/** The reader's place in one reading scope: the story they moved to, their held choices and the card open full size. */
 interface SoccerReading {
   scope: string;
   shownId: string | null;
   held: Held;
+  /** The exact card id open in the full-size reader; null when it is closed. Never moves `shownId`. */
+  readerId: string | null;
 }
 
-const freshReading = (scope: string): SoccerReading => ({ scope, shownId: null, held: {} });
+const freshReading = (scope: string): SoccerReading => ({ scope, shownId: null, held: {}, readerId: null });
 
-export default function SoccerMatchStories({ stream, colors = DEFAULT_COLORS }: { stream: SoccerStoryStream; colors?: SoccerStoryColors }) {
+const STREAM_CONTROL =
+  "min-h-11 rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand";
+
+export default function SoccerMatchStories({
+  stream,
+  colors = DEFAULT_COLORS,
+  readerContext = null,
+  readerBlocked = false,
+  onReaderOpenChange,
+}: {
+  stream: SoccerStoryStream;
+  colors?: SoccerStoryColors;
+  /** The compact match context the reader shows above its card (the page's compact names, score and state). */
+  readerContext?: ReactNode;
+  /** Another reader of this page is open: this stream offers no entry and its controls rest. */
+  readerBlocked?: boolean;
+  /** Told when this stream's reader opens or a reader action closes it. A new scope closes it silently: the page applies the same rule. */
+  onReaderOpenChange?: (open: boolean) => void;
+}) {
   const headingId = useId();
   const [stored, setStored] = useState<SoccerReading>(() => freshReading(stream.scope));
-  // A new event or phase is a new reading: nothing of the old scope's story or
-  // choices survives (native stream scope, "soccer:<event id>:<phase>"). A
-  // refresh in the same scope keeps every held id, available or not. Adjusted
-  // while rendering, so no frame shows the old scope's choices; no effect,
-  // timer or key.
+  // A new event or phase is a new reading: nothing of the old scope's story,
+  // choices or open reader survives (native stream scope,
+  // "soccer:<event id>:<phase>"). A refresh in the same scope keeps every held
+  // id, available or not. Adjusted while rendering, so no frame shows the old
+  // scope's choices; no effect, timer or key.
   if (stored.scope !== stream.scope) setStored(freshReading(stream.scope));
   const reading = stored.scope === stream.scope ? stored : freshReading(stream.scope);
-  const { shownId, held } = reading;
+  const { shownId, held, readerId } = reading;
   const write = (change: (current: SoccerReading) => SoccerReading) =>
     setStored((prev) => change(prev.scope === stream.scope ? prev : freshReading(stream.scope)));
   const setShownId = (id: string) => write((current) => ({ ...current, shownId: id }));
@@ -1430,8 +1463,43 @@ export default function SoccerMatchStories({ stream, colors = DEFAULT_COLORS }: 
   const next = count > 1 ? cards[(index + 1) % count] : null;
   const hold: Hold = (key, value) => write((current) => ({ ...current, held: { ...current.held, [key]: value } }));
 
+  // ─── The full-size reader ─────────────────────────────────────────────
+  const readerOpen = readerId !== null;
+  // While any reader of the page is open, the page stream rests (native StoryStream L178).
+  const resting = readerOpen || readerBlocked;
+  const section = useRef<HTMLElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  const openedIn = useRef<string | null>(null);
+  const scopeNow = useRef(stream.scope);
+  useIsomorphicLayoutEffect(() => {
+    scopeNow.current = stream.scope;
+  });
+  const openReader = (id: string) => {
+    if (resting) return;
+    openedIn.current = stream.scope;
+    write((current) => ({ ...current, readerId: id }));
+    onReaderOpenChange?.(true);
+  };
+  const moveReader = (id: string) => write((current) => ({ ...current, readerId: id }));
+  const closeReader = () => {
+    write((current) => ({ ...current, readerId: null }));
+    onReaderOpenChange?.(false);
+  };
+  // Back to the opener only in the scope it opened in; else this match's surviving entry.
+  const readerReturn = () => {
+    const own = opener.current;
+    if (openedIn.current === scopeNow.current && own?.isConnected && !own.disabled) return own;
+    return soccerReaderEntry(section.current, "story");
+  };
+  // Exact id, exactly once, against this render's cards: never another card, never a copy.
+  const readerSelection = selectExactlyOnce(cards, readerId);
+  const readerCard = chosenRow(readerSelection);
+  const readerIndex = readerCard ? cards.indexOf(readerCard) : -1;
+  const readerPrevious = readerCard && count > 1 ? cards[(readerIndex + count - 1) % count] : null;
+  const readerNext = readerCard && count > 1 ? cards[(readerIndex + 1) % count] : null;
+
   return (
-    <section aria-labelledby={headingId} aria-roledescription="story stream" className="space-y-3" data-soccer-stories={count}>
+    <section ref={section} aria-labelledby={headingId} aria-roledescription="story stream" className="space-y-3" data-soccer-stories={count}>
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 id={headingId} className="text-base font-semibold">
           {stream.heading}
@@ -1454,25 +1522,56 @@ export default function SoccerMatchStories({ stream, colors = DEFAULT_COLORS }: 
         <p className="rounded-lg bg-surface-deep p-3 text-sm text-text-secondary">{stream.emptyWords}</p>
       )}
 
+      {card && (
+        <button
+          ref={opener}
+          type="button"
+          disabled={resting}
+          aria-label={`${SOCCER_READER_WORDS.openCard}: ${card.name}`}
+          onClick={() => openReader(card.id)}
+          data-soccer-reader-entry="story"
+          className={`${STREAM_CONTROL} w-full sm:w-auto`}
+        >
+          {SOCCER_READER_WORDS.openCard}
+        </button>
+      )}
+
       {previous && next && (
         <nav aria-label={stream.storiesLabel} className="flex flex-wrap justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setShownId(previous.id)}
-            className="min-h-11 rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
-          >
+          <button type="button" disabled={resting} onClick={() => setShownId(previous.id)} className={STREAM_CONTROL}>
             {PREVIOUS}
             <span className="font-normal text-text-secondary">{` · ${previous.name}`}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => setShownId(next.id)}
-            className="min-h-11 rounded-md border border-surface-border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
-          >
+          <button type="button" disabled={resting} onClick={() => setShownId(next.id)} className={STREAM_CONTROL}>
             {NEXT}
             <span className="font-normal text-text-secondary">{` · ${next.name}`}</span>
           </button>
         </nav>
+      )}
+
+      {readerOpen && (
+        <SoccerMatchReader
+          kind="story"
+          title={readerCard ? readerCard.name : stream.heading}
+          position={readerCard && count > 1 ? `${readerIndex + 1} of ${count}` : null}
+          context={readerContext}
+          previous={readerPrevious && { name: readerPrevious.name, go: () => moveReader(readerPrevious.id) }}
+          next={readerNext && { name: readerNext.name, go: () => moveReader(readerNext.id) }}
+          navLabel={stream.storiesLabel}
+          onClose={closeReader}
+          returnTo={readerReturn}
+        >
+          {readerCard ? (
+            <CardBody card={readerCard} held={held} hold={hold} colors={colors} />
+          ) : (
+            <p
+              className="rounded-md bg-surface-deep p-2 text-sm font-semibold text-text-primary"
+              data-soccer-reader-unavailable={readerSelection.kind === "unavailable" ? readerSelection.reason : "missing"}
+            >
+              {SOCCER_READER_WORDS.storyUnavailable}
+            </p>
+          )}
+        </SoccerMatchReader>
       )}
     </section>
   );

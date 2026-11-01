@@ -16,8 +16,12 @@
  * The plot, axis placement and Details disclosure follow the hockey chart
  * (`HockeyJourneyHistoryChart.tsx`), importing its measured axis-label rules.
  * No animation and no timer: the only effect measures the plot's width so
- * lines, marks and labels are drawn at real pixels. No Full chart or Inspect
- * control: neither has a destination on web yet.
+ * lines, marks and labels are drawn at real pixels. No Inspect control: it has
+ * no destination on web yet. Full chart is the page's entry (SoccerMatchPage):
+ * it shows this same chart in the reader with `layout="expanded"`, which
+ * changes only the plot's height (native `.expanded`, no expand control
+ * inside); every source, series, gap, scale, time label, key and absence is
+ * the inline chart's.
  */
 
 import { useId, useRef, useState } from "react";
@@ -26,7 +30,9 @@ import type { SoccerHistoryAbsentEntry, SoccerMatchHistory } from "@/lib/eventPa
 import { axisLabelSubset, estimateLabelWidth, guideLabelPlacement } from "./HockeyJourneyHistoryChart";
 import { DEFAULT_ROOT_FONT_PX, useFrameMeasure, useIsomorphicLayoutEffect } from "./useFrameMeasure";
 
-const PLOT_HEIGHT = 230;
+/** The plot's height per layout: inline on the page, expanded in the full-size reader. Nothing else differs. */
+const PLOT_HEIGHTS = { inline: 230, expanded: 360 } as const;
+export type SoccerHistoryLayout = keyof typeof PLOT_HEIGHTS;
 const AXIS_FONT_PX = 12;
 const LABEL_GAP_PX = 6;
 
@@ -88,10 +94,13 @@ function AbsentKey({ entry, shape, color }: { entry: SoccerHistoryAbsentEntry; s
 export default function SoccerMatchHistoryChart({
   history,
   colors,
+  layout = "inline",
 }: {
   history: SoccerMatchHistory;
   colors: SoccerMatchLineColors;
+  layout?: SoccerHistoryLayout;
 }) {
+  const plotHeight = PLOT_HEIGHTS[layout];
   const frame = useRef<HTMLDivElement>(null);
   const { width, rootFontPx } = useFrameMeasure(frame, 600);
   const titleId = useId();
@@ -114,7 +123,7 @@ export default function SoccerMatchHistoryChart({
   const home = history.home;
   const domain = history.domain;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 40);
-  const plotH = PLOT_HEIGHT - MARGIN.top - MARGIN.bottom;
+  const plotH = plotHeight - MARGIN.top - MARGIN.bottom;
   const x = (t: number) =>
     domain && domain.upper > domain.lower
       ? MARGIN.left + ((t - domain.lower) / (domain.upper - domain.lower)) * plotW
@@ -144,8 +153,8 @@ export default function SoccerMatchHistoryChart({
     Math.max(LABEL_GAP_PX, fontPx),
   );
   const laneCount = placements.reduce((n, label) => Math.max(n, label.lane + 1), 0);
-  const labelBandTop = PLOT_HEIGHT + guideBand - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
-  const svgHeight = Math.max(PLOT_HEIGHT + guideBand + 26, labelBandTop + laneCount * laneHeight + 4);
+  const labelBandTop = plotHeight + guideBand - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
+  const svgHeight = Math.max(plotHeight + guideBand + 26, labelBandTop + laneCount * laneHeight + 4);
 
   const labelSignature = `${fontPx}|${history.xTicks.map((tick) => tick.label).join("\u0001")}|${placements
     .map((label) => label.index)
@@ -188,7 +197,7 @@ export default function SoccerMatchHistoryChart({
         {history.absence || !domain ? (
           <div
             className="flex flex-col items-center justify-center rounded-lg bg-surface-deep p-4 text-center"
-            style={{ minHeight: PLOT_HEIGHT }}
+            style={{ minHeight: plotHeight }}
           >
             <p className="text-base font-semibold">{history.absence?.title}</p>
             {history.absence?.words && <p className="mt-1 text-sm text-text-secondary">{history.absence.words}</p>}
