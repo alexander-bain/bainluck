@@ -371,18 +371,21 @@ RECEIPT_PREVIEW_INTERVAL_ENV = "PREVIEW_AT_RECEIPT_INTERVAL_S"
 #: preview. A TRUTH window like `PREVIEW_GRAPH_MAX_AGE_S`: wider because a
 #: held game's next stamp read is 13-21 s away under load (2026-10-31), and a
 #: graph that old is exactly the case this exists for. Review before raising.
-RECEIPT_GRAPH_MAX_AGE_S = 60.0
-#: Speed may set the graph age (seconds, 3-60) without a code change; anything
-#: else keeps `RECEIPT_GRAPH_MAX_AGE_S`. 60 = the preview's own lifetime: the
-#: graph is the stamp read the page already shows, so a receipt on it is never
-#: older than the screen (2026-10-31: 15 s dropped ~28% of PM live compositions
-#: to the stamp path exactly when stamps queued).
+RECEIPT_GRAPH_MAX_AGE_S = 300.0
+#: Speed may set the graph age (seconds, 3-900) without a code change; anything
+#: else keeps `RECEIPT_GRAPH_MAX_AGE_S`. The graph is the stamp read the page
+#: already shows, so a receipt on it is never older than the screen, and the
+#: proposal carries the graph's `preview_rev`: any write to the event since (a
+#: stamp of the other venue included) makes the ledger refuse it as stale. A
+#: quiet market's graph is only as old as its last stamp (2026-10-31: 15 s
+#: dropped ~28% of PM live compositions to the stamp path; at 60 s quiet Kalshi
+#: games still fell back for ~5 s).
 RECEIPT_GRAPH_MAX_AGE_ENV = "PREVIEW_AT_RECEIPT_GRAPH_MAX_AGE_S"
 #: The receipt worker logs its cumulative `receipt_preview_stats` at most this often.
 RECEIPT_STATS_LOG_INTERVAL_S = 60.0
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
-RECEIPT_QUOTE_RETENTION_S = 60.0
+RECEIPT_QUOTE_RETENTION_S = 300.0
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -568,12 +571,12 @@ def _preview_from_commit(event_id) -> bool:
 
 
 def _receipt_graph_max_age() -> float:
-    """`RECEIPT_GRAPH_MAX_AGE_ENV` when set to 3-60, else the default."""
+    """`RECEIPT_GRAPH_MAX_AGE_ENV` when set to 3-900, else the default."""
     try:
         value = float(os.environ[RECEIPT_GRAPH_MAX_AGE_ENV])
     except (KeyError, ValueError):
         return RECEIPT_GRAPH_MAX_AGE_S
-    return value if 3.0 <= value <= 60.0 else RECEIPT_GRAPH_MAX_AGE_S
+    return value if 3.0 <= value <= 900.0 else RECEIPT_GRAPH_MAX_AGE_S
 
 
 def _receipt_interval() -> float:
