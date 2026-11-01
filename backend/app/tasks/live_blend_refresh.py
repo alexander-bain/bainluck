@@ -8803,10 +8803,17 @@ class LiveBlendRefresher:
 
     def _hl_published(self, frame, meta, reply) -> None:
         """Ledger observer: any published frame for an event puts its value on screen."""
-        if reply and reply[0] == "published" and isinstance(frame, dict):
-            event_id = frame.get("event_id")
-            if event_id in self._hl_pending:
-                self._hl_resolve(event_id)
+        if not reply or not isinstance(frame, dict):
+            return
+        event_id = frame.get("event_id")
+        if event_id not in self._hl_pending:
+            return
+        if reply[0] == "published":
+            self._hl_resolve(event_id)
+        else:
+            # The ledger refused this send (stale/terminal/contributor/fenced...):
+            # the input is not on screen yet; name why it keeps waiting.
+            self._hl_mark(event_id, "ledger_%s" % str(reply[0])[:20])
 
     def _hl_summary(self) -> str:
         """The minute's headline clock: n, p50/p90/max, worst ids with how, fallbacks, late."""
