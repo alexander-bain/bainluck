@@ -102,7 +102,7 @@ def rig(
             SimpleNamespace(id=oid, market_id=oid, last_updated=1) for oid in selected
         ]
 
-    async def write(chunk, *, final=False, start_market_publish=None):
+    async def write(chunk, *, final=False, start_market_publish=None, marks=None):
         trace.append(("write", list(chunk)))
         if 900 in chunk:
             entered.set()

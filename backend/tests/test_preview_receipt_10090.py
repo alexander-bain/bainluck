@@ -230,8 +230,13 @@ def test_the_refresher_charges_committed_marks_to_published_blends(caplog, clock
     receipts = TailReceipts("kalshi")
     r._observe_committed(receipts, {42: mark(42, clock.mono)}, clock.wall, set(), clock.mono)
     clock.advance(0.25)
+    # 91a4099a: `_hl_published` is always a fourth observer, so the observer is
+    # always a composite; a raising sibling must not cost the receipt its charge
+    # (live's behavioral form, 87515fd9 review).
+    def boom(*a): raise RuntimeError("x")
+    monkeypatch.setattr(r, "_hl_published", boom)
     observe = r._preview_observer()
-    assert observe == r.preview_receipt.published  # no trace: the receipt alone
+    assert observe is not None and observe != r.preview_receipt.published
     observe(blend(42), None, ("published",))
     r.preview_stats["published"] += 1
     registry.refusal_counts[("kalshi", "bucket_full")] = 5

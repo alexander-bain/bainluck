@@ -681,7 +681,7 @@ async def test_repeated_cancellation_of_a_catalog_handover_keeps_the_bridged_sta
 
 
 def _recovered(p, overlap, x):
-    async def write(chunk, *, final=False, start_market_publish=None):
+    async def write(chunk, *, final=False, start_market_publish=None, marks=None):
         before = _stamp_sessions(x, 2)
         p.trace.append(("write", list(chunk)))
         await asyncio.sleep(0.01)
@@ -715,7 +715,7 @@ def _writer_deps(write, published=None):
 async def test_writer_cancelled_before_commit_keeps_prices_and_owes_nothing():
     entered = asyncio.Event()
 
-    async def write(chunk, *, start_market_publish=None):
+    async def write(chunk, *, start_market_publish=None, marks=None):
         entered.set()
         await asyncio.Event().wait()
 
@@ -739,7 +739,7 @@ async def test_committed_cohort_is_owed_before_its_market_notification_returns()
     held; the sender is still joined before the event is released."""
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def write(chunk, *, start_market_publish):
+    async def write(chunk, *, start_market_publish, marks=None):
         start_market_publish(object())
         return pm._PMPriceWriteResult(chunk)
 
@@ -767,7 +767,7 @@ async def test_writer_cancelled_after_commit_still_owes_the_whole_chunk():
     committed, hold = asyncio.Event(), asyncio.Event()
     published = []
 
-    async def write(chunk, *, start_market_publish=None):
+    async def write(chunk, *, start_market_publish=None, marks=None):
         start_market_publish("session")
         committed.set()
         await hold.wait()  # buffer cleanup interrupted
@@ -789,7 +789,7 @@ async def test_writer_cancelled_after_commit_still_owes_the_whole_chunk():
 async def test_writer_owes_only_returned_rows_and_holds_after_a_failure():
     calls = []
 
-    async def write(chunk, *, start_market_publish=None):
+    async def write(chunk, *, start_market_publish=None, marks=None):
         calls.append(dict(chunk))
         if len(calls) == 2:
             return False
@@ -812,7 +812,7 @@ async def test_writer_owes_only_returned_rows_and_holds_after_a_failure():
 
 
 async def test_writer_cancelled_before_its_first_turn_releases_queued_cohorts():
-    async def write(chunk, *, start_market_publish=None):
+    async def write(chunk, *, start_market_publish=None, marks=None):
         raise AssertionError("never reached")
 
     w = pm._PMBridgeWriter(asyncio.Event())
@@ -841,7 +841,7 @@ async def test_catalog_handover_waits_for_the_writer_and_keeps_its_stamp_as_debt
     boundary.stamps = pm._PMStampOwner(Refresher())
     hold = asyncio.Event()
 
-    async def write(chunk, *, start_market_publish=None):
+    async def write(chunk, *, start_market_publish=None, marks=None):
         await hold.wait()
         start_market_publish("session")
         return pm._PMPriceWriteResult(list(chunk))
@@ -1023,7 +1023,7 @@ async def test_postcommit_cancellation_owes_the_stamp_before_a_held_notification
     committed, notifying = asyncio.Event(), asyncio.Event()
     release_notification, finish_cleanup = asyncio.Event(), asyncio.Event()
 
-    async def write(chunk, *, start_market_publish):
+    async def write(chunk, *, start_market_publish, marks=None):
         start_market_publish(object())
         committed.set()
         await finish_cleanup.wait()

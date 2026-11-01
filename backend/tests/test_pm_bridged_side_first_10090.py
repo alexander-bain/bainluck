@@ -41,7 +41,7 @@ async def _hold(side_writer, name, order, entered, release):
 
 
 def _offer_bridged(boundary, order, buffer, *, write_seconds=0.0):
-    async def write(chunk, *, start_market_publish=None):
+    async def write(chunk, *, start_market_publish=None, marks=None):
         order.append("bridged")
         if write_seconds:
             await asyncio.sleep(write_seconds)

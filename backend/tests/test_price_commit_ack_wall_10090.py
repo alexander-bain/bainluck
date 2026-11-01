@@ -345,7 +345,7 @@ def _pm_game_flush(*, skipped=(), during_write=None):
         async def refresh_pending(self, **kwargs):
             pass
 
-        def note_committed_rows(self, rows):
+        def note_committed_rows(self, rows, marks=None):
             r.trace.append(("noted", None))
 
     def note_commit_ack(marks, wall):
@@ -430,7 +430,7 @@ class TestPolymarketBridgedWriter:
         buffer = {700: 0.4, 701: 0.6}
         input_marks = {700: "mark-700", 701: "mark-701"}
 
-        async def write(chunk, *, start_market_publish=None):
+        async def write(chunk, *, start_market_publish=None, marks=None):
             if newer_during_write:
                 input_marks[700] = "newer-700"
             if start_market_publish is not None:

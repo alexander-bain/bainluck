@@ -81,8 +81,22 @@ def test_it_logs_its_receipt(monkeypatch, caplog):
     monkeypatch.delenv(GC_FREEZE_ENV, raising=False)
     with caplog.at_level(logging.INFO, logger=ws_gc.__name__):
         refreeze_long_lived("polymarket")
-    assert re.search(r"worker-ws gc freeze: arm=polymarket frozen=\d+ collected=\d+ took=\d+ms",
+    assert re.search(r"worker-ws gc freeze: arm=polymarket full=1 frozen=\d+ collected=\d+ took=\d+ms",
                      caplog.text)
+
+
+def test_a_handover_refreeze_pays_no_full_collection(monkeypatch, caplog):
+    """#10090 11/01: a catalog handover's refreeze collects only the young
+    generations: the full collection froze the loop ~200-250 ms every handover."""
+    monkeypatch.delenv(GC_FREEZE_ENV, raising=False)
+    calls = []
+    real_collect, real_unfreeze = gc.collect, gc.unfreeze
+    monkeypatch.setattr(gc, "collect", lambda *a: calls.append(("collect",) + a) or real_collect(*a))
+    monkeypatch.setattr(gc, "unfreeze", lambda: calls.append(("unfreeze",)) or real_unfreeze())
+    with caplog.at_level(logging.INFO, logger=ws_gc.__name__):
+        assert refreeze_long_lived("polymarket", full=False) is not None
+    assert calls == [("collect", 1)]
+    assert re.search(r"worker-ws gc freeze: arm=polymarket full=0 frozen=\d+", caplog.text)
 
 
 def test_a_failing_collector_never_raises_into_the_consumer(monkeypatch, caplog):
@@ -100,7 +114,7 @@ def test_a_failing_collector_never_raises_into_the_consumer(monkeypatch, caplog)
 def test_the_consumer_refreezes_at_both_catalog_installations_before_its_trim():
     source = (BACKEND / "app" / "tasks" / "polymarket_ws.py").read_text()
     handover = source.index('release_free_heap("polymarket")')
-    assert source.rfind('refreeze_long_lived("polymarket")', 0, handover) > source.rfind(
+    assert source.rfind('refreeze_long_lived("polymarket", full=False)', 0, handover) > source.rfind(
         "await refresh_catalog(", 0, handover
     ), "every handover refreezes after installing the catalog, before the trim"
     initial = source.index('_PMCatalogHandoverTiming("initial"')
@@ -108,5 +122,9 @@ def test_the_consumer_refreezes_at_both_catalog_installations_before_its_trim():
     assert 'refreeze("polymarket")' in source[initial:nxt], (
         "the initial catalog is frozen when it is installed"
     )
-    # Only the Polymarket consumer: the Kalshi process runs 2-5 full collections.
-    assert "refreeze_long_lived" not in (BACKEND / "app" / "tasks" / "kalshi_ws.py").read_text()
+    # #10090 11/01: the Kalshi process freezes too (slate + ~74k open contracts):
+    # once fully after its open admission, then without a full collection after
+    # each scope change it applies.
+    kalshi = (BACKEND / "app" / "tasks" / "kalshi_ws.py").read_text()
+    assert 'refreeze_long_lived("kalshi")' in kalshi
+    assert 'refreeze_long_lived("kalshi", full=False)' in kalshi

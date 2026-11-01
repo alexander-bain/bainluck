@@ -183,7 +183,7 @@ async def test_switch_off_a_live_bridged_cohort_goes_ahead_of_a_waiting_side_loo
 
 
 def _offer(boundary, order, buffer, ids, events, *, live=False, also=None):
-    async def write(chunk, *, start_market_publish=None):
+    async def write(chunk, *, start_market_publish=None, marks=None):
         order.append(sorted(chunk))
         if also is not None:
             also(chunk)

@@ -100,7 +100,7 @@ async def test_the_bridged_writer_hands_back_only_the_events_that_committed():
     async def publish(session):
         published.append(session)
 
-    async def write(chunk, *, start_market_publish):
+    async def write(chunk, *, start_market_publish, marks=None):
         assert set(chunk) == {2, 3}
         start_market_publish("session")  # straight after COMMIT
         return pm._PMPriceWriteResult((3,), skipped_ids={2}, skipped_events={20})

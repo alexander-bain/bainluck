@@ -260,10 +260,15 @@ MUTATORS = {"update", "clear", "pop", "popitem", "setdefault", "add", "discard",
 
 def test_every_catalog_map_write_in_the_consumer_is_followed_by_a_rebuild():
     """Exactness rests on this: the three maps change only where a rebuild
-    follows before any await. A new writer elsewhere reddens this test."""
+    follows before any await. A new writer elsewhere reddens this test.
+
+    #10090 11/01: a handover's install may instead `invalidate()` the scans
+    before any await (they answer by the exact walk meanwhile), then
+    `rebuild_cooperatively` once the maps settle: the synchronous rebuild froze
+    the loop at every 10-minute handover."""
     src = inspect.getsource(pm._run_polymarket_ws_consumer)
     tree = ast.parse(src)
-    writes, rebuilds, awaits = [], [], []
+    writes, rebuilds, awaits, cooperative = [], [], [], []
     for node in ast.walk(tree):
         if isinstance(node, ast.Await):
             awaits.append(node.lineno)
@@ -271,8 +276,12 @@ def test_every_catalog_map_write_in_the_consumer_is_followed_by_a_rebuild():
             awaits.append(node.lineno)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             target = node.func.value
-            if node.func.attr == "rebuild" and ast.unparse(target) == "catalog_boundary.scans":
+            if node.func.attr in ("rebuild", "invalidate") \
+                    and ast.unparse(target) == "catalog_boundary.scans":
                 rebuilds.append(node.lineno)
+            if node.func.attr == "rebuild_cooperatively" \
+                    and ast.unparse(target) == "catalog_boundary.scans":
+                cooperative.append(node.lineno)
             if node.func.attr in MUTATORS and isinstance(target, ast.Name) \
                     and target.id in CATALOG_MAPS:
                 writes.append(node.lineno)
@@ -291,6 +300,8 @@ def test_every_catalog_map_write_in_the_consumer_is_followed_by_a_rebuild():
                 writes.append(node.lineno)
     assert writes, "the guard must see the catalog install's writes"
     assert len(rebuilds) >= 2, "one rebuild at start, one at each install"
+    assert cooperative and max(cooperative) > max(rebuilds), (
+        "an install that only invalidated rebuilds the scans after it")
     for line in writes:
         after = [r for r in rebuilds if r > line]
         assert after, f"line {line}: a catalog map write with no rebuild after it"

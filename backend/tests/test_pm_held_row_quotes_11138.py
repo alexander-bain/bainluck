@@ -619,7 +619,7 @@ def _deferred_flush(stored_at_or_after, *, prior=None, batch=None):
     r.ns["blend_refresher"].held_quotes = held
     held.stored_at_or_after = functools.partial(stored_at_or_after, r)
 
-    async def deferred(chunk, *, final=False, start_market_publish=None):
+    async def deferred(chunk, *, final=False, start_market_publish=None, marks=None):
         r.trace.append(("write", list(chunk)))
         return None
 

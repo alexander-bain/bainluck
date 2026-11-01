@@ -104,6 +104,11 @@ _CLOCK_VALUES = frozenset({
     # #11138: `HeldRowQuotes.overlay` dates a held quote by its frozen DB-clock
     # sample (`clock_timestamp()`, the same domain as `now()`), beside the price.
     "datetime.fromtimestamp(bound, timezone.utc)",
+    # #10090: the receipt overlay's in-memory row (`_receipt_preview_plan`,
+    # never written) is dated by the quote's frozen DB-clock bound, or 1 us
+    # past the stored row this process wrote from an older input (own write):
+    # both the database clock.
+    "datetime.fromtimestamp(at, timezone.utc)",
 })
 
 #: Values that hand the stored stamp back out — serialisers, not writes. Matched

@@ -46,7 +46,7 @@ def consumer_rig(monkeypatch):
                     market_by_outcome={101: 10, 102: 10, 900: 90},
                     observation_continuity={}, routing_generation=0, game_period=.01)
 
-    async def write(chunk, *, final=False, start_market_publish=None):
+    async def write(chunk, *, final=False, start_market_publish=None, marks=None):
         if 900 in chunk:
             entered.set()
             await release.wait()

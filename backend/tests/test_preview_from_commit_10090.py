@@ -232,10 +232,6 @@ def _skip_cases():
         # The committed rows say this is no moving live price.
         "settled_row": dict(row=dict(resolution_source="polymarket")),
         "winner_row": dict(row=dict(is_winner=True)),
-        "order_flip": dict(row=dict(price="0.560000")),
-        # The order holds, but the cached ranks are not the field's: the write's
-        # re-rank (`rerank_market_fields_stmt`) rewrote them in its transaction.
-        "stale_ranks": dict(legs=dict(ranks=(1, 1))),
         # The re-read path's own gates, not only the cache's.
         "held_quote": dict(held={AWAY_LEG}),
         "lock_retry": dict(lock_retry=True),
@@ -254,6 +250,28 @@ def _skip_cases():
         "unproven_orientation": dict(unproven=True),
         "current_book_proof": dict(proof=True),
     }
+
+
+# e3490dcd: a committed re-rank patches the graph's ranks to `_field_ranks` (what
+# `rerank_market_fields_stmt` stores in the write's transaction) instead of
+# dropping the graph. live's positive guard (87515fd9 review): both cases red with
+# e3490dcd reverted.
+@pytest.mark.parametrize("legs_kw,price,want_ranks,want", [
+    ({}, "0.560000", [1, 2], 0.56),                 # order_flip: the favourite flips
+    ({"ranks": (1, 1)}, "0.480000", [2, 1], 0.48),  # stale_ranks: cached ranks not the field's
+])
+async def test_a_committed_rerank_patches_the_graphs_ranks_and_composes(r, monkeypatch, legs_kw, price, want_ranks, want):
+    clock = [100.0]
+    monkeypatch.setattr(module, "_mono", lambda: clock[0])
+    group = legs(**legs_kw)
+    before = [(row.id, row.rank, row.current_probability) for e in group for row in e.outcomes]
+    read(r, event(), group)
+    r.note_committed_rows([returned(price=price)])
+    kept = r._preview_graphs[EV][2]
+    assert [row.rank for e in kept for row in e.outcomes] == want_ranks  # = rerank_market_fields_stmt
+    assert [(row.id, row.rank, row.current_probability) for e in group for row in e.outcomes] == before
+    await drained(r)
+    assert [op["value"] for op in proposals(r.sent)] == [want]
 
 
 @pytest.mark.parametrize("case", sorted(_skip_cases()))
@@ -592,7 +610,7 @@ def _pm_writer(*, fail_commit=False):
         async def refresh_pending(self, **kwargs):
             pass
 
-        def note_committed_rows(self, rows):
+        def note_committed_rows(self, rows, marks=None):
             r.trace.append(("noted", [(row.id, row.current_probability) for row in rows]))
 
     r.ns.update(
@@ -642,7 +660,7 @@ async def test_the_kalshi_writer_hands_over_its_returned_rows_only_once_committe
     r.release.set()
     stamp_gate, _calls = held_refresher(r, hold_ids=())
     noted = []
-    r.ns["blend_refresher"].note_committed_rows = lambda rows: noted.append(
+    r.ns["blend_refresher"].note_committed_rows = lambda rows, marks=None: noted.append(
         sorted(row.id for row in rows))
     real_phase = r.ns["prices"].phase
 
