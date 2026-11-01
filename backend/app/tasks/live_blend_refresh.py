@@ -3992,6 +3992,8 @@ class LiveBlendRefresher:
         self._event_commence: dict[int, float] = {}
         #: `receipt ambiguous` attribution lines left this minute.
         self._ambiguous_logged = 0
+        #: `na_proof` attribution lines used this minute.
+        self._na_proof_logged = 0
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -8113,6 +8115,47 @@ class LiveBlendRefresher:
 
     # ── #10090: provisional preview (off by default; canary events only) ──
 
+    def _log_na_proof(self, event_id, patched, overlaid) -> None:
+        """#10090: one line per refused Challenger composition (bounded per
+        minute): each leg's price, whether it is this receipt's input, and the
+        book / socket primary input / custody it was proved against. Never raises."""
+        try:
+            def short(entry):
+                if entry is None:
+                    return "-"
+                try:
+                    return "%s@%04x" % (entry[1], hash(entry[0]) & 0xFFFF)
+                except Exception:
+                    return repr(entry)[:40]
+            legs = []
+            reader = getattr(self, "current_book_signature", None)
+            for entry in patched:
+                ticker = (getattr(entry.market, "external_id", None) or "").upper()
+                if not ticker.startswith("KXATPCHALLENGERMATCH-"):
+                    continue
+                for row in entry.outcomes:
+                    tk = getattr(row, "external_id", None) or ""
+                    sig = reader(tk) if reader is not None else None
+                    socks = ";".join("pp=%s,mid=%s,in=%s" % (s[1], s[2], short(s[3]))
+                                     for s in (sig[1] if sig else ()))
+                    landed = sig[3] if sig else None
+                    held = sig[4] if sig else None
+                    stamp = getattr(row, "last_updated", None)
+                    legs.append(
+                        "%s p=%s rq=%d ov=%d at=%s socks=[%s] rcv=%s landed=%s@%s held=%s" % (
+                            tk.rsplit("-", 1)[-1], getattr(row, "current_probability", None),
+                            int(bool(getattr(row, "_receipt_quote", False))), int(row.id in overlaid),
+                            "%.3f" % stamp.timestamp() if hasattr(stamp, "timestamp") else stamp,
+                            socks, short(sig[2] if sig else None),
+                            short(landed[0] if landed else None),
+                            "%.3f" % landed[1].timestamp() if landed and hasattr(landed[1], "timestamp") else (landed[1] if landed else "-"),
+                            short(held[0] if held else None),
+                        ))
+            logger.info("live_blend_refresh[%s]: na_proof event=%s %s",
+                        self.source, event_id, " | ".join(legs) or "-")
+        except Exception:
+            logger.debug("na_proof attribution failed", exc_info=True)
+
     def _current_reading_proof(self, event_id, group, refused, *, park_refused=True):
         """Keep optional observation previews on the ordinary Kalshi proof path."""
         proof_kwargs = {}
@@ -9085,6 +9128,7 @@ class LiveBlendRefresher:
                 for eid in [e for e in self._hl_commit_at if e not in self._hl_pending]:
                     del self._hl_commit_at[eid]
                 self._ambiguous_logged = 0
+                self._na_proof_logged = 0
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -9391,6 +9435,7 @@ class LiveBlendRefresher:
             return None
         quotes = self._receipt_quotes
         patched, overlaid, newest = [], set(), None
+        proof_rows = bool(proof_kwargs)
         for entry in group:
             outcomes, changed = [], False
             for row in entry.outcomes:
@@ -9404,6 +9449,12 @@ class LiveBlendRefresher:
                 if stored is not None and stored.timestamp() >= bound:
                     current = getattr(row, "current_probability", None)
                     if current is not None and round(float(current), 6) == price:
+                        if proof_rows:
+                            # #10090: the row already holds this quote, and it
+                            # is still this composition's received input (the
+                            # Challenger primary proof reads it at receipt).
+                            row = SimpleNamespace(**{**vars(row), "_receipt_quote": True})
+                            changed = True
                         outcomes.append(row)  # the row already holds this quote
                         continue
                     own = self._own_writes.get(row.id)
@@ -9499,6 +9550,9 @@ class LiveBlendRefresher:
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
             self._hl_mark(event_id, "na_proof" if proof_kwargs else "na_orientation")
+            if proof_kwargs and self._na_proof_logged < 6:
+                self._na_proof_logged += 1
+                self._log_na_proof(event_id, patched, overlaid)
             return None
         contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
         rows = {row.id: (entry, row) for entry in patched for row in entry.outcomes}
