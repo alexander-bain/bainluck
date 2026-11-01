@@ -205,7 +205,8 @@ export default function SoccerMatchReader({
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-[16px]" data-soccer-reader-body="">
+      {/* 4px vertical scroll padding: a focused control the browser scrolls into view at the body's top or bottom edge shows its 2px focus ring too, not only its box. */}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain scroll-py-[4px] p-[16px]" data-soccer-reader-body="">
         {context}
         {/* Named navigation before the long card, so it is found without scrolling past a tall map or chart; it scrolls with the content. */}
         {previous && next && (
