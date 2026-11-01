@@ -15,6 +15,7 @@
 		A7C839030001000000000003 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = A7C839040001000000000004 /* FirebaseMessaging */; };
 		A7C0000000000000000000FD /* BainLuckWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A7C0000000000000000000F2 /* BainLuckWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A7C0000000000000000000DD /* BainLuckComplication.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A7C0000000000000000000D2 /* BainLuckComplication.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A7C177800000000000000002 /* prod-2026-08-02.json in Resources */ = {isa = PBXBuildFile; fileRef = A7C177800000000000000001 /* prod-2026-08-02.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -126,6 +127,7 @@
 		A7C0000000000000000000D2 /* BainLuckComplication.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BainLuckComplication.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7C0000000000000000000C2 /* BainLuckUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BainLuckUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7C0000000000000000000A2 /* BainLuckWatchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BainLuckWatchUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7C177800000000000000001 /* prod-2026-08-02.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "prod-2026-08-02.json"; path = "../../fixtures/calibration/prod-2026-08-02.json"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -357,6 +359,7 @@
 				A7C0000000000000000000E3 /* BainLuckTests */,
 				A7C0000000000000000000C3 /* BainLuckUITests */,
 				A7C0000000000000000000A3 /* BainLuckWatchUITests */,
+				A7C177800000000000000001 /* prod-2026-08-02.json */,
 				A7869E2B2F525C6A000542D3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -685,6 +688,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A7C177800000000000000002 /* prod-2026-08-02.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
