@@ -8943,6 +8943,9 @@ class LiveBlendRefresher:
             else:
                 patched.append(entry)
         if not overlaid:
+            # Every received leg is already in the stored rows the graph read:
+            # committed and stamped, so on screen (headline clock stops).
+            self._hl_resolve(event_id, "in_graph")
             return None  # nothing received since the graph: the stamp's own path
         reading = compute_source_home_probability(
             patched, event.home_team_name, event.away_team_name,
@@ -8959,7 +8962,12 @@ class LiveBlendRefresher:
         ids = {getattr(row, "id", None) for row in contributing}
         self._receipt_speaking[event_id] = frozenset(
             row.id for oid in ids if oid in rows for row in rows[oid][0].outcomes)
-        if ids.isdisjoint(overlaid) or not ids.issubset(rows):
+        if ids.isdisjoint(overlaid):
+            # The received legs do not contribute to this reading: no headline effect.
+            self._hl_resolve(event_id, "not_contributing")
+            return None  # the received legs are not this reading's
+        if not ids.issubset(rows):
+            self._hl_mark(event_id, "incomplete")
             return None  # the received legs are not this reading's
         if any(entry.market.status != "open"
                or market_assigned_settled(entry.market, entry.outcomes)
@@ -9071,6 +9079,7 @@ class LiveBlendRefresher:
                 ))
                 pending = preview.pending_entry(event_id, self.source)
                 if pending is None or not pending.at_receipt or pending.value != value:
+                    self._hl_mark(event_id, "refused_local")
                     continue  # refused locally (stale, expired value, capacity)
                 stats["proposed"] += 1
                 self._note_receipt_class("proposed", event_id)
