@@ -483,6 +483,10 @@ final class LiveStreamController {
     /// (`heartbeatActivityAt`): a venue reported in for this event, whatever
     /// price it carried. The EKG pulse only; never a price's age.
     private let onActivityAt: @MainActor (Date) -> Void
+    /// #10090 (Alex 2026-11-01) — the heartbeat's `updates`
+    /// (`heartbeatUpdates`): every venue input since the last heartbeat, for
+    /// the EKG's scrolling list. Activity only.
+    private let onUpdates: @MainActor ([LiveUpdateStream.Update]) -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -533,6 +537,7 @@ final class LiveStreamController {
         onPreviewReset: @escaping @MainActor () -> Void = {},
         onConfirmedAt: @escaping @MainActor (Date) -> Void = { _ in },
         onActivityAt: @escaping @MainActor (Date) -> Void = { _ in },
+        onUpdates: @escaping @MainActor ([LiveUpdateStream.Update]) -> Void = { _ in },
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
         healthyRolloverDelay: @escaping () -> TimeInterval = {
@@ -554,6 +559,7 @@ final class LiveStreamController {
         self.onPreviewReset = onPreviewReset
         self.onConfirmedAt = onConfirmedAt
         self.onActivityAt = onActivityAt
+        self.onUpdates = onUpdates
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
         self.healthyRolloverDelay = healthyRolloverDelay
@@ -589,6 +595,19 @@ final class LiveStreamController {
         guard let data = raw.data(using: .utf8),
               let beat = try? JSONDecoder().decode(Beat.self, from: data) else { return nil }
         return beat.activity_at?.asDate
+    }
+
+    /// #10090 (Alex 2026-11-01) — the heartbeat's `updates`: `[[venue, ISO
+    /// receipt]]`, every venue input since the last heartbeat. Rows that are
+    /// not a venue and a parseable time are skipped; [] for an older server.
+    nonisolated static func heartbeatUpdates(_ raw: String) -> [LiveUpdateStream.Update] {
+        struct Beat: Decodable { let updates: [[String]]? }
+        guard let data = raw.data(using: .utf8),
+              let beat = try? JSONDecoder().decode(Beat.self, from: data) else { return [] }
+        return (beat.updates ?? []).compactMap { row in
+            guard row.count == 2, !row[0].isEmpty, let at = row[1].asDate else { return nil }
+            return LiveUpdateStream.Update(source: row[0], at: at)
+        }
     }
 
     // MARK: Public surface
@@ -863,6 +882,8 @@ final class LiveStreamController {
             // connect replay (live R3), so the replay is already applied here.
             if let confirmed = Self.heartbeatConfirmedAt(raw) { self.onConfirmedAt(confirmed) }
             if let activity = Self.heartbeatActivityAt(raw) { self.onActivityAt(activity) }
+            let updates = Self.heartbeatUpdates(raw)
+            if !updates.isEmpty { self.onUpdates(updates) }
         }
 
         // The match ended. Terminal: the caller refetches once and settles the

@@ -162,9 +162,12 @@ final class TheEkgReplacesTheInfoMark10090Tests: XCTestCase {
         let ekg = try span(text, from: "privatefuncheroEkg(_event:EventDetail,isOpeningLine:Bool)->someView{",
                            to: "privatefuncprobabilityDetails(")
         XCTAssertTrue(ekg.hasPrefix("ifheroEkgDrawn(event,isOpeningLine:isOpeningLine){"))
-        XCTAssertTrue(ekg.contains("Button{showProbabilityDetails=true}"), "the EKG opens the one popover")
-        XCTAssertTrue(ekg.contains(".accessibilityHint(Self.probabilityDetailsHint(forecastShown:revealForecast11296!=nil))"),
-                      "the EKG says what its tap opens, as the (i) did")
+        // Alex 2026-11-01: the EKG opens its own update list, which links on
+        // to the one details popover.
+        XCTAssertTrue(ekg.contains("Button{showUpdateStream=true}"), "the EKG opens its update list")
+        XCTAssertTrue(ekg.contains(".accessibilityHint(\"Showsthevenueupdatesfeedingthisnumber\")"),
+                      "the EKG says what its tap opens")
+        XCTAssertTrue(ekg.contains("showProbabilityDetails=true"), "the list links to the details")
         XCTAssertFalse(ekg.contains(".accessibilityLabel("), "the heartbeat keeps its own label (\"Markets reporting\")")
 
         let control = try span(text, from: "privatefuncprobabilityDetails(", to: "privatefuncchartHeaderBar(")

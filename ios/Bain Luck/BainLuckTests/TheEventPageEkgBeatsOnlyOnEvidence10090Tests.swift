@@ -94,6 +94,41 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         XCTAssertNil(LiveStreamController.heartbeatActivityAt("not json"))
     }
 
+    // MARK: - The EKG's update list (Alex 2026-11-01)
+
+    func testTheHeartbeatsUpdatesAreReadSkippingRowsThatAreNotAVenueAndATime() {
+        let got = LiveStreamController.heartbeatUpdates(
+            #"{"t":"x","updates":[["kalshi","2026-11-01T22:57:03.420+00:00"],["polymarket","soon"],["","2026-11-01T22:57:03Z"],["polymarket","2026-11-01T22:57:03.610+00:00"]]}"#)
+        XCTAssertEqual(got.map(\.source), ["kalshi", "polymarket"])
+        XCTAssertEqual(got.first?.at, "2026-11-01T22:57:03.420+00:00".asDate)
+        XCTAssertEqual(LiveStreamController.heartbeatUpdates(#"{"t":"x"}"#), [])
+        XCTAssertEqual(LiveStreamController.heartbeatUpdates("junk"), [])
+    }
+
+    func testTheListIsNewestFirstWithoutRepeatsAndBounded() {
+        var list = LiveUpdateStream()
+        let a = LiveUpdateStream.Update(source: "kalshi", at: at(1))
+        let b = LiveUpdateStream.Update(source: "polymarket", at: at(2))
+        list.add([a, b])
+        list.add([b])                         // a reconnect repeats the last heartbeat
+        XCTAssertEqual(list.updates, [b, a])
+        list.add((0..<150).map { LiveUpdateStream.Update(source: "kalshi", at: at(10 + Double($0))) })
+        XCTAssertEqual(list.updates.count, LiveUpdateStream.capacity)
+        XCTAssertEqual(list.updates.first?.at, at(159))
+        list.clear()
+        XCTAssertTrue(list.updates.isEmpty)
+    }
+
+    func testEachRowNamesItsVenueAndItsTimeToTheHundredth() {
+        let utc = TimeZone(identifier: "UTC")!
+        let time = Date(timeIntervalSince1970: 1_793_573_823.427)   // 2026-11-01 22:57:03.427Z
+        XCTAssertEqual(LiveUpdateStream.timeText(time, timeZone: utc), "10:57:03.42 PM")
+        XCTAssertEqual(LiveUpdateStream.timeText(Date(timeIntervalSince1970: 1_793_491_200.055), timeZone: utc),
+                       "12:00:00.05 AM")
+        XCTAssertEqual(LiveUpdateStream.venueName("kalshi"), "Kalshi")
+        XCTAssertEqual(LiveUpdateStream.venueName("polymarket"), "Polymarket")
+    }
+
     func testARenderThatRepeatsItsInputsNeverBeatsAgain() {
         let once = opened().stepped(obs(confirmed: 6, price: 0), now: at(6.2))
         let again = once.stepped(obs(confirmed: 6, price: 0), now: at(9))
@@ -322,11 +357,12 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         // opens the popover from the collapsed control's anchor.
         XCTAssertNil(element("Probability confidence and update details", in: host.view),
                      "the (i) beside the EKG is still a VoiceOver stop")
-        XCTAssertEqual(control.accessibilityHint, EventDetailView.probabilityDetailsHint(forecastShown: false))
+        // Alex 2026-11-01: the tap opens the scrolling list of venue updates.
+        XCTAssertEqual(control.accessibilityHint, "Shows the venue updates feeding this number")
         XCTAssertEqual(host.presentedViewController, nil)
         XCTAssertTrue(control.accessibilityActivate(), "the heartbeat takes a tap")
         let opened = await settle(host, timeout: 3) { host.presentedViewController != nil }
-        XCTAssertTrue(opened, "a tap on the heartbeat opens the page's details popover")
+        XCTAssertTrue(opened, "a tap on the heartbeat opens its update list")
     }
 
     func testAFinishedGameShowsNoHeartbeat() async throws {

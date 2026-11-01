@@ -183,6 +183,10 @@ final class EventDetailViewModel: ObservableObject {
     /// on: a venue reported in, whatever it carried. Feeds only the EKG pulse;
     /// it never ages or dates a price. Cleared with the connection.
     @Published private(set) var streamActivityAt: Date?
+    /// #10090 (Alex 2026-11-01) — the venue updates the stream listed, newest
+    /// first, for the EKG's scrolling list. Kept across a reconnect (it is a
+    /// record of what arrived); cleared when the page's stream ends.
+    @Published private(set) var updateStream = LiveUpdateStream()
     /// #10090 decision J — this connection's connect `reconcile` has arrived.
     /// The server sends the first confirmed heartbeat BEFORE it (lane1's
     /// #11772 probe), and only the reconcile's floor makes a served price older
@@ -1432,6 +1436,7 @@ final class EventDetailViewModel: ObservableObject {
                 guard let self else { return }
                 if self.streamActivityAt.map({ activity > $0 }) ?? true { self.streamActivityAt = activity }
             },
+            onUpdates: { [weak self] updates in self?.updateStream.add(updates) },
             deliversFoldedQuotes: true
         )
         stream = controller
@@ -1478,6 +1483,7 @@ final class EventDetailViewModel: ObservableObject {
         streamHasPushedPrice = false
         streamConfirmedAt = nil
         streamActivityAt = nil
+        updateStream.clear()
         if connectReconcileSeen { connectReconcileSeen = false }
         streamTickTask?.cancel()
         streamTickTask = nil

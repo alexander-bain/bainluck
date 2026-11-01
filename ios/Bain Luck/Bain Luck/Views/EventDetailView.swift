@@ -34,6 +34,9 @@ struct EventDetailView: View {
     /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
     @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
+    /// #10090 (Alex 2026-11-01) — the EKG's own popover: the scrolling list of
+    /// venue updates, not the details.
+    @State private var showUpdateStream = false
     /// #10090 (Alex 67) — the heartbeat under the big percentage. Stepped only
     /// when its evidence moves (`ekgObservation`), never by a render.
     @State private var ekgTracker = EkgTracker.empty
@@ -422,6 +425,7 @@ struct EventDetailView: View {
             .onChange(of: eventId) { _, _ in
                 nflCards.resetNBAStream()
                 showProbabilityDetails = false
+                showUpdateStream = false
             }
             // #10090 (Alex 67) — the EKG beats on evidence: J or the printed
             // number's clock advancing while the stream delivers. A re-render
@@ -437,6 +441,7 @@ struct EventDetailView: View {
                 // page, reading this one's stopped model (build 89: "Update
                 // interrupted … 34 minutes ago" over a healthy live game).
                 showProbabilityDetails = false
+                showUpdateStream = false
                 duringPageAnchor.cancel()
                 afterPageAnchor.cancel()
                 marketPageVisible = false
@@ -1116,7 +1121,7 @@ struct EventDetailView: View {
     @ViewBuilder
     private func heroEkg(_ event: EventDetail, isOpeningLine: Bool) -> some View {
         if heroEkgDrawn(event, isOpeningLine: isOpeningLine) {
-            Button { showProbabilityDetails = true } label: {
+            Button { showUpdateStream = true } label: {
                 EkgHeartbeatView(tracker: ekgTracker, status: vm.liveUpdateStatus, asOf: displayAsOf)
                     // A 44pt target that lays out as a short row: it overhangs
                     // the gaps above and below, as the adopted disclosure does.
@@ -1125,8 +1130,19 @@ struct EventDetailView: View {
                     .padding(.vertical, -14)
             }
             .buttonStyle(.plain)
-            .accessibilityHint(Self.probabilityDetailsHint(forecastShown: revealForecast11296 != nil))
+            .accessibilityHint("Shows the venue updates feeding this number")
             .accessibilityIdentifier("ekg-heartbeat-button")
+            .popover(isPresented: $showUpdateStream, arrowEdge: .top) {
+                LiveUpdateStreamView(stream: vm.updateStream, onDetails: {
+                    // One popover at a time: the details open once this one is gone.
+                    showUpdateStream = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProbabilityDetails = true }
+                })
+                    .frame(idealWidth: 280, maxWidth: 300)
+                    #if os(iOS)
+                    .presentationCompactAdaptation(.popover)
+                    #endif
+            }
         }
     }
 
