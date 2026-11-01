@@ -105,18 +105,22 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         XCTAssertEqual(LiveStreamController.heartbeatUpdates("junk"), [])
     }
 
-    func testTheListIsNewestFirstWithoutRepeatsAndBounded() {
+    func testTheListIsNewestFirstKeepsSameTimeDuplicatesDropsARepeatedBatchAndIsBounded() {
         var list = LiveUpdateStream()
         let a = LiveUpdateStream.Update(source: "kalshi", at: at(1))
         let b = LiveUpdateStream.Update(source: "polymarket", at: at(2))
-        list.add([a, b])
-        list.add([b])                         // a reconnect repeats the last heartbeat
-        XCTAssertEqual(list.updates, [b, a])
+        list.add([a, a, b])                   // one book priced two legs at once
+        XCTAssertEqual(list.updates.map(\.source), ["polymarket", "kalshi", "kalshi"])
+        list.add([a, b])                      // a reconnect repeats the last heartbeat
+        XCTAssertEqual(list.updates.count, 3)
+        XCTAssertEqual(Set(list.updates.map(\.id)).count, 3, "every row has its own identity")
         list.add((0..<150).map { LiveUpdateStream.Update(source: "kalshi", at: at(10 + Double($0))) })
         XCTAssertEqual(list.updates.count, LiveUpdateStream.capacity)
         XCTAssertEqual(list.updates.first?.at, at(159))
         list.clear()
         XCTAssertTrue(list.updates.isEmpty)
+        list.add([a])
+        XCTAssertEqual(list.updates.count, 1, "a cleared list takes the venue's rows again")
     }
 
     func testEachRowNamesItsVenueAndItsTimeToTheHundredth() {

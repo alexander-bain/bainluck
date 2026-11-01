@@ -12,26 +12,40 @@ nonisolated struct LiveUpdateStream: Equatable {
     struct Update: Equatable, Hashable, Identifiable {
         var source: String
         var at: Date
-        var id: String { "\(source)@\(at.timeIntervalSince1970)" }
+        /// Arrival order on this page: one book message can price several legs
+        /// at the same millisecond, and each is its own row (duplicates shown).
+        var seq: Int = 0
+        var id: Int { seq }
     }
 
     static let capacity = 100
 
     /// Newest first.
     private(set) var updates: [Update] = []
+    private var nextSeq = 0
+    /// Newest receipt held per venue: a reconnect's first heartbeat can repeat
+    /// what the last one sent, and those rows are not new.
+    private var newest: [String: Date] = [:]
 
-    /// Adds the heartbeat's updates, dropping any already held (a reconnect's
-    /// first heartbeat can repeat the last one's), newest first, bounded.
+    /// Adds the heartbeat's updates (oldest first, as sent) that are newer than
+    /// what is held for their venue, keeping same-time duplicates; newest
+    /// first, bounded.
     mutating func add(_ incoming: [Update]) {
-        guard !incoming.isEmpty else { return }
-        let held = Set(updates)
-        let fresh = incoming.filter { !held.contains($0) }
+        let floor = newest
+        var fresh: [Update] = []
+        for update in incoming.sorted(by: { $0.at < $1.at }) {
+            if let held = floor[update.source], update.at <= held { continue }
+            var row = update
+            row.seq = nextSeq
+            nextSeq += 1
+            fresh.append(row)
+            newest[update.source] = max(newest[update.source] ?? update.at, update.at)
+        }
         guard !fresh.isEmpty else { return }
-        updates = Array((fresh + updates).sorted { ($0.at, $0.source) > ($1.at, $1.source) }
-            .prefix(Self.capacity))
+        updates = Array((fresh.reversed() + updates).prefix(Self.capacity))
     }
 
-    mutating func clear() { updates = [] }
+    mutating func clear() { updates = []; newest = [:] }
 
     /// "Kalshi", "Polymarket", or the venue's own name.
     static func venueName(_ source: String) -> String {
