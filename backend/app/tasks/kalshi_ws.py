@@ -796,6 +796,9 @@ def _kalshi_upcoming_hours_env() -> int:
 
 
 KALSHI_WS_UPCOMING_HOURS = _kalshi_upcoming_hours_env()
+#: #10090: a game contract's price is its last trade while that trade sits
+#: inside the live book (`handle_ticker`). "0" restores the midpoint.
+KALSHI_WS_GAME_LAST_TRADE = os.getenv("KALSHI_WS_GAME_LAST_TRADE", "1").strip() != "0"
 
 
 def _kalshi_slate_event_window():
@@ -3190,6 +3193,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # tight book → midpoint, else a trade the book does not refute, else a
         # longshot ask, else nothing (a wide book with no trade is not a price).
         prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
+        if (globals().get("KALSHI_WS_GAME_LAST_TRADE", False) and prob is not None
+                and ticker in ticker_to_ids and last_price is not None
+                and yes_bid is not None and yes_ask is not None
+                and 0 < yes_bid <= last_price <= yes_ask < 1):
+            # #10090 (Alex 11/01 ~12:25 PM PT, watching Jets-Raiders in the
+            # Kalshi app, "moving constantly"): on a game's contracts the price
+            # is the last trade while it sits inside the live book, as Kalshi
+            # shows it and as a Polymarket trade already prices its leg. A
+            # trade the book has moved past is still refused (#8753's rule).
+            prob = last_price
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:
