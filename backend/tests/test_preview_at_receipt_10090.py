@@ -674,12 +674,26 @@ async def test_an_unproven_reading_shows_what_the_stamps_live_verdict_will_write
     assert r.receipt_preview_stats["errors"] == 0
 
 
+@pytest.mark.parametrize("flipped, value", [(False, 0.2175), (True, 0.7825)])
+async def test_a_verdict_just_past_its_ttl_still_orients_the_preview(r, flipped, value):
+    """11/01 17:49-17:57Z: a quiet game's first input after the 150 s TTL waited
+    4.5-24 s for the stamp to re-derive the same verdict (event 15339038)."""
+    read(r, duel_event(), duel_pair())
+    r._inversion[EV] = (time.monotonic() - 300.0, flipped)
+
+    receive(r, 0.20)
+    await drained(r)
+
+    assert [op["value"] for op in ops(r.sent, "propose")] == [value]
+    assert r.receipt_preview_stats["verdict_oriented"] >= 1
+
+
 @pytest.mark.parametrize("verdict", ["none", "expired"])
 async def test_without_a_live_verdict_the_unproven_reading_still_waits_for_the_stamp(
         r, verdict):
     read(r, duel_event(), duel_pair())
     if verdict == "expired":
-        r._inversion[EV] = (time.monotonic() - 0.01, False)
+        r._inversion[EV] = (time.monotonic() - 0.01 - module.ORIENTATION_PREVIEW_GRACE_S, False)
 
     receive(r, 0.20)
     await drained(r)

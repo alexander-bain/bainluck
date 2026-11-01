@@ -151,6 +151,13 @@ BOOK_REFUSED_SWEEP_S = 10.0
 #: durable answer, only a cheap one that cannot be stale for long.
 DEFAULT_INVERSION_TTL_S = 150.0
 
+#: #10090: how long past its TTL a cached inversion verdict may still orient a
+#: receipt PREVIEW (never a stamp: the stamp re-derives it on expiry). The
+#: verdict is a property of the linkage, so it rarely changes; a quiet game's
+#: first input after the 150 s TTL otherwise waits for the stamp (11/01 17:49-
+#: 17:57Z: event 15339038 waited 4.5, 24 and 17 s as na_orientation>stamp_unobserved).
+ORIENTATION_PREVIEW_GRACE_S = 600.0
+
 #: When the recomputed value rounds to what is already stored, the write is
 #: still worth making occasionally — `updated_at` is what drives the hero's
 #: recency decay (#1829), so a source that goes quiet must still look ALIVE
@@ -4269,8 +4276,9 @@ class LiveBlendRefresher:
 
     def _live_orientation(self, event_id: int, reading):
         """#10090: an unproven reading oriented as the stamp would orient it
-        now — `_oriented`'s cached verdict while it is live, never a read.
-        None when there is no live verdict (the stamp's path computes one).
+        now — `_oriented`'s cached verdict while it is live, or expired by at
+        most ``ORIENTATION_PREVIEW_GRACE_S`` — never a read. None when there is
+        no such verdict (the stamp's path computes one).
 
         11/01 16:44Z: every Polymarket input on a live NCAAB game (event
         15334892, two same-named duel markets) waited 5-18 s as na_orientation
@@ -4278,7 +4286,7 @@ class LiveBlendRefresher:
         at 16:55Z a Kalshi input waited 80 s the same way (event 15340110).
         """
         cached = self._inversion.get(event_id)
-        if cached is None or time.monotonic() >= cached[0]:
+        if cached is None or time.monotonic() >= cached[0] + ORIENTATION_PREVIEW_GRACE_S:
             return None
         if not cached[1]:
             return reading
