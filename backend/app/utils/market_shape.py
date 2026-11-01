@@ -85,7 +85,10 @@ SIDE_THRESHOLD = "threshold"
 # market's outcomes. Deliberately separate from the display shape above.
 # ---------------------------------------------------------------------------
 
-CLASSIFIER_VERSION = 2
+# v3 preserves unknown push/void capability instead of certifying False from
+# absent metadata (#4382). Old v2 stamps cannot attest this distinction; the
+# normal unresolved-row backfill must recompute them on an admitted rollout.
+CLASSIFIER_VERSION = 3
 
 REL_COMPLEMENTS = "complements"  # Yes/No, Over/Under — sums to 1, one winner
 REL_COMPETITORS = "competitors"  # named mutually-exclusive field, one winner
@@ -388,7 +391,10 @@ def _outcome_relation(
     relation = REL_UNKNOWN
     exhaustive: bool | None = None
     ew = expected_winners
-    push = push_possible
+    # Only a JSON boolean states a rule. Omission, null, numeric flags and
+    # strings such as "false" are not evidence that a contract cannot push.
+    # Relation confidence/Top-N geometry does not supply the missing rule.
+    push = push_possible if isinstance(push_possible, bool) else None
 
     if source_kind:
         evidence.append(f"source_kind:{source_kind}")
@@ -512,7 +518,7 @@ def _outcome_relation(
         "outcome_relation": relation,
         "exhaustive": exhaustive,
         "expected_winners": ew,
-        "push_void_capable": bool(push),
+        "push_void_capable": push,
         "confidence": confidence,
         "evidence": sorted(set(evidence)),
     }
@@ -593,6 +599,12 @@ def classify_market_semantics(
     ``exhaustive`` / ``expected_winners`` / ``push_void_capable``), plus
     ``classifier_version`` / ``input_fingerprint`` / ``confidence`` / ``evidence``
     so classification is recomputable rather than frozen at first sight.
+
+    ``push_void_capable`` is tri-state in v3: False requires an explicit
+    boolean input; None means unknown. The existing two-sided-threshold
+    inference conservatively returns True when no explicit boolean is given.
+    None must never be read as a proved no-push/no-void rule. This field does
+    not establish tie treatment, fractional payouts or a maximum winner count.
     """
     names = [n for n in (outcome_names or []) if (n or "").strip()]
     name_set = {_norm(n) for n in names}
