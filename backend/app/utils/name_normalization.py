@@ -16,6 +16,7 @@ Public API:
 
 import re
 import unicodedata
+from functools import lru_cache
 
 from app.config.diacritic_search_folds import DIACRITIC_SEARCH_FOLDS
 
@@ -418,6 +419,7 @@ _SPONSOR_SUFFIX_RE = re.compile(
 )
 
 
+@lru_cache(maxsize=16384)  # #10090: pure; the receipt composer calls it per row per composition
 def strip_diacritics(s: str) -> str:
     """Remove diacritical marks and transliterate special characters.
 
@@ -490,6 +492,7 @@ def clean_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
+@lru_cache(maxsize=16384)  # #10090: pure string -> string
 def normalize_name(name: str) -> str:
     """Canonical name normalization: lowercase, strip diacritics, unify apostrophes,
     strip reserve/youth suffixes.
@@ -551,6 +554,7 @@ def expand_trailing_state_abbrev(name: str) -> str:
     return _TRAILING_STATE_RE.sub(" State", name)
 
 
+@lru_cache(maxsize=16384)  # #10090: pure string -> string
 def normalize_team_name_for_matching(name: str) -> str:
     """`normalize_name` plus the college-feed variations that otherwise block a
     correct market → event link.

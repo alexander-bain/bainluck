@@ -359,7 +359,7 @@ PREVIEW_AT_RECEIPT_VENUES_ENV = "PREVIEW_AT_RECEIPT_VENUES"
 #: is composed on its first tick with no wait. 0.25 s adds at most a quarter
 #: second to a moved price (the target is well under one second) and caps one
 #: game at four compositions a second however fast its book ticks.
-RECEIPT_PREVIEW_INTERVAL_S = 0.25
+RECEIPT_PREVIEW_INTERVAL_S = 0.1  # #10090: 0.25 held a busy game's input ~250 ms before composing
 #: Speed may set the interval (seconds, 0.05-2.0) without a release; anything
 #: else keeps `RECEIPT_PREVIEW_INTERVAL_S`. Read per worker pass.
 RECEIPT_PREVIEW_INTERVAL_ENV = "PREVIEW_AT_RECEIPT_INTERVAL_S"
