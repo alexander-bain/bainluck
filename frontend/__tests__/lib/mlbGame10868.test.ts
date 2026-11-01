@@ -18,8 +18,9 @@
  * here): the ENTIRE `game_question_matrix` member of that SAME game-markets body
  * (42dfb489…), which the reduced `finalMarkets` omits. The run-total tests join
  * it back onto `finalMarkets` (a CONSTRUCTED admission, named where used);
- * neither fixture is edited, and the matrix is never a before or live input
- * except where a test supplies it to prove it is refused.
+ * neither fixture is edited. The matrix is a REAL FINAL capture: wherever it
+ * feeds a before or live build (S2c), every quote, pin, clock, status, start,
+ * displayed pair and noReportedResult around it is CONSTRUCTED and named.
  *
  * REAL proves the FINAL phase only. CONSTRUCTED here, and named where used:
  * every clock; the host's values (the hero pair through the page's own
@@ -68,7 +69,10 @@ import {
   mlbFinalTotals,
   mlbRunComparison,
   mlbRunLines,
+  mlbRunMilestones,
   mlbRunSelected,
+  type MlbFinalTotals,
+  type MlbRunMilestones,
 } from "@/lib/eventPage10868/mlbRunTotals";
 
 // ─── Bodies and clocks ─────────────────────────────────────────────────────
@@ -738,36 +742,41 @@ const KEY_9_5 = "o:244311417";
 const KEY_10_5 = "o:244311422";
 const KEY_11_5 = "o:244311421";
 const AXIS_15 = { step: 5, upper: 15, labels: [0, 5, 10, 15] };
+/** The final leaf's input, or a failure: the final tests read only `kind: "final"`. */
+function finalTotalsOf(v: MlbGameView): MlbFinalTotals {
+  const rt = v.runTotals;
+  if (!rt || rt.kind !== "final") throw new Error(`expected the final leaf, got ${rt ? rt.kind : "none"}`);
+  return rt;
+}
 
-describe("FINAL run totals: the card's input, after the final only, from this game's own matrix", () => {
+describe("FINAL run totals: the final leaf's input, from this game's own matrix", () => {
   const finalWith = (rest = finalHostRest(), gameMarkets: GameMarketsResponse | null = withMatrix(ownMatrix())) =>
     build(finalDetail, FINAL_NOW, rest, { gameMarkets });
 
   it("REAL final 3–7: 13 full-game lines, total 10, 9.5 by default, every pregame chance Unavailable, the source's own results", () => {
     const v = finalWith();
-    const rt = v.runTotals;
-    expect(rt).not.toBeNull();
-    expect(rt!.kind).toBe("final");
-    expect(rt!.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
+    expect(v.runTotals?.kind).toBe("final");
+    const rt = finalTotalsOf(v);
+    expect(rt.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
     // Full-game lines only: the matrix's five first-five-innings run lines are not among them.
-    expect(rt!.lines.every((l) => l.questionKey.startsWith("q:count|runs|game|full_game|"))).toBe(true);
-    expect(rt!.total).toBe(10);
-    expect(rt!.bar).toEqual({ kind: "stacked", home: 3, away: 7 });
-    expect(rt!.axis).toEqual(AXIS_15);
-    expect(rt!.defaultKey).toBe(KEY_9_5);
+    expect(rt.lines.every((l) => l.questionKey.startsWith("q:count|runs|game|full_game|"))).toBe(true);
+    expect(rt.total).toBe(10);
+    expect(rt.bar).toEqual({ kind: "stacked", home: 3, away: 7 });
+    expect(rt.axis).toEqual(AXIS_15);
+    expect(rt.defaultKey).toBe(KEY_9_5);
     // The SAME names the built headline uses.
-    expect([rt!.homeName, rt!.awayName]).toEqual([v.headline.home.name, v.headline.away.name]);
-    expect([rt!.homeName, rt!.awayName]).toEqual(["Houston Astros", "Chicago White Sox"]);
-    expect(rt!.lines.every((l) => l.pregame === null && l.pregameText === MLB_RUN_TOTAL_WORDS.unavailable)).toBe(true);
+    expect([rt.homeName, rt.awayName]).toEqual([v.headline.home.name, v.headline.away.name]);
+    expect([rt.homeName, rt.awayName]).toEqual(["Houston Astros", "Chicago White Sox"]);
+    expect(rt.lines.every((l) => l.pregame === null && l.pregameText === MLB_RUN_TOTAL_WORDS.unavailable)).toBe(true);
     // The venue's own grade per line (won through 9.5, lost from 10.5), never graded here from the runs.
-    expect(rt!.lines.map((l) => l.result)).toEqual([...LINE_TEXTS.slice(0, 8).map(() => true), ...LINE_TEXTS.slice(8).map(() => false)]);
-    const byDefault = mlbRunSelected(rt!, null);
+    expect(rt.lines.map((l) => l.result)).toEqual([...LINE_TEXTS.slice(0, 8).map(() => true), ...LINE_TEXTS.slice(8).map(() => false)]);
+    const byDefault = mlbRunSelected(rt, null);
     expect(byDefault?.optionKey).toBe(KEY_9_5);
     expect(byDefault?.result).toBe(true);
-    expect(mlbRunComparison(rt!.total, byDefault!)).toBe("Final 10 runs · above this line");
-    const chosen = mlbRunSelected(rt!, KEY_10_5);
+    expect(mlbRunComparison(rt.total, byDefault!)).toBe("Final 10 runs · above this line");
+    const chosen = mlbRunSelected(rt, KEY_10_5);
     expect(chosen?.result).toBe(false);
-    expect(mlbRunComparison(rt!.total, chosen!)).toBe("Final 10 runs · below this line");
+    expect(mlbRunComparison(rt.total, chosen!)).toBe("Final 10 runs · below this line");
     // Exactly S1's answer for the same matrix, pair and names: the binding computes nothing of its own.
     expect(rt).toEqual(
       mlbFinalTotals(mlbRunLines(runTotalsFixture.game_question_matrix), { home: 3, away: 7 }, { home: "Houston Astros", away: "Chicago White Sox" }),
@@ -787,14 +796,15 @@ describe("FINAL run totals: the card's input, after the final only, from this ga
   it("the total is the headline's DISPLAYED pair, never the raw event final (CONSTRUCTED host pair 4–8 over the row's 3–7)", () => {
     const rest = { ...finalHostRest(), score: { home: 4, away: 8, observedAt: null } };
     const v = finalWith(rest);
+    const rt = finalTotalsOf(v);
     expect([finalDetail.home_score, finalDetail.away_score]).toEqual([3, 7]);
     expect(texts(v.headline.matrix.rows.map((r) => r.values[1]))).toEqual(["4", "8"]);
-    expect(v.runTotals?.total).toBe(12);
-    expect(v.runTotals?.bar).toEqual({ kind: "stacked", home: 4, away: 8 });
-    expect(v.runTotals?.defaultKey).toBe(KEY_11_5);
+    expect(rt.total).toBe(12);
+    expect(rt.bar).toEqual({ kind: "stacked", home: 4, away: 8 });
+    expect(rt.defaultKey).toBe(KEY_11_5);
     // The comparison is the pair against the number; the source's result is still the venue's own (11.5 lost).
-    const selected = mlbRunSelected(v.runTotals!, null);
-    expect(mlbRunComparison(v.runTotals!.total, selected!)).toBe("Final 12 runs · above this line");
+    const selected = mlbRunSelected(rt, null);
+    expect(mlbRunComparison(rt.total, selected!)).toBe("Final 12 runs · above this line");
     expect(selected?.result).toBe(false);
     // TEST MUTATION: an event row that disagrees again changes nothing in the card.
     const otherRow = build(mutate(finalDetail, { home_score: 9, away_score: 1 }), FINAL_NOW, rest, {
@@ -814,11 +824,11 @@ describe("FINAL run totals: the card's input, after the final only, from this ga
       { home: Number.MAX_SAFE_INTEGER, away: 1 },
     ];
     for (const pair of pairs) {
-      const rt = finalWith({ ...finalHostRest(), score: pair && { ...pair, observedAt: null } }).runTotals;
-      expect({ pair, total: rt?.total, bar: rt?.bar }).toEqual({ pair, total: null, bar: { kind: "none" } });
-      expect(rt?.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
-      expect(rt?.defaultKey).toBe(KEY_2_5);
-      expect(rt?.axis).toEqual(AXIS_15);
+      const rt = finalTotalsOf(finalWith({ ...finalHostRest(), score: pair && { ...pair, observedAt: null } }));
+      expect({ pair, total: rt.total, bar: rt.bar }).toEqual({ pair, total: null, bar: { kind: "none" } });
+      expect(rt.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
+      expect(rt.defaultKey).toBe(KEY_2_5);
+      expect(rt.axis).toEqual(AXIS_15);
     }
   });
 
@@ -839,18 +849,7 @@ describe("FINAL run totals: the card's input, after the final only, from this ga
     for (const [name, gameMarkets] of refusals) {
       expect({ name, runTotals: finalWith(finalHostRest(), gameMarkets).runTotals }).toEqual({ name, runTotals: null });
     }
-    expect(finalWith().runTotals?.lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
-  });
-
-  it("before first pitch and during play there is no run-total card, even with the final matrix supplied (CONSTRUCTED)", () => {
-    const markets = withMatrix(ownMatrix());
-    const before = build(beforeDetail, BEFORE_NOW, beforeHostRest(), { gameMarkets: markets });
-    const live = build(liveDetail, LIVE_NOW, liveHostRest(), { gameMarkets: markets });
-    const unbacked = build(liveDetail, LIVE_NOW, liveHostRest({ liveClaimUnbacked: true }), { gameMarkets: markets });
-    expect([before.phase, live.phase, unbacked.phase]).toEqual(["before", "live", "live"]);
-    for (const v of [before, live, unbacked]) expect(v.runTotals).toBeNull();
-    // The live page is exactly what it was without the matrix.
-    expect(live).toEqual(build(liveDetail, LIVE_NOW, liveHostRest()));
+    expect(finalTotalsOf(finalWith()).lines.map((l) => l.lineText)).toEqual(LINE_TEXTS);
   });
 
   it("a refresh in the same scope builds the same card (CONSTRUCTED refresh clock)", () => {
@@ -860,6 +859,172 @@ describe("FINAL run totals: the card's input, after the final only, from this ga
     });
     expect(later.scope).toBe(first.scope);
     expect(later.runTotals).toEqual(first.runTotals);
+  });
+});
+
+// ─── BEFORE / LIVE run totals (S2c: the same card, every phase) ────────────
+
+/** REAL: the retained game's own listed start (2026-09-30 21:00 UTC). */
+const START_MS = Date.parse(finalDetail.commence_time);
+const MIN = 60_000;
+const isoAt = (ms: number) => new Date(ms).toISOString();
+const KEY_12_5 = "o:244311420";
+/** The 13 admitted option keys in line order (2.5 … 14.5), as read from the capture. */
+const KEYS_13 = [
+  KEY_2_5,
+  "o:244311415",
+  "o:244311414",
+  "o:244311413",
+  "o:244311412",
+  "o:244311411",
+  "o:244311410",
+  KEY_9_5,
+  KEY_10_5,
+  KEY_11_5,
+  KEY_12_5,
+  "o:244311419",
+  "o:244311418",
+];
+function overOfLine(m: Json, line: number): Json {
+  const found = (m.questions as Json[]).filter((q) => isFullGameRuns(q) && (q.predicate as Json).line === line);
+  if (found.length !== 1) throw new Error(`expected one full-game question at ${line}`);
+  return (found[0].options as Json[])[0];
+}
+/** CONSTRUCTED: the line's Over option published as a quoted value on its own clock. */
+function quoteLine(m: Json, line: number, value: number, observedAt: string): void {
+  const o = overOfLine(m, line);
+  o.published = { ...(o.published as Json), value, value_state: "quoted", observed_at: observedAt };
+}
+/** CONSTRUCTED: an admitted pregame pin (comparable baseline) on the line's Over option. */
+function pinLine(m: Json, line: number, probability: number, observedAt: string): void {
+  overOfLine(m, line).comparison = {
+    state: "comparable",
+    reason: null,
+    baseline: { basis: "pregame_pin", probability, observed_at: observedAt },
+    latest: null,
+    delta_points: null,
+  };
+}
+function milestonesOf(v: MlbGameView): MlbRunMilestones {
+  const rt = v.runTotals;
+  if (!rt || rt.kind !== "milestones") throw new Error(`expected milestones, got ${rt ? rt.kind : "none"}`);
+  return rt;
+}
+function rowFor(input: MlbRunMilestones, key: string) {
+  const found = input.card.milestones.filter((r) => r.id === key);
+  if (found.length !== 1) throw new Error(`expected one milestone ${key}`);
+  return found[0];
+}
+
+describe("BEFORE / LIVE run totals: the milestones of the page's own phase, from the SAME owned lines (CONSTRUCTED phases)", () => {
+  it("before and live build S2b's milestones from this event's own matrix with the page's own inputs; nothing else moves", () => {
+    const markets = withMatrix(ownMatrix());
+    const before = build(beforeDetail, BEFORE_NOW, beforeHostRest(), { gameMarkets: markets });
+    const live = build(liveDetail, LIVE_NOW, liveHostRest(), { gameMarkets: markets });
+    expect([milestonesOf(before).phase, milestonesOf(live).phase]).toEqual(["before", "live"]);
+    // Exactly S2b's answer for what the page holds: the owned lines, the displayed pair WITH its clock,
+    // the state owner's noReportedResult (false here) and the host clock.
+    const lines = mlbRunLines(runTotalsFixture.game_question_matrix);
+    expect(before.runTotals).toEqual(mlbRunMilestones(lines, "before", beforeDetail, null, false, Date.parse(BEFORE_NOW)));
+    expect(live.runTotals).toEqual(
+      mlbRunMilestones(lines, "live", liveDetail, { home: 3, away: 7, observedAt: LIVE_OBSERVED }, false, Date.parse(LIVE_NOW)),
+    );
+    for (const v of [before, live]) {
+      const input = milestonesOf(v);
+      expect(input.card.milestones.map((r) => r.id)).toEqual(KEYS_13);
+      // The capture grades every line; before and during play no grade leaks into a row.
+      expect(input.card.milestones.every((r) => r.result === null)).toBe(true);
+    }
+    // The headline (D1 = B), history and All props are exactly what they were without the matrix.
+    expect({ ...live, runTotals: null }).toEqual(build(liveDetail, LIVE_NOW, liveHostRest()));
+    expect({ ...before, runTotals: null }).toEqual(build(beforeDetail, BEFORE_NOW, beforeHostRest()));
+  });
+
+  it("another event's body, a matrix not scoped to the game, two full-game lines or no matrix gives no card before or during play", () => {
+    const twoLines = ownMatrix();
+    // TEST MUTATION: two full-game lines left; the first-five-innings run lines stay and do not count.
+    twoLines.questions = (twoLines.questions as Json[]).filter((q) => !isFullGameRuns(q) || ["2.5", "3.5"].includes(String((q.predicate as Json).line)));
+    const refusals: Array<[string, GameMarketsResponse | null]> = [
+      ["another event's body (TEST MUTATION: event_id 1)", mutate(withMatrix(ownMatrix()), { event_id: 1 })],
+      ["a series-scoped matrix (TEST MUTATION)", withMatrix({ ...ownMatrix(), display_scope: "series" })],
+      ["two full-game lines", withMatrix(twoLines)],
+      ["the reduced body, which has no matrix member", finalMarkets],
+      ["no markets body", null],
+    ];
+    for (const [name, gameMarkets] of refusals) {
+      const before = build(beforeDetail, BEFORE_NOW, beforeHostRest(), { gameMarkets }).runTotals;
+      const live = build(liveDetail, LIVE_NOW, liveHostRest(), { gameMarkets }).runTotals;
+      expect({ name, before, live }).toEqual({ name, before: null, live: null });
+    }
+    expect(milestonesOf(build(liveDetail, LIVE_NOW, liveHostRest(), { gameMarkets: withMatrix(ownMatrix()) })).card.milestones).toHaveLength(13);
+  });
+
+  it("LIVE: the pin, the recorded in-game quote and the runs so far stay apart; the count is the DISPLAYED pair, never the raw row", () => {
+    const m = ownMatrix();
+    pinLine(m, 9.5, 0.4, isoAt(START_MS - 30 * MIN)); // CONSTRUCTED pins
+    pinLine(m, 11.5, 0.3, isoAt(START_MS - 30 * MIN));
+    quoteLine(m, 11.5, 0.2, isoAt(Date.parse(LIVE_NOW) - 2 * MIN)); // CONSTRUCTED recent post-start quote
+    // CONSTRUCTED (#8278's shape): the event row lags at 1–0 while the page displays 3–6.
+    const lagging = mutate(liveDetail, { home_score: 1, away_score: 0 });
+    const rest = liveHostRest({ score: { home: 3, away: 6, observedAt: LIVE_OBSERVED } });
+    const v = build(lagging, LIVE_NOW, rest, { gameMarkets: withMatrix(m) });
+    const input = milestonesOf(v);
+    // The headline prints the same displayed pair (storage order: home, away).
+    const runs = column(v, MLB_WORDS.runs);
+    expect([runs.home.text, runs.away.text]).toEqual(["3", "6"]);
+    expect(input.card.actual).toMatchObject({ kind: "count", quantity: 9, ruleLabel: "9 so far" });
+    const ten = rowFor(input, KEY_9_5);
+    expect(ten.pregame).toMatchObject({ kind: "value", observation: { probability: 0.4 } });
+    expect(ten.current).toEqual({ kind: "unavailable", words: "In-game chance unavailable" });
+    expect(ten.performance).toBe("1 more for 10+");
+    const twelve = rowFor(input, KEY_11_5);
+    expect(twelve.pregame).toMatchObject({ kind: "value", observation: { probability: 0.3 } });
+    expect(twelve.current).toMatchObject({ kind: "recorded", observation: { probability: 0.2 } });
+    expect(rowFor(input, KEY_2_5).current).toEqual({ kind: "reached", words: "Reached so far" });
+    expect(input.card.milestones.every((r) => r.result === null)).toBe(true);
+    // The shown pin nearest even odds opens (40% over 30%).
+    expect(input.card.defaultId).toBe(KEY_9_5);
+    // Whatever the row says, the card is the same: it never reads the row's score.
+    const otherRow = build(mutate(liveDetail, { home_score: 8, away_score: 8 }), LIVE_NOW, rest, { gameMarkets: withMatrix(m) });
+    expect(otherRow.runTotals).toEqual(v.runTotals);
+  });
+
+  it("BEFORE: no count before first pitch even with a displayed pair; a recent quote is the pregame chance, a pin is not; no shown chance is no default", () => {
+    const m = ownMatrix();
+    quoteLine(m, 9.5, 0.45, isoAt(Date.parse(BEFORE_NOW) - 5 * MIN)); // CONSTRUCTED recent quote
+    pinLine(m, 10.5, 0.5, isoAt(START_MS - 60 * MIN)); // CONSTRUCTED pin
+    const rest = beforeHostRest({ score: { home: 0, away: 0, observedAt: null } }); // CONSTRUCTED pair before first pitch
+    const input = milestonesOf(build(beforeDetail, BEFORE_NOW, rest, { gameMarkets: withMatrix(m) }));
+    expect(input.card.actual).toBeNull();
+    expect(input.card.milestones.every((r) => r.current === null && r.performance === null)).toBe(true);
+    expect(rowFor(input, KEY_9_5).pregame).toMatchObject({ kind: "value", observation: { probability: 0.45 } });
+    expect(rowFor(input, KEY_10_5).pregame).toEqual({ kind: "missing", words: "Pregame chance unavailable" });
+    expect(input.card.defaultId).toBe(KEY_9_5);
+    const none = milestonesOf(build(beforeDetail, BEFORE_NOW, beforeHostRest(), { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(none.card.defaultId).toBeNull();
+  });
+
+  it("noReportedResult comes from the page's own state owner: an unbacked live claim withholds every in-game quote (CONSTRUCTED)", () => {
+    const m = ownMatrix();
+    quoteLine(m, 11.5, 0.2, isoAt(Date.parse(LIVE_NOW) - 2 * MIN));
+    const backed = build(liveDetail, LIVE_NOW, liveHostRest(), { gameMarkets: withMatrix(m) });
+    const unbacked = build(liveDetail, LIVE_NOW, liveHostRest({ liveClaimUnbacked: true }), { gameMarkets: withMatrix(m) });
+    expect(rowFor(milestonesOf(backed), KEY_11_5).current).toMatchObject({ kind: "recorded", observation: { probability: 0.2 } });
+    expect(rowFor(milestonesOf(unbacked), KEY_11_5).current).toEqual({ kind: "unavailable", words: "In-game chance unavailable" });
+    // The same owner's answer also titles the headline's chance "Last recorded chance": one answer, two places.
+    expect(unbacked.headline.matrix.columns[1].title).toBe(MATRIX_WORDS.lastRecordedChance);
+    // Reached lines stay performance (3 + 7 = 10 runs).
+    expect(rowFor(milestonesOf(unbacked), KEY_9_5).current).toEqual({ kind: "reached", words: "Reached so far" });
+  });
+
+  it("each phase has its own scope, and a refresh in the same scope builds the same input (CONSTRUCTED refresh clock)", () => {
+    const markets = withMatrix(ownMatrix());
+    const live = build(liveDetail, LIVE_NOW, liveHostRest(), { gameMarkets: markets });
+    const later = build(liveDetail, "2026-10-01T00:17:00Z", liveHostRest(), { gameMarkets: markets });
+    const before = build(beforeDetail, BEFORE_NOW, beforeHostRest(), { gameMarkets: markets });
+    expect([before.scope, live.scope]).toEqual(["mlb:15321836:before", "mlb:15321836:live"]);
+    expect(later.scope).toBe(live.scope);
+    expect(later.runTotals).toEqual(live.runTotals);
   });
 });
 

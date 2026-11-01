@@ -23,14 +23,21 @@
  * the reduced markets body here — a CONSTRUCTED admission, since the reduced
  * fixture omits the member; neither fixture is edited. CONSTRUCTED, and named
  * where used: other displayed pairs, a withdrawn line, a duplicated key, a
- * wrong scope, a two-line matrix, another event's id, the before and live
- * events given the final matrix, and a live model handed a final card. The
+ * wrong scope, a two-line matrix, another event's id, and models handed an
+ * input of the wrong kind or another phase (PHASE AGREEMENT, S2c). The
  * row's side-by-side or stacked fit is not provable in jsdom (owed to the
  * browser check); these prove its order, its contents and what it holds.
  * B1 (CONSTRUCTED same-scope passes with no matrix, and a host-held selection
  * given to the card directly): the chosen line is held above the card, so a
  * same-scope absence keeps it; the standalone card's own S1 tests stay as they
  * are and prove its default, uncontrolled behaviour.
+ * S2c (every phase): before first pitch and during play the same row draws the
+ * run milestones of the page's OWN phase. The joined matrix is still the REAL
+ * FINAL capture (every option graded, no pins); every before/live quote, pin,
+ * clock, status, displayed pair, raw row score and noReportedResult put around
+ * it is CONSTRUCTED and named where made (the listed start is the capture's).
+ * No genuine before/live capture exists yet; these prove the binding, not a
+ * specimen.
  */
 import React, { act } from "react";
 import fs from "node:fs";
@@ -41,6 +48,7 @@ import runTotalsFixture from "../lib/mlbRunTotals10868.fixtures.json";
 import type { EventDetailResponse, EventHistoryResponse } from "@/lib/types";
 import type { GameMarketsResponse } from "@/lib/api";
 import { PROP_HIT_LABEL, PROP_MISS_LABEL } from "@/lib/propGrade";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { HISTORY_WORDS } from "@/lib/eventPage10868/hockeyJourneyHistory";
 import { MLB_RUN_TOTAL_WORDS } from "@/lib/eventPage10868/mlbRunTotals";
 import {
@@ -98,6 +106,21 @@ const liveHost: MlbGameHost = {
   score: { home: 3, away: 6, observedAt: LIVE_OBSERVED },
   projectedFinal: { home: 4, away: 7 },
 };
+
+/** CONSTRUCTED: one minute before the retained game's listed first pitch (21:00 UTC). */
+const BEFORE_NOW = Date.parse("2026-09-30T20:59:00Z");
+/** CONSTRUCTED: native `beforeEdits` over the real final, one minute before first pitch, with no hero pair. */
+const beforeDetail = mutate(finalDetail, {
+  status: "scheduled",
+  completed_at: null,
+  home_score: null,
+  away_score: null,
+  hero_settled_result: null,
+  hero_probability: null,
+  hero_probability_away: null,
+  hero_probability_source: null,
+});
+const beforeHost: MlbGameHost = { ...finalHost, nowMs: BEFORE_NOW, score: null };
 
 function model(
   event: EventDetailResponse,
@@ -275,17 +298,6 @@ describe("the headline", () => {
 // ─── Team names when nothing in the headline is readable (M2) ──────────────
 
 describe("team names when no headline slot holds a readable value", () => {
-  /** CONSTRUCTED: native `beforeEdits` over the real final — one minute before first pitch. */
-  const beforeDetail = mutate(finalDetail, {
-    status: "scheduled",
-    completed_at: null,
-    home_score: null,
-    away_score: null,
-    hero_settled_result: null,
-    hero_probability: null,
-    hero_probability_away: null,
-    hero_probability_source: null,
-  });
   /** CONSTRUCTED host: no hero pair, no score, no projection — every slot is its absence words. */
   const emptyHost: MlbGameHost = {
     nowMs: Date.parse("2026-09-30T20:59:00Z"),
@@ -470,19 +482,6 @@ const runSegments = () =>
 const sourceSays = (verdict: string) => `${MLB_RUN_TOTAL_WORDS.sourceResult} ${verdict}`;
 
 describe("the final run-total card beside the history", () => {
-  /** CONSTRUCTED: native `beforeEdits` over the real final, one minute before first pitch, with no hero pair. */
-  const beforeDetail = mutate(finalDetail, {
-    status: "scheduled",
-    completed_at: null,
-    home_score: null,
-    away_score: null,
-    hero_settled_result: null,
-    hero_probability: null,
-    hero_probability_away: null,
-    hero_probability_source: null,
-  });
-  const beforeHost: MlbGameHost = { ...finalHost, nowMs: Date.parse("2026-09-30T20:59:00Z"), score: null };
-
   it("REAL final 3–7: history then card in one row; total 10, 13 lines, 9.5 by default with its HIT, 10.5 with its MISS", () => {
     const m = model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) });
     render(m);
@@ -593,19 +592,37 @@ describe("the final run-total card beside the history", () => {
     expect(runChoices()).toHaveLength(13);
   });
 
-  it("before first pitch and during play the leaf never shows, even with the final matrix supplied; a live model handed a final card draws none (CONSTRUCTED)", () => {
+  it("before and live draw the milestone card of the page's OWN phase; a wrong-kind or wrong-phase input draws none (CONSTRUCTED)", () => {
     const markets = withMatrix(ownMatrix());
-    render(model(beforeDetail, beforeHost, { gameMarkets: markets }));
+    const beforeM = model(beforeDetail, beforeHost, { gameMarkets: markets });
+    const liveM = model(liveDetail, liveHost, { gameMarkets: markets });
+    const finalM = model(finalDetail, finalHost, { gameMarkets: markets });
+    render(beforeM);
     expect(host.querySelector("section[data-mlb-game='before']")).not.toBeNull();
-    expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
-    render(model(liveDetail, liveHost, { gameMarkets: markets }));
+    expect(rowItems()).toEqual(["history", "runTotals"]);
+    expect([runCard()?.getAttribute("data-mlb-run-totals"), runCard()?.getAttribute("data-mlb-run-milestones")]).toEqual(["mlb:15321836:before", "before"]);
+    expect(host.querySelector("[data-run-total]")).toBeNull();
+    render(liveM);
     expect(host.querySelector("section[data-mlb-game='live']")).not.toBeNull();
-    expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
-    // CONSTRUCTED misuse: the real final's card placed on a live model. The page draws a card for a final only.
-    const finalCard = view(model(finalDetail, finalHost, { gameMarkets: markets })).runTotals;
-    expect(finalCard).not.toBeNull();
-    render({ ...view(model(liveDetail, liveHost)), runTotals: finalCard });
-    expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
+    expect([runCard()?.getAttribute("data-mlb-run-totals"), runCard()?.getAttribute("data-mlb-run-milestones")]).toEqual(["mlb:15321836:live", "live"]);
+    expect(runCard()?.querySelectorAll('[data-soccer-card="goals"]')).toHaveLength(1);
+    expect(host.querySelector("[data-run-total]")).toBeNull();
+    // CONSTRUCTED mismatches: the wrong kind and the wrong phase each draw no card — never a final card during play.
+    const mismatches: Array<[string, MlbGameModel]> = [
+      ["a final card on the live page", { ...view(liveM), runTotals: view(finalM).runTotals }],
+      ["live milestones on the final page", { ...view(finalM), runTotals: view(liveM).runTotals }],
+      ["before milestones on the live page", { ...view(liveM), runTotals: view(beforeM).runTotals }],
+      ["live milestones on the before page", { ...view(beforeM), runTotals: view(liveM).runTotals }],
+    ];
+    for (const [name, misfit] of mismatches) {
+      render(misfit);
+      expect({ name, card: runCard(), items: rowItems() }).toEqual({ name, card: null, items: ["history"] });
+    }
+    // Non-vacuity: every borrowed input is a real card on its own page.
+    for (const own of [beforeM, liveM, finalM]) {
+      render(own);
+      expect(rowItems()).toEqual(["history", "runTotals"]);
+    }
   });
 
   it("a same-scope refresh keeps the chosen line; a withdrawn or duplicated key never substitutes, and the line returns by its key", () => {
@@ -648,7 +665,9 @@ describe("the final run-total card beside the history", () => {
     render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
     click(runChoice(KEY_10_5));
     render(model(liveDetail, liveHost, { gameMarkets: withMatrix(ownMatrix()) }));
-    expect(runCard()).toBeNull();
+    // Live is a new reading: its milestones (the same option keys) open with nothing chosen, never the final's 10.5.
+    expect(runCard()?.getAttribute("data-mlb-run-milestones")).toBe("live");
+    expect(host.querySelector("[data-soccer-chosen]")).toBeNull();
     render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
     expect(pressedRuns()).toEqual([KEY_9_5]);
   });
@@ -780,6 +799,283 @@ describe("the final run-total card beside the history", () => {
     );
     expect(historyChart()).not.toBe(chart);
     expect(historyDisclosure()?.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+// ─── S2c: this phase's run milestones in the same row ──────────────────────
+//
+// The joined matrix is the REAL final capture (every option graded, no pins).
+// Every quote, pin and clock put on it below is CONSTRUCTED, as are the phase
+// edits (`liveDetail`, `beforeDetail`), the hosts' displayed pairs and the
+// state owner's noReportedResult (`liveClaimUnbacked`).
+
+/** REAL: the retained game's own listed start. */
+const START_MS = Date.parse(finalDetail.commence_time);
+const MIN = 60_000;
+const iso = (ms: number) => new Date(ms).toISOString();
+/** The strip's thirteen milestones, 2.5 → "3+ runs" … 14.5 → "15+ runs". */
+const MILESTONE_LABELS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((n) => `${n}+ runs`);
+function overOfLine(m: Json, line: number): Json {
+  const found = (m.questions as Json[]).filter((q) => isFullGameRuns(q) && lineOf(q) === line);
+  if (found.length !== 1) throw new Error(`expected one full-game question at ${line}`);
+  return (found[0].options as Json[])[0];
+}
+/** CONSTRUCTED: the line's Over option published as a quoted value on its own clock. */
+function quoteLine(m: Json, line: number, value: number, observedAt: string): void {
+  const o = overOfLine(m, line);
+  o.published = { ...(o.published as Json), value, value_state: "quoted", observed_at: observedAt };
+}
+/** CONSTRUCTED: an admitted pregame pin (comparable baseline) on the line's Over option. */
+function pinLine(m: Json, line: number, probability: number, observedAt: string): void {
+  overOfLine(m, line).comparison = {
+    state: "comparable",
+    reason: null,
+    baseline: { basis: "pregame_pin", probability, observed_at: observedAt },
+    latest: null,
+    delta_points: null,
+  };
+}
+/** CONSTRUCTED live readings over the REAL matrix: pins on 9.5 (40%) and 11.5 (30%); a recorded 20% on 11.5 two minutes before the live clock. */
+function liveMilestoneMatrix(): Json {
+  const m = ownMatrix();
+  pinLine(m, 9.5, 0.4, iso(START_MS - 30 * MIN));
+  pinLine(m, 11.5, 0.3, iso(START_MS - 30 * MIN));
+  quoteLine(m, 11.5, 0.2, iso(LIVE_NOW - 2 * MIN));
+  return m;
+}
+/** TEST MUTATION: one full-game line withdrawn (every other question kept). */
+function withoutLine(m: Json, line: number): Json {
+  m.questions = (m.questions as Json[]).filter((q) => !(isFullGameRuns(q) && lineOf(q) === line));
+  return m;
+}
+const msChips = () => Array.from(runCard()?.querySelectorAll<HTMLButtonElement>('[data-soccer-card="goals"] li > button[aria-pressed]') ?? []);
+const msLabel = (b: HTMLButtonElement) => b.querySelector("span")?.textContent ?? null;
+const msPressed = () => msChips().filter((b) => b.getAttribute("aria-pressed") === "true").map(msLabel);
+const msChosen = () => runCard()?.querySelector("[data-soccer-chosen]")?.getAttribute("data-soccer-chosen") ?? null;
+const msUnavailable = () => runCard()?.querySelector("[data-soccer-selection-unavailable]") ?? null;
+function msChip(label: string): HTMLButtonElement {
+  const found = msChips().filter((b) => msLabel(b) === label);
+  if (found.length !== 1) throw new Error(`expected one milestone ${label}`);
+  return found[0];
+}
+const readoutTitles = () => Array.from(runCard()?.querySelectorAll("[data-soccer-chosen] dt") ?? []).map((dt) => dt.textContent);
+const readoutValues = () => Array.from(runCard()?.querySelectorAll("[data-soccer-chosen] dd") ?? []).map((dd) => dd.textContent);
+/** Any Details the run-total card itself offers (the milestone leaf's Details are off). */
+const cardDetails = () =>
+  (runCard()?.querySelectorAll("[data-soccer-details-entry]").length ?? 0) +
+  Array.from(runCard()?.querySelectorAll("button") ?? []).filter((b) => (b.textContent ?? "").startsWith("Details")).length;
+const liveWith = (matrix: unknown, h: MlbGameHost = liveHost) => model(liveDetail, h, { gameMarkets: withMatrix(matrix) });
+
+describe("S2c: before first pitch and during play the row draws this phase's run milestones (CONSTRUCTED phases over the REAL matrix)", () => {
+  it("LIVE: the count is the DISPLAYED pair, never the raw row; the pin, the recorded in-game quote and the runs so far stay apart; no final grade leaks", () => {
+    // CONSTRUCTED (#8278's shape): the event row lags at 1–0 while the page displays 3–6.
+    const lagging = mutate(liveDetail, { home_score: 1, away_score: 0 });
+    render(model(lagging, liveHost, { gameMarkets: withMatrix(liveMilestoneMatrix()) }));
+    expect(rowItems()).toEqual(["history", "runTotals"]);
+    // The headline's Runs column (away first) and the card's count read the same displayed pair.
+    const cells = Array.from(host.querySelectorAll("table tbody tr")).map((r) =>
+      Array.from(r.querySelectorAll("td")).map((td) => td.textContent ?? ""),
+    );
+    expect([cells[0][2], cells[1][2]]).toEqual(["66 runs", "33 runs"]);
+    const card = runCard();
+    expect([card?.getAttribute("data-mlb-run-totals"), card?.getAttribute("data-mlb-run-milestones")]).toEqual(["mlb:15321836:live", "live"]);
+    expect(card?.querySelector("h4")?.textContent).toBe(MLB_RUN_TOTAL_WORDS.liveTitle);
+    expect(card?.textContent).toContain(MLB_RUN_TOTAL_WORDS.milestonesEyebrow);
+    expect(card?.querySelector('[data-axis-labels="actual"] [data-axis-label="actual"]')?.textContent).toBe("9 so far");
+    expect(card?.querySelector('[data-mark="actual-rule"]')).not.toBeNull();
+    expect(msChips().map(msLabel)).toEqual(MILESTONE_LABELS);
+    // Reached lines are performance; the rest say how many more, from 9 (never the row's 1).
+    expect(msChip("3+ runs").textContent).toContain("Reached so far");
+    expect(msChip("9+ runs").textContent).toContain("Reached so far");
+    expect(msChip("10+ runs").textContent).toContain(MLB_RUN_TOTAL_WORDS.more(1, "10+"));
+    expect(msChip("12+ runs").textContent).toContain(MLB_RUN_TOTAL_WORDS.more(3, "12+"));
+    // Two pins drawn as pregame marks; the one recorded in-game quote as the only current mark.
+    expect(card?.querySelectorAll('[data-mark="pregame"]')).toHaveLength(2);
+    expect(card?.querySelectorAll('[data-mark="current"]')).toHaveLength(1);
+    expect(card?.querySelector(`[data-milestone="${KEY_11_5}"] [data-mark="current"]`)).not.toBeNull();
+    // The shown pin nearest even odds opens (40% over 30%): pregame and in-game kept apart.
+    expect(msPressed()).toEqual(["10+ runs"]);
+    expect(msChosen()).toBe(KEY_9_5);
+    expect(readoutTitles()).toEqual(["Pregame chance", "In-game chance"]);
+    expect(readoutValues()).toEqual([formatProbabilityPercent(0.4), MLB_RUN_TOTAL_WORDS.inGameUnavailable]);
+    click(msChip("12+ runs"));
+    expect(msChosen()).toBe(KEY_11_5);
+    expect(readoutTitles()).toEqual(["Pregame chance", "Recorded in-game"]);
+    expect(readoutValues()).toEqual([formatProbabilityPercent(0.3), formatProbabilityPercent(0.2)]);
+    click(msChip("3+ runs"));
+    expect(readoutValues()).toEqual([MLB_RUN_TOTAL_WORDS.pregameUnavailable, "Reached so far"]);
+    // The capture grades every line; during play none of it shows, and the final leaf is not drawn.
+    expect(card?.textContent).not.toContain(PROP_HIT_LABEL);
+    expect(card?.textContent).not.toContain(PROP_MISS_LABEL);
+    expect(card?.querySelector("[data-run-total]")).toBeNull();
+    expect(card?.querySelector("[data-run-source]")).toBeNull();
+    expect(cardDetails()).toBe(0);
+    // Whatever the row says, the card is the same: it never reads the row's score.
+    const otherRow = model(mutate(liveDetail, { home_score: 8, away_score: 8 }), liveHost, { gameMarkets: withMatrix(liveMilestoneMatrix()) });
+    expect(view(otherRow).runTotals).toEqual(view(model(lagging, liveHost, { gameMarkets: withMatrix(liveMilestoneMatrix()) })).runTotals);
+  });
+
+  it("noReportedResult is the page's own state owner's answer: an unbacked live claim withholds the recorded in-game quote; the pin, the count and the held key stay (CONSTRUCTED)", () => {
+    render(liveWith(liveMilestoneMatrix(), { ...liveHost, liveClaimUnbacked: true }));
+    expect(runCard()?.getAttribute("data-mlb-run-milestones")).toBe("live");
+    expect(runCard()?.querySelectorAll('[data-mark="current"]')).toHaveLength(0);
+    click(msChip("12+ runs"));
+    expect(readoutTitles()).toEqual(["Pregame chance", "In-game chance"]);
+    expect(readoutValues()).toEqual([formatProbabilityPercent(0.3), MLB_RUN_TOTAL_WORDS.inGameUnavailable]);
+    expect(msChip("3+ runs").textContent).toContain("Reached so far");
+    expect(runCard()?.querySelector('[data-axis-labels="actual"] [data-axis-label="actual"]')?.textContent).toBe("9 so far");
+    // Non-vacuity: the same scope, backed, records the quote on the same held line.
+    render(liveWith(liveMilestoneMatrix()));
+    expect(runCard()?.querySelectorAll('[data-mark="current"]')).toHaveLength(1);
+    expect(msChosen()).toBe(KEY_11_5);
+    expect(readoutValues()).toEqual([formatProbabilityPercent(0.3), formatProbabilityPercent(0.2)]);
+  });
+
+  it("BEFORE: no count before first pitch even with a displayed 0–0; a recent quote is the pregame chance and the shown default, a pin is not; no shown chance opens nothing", () => {
+    const m = ownMatrix();
+    quoteLine(m, 9.5, 0.45, iso(BEFORE_NOW - 5 * MIN)); // CONSTRUCTED recent quote
+    pinLine(m, 10.5, 0.5, iso(START_MS - 60 * MIN)); // CONSTRUCTED pin
+    const paired: MlbGameHost = { ...beforeHost, score: { home: 0, away: 0, observedAt: null } }; // CONSTRUCTED pair
+    render(model(beforeDetail, paired, { gameMarkets: withMatrix(m) }));
+    const card = runCard();
+    expect([card?.getAttribute("data-mlb-run-totals"), card?.getAttribute("data-mlb-run-milestones")]).toEqual(["mlb:15321836:before", "before"]);
+    expect(card?.querySelector("h4")?.textContent).toBe(MLB_RUN_TOTAL_WORDS.beforeTitle);
+    expect(card?.querySelector('[data-axis-labels="actual"]')).toBeNull();
+    expect(card?.querySelector('[data-mark="actual-rule"]')).toBeNull();
+    expect(card?.querySelectorAll('[data-mark="current"]')).toHaveLength(0);
+    expect(card?.textContent).not.toMatch(/more for|Reached so far/);
+    expect(card?.querySelectorAll('[data-mark="pregame"]')).toHaveLength(1);
+    expect(msChip("10+ runs").textContent).toContain(formatProbabilityPercent(0.45));
+    expect(msChip("11+ runs").textContent).toContain(MLB_RUN_TOTAL_WORDS.pregameUnavailable);
+    expect(msPressed()).toEqual(["10+ runs"]);
+    expect(msChosen()).toBe(KEY_9_5);
+    expect(readoutTitles()).toEqual(["Pregame chance"]);
+    expect(readoutValues()).toEqual([formatProbabilityPercent(0.45)]);
+    expect(card?.textContent).not.toContain(PROP_HIT_LABEL);
+    expect(card?.textContent).not.toContain(PROP_MISS_LABEL);
+    expect(cardDetails()).toBe(0);
+    // No shown chance (the REAL matrix alone): nothing is chosen, and nothing says unavailable.
+    render(model(beforeDetail, beforeHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(msChips().map(msLabel)).toEqual(MILESTONE_LABELS);
+    expect(msPressed()).toEqual([]);
+    expect(msChosen()).toBeNull();
+    expect(msUnavailable()).toBeNull();
+  });
+
+  it("before and live: no card for another event's body, a wrong scope, two full-game lines or no matrix — the history stays alone; the own matrix restores it", () => {
+    const refusals: Array<[string, GameMarketsResponse]> = [
+      ["another event's body (TEST MUTATION: event_id 1)", mutate(withMatrix(liveMilestoneMatrix()), { event_id: 1 })],
+      ["a series-scoped matrix (TEST MUTATION)", withMatrix({ ...liveMilestoneMatrix(), display_scope: "series" })],
+      ["two full-game lines (TEST MUTATION)", withMatrix(matrixKeeping([9.5, 11.5]))],
+      ["the reduced body, with no matrix member", finalMarkets],
+    ];
+    const phases = [
+      ["before", beforeDetail, beforeHost],
+      ["live", liveDetail, liveHost],
+    ] as const;
+    for (const [phase, detail, h] of phases) {
+      for (const [name, gameMarkets] of refusals) {
+        render(model(detail, h, { gameMarkets }));
+        expect(host.querySelector(`section[data-mlb-game='${phase}']`)).not.toBeNull();
+        expect({ phase, name, card: runCard(), items: rowItems() }).toEqual({ phase, name, card: null, items: ["history"] });
+      }
+      render(model(detail, h, { gameMarkets: withMatrix(liveMilestoneMatrix()) }));
+      expect(runCard()?.getAttribute("data-mlb-run-milestones")).toBe(phase);
+      expect(msChips()).toHaveLength(13);
+    }
+  });
+
+  it("B1 in the live scope: the chosen milestone survives the WHOLE matrix going away and returns by its key; withdrawn or duplicated it is unavailable, never a substitute", () => {
+    render(liveWith(liveMilestoneMatrix()));
+    expect(msChosen()).toBe(KEY_9_5); // the shown default
+    click(msChip("12+ runs"));
+    expect(msChosen()).toBe(KEY_11_5);
+    // CONSTRUCTED same-scope passes with NO matrix: the member removed (the reduced body), then a null member.
+    for (const gameMarkets of [finalMarkets, withMatrix(null)]) {
+      const absent = model(liveDetail, { ...liveHost, nowMs: LIVE_NOW + 30_000 }, { gameMarkets });
+      expect(view(absent).scope).toBe("mlb:15321836:live");
+      expect(view(absent).runTotals).toBeNull();
+      render(absent);
+      expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
+      expect(host.textContent).not.toContain(MLB_RUN_TOTAL_WORDS.liveTitle);
+    }
+    render(liveWith(liveMilestoneMatrix()));
+    expect(msChosen()).toBe(KEY_11_5); // never the 9.5 default
+    expect(msPressed()).toEqual(["12+ runs"]);
+    expect(readoutValues()).toEqual([formatProbabilityPercent(0.3), formatProbabilityPercent(0.2)]);
+    // TEST MUTATIONS: 11.5 withdrawn; 12.5's option carrying 11.5's key (the admission drops both).
+    const duplicated = liveMilestoneMatrix();
+    overOfLine(duplicated, 12.5).option_key = KEY_11_5;
+    for (const changed of [withoutLine(liveMilestoneMatrix(), 11.5), duplicated]) {
+      render(liveWith(changed));
+      expect(msUnavailable()?.textContent).toBe("Selected milestone unavailable.");
+      expect(msPressed()).toEqual([]); // never the 9.5 default or a neighbour
+      expect(msChosen()).toBeNull();
+      expect(msChips().map(msLabel)).not.toContain("12+ runs");
+      render(liveWith(liveMilestoneMatrix()));
+      expect(msChosen()).toBe(KEY_11_5);
+      expect(msPressed()).toEqual(["12+ runs"]);
+      expect(msUnavailable()).toBeNull();
+    }
+  });
+
+  it("B1: an event or phase change while the card is absent opens the new scope on its own shown default, never the held 12+ (CONSTRUCTED: another event id; then before first pitch)", () => {
+    const otherId = 15321837;
+    const otherLive = (gameMarkets: GameMarketsResponse) =>
+      model(mutate(liveDetail, { id: otherId }), liveHost, { history: mutate(finalHistory, { event_id: otherId }), gameMarkets });
+    render(liveWith(liveMilestoneMatrix()));
+    click(msChip("12+ runs"));
+    expect(msChosen()).toBe(KEY_11_5);
+    render(model(liveDetail, liveHost, { gameMarkets: finalMarkets })); // absent, same scope
+    render(otherLive(mutate(finalMarkets, { event_id: otherId }))); // the new event, still absent
+    expect(runCard()).toBeNull();
+    render(otherLive(withMatrix(liveMilestoneMatrix(), mutate(finalMarkets, { event_id: otherId }))));
+    expect(runCard()?.getAttribute("data-mlb-run-totals")).toBe("mlb:15321837:live");
+    expect(msChosen()).toBe(KEY_9_5);
+    // Back on 15321836 live (a new scope again): choose 12+, lose the matrix, pass through before first pitch, return.
+    render(liveWith(liveMilestoneMatrix()));
+    expect(msChosen()).toBe(KEY_9_5);
+    click(msChip("12+ runs"));
+    render(model(liveDetail, liveHost, { gameMarkets: finalMarkets }));
+    render(model(beforeDetail, beforeHost)); // a new phase, still no matrix
+    expect(host.querySelector("section[data-mlb-game='before']")).not.toBeNull();
+    expect(runCard()).toBeNull();
+    render(liveWith(liveMilestoneMatrix()));
+    expect(msChosen()).toBe(KEY_9_5);
+    expect(msPressed()).toEqual(["10+ runs"]);
+  });
+
+  it("the history chart, its open disclosure and an open original's Details survive the live milestones arriving and leaving in the same scope", () => {
+    render(model(liveDetail, liveHost)); // the reduced body: no card
+    expect(rowItems()).toEqual(["history"]);
+    const chart = historyChart();
+    const disclosure = historyDisclosure();
+    expect(chart).not.toBeNull();
+    expect(disclosure).not.toBeNull();
+    click(disclosure!);
+    expect(disclosure!.getAttribute("aria-expanded")).toBe("true");
+    click(entryButton());
+    const original = detailsButtons()[0];
+    click(original);
+    expect(openDetails()).toHaveLength(1);
+    expect(openDetails()[0]).toBe(original);
+    render(liveWith(liveMilestoneMatrix())); // the milestones arrive
+    expect(rowItems()).toEqual(["history", "runTotals"]);
+    expect(runCard()?.getAttribute("data-mlb-run-milestones")).toBe("live");
+    expect(historyChart()).toBe(chart);
+    expect(historyDisclosure()).toBe(disclosure);
+    expect(disclosure!.getAttribute("aria-expanded")).toBe("true");
+    expect(openDetails()).toHaveLength(1);
+    expect(openDetails()[0]).toBe(original);
+    expect(cardDetails()).toBe(0); // the card adds no Details; the original's stay the only ones
+    render(model(liveDetail, liveHost, { gameMarkets: finalMarkets })); // they leave
+    expect(rowItems()).toEqual(["history"]);
+    expect(historyChart()).toBe(chart);
+    expect(historyDisclosure()).toBe(disclosure);
+    expect(disclosure!.getAttribute("aria-expanded")).toBe("true");
+    expect(openDetails()).toHaveLength(1);
+    expect(openDetails()[0]).toBe(original);
+    expect(document.getElementById(original.getAttribute("aria-controls") ?? "")?.hidden).toBe(false);
   });
 });
 

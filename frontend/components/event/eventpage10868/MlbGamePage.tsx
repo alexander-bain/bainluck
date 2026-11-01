@@ -6,17 +6,19 @@
  * PILLARS: FORMATTING / TRUTH / DISCOVER. SHIP: a baseball fan's web event page
  * shows both teams' win chances, the score the page displays and the projected
  * final the page already admits together, with the two-team win history and
- * every original prop's exact Details. BINDING INCREMENT SHIP: after a baseball
- * game, the event page shows the actual run total against the offered lines,
- * alongside its win-probability history.
+ * every original prop's exact Details. RUN-TOTAL SHIP: before and during play
+ * the run milestones show each pregame chance, admitted in-game chance and the
+ * runs so far apart; after the game the actual run total stands against the
+ * offered lines — both alongside the win-probability history.
  *
  * PRESENTATION ONLY. It draws the model `buildMlbGame`
  * (lib/eventPage10868/mlbGame.ts) built from values the page already holds,
  * through the accepted components: `HockeyJourneyMatrix` (the team-paired
  * headline, its measured arrangement steps and its once-for-both-teams
  * absence lines), `HockeyJourneyHistoryChart` (the two-team history and its
- * own Details), `MlbRunTotalsCard` (after the final only: the run total against
- * every offered line, through its optional controlled selection) and
+ * own Details), `MlbRunTotalsCard` (the final run total against every offered
+ * line after the game; S2a's milestone visual before first pitch and during
+ * play; through its optional controlled selection) and
  * `HockeyJourneyAllProps` (every original with its exact Details). No fetch,
  * subscription, SWR key, timer, effect or animation is added here; the only
  * state is inside those components plus the run-line slot's scope and chosen
@@ -25,7 +27,8 @@
  * ORDER, top to bottom (native `BaseballEventPagePresentation10868`): the state
  * lines → the matrix, each column's source and clock said once under it (native
  * draws the provenance under the matrix; there is no About control) → the
- * history, with the final run-total card beside or under it → All props.
+ * history, with the run-total card of this phase beside or under it → All
+ * props.
  *
  * DISPLAY ORDER: AWAY FIRST (Design D2, native baseball's order). The model is
  * in storage order (home first, each row and series tagged with its `side`);
@@ -67,12 +70,18 @@
  * effect, timer or automatic selection. Native: `BaseballStoriesAdapter10868`
  * holds `selectedOptionKey` outside the card.
  *
- * THE HISTORY ROW (Design D4, built for the FINAL run-total card only; no empty
- * panel). `data-mlb-history-row` is a wrapping flex row with a 1.5rem gap. The
- * history is ALWAYS its first item, at the same place in the tree, so its chart
- * and disclosures never remount when the card comes or goes. The card is a
- * second item only for a final model whose `runTotals` is non-null (the slot
- * draws no element otherwise). Each item
+ * PHASE AGREEMENT (S2c). The card is drawn only when its input agrees with the
+ * page's phase: after the final a `kind: "final"` input; before first pitch and
+ * during play a `kind: "milestones"` input whose own phase IS the page's phase.
+ * Anything else — a constructed or stale mismatch — draws no card (never a
+ * final card during play, never another phase's milestones).
+ *
+ * THE HISTORY ROW (Design D4, built for the run-total card in every phase; no
+ * empty panel). `data-mlb-history-row` is a wrapping flex row with a 1.5rem
+ * gap. The history is ALWAYS its first item, at the same place in the tree, so
+ * its chart and disclosures never remount when the card comes or goes. The
+ * card is a second item only while an agreeing input exists (the slot draws no
+ * element otherwise). Each item
  * grows from native's minimum readable width (`anchorMinWidth` 460 pt /
  * `storiesMinWidth` 360 pt, BaseballEventPagePresentation10868.swift, as
  * 28.75rem / 22.5rem flex bases) and may shrink below it (`min-w-0`): the two
@@ -83,15 +92,26 @@
  */
 
 import { useState } from "react";
-import type { HockeyJourneyHeadline, HockeyJourneyHistory } from "@/lib/eventPage10868/hockeyJourneyTypes";
+import type { HockeyJourneyHeadline, HockeyJourneyHistory, HockeyJourneyPhase } from "@/lib/eventPage10868/hockeyJourneyTypes";
 import { MLB_WORDS, type MlbGameModel } from "@/lib/eventPage10868/mlbGame";
-import type { MlbFinalTotals } from "@/lib/eventPage10868/mlbRunTotals";
+import type { MlbRunTotalsInput } from "@/lib/eventPage10868/mlbRunTotals";
 import { teamColorStyle } from "@/lib/teamColors";
 import HockeyJourneyMatrix, { matrixSharedAbsences } from "./HockeyJourneyMatrix";
 import HockeyJourneyHistoryChart from "./HockeyJourneyHistoryChart";
 import HockeyJourneyAllProps from "./HockeyJourneyAllProps";
 import MlbRunTotalsCard, { type MlbRunTotalsColors } from "./MlbRunTotalsCard";
 import { inDisplayOrder } from "./FootballJourneySection";
+
+/**
+ * The run-total input only when it agrees with the page's phase (see PHASE
+ * AGREEMENT): final ↔ `kind: "final"`; before / live ↔ `kind: "milestones"` of
+ * that same phase. Otherwise null: no card.
+ */
+function runTotalsForPhase(phase: HockeyJourneyPhase, input: MlbRunTotalsInput | null): MlbRunTotalsInput | null {
+  if (!input) return null;
+  if (phase === "final") return input.kind === "final" ? input : null;
+  return input.kind === "milestones" && input.phase === phase ? input : null;
+}
 
 /**
  * The row's second item: holds the chosen run line for `scope` and draws the
@@ -103,7 +123,7 @@ function MlbRunTotalsSlot({
   scope,
   colors,
 }: {
-  totals: MlbFinalTotals | null;
+  totals: MlbRunTotalsInput | null;
   scope: string;
   colors: MlbRunTotalsColors;
 }) {
@@ -157,8 +177,8 @@ export default function MlbGamePage({ model }: { model: MlbGameModel }) {
     home: headline.home.tint ? "rgb(var(--team-home-primary))" : "var(--series-1)",
     away: headline.away.tint ? "rgb(var(--team-away-primary))" : "var(--series-2)",
   };
-  // The final run-total card: a FINAL model with a built card only (the builder already holds it to the final).
-  const runTotals = model.phase === "final" ? model.runTotals : null;
+  // The run-total card only for an input that agrees with this page's phase (the builder already agrees).
+  const runTotals = runTotalsForPhase(model.phase, model.runTotals);
 
   return (
     <section
@@ -187,7 +207,7 @@ export default function MlbGamePage({ model }: { model: MlbGameModel }) {
         <HockeyJourneyMatrix headline={headline} inlineProvenance compactColumns />
       </div>
 
-      {/* D4: the history, then (final only) the run-total card; side by side while both bases fit (see header). */}
+      {/* D4: the history, then this phase's run-total card; side by side while both bases fit (see header). */}
       <div data-mlb-history-row="" className="flex flex-wrap gap-6">
         <div data-mlb-row-item="history" className="min-w-0 grow basis-[28.75rem]">
           <HockeyJourneyHistoryChart key={model.scope} history={history} colors={lineColors} />
