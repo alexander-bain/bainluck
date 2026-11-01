@@ -415,10 +415,17 @@ async def test_a_tick_on_a_market_that_does_not_speak_composes_nothing(r):
     assert r._receipt_speaking[EV] == frozenset({HOME_LEG, AWAY_LEG})
     r.held_quotes.note_input(mark(PROP_OVER, 0.60))
     assert r._receipt_due == {} and PROP_OVER in r._receipt_quotes
-    # A new read graph forgets which market spoke: the next tick re-learns it.
+    # A new read graph with the same speakers keeps them (11/01 Magic-Celtics).
     read(r, event(), _with_a_prop_market())
-    assert EV not in r._receipt_speaking
+    assert r._receipt_speaking[EV] == frozenset({HOME_LEG, AWAY_LEG})
     r.held_quotes.note_input(mark(PROP_OVER, 0.61))
+    assert r._receipt_due == {}
+    # One whose speaker is priced out forgets them: the next tick re-learns it.
+    group = _with_a_prop_market()
+    group[0].outcomes[0].current_probability = None
+    read(r, event(), group)
+    assert EV not in r._receipt_speaking
+    r.held_quotes.note_input(mark(PROP_OVER, 0.62))
     assert EV in r._receipt_due
 
 
@@ -1133,3 +1140,36 @@ def test_a_drop_noop_is_logged_with_the_ledger_state_and_capped(r, caplog):
     lines = [m for m in caplog.messages if "drop-noop" in m]
     assert len(lines) == 20
     assert "expired=0.512" in lines[0] and "stored=0.5" in lines[0] and "base_rev=12" in lines[0]
+
+
+async def test_a_prop_withdrawn_just_after_a_stamp_read_keeps_the_graph_and_preview(r):
+    """11/01 20:50-22:08Z, Magic-Celtics: every stamp read dropped the legs that
+    speak the headline, so a prop withdrawal right after one took back the
+    preview and dropped the graph (five ~0.65-1.05 s `refetch` waits)."""
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    assert ops(r.sent, "propose")
+    read(r, event(at=NOW), with_prop(legs()))  # the next stamp read, before any composition
+    assert r._receipt_speaking.get(EV) == frozenset({HOME_LEG, AWAY_LEG})
+
+    r.forget_preview_outcomes([PROP_LEG])
+    await drained(r)
+
+    assert ops(r.sent, "settle") == [], "the headline preview stands"
+    assert EV in r._preview_graphs and EV not in r._graph_lost_at
+
+
+@pytest.mark.parametrize("change", ["status", "legs"])
+async def test_a_changed_speaking_market_is_not_carried_across_a_read(r, change):
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    group = with_prop(legs())
+    if change == "status":
+        group[0].market.status = "closed"
+    else:
+        group[0].outcomes.pop()
+    read(r, event(at=NOW), group)
+
+    assert EV not in r._receipt_speaking, "the next composition finds the speakers again"

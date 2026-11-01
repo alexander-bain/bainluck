@@ -8726,7 +8726,10 @@ class LiveBlendRefresher:
                            exc_info=True)
 
     def _install_preview_graph(self, event_id: int, entry: tuple) -> None:
+        speaking = self._carried_speaking(event_id, entry[2])
         self._forget_preview_graph(event_id)
+        if speaking:
+            self._receipt_speaking[event_id] = speaking
         self._preview_graphs[event_id] = entry
         lost = getattr(self, "_graph_lost_at", None)
         if lost is not None:
@@ -8734,6 +8737,36 @@ class LiveBlendRefresher:
         for market in entry[2]:
             for row in market.outcomes:
                 self._preview_graph_outcomes[row.id] = event_id
+
+    def _carried_speaking(self, event_id: int, group) -> Optional[frozenset]:
+        """#10090: the legs that spoke this event's headline, kept across a new
+        graph for the SAME event when the markets holding them are unchanged
+        (the same legs, the same market status, every leg priced). Dropping them at every stamp
+        read left a window in which a prop withdrawal took back the headline
+        preview and dropped the whole graph (11/01 20:50-22:08Z, Magic-Celtics:
+        five ~0.65-1.05 s waits as `refetch`). None when anything differs: the
+        next composition finds them again. Never raises."""
+        try:
+            speaking = self._receipt_speaking.get(event_id)
+            old = self._preview_graphs.get(event_id)
+            if not speaking or old is None:
+                return None
+            def holding(markets):
+                return {getattr(m.market, "id", None): (getattr(m.market, "status", None),
+                                                        frozenset(row.id for row in m.outcomes))
+                        for m in markets
+                        if any(row.id in speaking for row in m.outcomes)}
+            before, after = holding(old[2]), holding(group)
+            if not before or before != after:
+                return None
+            if frozenset().union(*(ids for _status, ids in after.values())) != speaking:
+                return None
+            if any(row.id in speaking and getattr(row, "current_probability", None) is None
+                   for m in group for row in m.outcomes):
+                return None  # a speaker priced out: another market may speak now
+            return speaking
+        except Exception:
+            return None
 
     def _forget_preview_graph(self, event_id: int) -> None:
         self._receipt_speaking.pop(event_id, None)
