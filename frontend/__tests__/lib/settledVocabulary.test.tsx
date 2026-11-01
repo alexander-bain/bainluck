@@ -108,6 +108,7 @@ import MlbGamePage from "@/components/event/eventpage10868/MlbGamePage";
 import mlbRunTotalsFixture from "./mlbRunTotals10868.fixtures.json";
 import { mlbFinalTotals, mlbRunLines } from "@/lib/eventPage10868/mlbRunTotals";
 import MlbRunTotalsCard from "@/components/event/eventpage10868/MlbRunTotalsCard";
+import MlbRunTotalsReader from "@/components/event/eventpage10868/MlbRunTotalsReader";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 
@@ -622,6 +623,41 @@ const SURFACES: Surface[] = [
       return totals ? renderToStaticMarkup(<MlbRunTotalsCard totals={totals} scope="mlb:15321836:final" />) : "";
     },
   },
+  // #10868 reader I1 — the run-total card at full size: the reader draws the SAME enrolled final leaf and
+  // states verdicts only through it. The same CONSTRUCTED forced pair over the REAL final matrix; a
+  // CONSTRUCTED caller (no held key, so the default line; display-string context; no-op callbacks).
+  // The shell's `<dialog>` and its children render in static markup (no `open`, effects do not run).
+  {
+    file: `${HOCKEY}/MlbRunTotalsReader.tsx`,
+    render: (hit) => {
+      const matrix = JSON.parse(JSON.stringify(mlbRunTotalsFixture.game_question_matrix)) as {
+        questions: Array<{ options: Array<Record<string, unknown>> }>;
+      };
+      for (const q of matrix.questions) for (const o of q.options) o.result = { state: hit ? "won" : "lost" };
+      const row = mlbFixtures.finalDetail;
+      const totals = mlbFinalTotals(mlbRunLines(matrix), { home: row.home_score, away: row.away_score }, { home: row.home_team, away: row.away_team });
+      const none = () => undefined;
+      return totals
+        ? renderToStaticMarkup(
+            <MlbRunTotalsReader
+              totals={totals}
+              scope="mlb:15321836:final"
+              colors={{ home: "var(--series-1)", away: "var(--series-2)" }}
+              selection={{ held: null, onSelect: none }}
+              context={{
+                away: row.away_team,
+                home: row.home_team,
+                score: { away: String(row.away_score), home: String(row.home_score) },
+                state: "Final",
+              }}
+              onClose={none}
+              onUnavailable={none}
+              returnTo={() => null}
+            />,
+          )
+        : "";
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -845,6 +881,8 @@ describe("every settled surface is enrolled in the census", () => {
       "HockeyJourneyContributionCard",
       "HockeyJourneyAllProps",
       "HockeyJourneyStories",
+      // #10868 — the full-size run-total reader delegates its verdict slot to the enrolled card.
+      "MlbRunTotalsCard",
     ];
     // The compact browser delegates its verdict slot to the parent's existing
     // StatBox. Pin BOTH sides of that callback instead of exempting wrappers
