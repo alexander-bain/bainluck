@@ -8772,6 +8772,16 @@ class LiveBlendRefresher:
                         if quote[3] in self._hl_pending:
                             self._receipt_now.add(quote[3])
                         queued = True
+                # 11/01 18:03Z: a Polymarket input waited 53.8 s as old_graph
+                # after its graph was re-read: no received quote was left to
+                # queue, so nothing composed it and the clock stayed open until
+                # a later read. A waiting event is composed on the fresh graph
+                # anyway; with nothing received since, that ends in_graph.
+                for event_id in kept:
+                    if event_id in self._hl_pending and event_id not in self._receipt_due:
+                        self._receipt_due[event_id] = None
+                        self._receipt_now.add(event_id)
+                        queued = True
             if queued:
                 self._wake_receipt(True)
 

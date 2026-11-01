@@ -719,3 +719,36 @@ async def test_a_receipt_with_no_valid_reading_leaves_the_clock_as_no_price(r):
     assert ops(r.sent, "propose") == []
     assert r._hl_fallback.get("na_orientation", 0) == 0
     assert EV not in r._hl_pending, "no price to show is not a wait"
+
+
+async def test_a_waiting_event_is_composed_on_its_reread_graph_even_with_no_quote_left(r):
+    """11/01 18:03Z: a Polymarket input waited 53.8 s as old_graph after its graph
+    was re-read: no received quote was left to queue, so nothing composed it.
+    A waiting event is composed on the fresh graph; with nothing received since,
+    the clock ends there (in_graph)."""
+    from contextlib import asynccontextmanager
+
+    ev, group = event(), legs()
+    read(r, ev, group)
+    receive(r, 0.48)
+    r._hl_pending[EV] = [module._mono() - 50.0, "old_graph", None, 0]
+    r._receipt_quotes.clear()  # the input's quote is gone by the time of the re-read
+    r._receipt_due.clear()
+
+    @asynccontextmanager
+    async def factory():
+        yield None
+
+    async def read_groups(_session, event_ids, overlay_held=False):
+        read(r, event(), legs(home="0.480000", away="0.520000", seen=NOW))
+        return {}
+
+    r._session_factory = factory
+    r._read_groups = read_groups
+    r._schedule_graph_refetch((EV,), lost=False)
+    await asyncio.wait_for(r._graph_refetch_task, 5)
+    await drained(r)
+
+    # Composed on the re-read rows (their committed price), so the publish
+    # that carries it ends the wait (`_hl_published`); the rig records frames.
+    assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
