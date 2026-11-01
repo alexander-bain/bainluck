@@ -383,9 +383,22 @@ def _kalshi_open_arm() -> bool:
 
 
 def _polymarket_open_arm() -> bool:
-    from app.tasks.polymarket_open_contracts import open_contract_prices_enabled
+    """True when the open-contract socket streams every tokened market, so the
+    poll leaves them all to it.
 
-    return open_contract_prices_enabled()
+    #10090 (Alex 2026-11-01, "is there any opportunity to be smart about how we
+    handle this?"): under ``POLYMARKET_WS_OPEN_SCOPE=slate`` the socket keeps
+    only what a live or near-start game, a reader or a served page needs. Every
+    other tokened market had no 30 s writer at all and fell to the hourly
+    refresh. Those are polled here now; a market the socket still streams is
+    polled too, which the hand-off rules make safe (a newer socket write
+    always wins, and a poll write never waits on a row the socket holds).
+    """
+    from app.tasks.polymarket_open_contracts import (
+        OPEN_SCOPE_SLATE, open_contract_prices_enabled, open_contract_scope,
+    )
+
+    return open_contract_prices_enabled() and open_contract_scope() != OPEN_SCOPE_SLATE
 
 
 def shown_market_ids() -> list[int]:
