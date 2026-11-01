@@ -580,6 +580,22 @@ def _preview_from_commit(event_id) -> bool:
 PREVIEW_PUBLISH_CHUNK = 8
 
 
+_ACCEPTS_REFUSED: dict = {}
+
+
+def _accepts_refused(preview) -> bool:
+    """Whether this registry's `execute` takes the #10090 ``refused`` hook."""
+    kind = type(preview)
+    if kind not in _ACCEPTS_REFUSED:
+        import inspect
+
+        try:
+            _ACCEPTS_REFUSED[kind] = "refused" in inspect.signature(preview.execute).parameters
+        except (TypeError, ValueError):
+            _ACCEPTS_REFUSED[kind] = False
+    return _ACCEPTS_REFUSED[kind]
+
+
 def _frame_event(frame) -> Any:
     """A preview frame's (or ledger operation's) event id, None if it has none."""
     return frame.get("event_id") if isinstance(frame, dict) else None
@@ -3900,6 +3916,8 @@ class LiveBlendRefresher:
         self.graph_refetch_stats: dict[str, int] = {"reads": 0, "events": 0, "kept": 0, "errors": 0}
         #: Receipt-path claim-lock waits this minute: (count, total s, max s, timeouts).
         self._receipt_lock_wait = [0, 0.0, 0.0, 0]
+        #: Receipt publish passes this minute: (count, longest s, its plans).
+        self._receipt_pass_max = [0, 0.0, 0]
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -8459,7 +8477,9 @@ class LiveBlendRefresher:
             for event_id in batch:
                 self._graph_refetch.pop(event_id, None)
             try:
-                async with self._session_slot(), factory() as session:
+                # Not a stamp slot: one small read on its own pooled connection
+                # (one worker), so a refetch never queues behind stamp reads.
+                async with factory() as session:
                     await self._read_groups(session, batch, overlay_held=False)
                 self.graph_refetch_stats["reads"] += 1
                 self.graph_refetch_stats["events"] += len(batch)
@@ -8838,10 +8858,12 @@ class LiveBlendRefresher:
                     self._receipt_class_summary(),
                 )
                 lw, self._receipt_lock_wait = self._receipt_lock_wait, [0, 0.0, 0.0, 0]
-                logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d",
+                pm, self._receipt_pass_max = self._receipt_pass_max, [0, 0.0, 0]
+                logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
-                            lw[0], int(lw[1] * 1000), int(lw[2] * 1000), lw[3])
+                            lw[0], int(lw[1] * 1000), int(lw[2] * 1000), lw[3],
+                            pm[0], int(pm[1] * 1000), pm[2])
             due, deferred = [], {}
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
@@ -8913,6 +8935,24 @@ class LiveBlendRefresher:
             # `contributor` recomposes and re-sends at once (observed again);
             # anything else (fenced, refused, local_*) is a real miss: name it.
             self._hl_mark(event_id, "ledger_%s" % status[:20])
+
+    def _hl_mutate_refused(self, event_id, status) -> None:
+        """A proposal's ledger call composed no frame. ``ok``: accepted with
+        nothing to send (the screen already shows that composition). A stale
+        read ticket (``read_required``) re-reads the event's graph at once, so
+        the next composition opens on a current ticket instead of waiting for
+        the next stamp read (a 5 s floor on Polymarket). Never raises."""
+        try:
+            status = str(status)[:24]
+            self._note_receipt_class("mutate_" + status, event_id)
+            if status == "ok":
+                self._hl_resolve(event_id, "ledger_noframe")
+                return
+            self._hl_mark(event_id, "mutate_" + status)
+            if status in ("read_required", "stale_context") and event_id in self._preview_graphs:
+                self._schedule_graph_refetch((event_id,))
+        except Exception:
+            self.receipt_preview_stats["errors"] += 1
 
     def _hl_summary(self) -> str:
         """The minute's headline clock: n, p50/p90/max, worst ids with how, fallbacks, late."""
@@ -9206,14 +9246,30 @@ class LiveBlendRefresher:
                     continue
                 _kind, event, reading, value, contributing, newest = plan
                 stamped_at = _dt.now(timezone.utc)
-                frames.extend(preview.propose(
+                counts = getattr(preview, "refusal_counts", None)
+                before = dict(counts) if isinstance(counts, dict) else None
+                ops = preview.propose(
                     event_id, self.source, value=value, event=event,
                     row_sources=event.preview_sources, row_rev=event.preview_rev,
                     eligibility=getattr(reading, "eligibility", None),
                     observed_basis=observation_basis(contributing),
                     stamped_at=stamped_at, at_receipt=True,
-                ))
+                )
+                frames.extend(ops)
                 pending = preview.pending_entry(event_id, self.source)
+                if not ops:
+                    # Nothing will be sent for this event: name why (the
+                    # registry's refusal counter that moved, else a no-op).
+                    why = "noop"
+                    if before is not None:
+                        why = next((str(key[1]) for key, n in counts.items()
+                                    if isinstance(key, tuple) and len(key) > 1
+                                    and n != before.get(key)), "noop")
+                    self._note_receipt_class("drop_" + why[:24], event_id)
+                    self._hl_mark(event_id, "drop_" + why[:24])
+                    if why == "local_ticket" and event_id in self._preview_graphs:
+                        self._schedule_graph_refetch((event_id,))
+                    continue
                 if pending is None or not pending.at_receipt or pending.value != value:
                     self._hl_mark(event_id, "refused_local")
                     continue  # refused locally (stale, expired value, capacity)
@@ -9226,7 +9282,14 @@ class LiveBlendRefresher:
                                        stamped_at.isoformat(), newest)
             return frames
 
-        await self._publish_previews([], prepare_frames=prepare_frames)
+        published_at = _mono()
+        await self._publish_previews([], prepare_frames=prepare_frames,
+                                     refused=self._hl_mutate_refused)
+        took = _mono() - published_at
+        pm = self._receipt_pass_max
+        pm[0] += 1
+        if took > pm[1]:
+            pm[1], pm[2] = took, len(plans) + len(withdrawn)
 
     async def revoke_receipt_previews(self, outcome_ids) -> None:
         """Prices whose write will never happen (the final drain stranded
@@ -10074,7 +10137,8 @@ class LiveBlendRefresher:
                 raise PreviewSettlementUncertain("idle retirement reply unavailable") from exc
             return []
 
-    async def _publish_previews(self, frames: list[dict], *, prepare_frames=None) -> None:
+    async def _publish_previews(self, frames: list[dict], *, prepare_frames=None,
+                                refused=None) -> None:
         """Fenced PUBLISH of provisional frames. Never raises; never retained.
 
         Not `_publish`: a preview has no revision, owes no recovery intent and
@@ -10144,10 +10208,12 @@ class LiveBlendRefresher:
                             # #10090: the stage trace and the preview receipt
                             # see each send, after it; neither changes it.
                             observe = self._preview_observer()
+                            extra = {} if observe is None else {"observe": observe}
+                            if refused is not None and _accepts_refused(preview):
+                                extra["refused"] = refused
                             await preview.execute(
                                 frames, self._preview_call(connection), event_channel,
-                                self.preview_stats,
-                                **({} if observe is None else {"observe": observe}),
+                                self.preview_stats, **extra,
                             )
                             return
                         # A blend composed before this lock may be older than a

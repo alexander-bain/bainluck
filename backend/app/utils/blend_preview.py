@@ -2336,15 +2336,30 @@ class LedgerRegistry(PreviewRegistry):
                     break
         return frames
 
-    async def execute(self, items: list, call, channel, stats: dict, observe=None) -> None:
+    async def execute(self, items: list, call, channel, stats: dict, observe=None,
+                      refused=None) -> None:
         """Each operation's frames are published before the next operation runs.
 
         ``observe`` (optional) is told about every composed frame at its send;
-        see `observe_publication`.
+        see `observe_publication`. ``refused`` (optional, #10090) is told
+        ``(event_id, status)`` when a proposal's ledger call composed no frame
+        (a refusal such as ``read_required``, or nothing to send); it reads
+        only and its failures are swallowed.
         """
         with self._alarm_batch():
             for item in items:
-                for frame in await self.prepare([item], call, stats):
+                if (refused is not None and isinstance(item, dict)
+                        and item.get("ledger_op") == "propose"):
+                    outcome: list = []
+                    frames = await self._mutate(item, call, stats, outcome)
+                    if not frames:
+                        try:
+                            refused(item.get("event_id"), outcome[0] if outcome else "none")
+                        except Exception:
+                            pass
+                else:
+                    frames = await self.prepare([item], call, stats)
+                for frame in frames:
                     await self._publish(frame, call, channel, stats, observe=observe)
 
 
