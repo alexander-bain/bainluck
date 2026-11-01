@@ -8771,7 +8771,9 @@ class LiveBlendRefresher:
         if entry is None:
             return
         if len(self._hl_samples) < 20000:
-            self._hl_samples.append((max(0.0, _mono() - entry[0]), event_id, how or entry[1]))
+            # A fallback keeps its reason (why it waited); else how it reached the screen.
+            why = entry[1] if entry[1] != "receipt" else (how or "receipt")
+            self._hl_samples.append((max(0.0, _mono() - entry[0]), event_id, why))
 
     def _hl_mark(self, event_id, how: str) -> None:
         """A headline input that will wait for the stamp path: say why."""
@@ -8979,6 +8981,12 @@ class LiveBlendRefresher:
             self._hl_mark(event_id, "na_settled")
             return None
         value = round(reading.home_probability, 4)
+        if self._last_written_value.get(event_id) == value:
+            # Back at the stored value: retire any receipt preview so the page
+            # shows the committed one. Records nothing, so the #5661 restamp
+            # gate below (which refuses re-dating an unchanged value) does not
+            # apply; checked first so a stale receipt preview never outlives it.
+            return ("returned",)
         basis = observation_basis(contributing)
         if not basis or restamp_records_no_observation(
                 value, oldest_observation_time(contributing),
@@ -8988,8 +8996,6 @@ class LiveBlendRefresher:
             self._hl_mark(event_id, "na_basis")
             return None
         pending = preview.pending_entry(event_id, self.source)
-        if self._last_written_value.get(event_id) == value:
-            return ("returned",)
         eligibility = getattr(reading, "eligibility", None)
         shown = self._receipt_blend(event, None if pending is None else pending.value,
                                     getattr(pending, "eligibility", None),
