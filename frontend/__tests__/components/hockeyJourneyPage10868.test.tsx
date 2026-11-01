@@ -10,7 +10,8 @@
  * missing history response; a live read of 15338496 with one row's
  * `observed_at` changed; the final markets without one player's points rows;
  * a before-phase card carrying a later count, result and in-game reading as a
- * negative control; and forced element widths for the matrix's fit steps
+ * negative control; one All props original edited so its label repeats its
+ * title and it names no venue; and forced element widths for the matrix's fit steps
  * (jsdom lays nothing out, so these prove the stepping logic, never real fit —
  * real fit is proved only by browser views at 375 / 393 px, normal and 200%
  * text, under grant I).
@@ -44,6 +45,8 @@ import HockeyJourneyHistoryChart, {
 } from "@/components/event/eventpage10868/HockeyJourneyHistoryChart";
 // FQ2: the shared chart's football caller, through its own history builder (read-only).
 import footballFixtures from "../lib/footballJourney10868.fixtures.json";
+// M1: the shared All props rows on the REAL MLB final subset (provenance in `__tests__/lib/mlbGame10868.test.ts`).
+import mlbFixtures from "../lib/mlbGame10868.fixtures.json";
 import { footballJourneyHistory } from "@/lib/eventPage10868/footballJourney";
 import type { HockeyJourneyHistory } from "@/lib/eventPage10868/hockeyJourneyTypes";
 
@@ -1097,5 +1100,108 @@ describe("period guide labels stay inside the SVG, at their own line when they h
       expect(label.end).toBeLessThanOrEqual(lifted.width);
       expect(label.y).toBeGreaterThan(0);
     }
+  });
+});
+
+// ─── All props rows say which prop they are before Details opens (M1) ──────
+//
+// The e9b6 browser review counted "Over" 191 times on the REAL 15321836 final:
+// team totals, first-five totals and player props all list that side, so a row
+// and its Details button said only "Over". The shared row now leads with the
+// served market text the view model already built (`title`: subject and
+// threshold), then the side (`label`) and the venue (`about.source`); Details'
+// accessible name uses the same fields. The view model is the shared builder's
+// (`hockeyJourneyOriginals`), unchanged. Two genuinely identical venue offers may
+// still read alike, so names are compared against the distinct props they name.
+
+describe("All props rows name their prop, side and venue, and Details has a specific accessible name", () => {
+  const mlbFinal = hockeyJourneyOriginals(
+    mlbFixtures.finalDetail as unknown as EventDetailResponse,
+    mlbFixtures.finalMarkets as unknown as GameMarketsResponse,
+    Date.parse("2026-10-11T04:57:23.592725Z"),
+  );
+  const hockeyFinal = hockeyJourneyOriginals(
+    fixtures.finalDetail as unknown as EventDetailResponse,
+    fixtures.finalMarkets as unknown as GameMarketsResponse,
+    Date.parse("2026-10-11T04:56:41Z"),
+  );
+  /** Each rendered row beside the original it draws (rows are drawn in the model's order). */
+  function rendered(originals: typeof mlbFinal) {
+    act(() => root.render(<HockeyJourneyAllProps originals={originals} entryLabel="All props" />));
+    const rows = Array.from(host.querySelectorAll("li"));
+    expect(rows).toHaveLength(originals.originals.length);
+    return originals.originals.map((original, i) => ({
+      original,
+      row: rows[i],
+      /** The row's face before Details opens: the prop block, beside its reading. */
+      prop: rows[i].querySelector("div > span")?.textContent ?? "",
+      name: rows[i].querySelector("button")?.textContent ?? "",
+    }));
+  }
+  const propOf = (o: (typeof mlbFinal)["originals"][number]) => `${o.title}|${o.label}|${o.about.source ?? ""}`;
+
+  it("REAL MLB final: rows that share the side Over read as their own subject and threshold", () => {
+    const over = rendered(mlbFinal).filter(({ original }) => original.label === "Over");
+    // Several different props list the same side (REAL: team totals, first-five totals, player props).
+    expect(over.length).toBeGreaterThan(1);
+    expect(new Set(over.map(({ original }) => original.title)).size).toBeGreaterThan(1);
+    for (const { original, prop } of over) {
+      expect(prop).toContain(original.title);
+      expect(prop).toContain("Over");
+      if (original.about.source) expect(prop).toContain(original.about.source);
+    }
+    // One distinct face per distinct prop: no longer a column of identical "Over" rows.
+    expect(new Set(over.map(({ prop }) => prop)).size).toBe(new Set(over.map(({ original }) => propOf(original))).size);
+  });
+
+  it("REAL MLB final: each Details button's accessible name says which prop it opens", () => {
+    const over = rendered(mlbFinal).filter(({ original }) => original.label === "Over");
+    for (const { original, name } of over) {
+      expect(name.startsWith("Details")).toBe(true);
+      expect(name).toContain(original.title);
+      expect(name).toContain("Over");
+      if (original.about.source) expect(name).toContain(original.about.source);
+    }
+    expect(over.map(({ name }) => name)).not.toContain("Details: Over");
+    expect(new Set(over.map(({ name }) => name)).size).toBe(new Set(over.map(({ original }) => propOf(original))).size);
+  });
+
+  it("opening a row's Details shows the same payload as before: the original's title, outcome, venue and ids", () => {
+    const [first] = rendered(mlbFinal).filter(({ original }) => original.label === "Over");
+    const details = first.row.querySelector("button")!;
+    const region = document.getElementById(details.getAttribute("aria-controls") ?? "")!;
+    expect(region.hidden).toBe(true);
+    click(details);
+    expect(region.hidden).toBe(false);
+    const paragraphs = Array.from(region.children)
+      .filter((el) => el.tagName === "P")
+      .map((p) => p.textContent);
+    expect(paragraphs).toEqual([first.original.title, first.original.outcome]);
+    for (const row of first.original.about.rows) expect(region.textContent).toContain(`${row.label}${row.value}`);
+  });
+
+  it("hockey keeps its readable rows: the rung's own words, under its market, with its venue", () => {
+    const rows = rendered(hockeyFinal);
+    const kaprizov = rows.find(({ original }) => original.label === "Kirill Kaprizov 2+ points");
+    expect(kaprizov).toBeDefined();
+    for (const { original, prop, name } of rows) {
+      expect(prop).toContain(original.title);
+      expect(prop).toContain(original.label);
+      expect(name).toContain(original.label);
+      if (original.about.source) expect(prop).toContain(original.about.source);
+    }
+    // The existing hockey reading is unchanged: after the final the row's figure is still its own grade.
+    expect(kaprizov!.original.grade).not.toBeNull();
+    expect(kaprizov!.row.querySelector("div")?.textContent).toContain(kaprizov!.original.grade!.words);
+  });
+
+  it("CONSTRUCTED: a label that only repeats the title is said once, and no venue leaves no stray separator", () => {
+    const base = hockeyFinal.originals[0];
+    const lone = { ...hockeyFinal, originals: [{ ...base, title: base.label, about: { ...base.about, source: null } }] };
+    const [only] = rendered(lone);
+    expect(only.prop).toBe(base.label);
+    expect(only.name.split(base.label).length - 1).toBe(1);
+    expect(only.name).not.toContain(" · ");
+    expect(only.name.trim().endsWith(",")).toBe(false);
   });
 });

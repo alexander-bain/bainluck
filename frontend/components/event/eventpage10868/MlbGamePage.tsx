@@ -27,6 +27,14 @@
  * `inDisplayOrder` makes immutable presentation copies picked by side. Nothing
  * is swapped by position and every id is unchanged.
  *
+ * TEAM NAMES WITH NOTHING TO READ. When NO headline slot holds a readable value
+ * (every column absent for both teams in the same words, and no result), the
+ * shared matrix states each column once under "Both teams" and draws no team
+ * row, so the teams would vanish. Only then are the model's own away and home
+ * names listed here, once, away first, and with no figure. In every other case
+ * the matrix names the teams and nothing is added; its shared absence lines are
+ * unchanged.
+ *
  * HEADLINE PROMINENCE. Every figure is in the matrix: the lead column (the
  * current chance during play, else the first; the final runs after the final)
  * is its largest figure in the team's colour, and runs and the projected final
@@ -53,7 +61,7 @@
 import type { HockeyJourneyHeadline, HockeyJourneyHistory } from "@/lib/eventPage10868/hockeyJourneyTypes";
 import { MLB_WORDS, type MlbGameModel } from "@/lib/eventPage10868/mlbGame";
 import { teamColorStyle } from "@/lib/teamColors";
-import HockeyJourneyMatrix from "./HockeyJourneyMatrix";
+import HockeyJourneyMatrix, { matrixSharedAbsences } from "./HockeyJourneyMatrix";
 import HockeyJourneyHistoryChart from "./HockeyJourneyHistoryChart";
 import HockeyJourneyAllProps from "./HockeyJourneyAllProps";
 import { inDisplayOrder } from "./FootballJourneySection";
@@ -79,6 +87,11 @@ export default function MlbGamePage({ model }: { model: MlbGameModel }) {
     matrix: { ...model.headline.matrix, rows: inDisplayOrder(model.headline.matrix.rows) },
   };
   const history: HockeyJourneyHistory = { ...model.history, series: inDisplayOrder(model.history.series) };
+  // No readable slot and no result: the matrix draws no team row (every column is a shared absence).
+  const { matrix } = headline;
+  const namesOnly =
+    matrix.rows.every((row) => !row.result && row.values.every((slot) => slot.kind === "absent")) &&
+    matrixSharedAbsences(matrix).length === matrix.columns.length;
   // A team colour paints its own figure and line only when it clears the card-surface contrast floor
   // (`tint`); otherwise the series tokens stand in — the hockey screen's rule, unchanged.
   const style = teamColorStyle(headline.home.tint, headline.away.tint);
@@ -100,7 +113,19 @@ export default function MlbGamePage({ model }: { model: MlbGameModel }) {
         {headline.stateContext && <p className="break-words text-sm text-text-secondary">{headline.stateContext}</p>}
       </header>
 
-      <HockeyJourneyMatrix headline={headline} inlineProvenance compactColumns />
+      {/* One wrapper in every case, so the matrix never remounts when the names line comes or goes. */}
+      <div className="space-y-2">
+        {namesOnly && (
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-base font-semibold" data-mlb-team-names="">
+            {[headline.away, headline.home].map((team) => (
+              <li key={team.side} className="min-w-0 break-words" style={team.tint ? { color: team.tint } : undefined}>
+                {team.name}
+              </li>
+            ))}
+          </ul>
+        )}
+        <HockeyJourneyMatrix headline={headline} inlineProvenance compactColumns />
+      </div>
 
       {/* D4 insertion point: the approved stories join this row beside the history (see header). */}
       <div data-mlb-history-row="">

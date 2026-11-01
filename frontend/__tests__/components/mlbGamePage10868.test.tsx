@@ -10,7 +10,9 @@
  * `__tests__/lib/mlbGame10868.test.ts`). CONSTRUCTED, and named where used: every
  * clock and host value; the live event (native `liveEdits`); a refreshed
  * markets body with one earlier row removed, and one with the opened row
- * removed; another event's ids; and forced element widths and a forced root font
+ * removed; another event's ids; a before-first-pitch event (native
+ * `beforeEdits`) with no hero pair, and a final with no pregame odds and no
+ * displayed score, so every headline slot is absent; and forced element widths and a forced root font
  * (jsdom lays nothing out, so these prove the arrangement steps and the
  * enlarged-text branch, never real fit — that is the later 375 / 393 / 1280 px,
  * 100% / 200% browser check on the exact committed export).
@@ -132,10 +134,6 @@ function click(el: Element) {
   });
 }
 
-function buttonByText(text: string): HTMLButtonElement | null {
-  return Array.from(host.querySelectorAll("button")).find((b) => (b.textContent ?? "") === text) ?? null;
-}
-
 function entryButton(): HTMLButtonElement {
   const found = Array.from(host.querySelectorAll("button")).find((b) => /original outcome/.test(b.textContent ?? ""));
   if (!found) throw new Error("no All props entry");
@@ -145,10 +143,21 @@ function entryButton(): HTMLButtonElement {
 const detailsButtons = () => Array.from(host.querySelectorAll("button")).filter((b) => (b.textContent ?? "").startsWith("Details"));
 const openDetails = () => detailsButtons().filter((b) => b.getAttribute("aria-expanded") === "true");
 
-function penaLabel(m: MlbGameModel): string {
+function penaOriginal(m: MlbGameModel) {
   const found = view(m).originals.originals.find((o) => o.key === PENA_KEY);
   if (!found) throw new Error("no Peña original");
-  return found.label;
+  return found;
+}
+
+/** The Peña row's Details button, found by what its accessible name says (its prop, side and venue), not by an exact template. */
+function penaDetails(m: MlbGameModel): HTMLButtonElement | null {
+  const o = penaOriginal(m);
+  return (
+    detailsButtons().find((b) => {
+      const name = b.textContent ?? "";
+      return name.includes(o.title) && name.includes(o.label) && (!o.about.source || name.includes(o.about.source));
+    }) ?? null
+  );
 }
 
 // ─── The headline ──────────────────────────────────────────────────────────
@@ -171,8 +180,10 @@ describe("the headline", () => {
     expect(cells[0]).toEqual([expect.stringContaining("41%"), expect.stringContaining("7")]);
     expect(cells[1]).toEqual([expect.stringContaining("59%"), expect.stringContaining("3")]);
     expect(host.querySelector("[data-matrix-shared-absences]")?.textContent).toBe(
-      `${BOTH_TEAMS_LABEL}Projected final:${MLB_WORDS.projectionUnavailable}`,
+      `${BOTH_TEAMS_LABEL}${MLB_WORDS.pregameProjectedFinal}:${MLB_WORDS.unavailable}`,
     );
+    // The grid names the teams; no second names line is added.
+    expect(host.querySelector("[data-mlb-team-names]")).toBeNull();
     const table = host.querySelector("table")?.textContent ?? "";
     expect(table).not.toContain("100%");
     expect(table).not.toContain(">99%");
@@ -187,6 +198,7 @@ describe("the headline", () => {
       .map((th) => th.textContent ?? "")
       .filter((t) => t !== "Team");
     expect(titles).toEqual(["Pregame chance", "Current chance", "Runs", "Projected final"]);
+    expect(host.querySelector("[data-mlb-team-names]")).toBeNull();
     const rows = Array.from(host.querySelectorAll("table tbody tr"));
     const cells = rows.map((r) => Array.from(r.querySelectorAll("td")).map((td) => td.textContent ?? ""));
     // Away first: White Sox 41% · >99% · 6 runs · 7 runs projected; Astros 59% · <1% · 3 · 4.
@@ -241,6 +253,67 @@ describe("the headline", () => {
   });
 });
 
+// ─── Team names when nothing in the headline is readable (M2) ──────────────
+
+describe("team names when no headline slot holds a readable value", () => {
+  /** CONSTRUCTED: native `beforeEdits` over the real final — one minute before first pitch. */
+  const beforeDetail = mutate(finalDetail, {
+    status: "scheduled",
+    completed_at: null,
+    home_score: null,
+    away_score: null,
+    hero_settled_result: null,
+    hero_probability: null,
+    hero_probability_away: null,
+    hero_probability_source: null,
+  });
+  /** CONSTRUCTED host: no hero pair, no score, no projection — every slot is its absence words. */
+  const emptyHost: MlbGameHost = {
+    nowMs: Date.parse("2026-09-30T20:59:00Z"),
+    hero: null,
+    probabilityObservedAt: null,
+    deliveryInterrupted: false,
+    liveClaimUnbacked: false,
+    score: null,
+    projectedFinal: null,
+  };
+  const namesLine = () => host.querySelector("[data-mlb-team-names]");
+
+  it("every slot absent: the away and home names stay visible once, beside the unchanged Both teams lines", () => {
+    const m = model(beforeDetail, emptyHost);
+    const v = view(m);
+    expect(v.phase).toBe("before");
+    expect(v.headline.matrix.rows.every((r) => r.values.every((slot) => slot.kind === "absent") && !r.result)).toBe(true);
+    render(m);
+    // The shared matrix draws no team row: every column is said once under Both teams, as before.
+    expect(host.querySelector("table")).toBeNull();
+    const shared = host.querySelector("[data-matrix-shared-absences]")?.textContent ?? "";
+    expect(shared.startsWith(BOTH_TEAMS_LABEL)).toBe(true);
+    for (const column of v.headline.matrix.columns) expect(shared).toContain(column.title);
+    // The model's own names, away first, each once in the headline, with no figure beside them.
+    const names = Array.from(namesLine()?.querySelectorAll("li") ?? []).map((li) => li.textContent);
+    expect(names).toEqual([v.headline.away.name, v.headline.home.name]);
+    const headlineText = namesLine()?.parentElement?.textContent ?? "";
+    for (const name of names) expect(headlineText.split(name ?? "").length - 1).toBe(1);
+    expect(namesLine()?.textContent).not.toMatch(/[0-9%]/);
+  });
+
+  it("every slot absent but a result to show: the grid names the teams, so no names line is added", () => {
+    // TEST MUTATION (CONSTRUCTED): no pregame odds and no displayed score; the served verdict still says who won.
+    const m = model(mutate(finalDetail, { prematch_odds: null, opening_odds: null }), { ...finalHost, score: null });
+    const v = view(m);
+    expect(v.headline.matrix.rows.every((r) => r.values.every((slot) => slot.kind === "absent"))).toBe(true);
+    expect(v.headline.matrix.rows.every((r) => !!r.result)).toBe(true);
+    render(m);
+    expect(namesLine()).toBeNull();
+    const rows = Array.from(host.querySelectorAll("table tbody tr"));
+    expect(rows.map((r) => r.querySelector("th")?.textContent ?? "")).toEqual([
+      expect.stringContaining(v.headline.away.name),
+      expect.stringContaining(v.headline.home.name),
+    ]);
+  });
+});
+
 // ─── All props: exact Details, held identity, reset ────────────────────────
 
 describe("All props", () => {
@@ -250,7 +323,7 @@ describe("All props", () => {
     const entry = entryButton();
     expect(entry.textContent).toBe(view(m).allPropsLabel);
     click(entry);
-    const details = buttonByText(`Details: ${penaLabel(m)}`);
+    const details = penaDetails(m);
     expect(details).not.toBeNull();
     click(details!);
     const region = document.getElementById(details!.getAttribute("aria-controls") ?? "");
@@ -266,7 +339,7 @@ describe("All props", () => {
     const first = model(finalDetail, finalHost);
     render(first);
     click(entryButton());
-    click(buttonByText(`Details: ${penaLabel(first)}`)!);
+    click(penaDetails(first)!);
     // CONSTRUCTED refresh: an earlier served row (row 0) is gone, so every later original moves up one place.
     const refreshed = model(finalDetail, { ...finalHost, nowMs: FINAL_NOW + 60_000 }, { gameMarkets: marketsWithout(0) });
     expect(view(refreshed).originals.scope).toBe(view(first).originals.scope);
@@ -274,7 +347,7 @@ describe("All props", () => {
     expect(entryButton().getAttribute("aria-expanded")).toBe("true");
     const open = openDetails();
     expect(open).toHaveLength(1);
-    expect(open[0].textContent).toBe(`Details: ${penaLabel(refreshed)}`);
+    expect(open[0]).toBe(penaDetails(refreshed));
     const region = document.getElementById(open[0].getAttribute("aria-controls") ?? "");
     expect(region?.textContent).toContain("Outcome ID242692574");
   });
@@ -283,11 +356,11 @@ describe("All props", () => {
     const first = model(finalDetail, finalHost);
     render(first);
     click(entryButton());
-    click(buttonByText(`Details: ${penaLabel(first)}`)!);
+    click(penaDetails(first)!);
     const withdrawn = model(finalDetail, finalHost, { gameMarkets: marketsWithout(PENA_ROW) });
     expect(view(withdrawn).originals.originals.some((o) => o.key === PENA_KEY)).toBe(false);
     render(withdrawn);
-    expect(buttonByText(`Details: ${penaLabel(first)}`)).toBeNull();
+    expect(penaDetails(first)).toBeNull();
     expect(openDetails()).toHaveLength(0);
     expect(host.textContent).not.toContain("Outcome ID242692574");
   });

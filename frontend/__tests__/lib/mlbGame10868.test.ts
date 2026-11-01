@@ -291,14 +291,14 @@ describe("FINAL — White Sox 7, Astros 3 (REAL)", () => {
     expect(view.headline.spokenLabel).toBe("Baseball win chances and runs");
   });
 
-  it("compares the stored pregame chance with the final runs (lead) and says the projection is unavailable", () => {
-    expect(matrix.columns.map((c) => c.title)).toEqual(["Pregame chance", "Final runs", "Projected final"]);
+  it("compares the stored pregame chance with the final runs (lead) and names the missing pregame projected final", () => {
+    expect(matrix.columns.map((c) => c.title)).toEqual(["Pregame chance", "Final runs", MLB_WORDS.pregameProjectedFinal]);
     expect(matrix.lead).toBe(1);
     expect(matrix.groups).toEqual([[0], [1, 2]]);
     const [home, away] = matrix.rows;
     expect([home.side, away.side]).toEqual(["home", "away"]);
-    expect(texts(home.values)).toEqual(["59%", "3", MLB_WORDS.projectionUnavailable]);
-    expect(texts(away.values)).toEqual(["41%", "7", MLB_WORDS.projectionUnavailable]);
+    expect(texts(home.values)).toEqual(["59%", "3", MLB_WORDS.unavailable]);
+    expect(texts(away.values)).toEqual(["41%", "7", MLB_WORDS.unavailable]);
     expect(spoken([home.values[1], away.values[1]])).toEqual(["3 runs", "7 runs"]);
     // The served integers (59 / 41), named by its own caption word; no venue name is served for kalshi.
     expect(matrix.columns[0].provenance).toBe("Pre-match");
@@ -332,10 +332,26 @@ describe("FINAL — White Sox 7, Astros 3 (REAL)", () => {
 
   it("a projected final is never read after the final, whatever the host passes (CONSTRUCTED host misuse)", () => {
     const misuse = build(finalDetail, FINAL_NOW, { ...finalHostRest(), projectedFinal: { home: 4, away: 6 } });
-    expect(texts(misuse.headline.matrix.rows.map((r) => r.values[2]))).toEqual([
-      MLB_WORDS.projectionUnavailable,
-      MLB_WORDS.projectionUnavailable,
-    ]);
+    expect(misuse.headline.matrix.columns[2].title).toBe(MLB_WORDS.pregameProjectedFinal);
+    expect(texts(misuse.headline.matrix.rows.map((r) => r.values[2]))).toEqual([MLB_WORDS.unavailable, MLB_WORDS.unavailable]);
+    expect(misuse.headline.matrix.rows.every((r) => r.values[2].kind === "absent")).toBe(true);
+  });
+
+  it("no pregame forecast is synthesized after the final: a history pair or an unbacked claim leaves it Unavailable", () => {
+    // TEST MUTATION (CONSTRUCTED): a history body that carries a projected pair, and a page that calls the claim unbacked.
+    const withPair = mutate(finalHistory, { pm_spread_data: { projected_final: { home: 4, away: 6 } } });
+    for (const v of [
+      build(finalDetail, FINAL_NOW, finalHostRest(), { history: withPair }),
+      build(finalDetail, FINAL_NOW, { ...finalHostRest(), liveClaimUnbacked: true }),
+    ]) {
+      const p = column(v, MLB_WORDS.pregameProjectedFinal);
+      expect([p.home, p.away]).toEqual([
+        { kind: "absent", text: MLB_WORDS.unavailable },
+        { kind: "absent", text: MLB_WORDS.unavailable },
+      ]);
+      expect(p.provenance).toBeNull();
+      expect(v.headline.matrix.columns.map((c) => c.title)).not.toContain("Projected final");
+    }
   });
 
   it("the final runs and the result fallback are the DISPLAYED pair, never the event row", () => {
@@ -469,6 +485,15 @@ describe("LIVE — CONSTRUCTED from the final (native liveEdits)", () => {
   it("a null projection is honest absence: Projected final unavailable", () => {
     const p = column(view, "Projected final");
     expect([p.home.text, p.away.text]).toEqual([MLB_WORDS.projectionUnavailable, MLB_WORDS.projectionUnavailable]);
+  });
+
+  it("the final's wording stays the final's: during play the column is still Projected final, never Unavailable", () => {
+    const titles = view.headline.matrix.columns.map((c) => c.title);
+    expect(titles).not.toContain(MLB_WORDS.pregameProjectedFinal);
+    expect(view.headline.matrix.rows.flatMap((r) => texts(r.values))).not.toContain(MLB_WORDS.unavailable);
+    const before = build(beforeDetail, BEFORE_NOW, beforeHostRest());
+    expect(before.headline.matrix.columns.map((c) => c.title)).toEqual([MATRIX_WORDS.currentChance, "Projected final"]);
+    expect(before.headline.matrix.rows.flatMap((r) => texts(r.values))).not.toContain(MLB_WORDS.unavailable);
   });
 
   it("an unbacked live claim: No result reported over the displayed pair, last recorded chance, projection withheld", () => {

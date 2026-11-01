@@ -68,7 +68,10 @@
  *                     page's own `isSuspended` (this file's `noReportedResult`)
  *                     the page nulls it, said "… for this game state". After the
  *                     final it is never read: the page's gate excludes
- *                     completed/closed, and a final is not a forecast.
+ *                     completed/closed, and a final is not a forecast. The
+ *                     final's column names what is missing, "Pregame projected
+ *                     final", and says "Unavailable": no pregame forecast is
+ *                     held for this game, and none is synthesized from history.
  *   - result          `servedOutcome` → "Won" / "Lost", with the displayed pair
  *                     as its score fallback, so Won/Lost never disagrees with
  *                     the final runs shown. Never a chance; baseball has no draw.
@@ -173,6 +176,9 @@ export const MLB_WORDS = {
   finalScore: "Final score",
   projectionUnavailable: "Projected final unavailable",
   projectionWithheld: "Projected final unavailable for this game state",
+  /** After the final only: the missing pregame reference, named, and its absence. */
+  pregameProjectedFinal: "Pregame projected final",
+  unavailable: "Unavailable",
   spokenLabel: "Baseball win chances and runs",
   /** The accessible name of a refused section (its state and words stay its content). */
   refusedLabel: "Baseball game status",
@@ -433,7 +439,9 @@ function runSlots(
 /**
  * The projected-final column (D1 = B): the host's `heroProjectedFinal` exactly
  * as passed, or that slot's absence words. Read only before the start and
- * during play, and not under the page's own `isSuspended`.
+ * during play, and not under the page's own `isSuspended`. After the final the
+ * column is the missing PREGAME reference, "Pregame projected final", and
+ * says "Unavailable" whatever the host passes: nothing is read or synthesized.
  */
 export function mlbProjection(
   event: EventDetailResponse,
@@ -441,9 +449,12 @@ export function mlbProjection(
   host: MlbGameHost,
   noReportedResult: boolean,
 ): { title: string; home: HockeyJourneySlot; away: HockeyJourneySlot; provenance: string | null } {
+  if (phase === "final") {
+    const missing = absentSlot(MLB_WORDS.unavailable);
+    return { title: MLB_WORDS.pregameProjectedFinal, home: missing, away: missing, provenance: null };
+  }
   const title = projectedFinalLabel(event.sport);
   const none = (words: string) => ({ title, home: absentSlot(words), away: absentSlot(words), provenance: null });
-  if (phase === "final") return none(MLB_WORDS.projectionUnavailable);
   if (noReportedResult) return none(MLB_WORDS.projectionWithheld);
   const pair = host.projectedFinal;
   if (!pair || !countable(pair.home) || !countable(pair.away)) return none(MLB_WORDS.projectionUnavailable);
@@ -459,10 +470,10 @@ export function mlbProjection(
  *
  *   before  [chance (lead), projected final]                   groups [[0, 1]]
  *   live    [pregame, current (lead), runs, projected final]   groups [[0, 1], [2, 3]]
- *   final   [pregame, final runs (lead), projected final]      groups [[0], [1, 2]]
+ *   final   [pregame, final runs (lead), pregame projected final]  groups [[0], [1, 2]]
  *
- * After the final the projected-final column is always its absence words,
- * which the matrix states once for both teams.
+ * After the final the last column is the missing pregame reference, "Pregame
+ * projected final: Unavailable", which the matrix states once for both teams.
  */
 export function mlbGameMatrix(
   event: EventDetailResponse,

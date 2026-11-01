@@ -8,6 +8,15 @@
  * not loss: an unconfirmed grade says so in words. During play the row's
  * figure is only ever an admitted CURRENT chance; a refused quote is printed
  * once, in Details, as the historical quote with its own clock and venue.
+ *
+ * A ROW SAYS WHICH PROP IT IS before it is opened, from fields the view model
+ * already built: the served market text (`title`, which carries the subject and
+ * the threshold, e.g. "Jeremy Peña: Total Bases O/U 5.5"), then the side it
+ * lists (`label`, "Over") and the venue (`about.source`). A label that only
+ * repeats the title is not said twice. Details' accessible name is built from
+ * the same three fields, so a hundred "Over" rows are a hundred different
+ * buttons. Nothing is formatted, reordered, filtered or merged here, and two
+ * genuinely identical venue offers may still read alike.
  */
 
 import { useId, useState } from "react";
@@ -39,10 +48,19 @@ function headlineOf(original: HockeyJourneyOriginal): HockeyJourneyOriginalReadi
 function OriginalRow({ original }: { original: HockeyJourneyOriginal }) {
   const detailsId = useId();
   const [open, setOpen] = useState(false);
+  // The prop (subject and threshold), then the side it lists unless that only repeats it, then the venue.
+  const subject = original.title || original.label;
+  const side = original.label && original.label !== subject ? original.label : null;
+  const venue = original.about.source;
+  const sideAndVenue = [side, venue].filter(Boolean).join(" · ");
+  const spokenName = [subject, side, venue].filter(Boolean).join(", ");
   return (
     <li className="border-b border-surface-border py-2 last:border-b-0">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <span className="min-w-0 break-words text-sm font-medium">{original.label}</span>
+        <span className="min-w-0 break-words text-sm">
+          <span className="block font-medium">{subject}</span>
+          {sideAndVenue && <span className="block text-text-secondary">{sideAndVenue}</span>}
+        </span>
         <ReadingText reading={headlineOf(original)} />
       </div>
       <button
@@ -52,7 +70,7 @@ function OriginalRow({ original }: { original: HockeyJourneyOriginal }) {
         onClick={() => setOpen((v) => !v)}
         className="min-h-11 text-sm font-semibold text-text-primary underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand"
       >
-        Details<span className="sr-only">{`: ${original.label}`}</span>
+        Details<span className="sr-only">{`: ${spokenName}`}</span>
       </button>
       <div id={detailsId} hidden={!open} className="space-y-2 pb-2 text-sm">
         <p className="font-semibold break-words">{original.title}</p>
