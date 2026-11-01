@@ -396,12 +396,18 @@ TERMINAL_READ_RETRY_S = 30.0
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
 RECEIPT_QUOTE_RETENTION_S = 60.0
+#: #10090: a stored row this process did not record writing, this many DB-clock
+#: seconds older than the newest completed DB-clock sample, is another
+#: writer's: this process's own commit is recorded before its next await.
+RECEIPT_FOREIGN_ROW_SETTLE_S = 0.3
 #: #10090 DNPL: a LIVE event whose inputs reach the page at receipt (its graph
 #: kept, `preview_at_receipt` on) is persisted at most this often. The page
 #: does not wait for that write; a headline input on a fallback stays urgent
 #: (`URGENT_STAMP_MIN_S`). Below the arm's own floor this changes nothing
 #: (Polymarket's is 5 s); `LIVE_BLEND_RECEIPT_STAMP_FLOOR_S=0` turns it off.
-RECEIPT_STAMP_FLOOR_S = float(os.getenv("LIVE_BLEND_RECEIPT_STAMP_FLOOR_S", "5"))
+#: 20 s (Alex 2026-10-31: with DNPL the screen no longer waits on this write,
+#: so write far less): inside the 60 s preview lifetime with margin.
+RECEIPT_STAMP_FLOOR_S = float(os.getenv("LIVE_BLEND_RECEIPT_STAMP_FLOOR_S", "20"))
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -594,6 +600,11 @@ def _preview_from_commit(event_id) -> bool:
 
 #: A preview batch larger than this is published in chunks (see `_publish_previews`).
 PREVIEW_PUBLISH_CHUNK = 8
+#: #10090: events per claim-lock hold on the observation-only preview path,
+#: and how long that hold may wait for the venue's buffer lock (beyond it the
+#: frozen inputs are retried, never sent unvalidated).
+OBSERVATION_PUBLISH_CHUNK = 4
+OBSERVATION_VALIDATE_WAIT_S = 0.025
 
 
 _ACCEPTS_REFUSED: dict = {}
@@ -3910,7 +3921,7 @@ class LiveBlendRefresher:
             "ambiguous": 0, "not_admitted": 0, "returned": 0, "withdrawn": 0, "errors": 0,
             # Skips before composition (counted only; same returns as before):
             "no_bound": 0, "routing": 0, "kept_no_graph": 0, "not_speaking": 0,
-            "own_write": 0, "superseded": 0,
+            "own_write": 0, "superseded": 0, "overwritten": 0,
         }
         #: Wall seconds spent composing receipt previews (local CPU, no await).
         self.receipt_compose_s = 0.0
@@ -8268,46 +8279,73 @@ class LiveBlendRefresher:
             if not plans and not refusals:
                 return
 
-            async def prepare_frames():
-                allowed = await validate(set(plans) | set(refusals))
-                if selections:
-                    for eid in set(selections).difference(allowed or ()):
-                        self._stage_trace("selection_unsent", selections[eid], "NOT_ALLOWED")
-                if not allowed:
-                    return []  # rejection/cancellation must not mutate the registry
-                preview = registry()
-                frames = preview.expire()
-                for eid in allowed:
-                    if eid in refusals:
-                        frames.extend(preview.refused(eid, self.source, refusals[eid]))
-                        continue
-                    event, reading, basis, group, proof_kwargs = plans[eid]
-                    if proof_kwargs:
-                        # Current book/custody proof may change during Redis checkout.
-                        current = compute_source_home_probability(
-                            group, event.home_team_name, event.away_team_name, **proof_kwargs,
-                        )
-                        if (current is None or not has_proven_home_orientation(current)
-                                or round(current.home_probability, 4) != round(reading.home_probability, 4)
-                                or {str(row.id) for row in (getattr(current, "contributing_outcomes", None)
-                                                            or (current.outcome,))} != set(basis)):
-                            if selections and eid in selections:
-                                self._stage_trace("selection_unsent", selections[eid], "RECHECK_CHANGED")
-                            continue
-                    ops = preview.propose(
-                        eid, self.source, value=round(reading.home_probability, 4), event=event,
-                        row_sources=event.preview_sources, row_rev=event.preview_rev,
-                        eligibility=getattr(reading, "eligibility", None), observed_basis=basis,
-                        observation_only=True,
-                    )
-                    frames.extend(ops)
-                    if selections and eid in selections:
-                        self._trace_proposal(selections[eid], ops, eid, preview.ledger)
-                return frames
+            deferred = False
 
-            await self._publish_previews([], prepare_frames=prepare_frames)
+            def chunk_frames(ids):
+                async def prepare_frames():
+                    nonlocal deferred
+                    try:
+                        # #10090: this runs under the claim lock, which every
+                        # receipt preview waits on, so it never waits out a
+                        # long buffer-lock holder (a catalog handover's map
+                        # phase); the caller retries the frozen inputs.
+                        allowed = await asyncio.wait_for(
+                            validate(set(ids)), OBSERVATION_VALIDATE_WAIT_S)
+                    except asyncio.TimeoutError:
+                        deferred = True
+                        return []
+                    if selections:
+                        for eid in (set(selections) & set(ids)).difference(allowed or ()):
+                            self._stage_trace("selection_unsent", selections[eid], "NOT_ALLOWED")
+                    if not allowed:
+                        return []  # rejection/cancellation must not mutate the registry
+                    preview = registry()
+                    frames = preview.expire()
+                    for eid in allowed:
+                        if eid in refusals:
+                            frames.extend(preview.refused(eid, self.source, refusals[eid]))
+                            continue
+                        event, reading, basis, group, proof_kwargs = plans[eid]
+                        if proof_kwargs:
+                            # Current book/custody proof may change during Redis checkout.
+                            current = compute_source_home_probability(
+                                group, event.home_team_name, event.away_team_name, **proof_kwargs,
+                            )
+                            if (current is None or not has_proven_home_orientation(current)
+                                    or round(current.home_probability, 4) != round(reading.home_probability, 4)
+                                    or {str(row.id) for row in (getattr(current, "contributing_outcomes", None)
+                                                                or (current.outcome,))} != set(basis)):
+                                if selections and eid in selections:
+                                    self._stage_trace("selection_unsent", selections[eid], "RECHECK_CHANGED")
+                                continue
+                        ops = preview.propose(
+                            eid, self.source, value=round(reading.home_probability, 4), event=event,
+                            row_sources=event.preview_sources, row_rev=event.preview_rev,
+                            eligibility=getattr(reading, "eligibility", None), observed_basis=basis,
+                            observation_only=True,
+                        )
+                        frames.extend(ops)
+                        if selections and eid in selections:
+                            self._trace_proposal(selections[eid], ops, eid, preview.ledger)
+                    return frames
+
+                return prepare_frames
+
+            # #10090: a few events per claim-lock hold, so a receipt preview
+            # waits for one chunk, not the whole batch (2026-11-01 04:24Z:
+            # one 351 ms hold).
+            ids = list(plans) + [eid for eid in refusals if eid not in plans]
+            for at in range(0, len(ids), OBSERVATION_PUBLISH_CHUNK):
+                await self._publish_previews(
+                    [], prepare_frames=chunk_frames(ids[at:at + OBSERVATION_PUBLISH_CHUNK]))
+                if deferred:
+                    break
             if selections:
                 self._stage_trace("selections_closed", selections.values())
+            if deferred:
+                self.observation_read_stats["deferred"] = (
+                    self.observation_read_stats.get("deferred", 0) + 1)
+                return False
         except Exception as exc:
             if selections:
                 self._stage_trace("selections_closed", selections.values())
@@ -9354,6 +9392,23 @@ class LiveBlendRefresher:
                         outcomes.append(row)
                         continue
                     wrote = own.get(stored_ts) if own else None
+                    q_recv = getattr(mark, "recv_mono", None)
+                    latest = getattr(getattr(self, "held_quotes", None), "_database_bound", None)
+                    if (wrote is None and q_recv is not None and latest is not None
+                            and stored_ts <= latest - RECEIPT_FOREIGN_ROW_SETTLE_S
+                            and (waiting is None or q_recv < waiting[0])):
+                        # #10090: this quote already reached the screen (it is
+                        # older than the event's oldest waiting headline input)
+                        # and a later write that is not this process's (settled
+                        # in the DB clock, so not its own commit still being
+                        # recorded) now holds the row: the screen shows that
+                        # row, and so does this composition. Not a reason to
+                        # hold the event's newer inputs on other legs (04:23Z:
+                        # a 0.99 quote under the 2-minute poller's 0.995 held a
+                        # fresh leg 1,030 ms).
+                        stats["overwritten"] += 1
+                        outcomes.append(row)
+                        continue
                     if (wrote is None or current is None
                             or wrote[0] != round(float(current), 6)
                             or getattr(mark, "seq", -1) <= wrote[1]):
