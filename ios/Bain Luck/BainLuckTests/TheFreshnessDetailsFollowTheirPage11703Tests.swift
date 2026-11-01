@@ -190,9 +190,19 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         await settle(host, timeout: 5) { control = self.detailsControl(in: self.topPage(host)); return control != nil }
         let opener = try XCTUnwrap(control, "control: the first game's page shows its details control")
         XCTAssertTrue(opener.accessibilityActivate(), "control: the details control takes an activation")
-        let opened = await settle(host, timeout: 3) { host.presentedViewController != nil }
+        // The reader sees the details only once UIKit has finished presenting
+        // them. `presentedViewController` is set when the presentation STARTS:
+        // the H probe (ebedb18b) found the popover still `isBeingPresented`
+        // and outside the window at the push, and UIKit queued every
+        // dismissal behind that unfinished presentation.
+        let opened = await settle(host, timeout: 3) {
+            guard let presented = host.presentedViewController else { return false }
+            return !presented.isBeingPresented && presented.viewIfLoaded?.window != nil
+        }
         XCTAssertTrue(opened, "control: a reader who opens the details sees them")
-        _ = try onScreenText(window, "first-page-details-open")
+        let openText = try onScreenText(window, "first-page-details-open")
+        XCTAssertTrue(openText.contains("update received"),
+            "control: the details are on screen before the link (read: \(openText))")
 
         router.path.append(Self.second)
         await settle(host, timeout: 1.5) { router.path.count == 1 && host.presentedViewController == nil }
@@ -211,5 +221,13 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
             .accessibilityActivate())
         let reopened = await settle(host, timeout: 3) { host.presentedViewController != nil }
         XCTAssertTrue(reopened, "the second game's own details still open when the reader asks")
+
+        // The first page's own close comes seconds after the push on iOS 27
+        // (its `onDisappear`); it must not take the second game's details
+        // with it.
+        let secondDetails = host.presentedViewController
+        await settle(host, timeout: 6)
+        XCTAssertTrue(secondDetails != nil && host.presentedViewController === secondDetails,
+            "#11703: the second game's details closed on their own after the first page's late close")
     }
 }
