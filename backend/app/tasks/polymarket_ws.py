@@ -4527,10 +4527,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     open_run_task = None
     routing_generation = 0
     # #10090 `preview_at_receipt`: a received quote names the routing it was
-    # accepted under; none is kept or composed while a handover changes it.
-    blend_refresher.receipt_route = lambda: (
-        None if catalog_boundary.changing else routing_generation
-    )
+    # accepted under. The maps change only inside `refresh_catalog`'s `map`
+    # phase, under the buffer lock every input takes, and that phase bumps
+    # `routing_generation`, so a quote of the old routing never composes after
+    # it. The rest of a handover (fence, drain, stamps: 1.5-4 s, every PM flush
+    # held) changes no map, so receipt previews keep showing prices through it
+    # instead of leaving every game's newest price behind the handover.
+    blend_refresher.receipt_route = lambda: routing_generation
     # #10090: the installed open catalog is a successful `slate` scope, which
     # keeps the catalog-refresh loop even when the scope holds nothing.
     open_scope_installed = False

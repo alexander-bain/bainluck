@@ -9095,7 +9095,15 @@ class LiveBlendRefresher:
         if gate or self._current_reading_proof(event_id, group, [], park_refused=False):
             stats["not_admitted"] += 1
             self._note_receipt_class("not_admitted", event_id)
-            self._hl_mark(event_id, "na_gate" if gate else "na_proof")
+            if gate:
+                why = ("na_route" if token is None
+                       else "na_status" if event.status != "live" or event.completed_at is not None
+                       else "na_ticket" if getattr(event, "preview_read_ticket", None) is None
+                       else "na_rev" if type(getattr(event, "preview_rev", None)) is not int
+                       else "na_switch")
+            else:
+                why = "na_proof"
+            self._hl_mark(event_id, why)
             return None
         quotes = self._receipt_quotes
         patched, overlaid, newest = [], set(), None
