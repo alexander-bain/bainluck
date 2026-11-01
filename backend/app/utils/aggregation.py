@@ -60,6 +60,22 @@ SOURCE_WEIGHTS: dict[str, float] = {
     "mlb": 0.8,  # MLB Model (MLB Stats API)
 }
 
+#: Alex 2026-10-31 (#10090, decision D): in live play the two real-time markets
+#: carry the sportsbook consensus's base weight, so each of their ticks moves the
+#: live headline about twice as far (UNLV-NIU: Kalshi and Polymarket were ~25%
+#: of the headline beside books refreshed ~every 30 s). The #1829 share cap and
+#: the relative decay apply on top, unchanged; pre-game and settled blends keep
+#: `SOURCE_WEIGHTS`.
+LIVE_MARKET_SOURCES = frozenset({"kalshi", "polymarket"})
+
+
+def _live_base_weight(source: str, weights: Optional[dict] = None) -> float:
+    """A source's base weight in live play (`LIVE_MARKET_SOURCES`)."""
+    table = weights or SOURCE_WEIGHTS
+    if source in LIVE_MARKET_SOURCES:
+        return table.get("betting", SOURCE_WEIGHTS["betting"])
+    return table.get(source, 0.5)
+
 # Staleness parameters (in seconds)
 STALENESS_GRACE_PERIOD = 120  # 2 min: no penalty
 STALENESS_DECAY_WINDOW = 180  # Next 3 min: linear decay to 0
@@ -1158,9 +1174,13 @@ def compute_aggregated_probability(
         reference_epoch = max(decay_epochs) if decay_epochs else None
 
         # Pass 2: weight each candidate by how far behind that reference it is.
+        # A live bucket weighs the live markets as the hero does (`_live_base_weight`).
+        live_bucket = (live_blend and not bucket_is_pregame
+                       and not any(key == "final_result" for key, _p, _e in candidates))
         for source_key, latest, latest_epoch in candidates:
-            base_weight = weights.get(
-                source_key, 0.5
+            base_weight = (
+                _live_base_weight(source_key, weights) if live_bucket
+                else weights.get(source_key, 0.5)
             )  # Default weight for unknown sources
 
             if (
@@ -1438,7 +1458,9 @@ def _decayed_source_weights(
 
     values = list(prob_readings.values())
     keys = list(prob_readings.keys())
-    weights = [SOURCE_WEIGHTS.get(src, 0.5) for src in keys]
+    live = _takes_live_average(event, event_status, keys)
+    weights = [_live_base_weight(src) if live else SOURCE_WEIGHTS.get(src, 0.5)
+               for src in keys]
     floored: set[str] = set()
 
     # Relative recency. The reference is the freshest stamp on the event,
