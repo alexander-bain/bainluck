@@ -2901,6 +2901,50 @@ class PMCatalogScans:
             len(open_outcome_ids), len(event_id_by_outcome), len(complement_of),
         )
 
+    def invalidate(self) -> None:
+        """The maps are changing: every answer takes the walk until a rebuild."""
+        self._built_from = None
+
+    async def rebuild_cooperatively(self, open_outcome_ids, event_id_by_outcome: dict,
+                                    complement_of: dict, step: int = 4096) -> bool:
+        """`rebuild`, yielding to the loop every `step` legs.
+
+        #10090: the synchronous walk of every open leg (~75k) ran inside the
+        catalog install's map phase, holding the PM loop and the buffer lock
+        every ~10 min. The walk answers meanwhile. Installed only if no map
+        changed size meanwhile (they change only at a catalog install). Never
+        raises.
+        """
+        self._built_from = None
+        if not PM_SCAN_PREFILTER:
+            return False
+        try:
+            sizes = (len(open_outcome_ids), len(event_id_by_outcome), len(complement_of))
+            standalone: set[int] = set()
+            open_ids = list(open_outcome_ids)
+            for at in range(0, len(open_ids), step):
+                standalone.update(standalone_open_outcome_ids(
+                    open_ids[at:at + step], open_outcome_ids, event_id_by_outcome,
+                    complement_of,
+                ))
+                await asyncio.sleep(0)
+            legs: dict[int, list[int]] = {}
+            items = list(event_id_by_outcome.items())
+            for at in range(0, len(items), step):
+                for oid, eid in items[at:at + step]:
+                    if eid is not None:
+                        legs.setdefault(eid, []).append(oid)
+                await asyncio.sleep(0)
+            if sizes != (len(open_outcome_ids), len(event_id_by_outcome), len(complement_of)):
+                return False
+            self.standalone_ids = standalone
+            self.legs_by_event = legs
+            self._built_from = (open_outcome_ids, event_id_by_outcome, complement_of, *sizes)
+            return True
+        except Exception:
+            logger.warning("Polymarket WS: catalog scan rebuild failed; walking", exc_info=True)
+            return False
+
     def _events_current(self, event_id_by_outcome) -> bool:
         built = self._built_from
         return (PM_SCAN_PREFILTER and built is not None
@@ -7553,8 +7597,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 )
                 old_debt = protected - current_outcomes
                 for owners in (market_by_outcome, event_id_by_outcome):
-                    for oid in owners.keys() - old_debt:
-                        del owners[oid]
+                    # Only the old debt survives: rebuilt from it (a Python
+                    # delete per entry of ~75k held this lock, #10090).
+                    kept = {oid: owners[oid] for oid in old_debt if oid in owners}
+                    owners.clear()
+                    owners.update(kept)
                 # #10663: per-outcome bookkeeping keeps only the outcomes this
                 # catalog owns or a buffered write still carries. Nothing else
                 # retired an entry, so both grew by every outcome the process
@@ -7610,13 +7657,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 ):
                     target.clear()
                     target.update(fresh)
-                for oid in open_complement_of.keys() - old_debt:
-                    del open_complement_of[oid]
+                kept = {oid: open_complement_of[oid] for oid in old_debt
+                        if oid in open_complement_of}
+                open_complement_of.clear()
+                open_complement_of.update(kept)
                 if admission is not None:
                     open_complement_of.update(admission.complement_of)
-                catalog_boundary.scans.rebuild(
-                    open_outcome_ids, event_id_by_outcome, open_complement_of,
-                )
+                # #10090: rebuilt after the install, a slice at a time
+                # (`rebuild_cooperatively` below); the walk answers meanwhile.
+                catalog_boundary.scans.invalidate()
                 open_scope_installed = (
                     admission is not None and admission.scope == OPEN_SCOPE_SLATE
                 )
@@ -7674,6 +7723,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 open_ws.update_asset_ids(
                     desired_open, price_book_snapshots=snapshot_prices
                 )
+        await catalog_boundary.scans.rebuild_cooperatively(
+            open_outcome_ids, event_id_by_outcome, open_complement_of,
+        )
 
     async def run_open_client(open_ws, desired_open, snapshot_prices):
         try:

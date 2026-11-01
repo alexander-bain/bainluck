@@ -871,6 +871,8 @@ def recently_quoted_event_ids(quoted_at, now, window=QUOTE_PRIORITY_EVIDENCE_SEC
 #: #10090 — open-contract connections a changed scope may hold beyond the
 #: packed minimum before the run takes the full rebuild instead.
 OPEN_CONTRACT_EXTRA_CONNECTIONS = 2
+#: #10090: open-contract scope rows read, and mapped, per loop turn.
+OPEN_CONTRACT_READ_PARTITION = 2000
 
 
 class _KalshiClient:
@@ -1274,19 +1276,37 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             linked = ticker_to_ids
         if not open_contract_prices_enabled():
             return {}, {}, False, False
+        ids: dict = {}
+        candidates: dict = {}
         try:
             async with get_task_session() as session:
-                open_rows = (
-                    await session.execute(kalshi_open_contract_stmt())
-                ).all()
+                # #10090: ~74k rows, mapped a partition at a time with the loop
+                # yielded between. One `.all()` plus two whole-list walks held
+                # the Kalshi loop ~0.6 s at every scope refresh (04:34, 04:44,
+                # 05:01Z: receipt compositions 590-710 ms late). Both maps are
+                # per-row, last row wins, so merging partitions in order is the
+                # same answer.
+                stream = getattr(session, "stream", None)
+                if stream is None:
+                    part = (await session.execute(kalshi_open_contract_stmt())).all()
+                    ids.update(open_contract_ticker_map(part, linked))
+                    candidates.update(open_contract_event_candidates(part, linked))
+                else:
+                    result = await stream(kalshi_open_contract_stmt().execution_options(
+                        yield_per=OPEN_CONTRACT_READ_PARTITION))
+                    try:
+                        async for part in result.partitions(OPEN_CONTRACT_READ_PARTITION):
+                            ids.update(open_contract_ticker_map(part, linked))
+                            candidates.update(open_contract_event_candidates(part, linked))
+                            await asyncio.sleep(0)
+                    finally:
+                        await result.close()
         except Exception:
             logger.exception(
                 "Kalshi WS: open-contract admission read failed; "
                 "streaming the linked slate only this run"
             )
             return {}, {}, True, False
-        ids = open_contract_ticker_map(open_rows, linked)
-        candidates = open_contract_event_candidates(open_rows, linked)
         if not candidates:
             return ids, {}, False, False
         try:
@@ -3875,8 +3895,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             tuple(open_contract_channels()),
         )
 
-    def refresh_prepared(scope_ids):
-        layout = [sorted(c.tickers & frozenset(scope_ids)) for c in open_clients]
+    def refresh_prepared(scope_ids, scope=None):
+        # One frozenset for every client (it was rebuilt per client).
+        if scope is None:
+            scope = frozenset(scope_ids)
+        layout = [sorted(c.tickers & scope) for c in open_clients]
         prepared = prepared_shard_indexes(scope_ids, layout)
         for index, client in enumerate(open_clients):
             if client.predecessor is None:
@@ -3994,9 +4017,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         current["bridge"] = dict(bridge)
 
         changed = {"kept": 0, "replaced": 0, "started": 0, "retired": 0}
+        game_scope, open_scope = frozenset(new_ids), frozenset(ids)
         for kind, clients, plan, scope in (
-            ("game", game_clients, game_plan, frozenset(new_ids)),
-            ("open", open_clients, open_plan, frozenset(ids)),
+            ("game", game_clients, game_plan, game_scope),
+            ("open", open_clients, open_plan, open_scope),
         ):
             keep, replace, start, retire = plan
             steady = []
@@ -4015,7 +4039,6 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             changed["replaced"] += len(replace)
             changed["started"] += len(start)
             changed["retired"] += len(retire)
-        game_scope, open_scope = frozenset(new_ids), frozenset(ids)
         # Built once: inside the comprehension it was rebuilt per owned ticker,
         # quadratic in ~44k tickers — a ~93 s frozen loop in production (v5614).
         in_scope = game_scope | open_scope
@@ -4028,7 +4051,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             claim_tickers(client, game_scope)
         for client in open_clients:
             claim_tickers(client, open_scope)
-        refresh_prepared(ids)
+        refresh_prepared(ids, open_scope)
 
         stats["tickers_subscribed"] = len(new_ids)
         stats["open_contract_tickers"] = len(ids)
