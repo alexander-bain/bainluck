@@ -48,6 +48,23 @@
  * state). Details stay off inside the wrapper. The final input draws exactly
  * the final leaf below.
  *
+ * LAYOUT (optional, reader I1, Design R-F2). `layout="page"` (the default) is
+ * the markup above, unchanged. `layout="expanded"` — what the full-size reader
+ * (`MlbRunTotalsReader`) asks for — gives ONLY the final plot more height, in
+ * native's proportion (`MLBTotalTargetsPresentation11284` chart frame
+ * `expanded ? 132 : 108`). Native's frame holds the marks and the axis labels;
+ * the web twin is the `data-run-plot` block: the marks area (6rem) plus the
+ * axis-label row (0.25rem gap + 1.25rem) = 7.5rem. Expanded, that block is
+ * 7.5rem × 132 / 108 = 9.1667rem; the label row keeps its size and type (as
+ * native's axis labels do), so the marks area alone takes the added room:
+ * 7.5rem × 132 / 108 − 1.5rem = 7.6667rem. Every mark inside it is placed in
+ * percentages of that area, so the bar, ticks, stem and diamond keep their
+ * proportions; every horizontal position, the diamond's size, every reading,
+ * word and control are the same as on the page. No Details control is added
+ * (native expanded draws one; web Details stay owed). The milestones leaf
+ * has no expanded form (native has none) and ignores `layout`. No pixel
+ * parity is claimed before a browser check.
+ *
  * The axis never depends on the selection, so choosing a line never rescales
  * the bar. No chart library, fetch, timer or subscription; tokens and the
  * host's team colours only. The plot is hidden from screen readers: every
@@ -78,6 +95,18 @@ export interface MlbRunTotalsSelection {
   onSelect: (optionKey: string) => void;
 }
 
+/** Where the card is drawn: on the page (default), or full size in the reader (see LAYOUT). */
+export type MlbRunTotalsLayout = "page" | "expanded";
+
+/**
+ * The final plot's marks-area height per layout (see LAYOUT): page 6rem (`h-24`);
+ * expanded = the 7.5rem plot block × 132 / 108, less the unchanged 1.5rem axis-label row.
+ */
+export const MLB_RUN_PLOT_HEIGHT: Record<MlbRunTotalsLayout, string> = {
+  page: "h-24",
+  expanded: "h-[calc(7.5rem*132/108_-_1.5rem)]",
+};
+
 /** The source's verdict in web's one settled vocabulary, or the documented partial. */
 const resultWords = (result: boolean | null): string => (result === null ? W.resultUnavailable : propVerdictLabel(result));
 
@@ -88,6 +117,7 @@ export default function MlbRunTotalsCard({
   scope,
   colors = DEFAULT_COLORS,
   selection,
+  layout = "page",
 }: {
   /**
    * THIS event's built input: `mlbFinalTotals(…)` after the final, or
@@ -99,6 +129,8 @@ export default function MlbRunTotalsCard({
   colors?: MlbRunTotalsColors;
   /** Optional host-held selection (see CONTROLLED SELECTION); absent = the card holds it itself. */
   selection?: MlbRunTotalsSelection;
+  /** Optional: "expanded" gives only the final plot more height (see LAYOUT); default "page". */
+  layout?: MlbRunTotalsLayout;
 }) {
   const titleId = useId();
   const stripId = useId();
@@ -110,6 +142,7 @@ export default function MlbRunTotalsCard({
 
   if (totals.kind === "milestones") {
     // Before / live: S2a's wrapper over the approved milestone visual, on the same held key (none = undefined).
+    // `layout` is not read here: the milestones leaf has no expanded form.
     return (
       <div className="min-w-0" data-mlb-run-totals={scope} data-mlb-run-milestones={totals.phase}>
         <CountMilestoneCard card={totals.card} heldId={held === null ? undefined : held} onChoose={choose} />
@@ -199,8 +232,8 @@ export default function MlbRunTotalsCard({
       </div>
 
       {/* The bar, every line's tick and the selected diamond, on one zero-based runs axis. */}
-      <div aria-hidden="true" className="px-3" data-run-plot="">
-        <div className="relative h-24">
+      <div aria-hidden="true" className="px-3" data-run-plot={layout === "expanded" ? "expanded" : ""}>
+        <div className={`relative ${MLB_RUN_PLOT_HEIGHT[layout]}`}>
           <div className="absolute inset-x-0 top-[40%] h-[28%] rounded-sm bg-surface-deep" />
           {segments.map((s) => (
             <div
