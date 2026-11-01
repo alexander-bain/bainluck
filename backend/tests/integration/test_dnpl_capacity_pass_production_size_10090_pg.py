@@ -16,6 +16,14 @@ Real here: `_maintain_preview_capacity`, the shipped Lua, disposable Postgres,
 and a private Redis. One seam: every DB statement the worker issues costs
 `STATEMENT_S`, the per-statement wait production pays under load (its passes
 die after about ten statements plus lock waits, which is at least 90 ms each).
+
+11/01 (488339ea, 8dab4471): idle residents are reclaimed only under ledger
+pressure (`PREVIEW_IDLE_RECLAIM_FILL`, 75% of the cap), and lifecycle
+retirements wait for pressure or a quiet ledger (`PREVIEW_LIFECYCLE_QUIET_LIVE`):
+each retirement moves the global barrier and refuses every in-flight receipt.
+This rig's 79 residents sit at ~15% of the cap, so the reclaim proofs run
+`under_pressure` (the threshold at 0); the below-fill twins at the end keep
+the shipped threshold and prove what such a pass does instead.
 """
 import asyncio
 import json
@@ -170,6 +178,16 @@ async def production(rig, redis_kwargs, monkeypatch, request, ticket_kind):
         blend_preview.reset_registry_for_tests()
 
 
+@pytest.fixture
+def under_pressure(monkeypatch):
+    """The ledger counts as full enough to reclaim idle residents and retire
+    finished ones (`PREVIEW_IDLE_RECLAIM_FILL` at 0): these rigs prove the
+    reclaim mechanics, which only run under pressure."""
+    from app.tasks import live_blend_refresh
+
+    monkeypatch.setattr(live_blend_refresh, 'PREVIEW_IDLE_RECLAIM_FILL', 0.0)
+
+
 async def resident(client, eid):
     return await client.hget(L, f'e:{eid}:gen') is not None
 
@@ -196,7 +214,7 @@ def receipt(caplog):
 
 @pytest.mark.parametrize('ticket_kind', ['int', 'authority'])
 async def test_full_other_group_reclaims_idle_residents_and_admits_busy_games(
-        rig, production, caplog, ticket_kind):
+        rig, production, caplog, ticket_kind, under_pressure):
     import logging
 
     worker, registry, client, statements = production
@@ -238,7 +256,7 @@ async def test_full_other_group_reclaims_idle_residents_and_admits_busy_games(
 
 
 async def test_a_full_pass_publishes_one_idle_revoke_per_reclaimed_resident(
-        rig, production):
+        rig, production, under_pressure):
     worker, registry, client, _ = production
     subscriber = client.pubsub()
     channels = [event_channel(e) for e in OTHER_UPCOMING]
@@ -260,7 +278,7 @@ async def test_a_full_pass_publishes_one_idle_revoke_per_reclaimed_resident(
 
 
 async def test_a_row_that_went_live_inside_the_batch_keeps_its_residency(
-        rig, production, monkeypatch):
+        rig, production, monkeypatch, under_pressure):
     """The batch's one locked read proves each row; a row no longer
     future-scheduled is skipped while its siblings are reclaimed."""
     worker, registry, client, _ = production
@@ -297,7 +315,8 @@ async def test_a_pass_on_a_ledger_with_nothing_idle_sends_no_retirement(rig, pro
     assert not any('FOR SHARE' in s and 'commence_time >' in s for s in statements)
 
 
-async def test_a_finished_game_and_the_idle_batch_retire_in_the_same_pass(rig, production):
+async def test_a_finished_game_and_the_idle_batch_retire_in_the_same_pass(
+        rig, production, under_pressure):
     """The finished game's retirement moves the barrier; the idle batch is then
     proved after a fresh ticket, so it still reclaims in that pass."""
     worker, registry, client, _ = production
@@ -309,7 +328,7 @@ async def test_a_finished_game_and_the_idle_batch_retire_in_the_same_pass(rig, p
 
 @pytest.mark.parametrize('production', [V2_SPLIT], indirect=True)
 async def test_under_the_1024_split_the_pass_still_finishes_and_reclaims_idle_upcoming(
-        rig, production, caplog):
+        rig, production, caplog, under_pressure):
     """After the switch-over no bucket here is full: the policy batch frees
     nothing, the busy game is admitted without a pass, and the same pass still
     ends inside its budget and reclaims every idle future-scheduled resident."""
@@ -332,3 +351,49 @@ async def test_under_the_1024_split_the_pass_still_finishes_and_reclaims_idle_up
     # A bucket below its limit gives policy retirement nothing to take.
     assert all([await resident(client, e) for e in [*ACTIVE_PREVIEW, *ACTIVE_IDLE]])
     assert int(await client.hget(L, 'r:count:4')) == 49
+
+
+# ── below the fill threshold (the shipped PREVIEW_IDLE_RECLAIM_FILL) ─────────
+
+
+async def test_below_the_fill_threshold_only_a_full_bucket_gives_up_a_resident(
+        rig, production, caplog):
+    """At ~15% of the cap no idle resident is reclaimed: each full bucket's
+    policy retirement frees exactly one slot ("Other active" and "Other
+    upcoming"), the busy game takes the freed one, and every T1 upcoming
+    resident keeps its residency."""
+    import logging
+
+    worker, registry, client, _ = production
+    caplog.set_level(logging.INFO, logger='app.tasks.live_blend_refresh')
+    assert await admit(rig, registry, client, worker, WAITING[0]) == []
+    await worker._maintain_preview_capacity()
+    fields = receipt(caplog)
+    assert fields['end'] == 'done', fields
+    assert fields['idle_attempted'] == '0', fields
+    assert fields['reclaimed'] == '2', fields
+    assert int(await client.hget(L, 'r:count:4')) == 47
+    assert sum([not await resident(client, e) for e in OTHER_UPCOMING]) == 1
+    assert all([await resident(client, e) for e in T1_UPCOMING])
+    assert await admit(rig, registry, client, worker, WAITING[0]) == ['blend']
+    for eid in ACTIVE_PREVIEW:
+        assert await resident(client, eid)
+
+
+async def test_below_fill_a_finished_game_waits_while_the_ledger_is_busy(
+        rig, production, monkeypatch):
+    """A finished resident in a bucket below its limit is not retired while
+    more than PREVIEW_LIFECYCLE_QUIET_LIVE residents are live (here 48): its
+    retirement would move the barrier under every live game's next receipt.
+    The same pass on a quiet ledger retires it."""
+    from app.tasks import live_blend_refresh
+
+    worker, registry, client, _ = production
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE events SET status='final' WHERE id=201"))
+    await worker._maintain_preview_capacity()
+    assert await resident(client, 201)
+
+    monkeypatch.setattr(live_blend_refresh, 'PREVIEW_LIFECYCLE_QUIET_LIVE', 48)
+    await worker._maintain_preview_capacity()
+    assert not await resident(client, 201)
