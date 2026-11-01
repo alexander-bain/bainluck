@@ -14,15 +14,23 @@ this note; the final card by the binding increment, the before/live milestones b
 totals" below. A source package is not app integration, and no route or phase advances from it
 alone.
 
+Reader ship (I1 + I2): the baseball page's run-total card offers "Open full card"; a fan explores
+the same card full size, closes it, and returns to the same choice and page position. The
+full-size reader (`MlbRunTotalsReader.tsx`, I1) and its binding in this page (I2) are PREPARED in
+this checkpoint (source, tests and this note); see "The run-total full-size reader" below. Not
+mounted, and not visual, accessibility or TestFlight acceptance.
+
 Nothing below is applied. `app/events/[id]/page.tsx` is untouched and stays PROPOSED only; no source
 in this checkpoint reads or edits it. The page owner applies this under its own grant (OB-10) after
 the web gates (`npm run build` → `npm run typecheck` →
-`npx jest --testPathPatterns='mlbGame|mlbRunTotals|settledVocabulary'`) and real browser views. Line
+`npx jest --testPathPatterns='mlbGame|mlbRunTotals|soccerMatchReader|settledVocabulary'`) and real
+browser views. Line
 numbers are approximate (page.tsx 4,347 lines at 91d79dcb). This mirrors `MOUNT.md` (hockey) and
 `MOUNT-SOCCER.md`.
 
-This is a CORE checkpoint plus the run-total card in every phase, not the full MLB page. What it
-does not carry is listed under "Held, not dropped" below; none of it is claimed.
+This is a CORE checkpoint plus the run-total card in every phase and its full-size reader, not the
+full MLB page. What it does not carry is listed under "Held, not dropped" below; none of it is
+claimed.
 
 ## Design disposition
 
@@ -98,9 +106,11 @@ The run-total card adds NO host key in any phase: it reads the `gameMarkets` bod
 Never give the section a `key` that changes per refresh. Its history and All props are keyed by the
 model's own `scope` (`mlb:<event>:<phase>`), so an open list, an open Details or a chart disclosure
 survives a refresh in the same scope (each Details is held by the original's exact key) and resets on
-a new event or phase. The run-total card's chosen line is held inside the section, above the card,
-for the same `scope` (see "Run totals"). `resetKey={event}` only retries a failed section; it
-does not remount it.
+a new event or phase. The run-total card's chosen line, and whether its full-size reader is open, are
+held inside the section, above the card, for the same `scope` (see "Run totals" and "The run-total
+full-size reader"). The reader is the section's own local `<dialog>`: no route, history entry,
+query parameter or global modal layer is added for it. `resetKey={event}` only retries a failed
+section; it does not remount it.
 
 ## Owner-binding debt (all UNPAID)
 
@@ -127,9 +137,11 @@ does not remount it.
    reaches `lib/propGrade.ts` through `HockeyJourneyAllProps` and is enrolled at the end of
    `__tests__/lib/settledVocabulary.test.tsx` `SURFACES` with one CONSTRUCTED forced pair. No
    existing line changed. Its non-vacuity check is in `__tests__/lib/mlbGame10868.test.ts`.
-   `MlbRunTotalsCard.tsx` (the leaf) is enrolled there too, by the S1 commit; this binding does not
-   edit the census. The page's census entry builds over the reduced fixture, which has no matrix,
-   so it draws no card in any phase and its differential is unchanged.
+   `MlbRunTotalsCard.tsx` (the leaf) is enrolled there too, by the S1 commit, and
+   `MlbRunTotalsReader.tsx` by the I1 census commit (its verdict slot delegated to the enrolled
+   card). Neither S2c nor I2 edits the census. The page's census entry builds over the reduced
+   fixture, which has no matrix, so it draws no card, entry or reader in any phase and its
+   differential is unchanged.
 5. **Checks under grant.** `npm run build`, `npm run typecheck`, the focused jest files, then real
    browser views on the exact committed export at 375 px, 393 px and 1280 px with 100% and 200% text:
    no clipped value, no tiny or grey substitute figure, no word split, no horizontal page scroll; the
@@ -139,7 +151,13 @@ does not remount it.
    milestones): history then card stacked at 375 / 393 px, normal and enlarged text, with no
    miniature history; side by side at wide width only when both bases fit; choosing a line or a
    milestone works, the final card never rescales its bar; the headline and history are unchanged.
-   No genuine before/live specimen exists for this check yet (see "Held, not dropped").
+   For the full-size reader, at the same widths and text sizes: "Open full card" sits under the
+   card inside its item; the reader opens as a true modal (background inert, page scroll held, Close
+   always reachable, the compact context and card readable and wrapping, the final plot taller
+   without shrunken labels); Close and Escape (the dialog's cancel) return the page to its position
+   with focus on the entry (or on the named history row when the entry is gone); the choice made in
+   either view is the other's. No genuine before/live specimen exists for this check yet (see
+   "Held, not dropped").
 
 ## What a reader sees on real inputs today (event 15321836, final 3–7)
 
@@ -250,7 +268,49 @@ does not remount it.
 - **Evidence.** The jest tests use the REAL final matrix joined in-test onto the reduced body. Every
   before/live quote, pin, clock, status, displayed pair, raw row score and `noReportedResult` in
   them is CONSTRUCTED. They prove behaviour, not pixel fit or a genuine before/live specimen.
-- **Not in this increment.** A reader or Details on the card, in any phase.
+- **Not in this increment.** Details on the card (run-line and milestone Details), in the page or
+  the reader, in any phase.
+
+## The run-total full-size reader (I1 + I2; prepared in this checkpoint, not mounted)
+
+- **Reader (I1, `MlbRunTotalsReader.tsx`).** The EXISTING `SoccerMatchReader` shell, unchanged
+  (one local `<dialog>` with `showModal()` — a true modal or nothing; page scroll held; Close,
+  Escape and cancel through the owner once; an asked close restores the page position and focuses
+  `returnTo()` with `preventScroll`; an owner close restores no scroll and moves focus only if it
+  was lost). Title native's "Run totals"; a single card, no Previous / Next or position; no
+  Details. It draws the SAME `MlbRunTotalsCard` on the caller's SAME controlled selection with
+  `layout="expanded"`: only the final plot is taller, in native's 108 → 132 proportion (the web
+  plot block 7.5rem → 9.1667rem, the axis-label row unchanged, so the marks area 6rem → 7.6667rem);
+  the milestones leaf is unchanged. With no input (the whole matrix gone) the open reader keeps
+  only its title, Close and native baseball's `storyUnavailable` words: no context, card,
+  probability or count.
+- **Slot state (I2, `MlbRunTotalsSlot` in `MlbGamePage.tsx`).** `{ scope, key, open, unavailable }`
+  plus the entry's ref; no model, line or probability is held. A new event or phase resets all
+  four while rendering, so the reader closes in the same render as the key clears: no frame shows
+  it for the old phase.
+- **Entry.** With an agreeing card, "Open full card" (spoken "Open full card: Run totals") sits
+  inside the run-total row item, under the card, disabled while the reader is open. After a failed
+  attempt (`showModal` missing or throwing) a status line beside it says "Full-size view
+  unavailable. You can still explore this on the page." until the next attempt or a new scope; the
+  page card keeps working.
+- **One reading, two views.** The page card and the reader get the SAME phase-agreed input
+  (`runTotalsForPhase`) and the SAME selection object, so a choice in either is the other's and
+  survives close / reopen and same-scope refreshes.
+- **Input lost while open.** The page draws no row item, card, entry or placeholder; the reader,
+  a fragment sibling after the item (its dialog out of the row's flow), stays mounted on its
+  absence words; the key is kept and the exact returning input restores it.
+- **Compact context, from the built headline only.** Away first, each team's short name else its
+  name; both runs slots' printed text from this phase's runs column (live index 2, final index 1)
+  only when the matrix is this phase's and both are values; never before first pitch, never a 0,
+  a half pair or the event row; then `headline.state`.
+- **Focus return (R-F3).** The entry while it is connected and enabled; else the history row
+  (`data-mlb-history-row`, `tabIndex={-1}`, `role="group"`, named "Win probability and run
+  totals"), which stays while the page does; null only once the page is gone. No Tab stop is added
+  and the row's geometry is unchanged.
+- **Evidence.** `__tests__/components/mlbRunTotalsReader10868.test.tsx` (I1, a test host) and
+  `__tests__/components/mlbGamePageRunReader10868.test.tsx` (I2, the actual builder and page) on
+  the REAL final matrix plus CONSTRUCTED before/live inputs, with jsdom's dialog stubbed: they
+  prove state and wiring, not modality, fit or pixel parity.
 
 ## Held, not dropped (the next increments toward the same full route)
 
@@ -267,9 +327,14 @@ does not remount it.
   until the producer exposes it.
 - G1 (no typed pregame player channel), G2 (no live count), G3 (no role-qualified identity), M1 (no
   genuine live HR/K specimen).
-- The pregame and final forecast comparisons; inning guides (OB-3); full-size readers (including
-  any reader or Details on the run-total card); the league eyebrow (web's event type declares no
-  `metadata.league`); native fidelity, interaction and accessibility parity.
+- The pregame and final forecast comparisons; inning guides (OB-3); the MLB Full chart reader and
+  every other full-size reader; multi-card browsing (Previous / Next) once other MLB stories exist
+  on web; run-line and milestone Details on the run-total card (page and reader); the league
+  eyebrow (web's event type declares no `metadata.league`); native fidelity, interaction and
+  accessibility parity.
+- The run-total reader's real browser behaviour: modality, focus containment, scroll locking, fit
+  at 375 / 393 / 1280 px and 200% text, and the expanded plot against native (no pixel parity is
+  claimed).
 - The owner bindings OB-8 (interrupted delivery) and OB-10 (the release switch and the duplicates),
   the production mount (page.tsx stays PROPOSED), and every native, device, accessibility and
   TestFlight obligation.
