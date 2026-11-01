@@ -412,6 +412,13 @@ RECEIPT_FOREIGN_ROW_SETTLE_S = 0.3
 #: 20 s (Alex 2026-10-31: with DNPL the screen no longer waits on this write,
 #: so write far less): inside the 60 s preview lifetime with margin.
 RECEIPT_STAMP_FLOOR_S = float(os.getenv("LIVE_BLEND_RECEIPT_STAMP_FLOOR_S", "20"))
+#: #10090 (Alex 2026-10-31, "write far less"): a scheduled event more than
+#: `PREGAME_FLOOR_LEAD_S` before its start is stamped at most this often. Its
+#: market rows (props, the market-quote push) are written as before; only the
+#: event's blend stamp waits. 05:00Z: 87 of the ~105 events Polymarket stamped
+#: a minute were pre-game (Kalshi's floor is its 0.25 s flush).
+PREGAME_STAMP_FLOOR_S = float(os.getenv("LIVE_BLEND_PREGAME_STAMP_FLOOR_S", "15"))
+PREGAME_FLOOR_LEAD_S = 300.0
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -3980,6 +3987,9 @@ class LiveBlendRefresher:
         self._own_writes: dict[int, dict] = {}
         #: event id -> `_mono` of its terminal-read retirement (`TERMINAL_READ_RETRY_S`).
         self._terminal_reads: dict[int, float] = {}
+        #: Scheduled events' start (epoch s) from their last stamp read
+        #: (`PREGAME_STAMP_FLOOR_S`); absent: the ordinary floor.
+        self._event_commence: dict[int, float] = {}
         #: `receipt ambiguous` attribution lines left this minute.
         self._ambiguous_logged = 0
 
@@ -3998,7 +4008,11 @@ class LiveBlendRefresher:
         if last is None:
             return True
         floor = self.min_refresh_interval_s
-        if RECEIPT_STAMP_FLOOR_S > floor:
+        start = getattr(self, "_event_commence", {}).get(event_id)
+        if (PREGAME_STAMP_FLOOR_S > floor and start is not None
+                and start - _wall() > PREGAME_FLOOR_LEAD_S):
+            floor = PREGAME_STAMP_FLOOR_S
+        elif RECEIPT_STAMP_FLOOR_S > floor:
             cached = getattr(self, "_preview_graphs", {}).get(event_id)
             if (cached is not None and getattr(cached[1], "status", None) == "live"
                     and getattr(cached[1], "completed_at", None) is None
@@ -6824,6 +6838,14 @@ class LiveBlendRefresher:
                     self._live_event_ids.add(eid)
                 else:
                     self._live_event_ids.discard(eid)
+                ev = grouped[eid][0] if eid in grouped else None
+                start = getattr(ev, "commence_time", None)
+                if getattr(ev, "status", None) == "scheduled" and isinstance(start, datetime):
+                    if len(self._event_commence) > 8192:
+                        self._event_commence.clear()
+                    self._event_commence[eid] = start.timestamp()
+                else:
+                    self._event_commence.pop(eid, None)
             if not grouped:
                 self._stamp_wait_read(event_ids, {})
                 if self.preview:
