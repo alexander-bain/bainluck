@@ -285,6 +285,8 @@ def _pool_sql(venue: str, window_sql: str, props_sql: str = "") -> str:
     from app.tasks.futures_price_refresh import HIGH_VALUE_SQL
 
     valued = f"({HIGH_VALUE_SQL} OR fm.id = ANY(CAST(:shown_ids AS integer[])))"
+    # Production runs Python 3.11: no nested quotes inside an f-string field.
+    props_union = "\n            UNION\n            SELECT id FROM props" if props_sql else ""
     return f"""
         unlinked AS MATERIALIZED (
             SELECT fm.id
@@ -308,9 +310,7 @@ def _pool_sql(venue: str, window_sql: str, props_sql: str = "") -> str:
         pool AS (
             SELECT id FROM unlinked
             UNION
-            SELECT id FROM linked{"""
-            UNION
-            SELECT id FROM props""" if props_sql else ""}
+            SELECT id FROM linked{props_union}
         )
     """
 
