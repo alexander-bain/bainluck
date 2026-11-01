@@ -950,7 +950,7 @@ it("prints the shown player's whole name and team on the card, outside the close
 // so the frame's clientWidth is set to the measured value; label widths are the chart's own
 // estimate, which is what it draws with before the browser can measure).
 
-describe("period guide labels stay inside the SVG, at their own line when they fit (FQ2)", () => {
+describe("period guide labels stay inside the SVG, at their own line when they have room (FQ2)", () => {
   /** CONSTRUCTED layout: the chart frame's width in px, as the browser lab measured it. */
   function withFrameWidth(px: number) {
     Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => px });
