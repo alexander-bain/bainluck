@@ -98,6 +98,10 @@ import {
 import hockeyFixtures from "./hockeyJourney10868.fixtures.json";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 import { vocabularyDelta } from "../helpers/renderedTokens";
+import soccerFixtures from "./soccerMatch10868.fixtures.json";
+import { buildSoccerMatch, type SoccerMatchAdmission } from "@/lib/eventPage10868/soccerMatch";
+import SoccerMatchPage from "@/components/event/eventpage10868/SoccerMatchPage";
+import SoccerMatchStories from "@/components/event/eventpage10868/SoccerMatchStories";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 
@@ -335,6 +339,44 @@ function hockeyJourney(hit: boolean) {
 const HOCKEY = "components/event/eventpage10868";
 
 /**
+ * #10868 — the soccer match screen: one finished match (15325054, Real
+ * Valladolid CF 5–0 Albacete, the verbatim native subset in
+ * `soccerMatch10868.fixtures.json`) with EVERY served row's settlement forced
+ * one way (`is_winner`, with `resolution_source: "api_settlement"`) and nothing
+ * else changed but this: CONSTRUCTED, the matrix options' own `result` is
+ * removed so no matrix grade can disagree with the forced settlement, and the
+ * story markets are admitted with native's `liveAdmission` ids (no production
+ * owner admits them). The pair then differs by the verdict alone.
+ */
+const SOCCER_FINAL_NOW = Date.parse(soccerFixtures.provenance.clocks.finalNow);
+function soccerMatch(hit: boolean) {
+  const body = JSON.parse(soccerFixtures.bodies.finalMarkets.raw) as Record<string, unknown>;
+  for (const key of ["totals", "spreads", "team_totals", "period_markets", "other"]) {
+    body[key] = ((body[key] as Array<Record<string, unknown>> | undefined) ?? []).map((row) => ({
+      ...row,
+      is_winner: hit,
+      resolution_source: "api_settlement",
+    }));
+  }
+  const matrix = body.game_question_matrix as Record<string, unknown>;
+  matrix.questions = (matrix.questions as Array<Record<string, unknown>>).map((q) => ({
+    ...q,
+    options: (q.options as Array<Record<string, unknown>>).map((o) => {
+      const rest = { ...o };
+      delete rest.result;
+      return rest;
+    }),
+  }));
+  return buildSoccerMatch({
+    event: JSON.parse(soccerFixtures.bodies.finalDetail.raw) as EventDetailResponse,
+    history: JSON.parse(soccerFixtures.bodies.finalHistory.raw) as EventHistoryResponse,
+    gameMarkets: body as unknown as GameMarketsResponse,
+    admitted: (soccerFixtures.constructed as unknown as { liveAdmission: SoccerMatchAdmission }).liveAdmission,
+    host: { nowMs: SOCCER_FINAL_NOW, hero: null, probabilityObservedAt: null },
+  });
+}
+
+/**
  * EVERY component that can state a settled prop verdict. Not hand-maintained:
  * `enrolment` below proves this list covers the transitive closure.
  */
@@ -504,6 +546,16 @@ const SURFACES: Surface[] = [
   {
     file: `${HOCKEY}/HockeyJourneyPage.tsx`,
     render: (hit) => renderToStaticMarkup(<HockeyJourneyPage journey={hockeyJourney(hit)} />),
+  },
+  // #10868 — the soccer match screen: the story stream states results in the
+  // registered words (`propVerdictLabel`); the page renders it and All props.
+  {
+    file: `${HOCKEY}/SoccerMatchStories.tsx`,
+    render: (hit) => renderToStaticMarkup(<SoccerMatchStories stream={soccerMatch(hit).stories} />),
+  },
+  {
+    file: `${HOCKEY}/SoccerMatchPage.tsx`,
+    render: (hit) => renderToStaticMarkup(<SoccerMatchPage match={soccerMatch(hit)} />),
   },
 ];
 
