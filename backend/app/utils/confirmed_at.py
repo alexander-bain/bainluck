@@ -51,6 +51,7 @@ it, and adds the value to its named heartbeat.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import math
@@ -94,6 +95,10 @@ READ_TTL_S = 1.0
 #: minutes ago read last, or one a failed read kept, is not current (a page
 #: opened at 19:25Z on #10090 was sent a 385 s-old ``confirmed_at``).
 READ_FRESH_S = 3.0
+#: #10090 (Alex 2026-11-01): the receipt times of the venue inputs since the
+#: last write, kept for the EKG's scrolling update list (``r``). Bounded: a
+#: second busier than this keeps its newest.
+RECENT_PER_WRITE = 40
 
 #: Dispositions whose reading equals what this source has published: a stamp
 #: published it; the others compared equal to the last stamp and published
@@ -148,7 +153,7 @@ class _Event:
                  "busy_until", "previewing", "frozen_until", "touched",
                  "written", "written_at", "awaiting", "awaiting_until",
                  "awaiting_wall", "last_input", "begun", "outside", "outside_until",
-                 "written_input")
+                 "written_input", "recent")
 
     def __init__(self) -> None:
         #: None = this run has not published a reading; `_SILENT` = the last
@@ -181,6 +186,8 @@ class _Event:
         self.outside_until: Optional[float] = None
         #: The `last_input` the last write carried (the activity pulse, ``a``).
         self.written_input: Optional[float] = None
+        #: Receipt times (ms) of inputs since the last write (``r``).
+        self.recent: collections.deque = collections.deque(maxlen=RECENT_PER_WRITE)
 
 
 class ConfirmedAt:
@@ -240,6 +247,7 @@ class ConfirmedAt:
             # again while still unknown starts a new one, here (R5).
             state.unknown_since = recv_wall
         state.latest[outcome_id] = (p, recv_wall)
+        state.recent.append(_ms(recv_wall))
         if state.last_input is None or recv_wall > state.last_input:
             state.last_input = recv_wall
             # #10090 (Alex 2026-11-01): the page's EKG pulses on every venue
@@ -621,15 +629,19 @@ class ConfirmedAt:
             return None
         return due
 
-    @staticmethod
-    def _payload(state: _Event, report: tuple, wall: float) -> str:
+    def _payload(self, state: _Event, report: tuple, wall: float) -> str:
         """One venue entry: ``c``/``h`` (the agreement and the hold, the truth
         the age label reads), ``w`` (written) and ``a``: the newest input's
-        receipt, whatever it agreed with. ``a`` is activity only, for the EKG
-        pulse; it never dates a price (`combine` does not read it)."""
+        receipt, whatever it agreed with, and ``r`` the receipt times of every
+        input since the last write (``s`` names the venue). ``a`` and ``r`` are
+        activity only, for the EKG; they never date a price (`combine` does not
+        read them)."""
         state.written_input = state.last_input
+        recent = sorted(state.recent)
+        state.recent.clear()
         return json.dumps({"c": report[0], "h": report[1], "w": _ms(wall),
-                           "a": _ms(state.last_input)}, separators=(",", ":"))
+                           "a": _ms(state.last_input), "s": self.source, "r": recent},
+                          separators=(",", ":"))
 
     def _kick(self) -> None:
         if self._task is not None or self._closed or self._client is None:
@@ -761,6 +773,28 @@ def activity(entries: Iterable[Any], now_wall: float) -> Optional[float]:
     return min(newest, int(now_wall * 1000)) / 1000.0
 
 
+def recent_updates(entries: Iterable[Any], after: dict, now_wall: float,
+                   limit: int = 60) -> list[tuple[str, int]]:
+    """(venue, receipt ms) of every input the entries list that is newer than
+    ``after[venue]`` (ms), oldest first, at most ``limit`` (the newest). The
+    EKG's update list only: activity, never a price's age."""
+    now_ms = int(now_wall * 1000)
+    out = []
+    for raw in entries:
+        try:
+            entry = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(entry, dict) or not isinstance(entry.get("s"), str):
+            continue
+        source, floor = entry["s"], after.get(entry["s"], -1)
+        for ms in entry.get("r") or ():
+            if type(ms) is int and floor < ms <= now_ms:
+                out.append((source, ms))
+    out.sort(key=lambda item: (item[1], item[0]))
+    return out[-limit:]
+
+
 async def _fetch(event_ids: list[int]) -> Optional[dict[int, list]]:
     from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
@@ -886,6 +920,20 @@ class ConfirmedReads:
             if cached is not None:
                 entries.extend(cached[1])
         return activity(entries, self._wall())
+
+    def updates(self, event_ids, after: dict) -> list[tuple[str, int]]:
+        """The cached inputs newer than ``after`` (`recent_updates`), [] unless
+        every member was read within ``READ_FRESH_S``. No read of its own."""
+        now = self._mono()
+        if any(now - self._fetched.get(eid, -math.inf) >= READ_FRESH_S
+               for eid in event_ids):
+            return []
+        entries = []
+        for eid in event_ids:
+            cached = self._entries.get(eid)
+            if cached is not None:
+                entries.extend(cached[1])
+        return recent_updates(entries, after, self._wall())
 
     def peek(self, event_ids) -> Optional[float]:
         """The cached value now; a stale entry starts one shared re-read."""

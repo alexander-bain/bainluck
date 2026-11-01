@@ -332,7 +332,7 @@ class TestWriter:
         assert [eid for eid, _ in due] == [E]
         payload = json.loads(due[0][1])
         assert payload == {"c": int(STAMP_WALL * 1000), "h": None, "w": int(clock.wall * 1000),
-                           "a": None}
+                           "a": None, "s": t.source, "r": []}
         assert t.take_due() is None  # nothing changed, nothing held: the writer may stop
         clock.tick(1)
         t.note_input(E, HOME, 0.62, clock.wall)
@@ -460,6 +460,8 @@ def route_reads(monkeypatch):
         extra = {}
         if script["a"] is not None:
             extra["a"] = int((script["a"] + script["step"] * (script["calls"] - 1)) * 1000)
+            extra["s"] = "kalshi"
+            extra["r"] = [extra["a"] - 500, extra["a"]]
         if script["c"] is None:
             return {eid: [_entry(**extra)] if extra else [] for eid in ids}
         c = script["c"] + script["step"] * (script["calls"] - 1)
@@ -1351,3 +1353,92 @@ class TestActivityPulse:
         pulses = [b["activity_at"] for b in beats if b["activity_at"] is not None]
         assert len(pulses) > 1 and pulses == sorted(set(pulses))
         assert all(b["confirmed_at"] is None for b in beats), "no agreement was claimed"
+
+
+
+# ── #10090 (Alex 2026-11-01): the EKG's scrolling list of venue updates ─────
+
+
+class TestUpdateList:
+    NOW = 1_793_314_900.0
+    MS = int(NOW * 1000)
+
+    def test_each_write_carries_every_input_since_the_last_one_then_clears(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6)
+        t.take_due()
+        first = clock.wall
+        t.note_input(E, HOME, 0.6, first)
+        clock.tick(0.25)
+        t.note_input(E, HOME, 0.6, clock.wall)   # a duplicate price still counts
+        payload = json.loads(t.take_due()[0][1])
+        assert payload["s"] == t.source
+        assert payload["r"] == [int(first * 1000), int(clock.wall * 1000)]
+        clock.tick(1)
+        t.note_input(E, HOME, 0.6, clock.wall)
+        assert json.loads(t.take_due()[0][1])["r"] == [int(clock.wall * 1000)]
+
+    def test_a_busy_second_keeps_its_newest_inputs(self, clock):
+        t = _tracker(clock)
+        _publish(t, o70=0.6)
+        t.take_due()
+        for i in range(ca.RECENT_PER_WRITE + 10):
+            clock.tick(0.001)
+            t.note_input(E, HOME, 0.6, clock.wall)
+        r = json.loads(t.take_due()[0][1])["r"]
+        assert len(r) == ca.RECENT_PER_WRITE and r[-1] == int(clock.wall * 1000)
+
+    def test_recent_updates_are_new_per_venue_oldest_first_and_bounded(self):
+        entries = [_entry(s="kalshi", r=[self.MS - 900, self.MS - 400]),
+                   _entry(s="polymarket", r=[self.MS - 700, self.MS + 5000]),
+                   _entry(c=self.MS), "junk"]
+        got = ca.recent_updates(entries, {"kalshi": self.MS - 900}, self.NOW)
+        assert got == [("polymarket", self.MS - 700), ("kalshi", self.MS - 400)]
+        assert ca.recent_updates(entries, {}, self.NOW, limit=1) == [("kalshi", self.MS - 400)]
+
+    @pytest.mark.asyncio
+    async def test_the_heartbeat_sends_each_update_once(self, route_reads, monkeypatch):
+        from app.routes import event_stream as mod
+        from tests.test_live_push import FakePubSub, _collect
+
+        import time as _time
+        monkeypatch.setattr(mod, "CONFIRMED_BEAT_MIN_S", 0.0)
+        monkeypatch.setattr(mod, "FRAME_WAIT_S", 0.01)
+        monkeypatch.setattr(ca, "READ_TTL_S", 0.0)
+        route_reads["a"], route_reads["step"] = _time.time() - 30, 1.0
+        chunks = await _collect(5, FakePubSub(), monkeypatch, disconnect_after=8)
+        sent = [tuple(u) for b in _sse(chunks, "heartbeat") for u in b.get("updates", ())]
+        assert sent and len(sent) == len(set(sent)), "no update is sent twice"
+        assert all(u[0] == "kalshi" for u in sent)
+
+    @pytest.mark.asyncio
+    async def test_a_quiet_venues_updates_are_not_resent_when_the_other_venue_moves(
+        self, monkeypatch,
+    ):
+        """Each venue's entry lists inputs since ITS last write; the other venue's
+        activity beats the stream, and must not resend the quiet one's list."""
+        from app.routes import event_stream as mod
+        from tests._event_stream_legacy_view import install_legacy_view
+        from tests.test_live_push import FakePubSub, _collect
+
+        import time as _time
+        install_legacy_view(monkeypatch)
+        base, calls = _time.time() - 30, {"n": 0}
+
+        async def fetch(ids):
+            calls["n"] += 1
+            pm = int((base + calls["n"]) * 1000)
+            quiet = int(base * 1000)
+            return {eid: [_entry(s="kalshi", a=quiet, r=[quiet - 200, quiet]),
+                          _entry(s="polymarket", a=pm, r=[pm])] for eid in ids}
+
+        monkeypatch.setattr(ca, "_READS", ConfirmedReads(fetch))
+        monkeypatch.setattr(mod, "CONFIRMED_BEAT_MIN_S", 0.0)
+        monkeypatch.setattr(mod, "FRAME_WAIT_S", 0.01)
+        monkeypatch.setattr(ca, "READ_TTL_S", 0.0)
+        chunks = await _collect(5, FakePubSub(), monkeypatch, disconnect_after=8)
+        sent = [tuple(u) for b in _sse(chunks, "heartbeat") for u in b.get("updates", ())]
+        assert [u for u in sent if u[0] == "kalshi"] == [
+            ("kalshi", ca.iso((int(base * 1000) - 200) / 1000)),
+            ("kalshi", ca.iso(int(base * 1000) / 1000))]
+        assert len([u for u in sent if u[0] == "polymarket"]) > 1
