@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import type { HeroFact } from '@/lib/event/heroFreshness';
 import {
@@ -164,7 +164,12 @@ export function ConnectionTimesPanel({
   scoreShown,
   scoreConfirmedAt,
   marketUpdatedAt,
-}: ConnectionTimes & { id: string; open: boolean; now: number; placement?: string; style?: CSSProperties }) {
+  children,
+}: ConnectionTimes & {
+  id: string; open: boolean; now: number; placement?: string; style?: CSSProperties;
+  /** #10090: the EKG's update list, above the times (`EkgTimesButton`). */
+  children?: ReactNode;
+}) {
   return (
     <div
       id={id}
@@ -172,6 +177,7 @@ export function ConnectionTimesPanel({
       style={style}
       className={`${placement} z-20 rounded-lg border border-surface-border bg-surface-card p-3 text-left text-xs text-text-secondary shadow-card`}
     >
+      {children}
       <dl className="space-y-1.5">
         <div>
           <dt className="font-medium text-text-primary">Latest source update</dt>

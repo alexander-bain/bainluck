@@ -628,6 +628,8 @@ export default function EventPage({ params }: EventPageProps) {
     confirmedAt: streamConfirmedAt,
     // #10090 (Alex 2026-11-01): a venue reported in — the EKG pulse only.
     activityAt: streamActivityAt,
+    // #10090 (Alex 2026-11-01): the EKG panel's scrolling list of venue updates.
+    updates: streamUpdates,
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
@@ -3260,7 +3262,7 @@ export default function EventPage({ params }: EventPageProps) {
                   clips, see `EkgTimesButton`). */}
               {ekgShowing ? (
                 <div className="mt-0.5 flex justify-center" data-testid="ekg-row">
-                  <EkgTimesButton {...connectionTimes}>
+                  <EkgTimesButton {...connectionTimes} updates={streamUpdates}>
                     <EkgHeartbeat tracker={ekgTrackerRef.current} status={streamStatus} />
                   </EkgTimesButton>
                 </div>

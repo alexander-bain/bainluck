@@ -1,5 +1,6 @@
 'use client';
 
+import { addUpdates, EMPTY_UPDATE_LIST, type LiveUpdate, type LiveUpdateList } from '@/lib/event/liveUpdateStream';
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { API_URL } from '@/lib/api';
@@ -146,7 +147,11 @@ interface UseLiveEventStreamResult {
    * never a price's age. Null from an old server.
    */
   activityAt: string | null;
+  /** #10090 (Alex 2026-11-01) — the venue updates the stream listed, newest first (the EKG's list). */
+  updates: LiveUpdate[];
 }
+
+const NO_UPDATES: LiveUpdate[] = [];
 
 export function useLiveEventStream(
   eventId: number | undefined,
@@ -184,6 +189,9 @@ export function useLiveEventStream(
   });
   const [activity, setActivity] = useState<{ eventId: number | undefined; at: string | null }>({
     eventId, at: null,
+  });
+  const [updateList, setUpdateList] = useState<{ eventId: number | undefined; list: LiveUpdateList }>({
+    eventId, list: EMPTY_UPDATE_LIST,
   });
   // #10090 J C1: the commit floors announced for this event, max per row, the
   // floors of rows that left the committed fold (parked, as the reader retires
@@ -388,6 +396,12 @@ export function useLiveEventStream(
             : { eventId, at }
         ));
       },
+      onUpdates: (incoming) => {
+        if (mounted.current) setUpdateList(previous => ({
+          eventId,
+          list: addUpdates(previous.eventId === eventId ? previous.list : EMPTY_UPDATE_LIST, incoming),
+        }));
+      },
       onActivityAt: (at) => {
         if (mounted.current) setActivity(previous => (
           previous.eventId === eventId && previous.at !== null && Date.parse(previous.at) >= Date.parse(at)
@@ -451,6 +465,7 @@ export function useLiveEventStream(
       && !confirmationOwed(gate.eventId === eventId ? gateFloors : {}, authoritativeMembership)
       ? confirmed.at : null,
     activityAt: enabled && activity.eventId === eventId ? activity.at : null,
+    updates: enabled && updateList.eventId === eventId ? updateList.list.updates : NO_UPDATES,
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.
     status: statusEventId === eventId ? status : enabled ? 'connecting' : 'idle',

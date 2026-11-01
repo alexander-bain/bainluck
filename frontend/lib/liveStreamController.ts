@@ -46,6 +46,7 @@
  * one. No test in here branches on the wall clock (gotcha #44).
  */
 
+import { heartbeatUpdates } from '@/lib/event/liveUpdateStream';
 import { parseReconcileControl, type ReconcileControl } from "./reconcileControl";
 import { snapshotFrameIsOversize } from "./sourceSnapshot";
 
@@ -159,6 +160,8 @@ export interface LiveStreamDeps {
    * in. The EKG pulse only; touches no clock, cursor or status here.
    */
   onActivityAt?: (activityAt: string) => void;
+  /** #10090 (Alex 2026-11-01) — the heartbeat's `updates`, for the EKG's list. Activity only. */
+  onUpdates?: (updates: { source: string; at: number }[]) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -567,6 +570,8 @@ export function createLiveStreamController(
       if (confirmedAt !== null) deps.onConfirmedAt?.(confirmedAt);
       const activityAt = heartbeatActivityAt(data);
       if (activityAt !== null) deps.onActivityAt?.(activityAt);
+      const updates = heartbeatUpdates(data);
+      if (updates.length > 0) deps.onUpdates?.(updates);
     });
 
     // The match ended. Terminal: the caller refetches once and settles the page

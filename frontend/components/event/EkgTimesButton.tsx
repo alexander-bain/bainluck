@@ -2,6 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import type { LiveUpdate } from '@/lib/event/liveUpdateStream';
+
+import LiveUpdateList from '@/components/event/LiveUpdateList';
 import {
   ConnectionTimesPanel,
   useTimesDisclosure,
@@ -29,13 +32,15 @@ interface EkgTimesButtonProps extends ConnectionTimes {
   children: ReactNode;
   /** Injected for tests; the page re-renders every second, so `Date.now()` is fresh. */
   now?: number;
+  /** #10090 (Alex 2026-11-01): the venue updates feeding the number, newest first. */
+  updates?: LiveUpdate[];
 }
 
 const EDGE_PX = 12;
 const PANEL_MAX_PX = 320;
 const GAP_PX = 4;
 
-export default function EkgTimesButton({ children, now = Date.now(), ...times }: EkgTimesButtonProps) {
+export default function EkgTimesButton({ children, now = Date.now(), updates, ...times }: EkgTimesButtonProps) {
   const { open, id, root, button, toggle, close } = useTimesDisclosure();
   const [place, setPlace] = useState<{ top: number; left: number; width: number } | null>(null);
 
@@ -75,7 +80,9 @@ export default function EkgTimesButton({ children, now = Date.now(), ...times }:
         {children}
         <span className="sr-only">, show update times</span>
       </button>
-      <ConnectionTimesPanel id={id} open={open} now={now} placement="fixed" style={place ?? undefined} {...times} />
+      <ConnectionTimesPanel id={id} open={open} now={now} placement="fixed" style={place ?? undefined} {...times}>
+        {updates ? <LiveUpdateList updates={updates} /> : null}
+      </ConnectionTimesPanel>
     </div>
   );
 }
