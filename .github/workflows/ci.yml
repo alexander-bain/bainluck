@@ -139,7 +139,7 @@ jobs:
 
       - name: Publish compose checkout provenance
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compose-source-provenance-${{ github.run_attempt }}-change-scope
           path: ${{ runner.temp }}/ci-provenance.json
@@ -240,7 +240,7 @@ jobs:
 
       - name: Publish compose checkout provenance
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compose-source-provenance-${{ github.run_attempt }}-backend-tests-${{ matrix.shard }}
           path: ${{ runner.temp }}/ci-provenance.json
@@ -451,7 +451,7 @@ jobs:
 
       - name: Publish compose checkout provenance
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compose-source-provenance-${{ github.run_attempt }}-golden-baseline-floor
           path: ${{ runner.temp }}/ci-provenance.json

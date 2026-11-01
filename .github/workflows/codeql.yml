@@ -229,7 +229,7 @@ jobs:
 
       - name: Publish CodeQL security receipt
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/integrator/compose-'))
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codeql-security-${{ github.run_attempt }}-${{ matrix.language }}
           path: codeql-security.json
