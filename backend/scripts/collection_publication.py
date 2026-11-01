@@ -43,6 +43,13 @@ from app.utils.container_game_winner import (  # noqa: E402
 )
 from app.utils.container_presentation import edition_for_slug  # noqa: E402
 from app.utils.market_shape import SHAPE_DUEL  # noqa: E402
+from app.services.midterms_collection import load_midterms_cards  # noqa: E402
+from app.utils.midterms_collection import (
+    MANIFEST,
+    MARKET_IDS,
+    SLUG as MIDTERMS_SLUG,
+    outcome_key,
+)  # noqa: E402
 
 MEMBER_WITHDRAW = "withdraw-members"
 MEMBER_RESTORE = "readmit-members"
@@ -89,6 +96,7 @@ class Options:
     restore_from_ledger: bool = False
     hub_revisions: tuple | None = None
     receipt_dir: str | None = None
+    curated_manifest: str | None = None
 
 
 def _validate_identity(options: Options) -> None:
@@ -115,6 +123,9 @@ def _validate_decision(options: Options) -> None:
 
 
 def validate(options: Options) -> None:
+    if options.curated_manifest:
+        validate_curated(options)
+        return
     if options.operation in MEMBER_OPERATIONS:
         validate_member(options)
         return
@@ -142,6 +153,36 @@ def validate(options: Options) -> None:
             )
         if options.operation is None or options.expected_revision is None:
             raise OperatorRefused("apply requires operation and expected-revision")
+        _validate_decision(options)
+
+
+def validate_curated(options: Options) -> None:
+    _validate_identity(options)
+    try:
+        manifest = json.loads(Path(options.curated_manifest).read_text())
+    except (OSError, ValueError) as exc:
+        raise OperatorRefused(
+            "curated manifest must be the reviewed Midterms manifest"
+        ) from exc
+    if manifest != MANIFEST or options.slug != MIDTERMS_SLUG:
+        raise OperatorRefused("only the exact reviewed Midterms manifest is accepted")
+    if (
+        options.operation != "publish"
+        or options.expected_revision is None
+        or options.expected_revision < 0
+    ):
+        raise OperatorRefused(
+            "curated publication requires publish and an exact expected-revision (0 for a new root)"
+        )
+    if (
+        options.manifest
+        or options.backup
+        or options.restore_from_ledger
+        or options.hub_revisions
+        or options.receipt_dir
+    ):
+        raise OperatorRefused("curated publication cannot combine member operations")
+    if options.apply:
         _validate_decision(options)
 
 
@@ -221,6 +262,11 @@ def parse_args(argv: list[str] | None = None) -> Options:
         help="readmit-members: the withdraw-members apply receipt to restore",
     )
     parser.add_argument("--restore-from-ledger", action="store_true")
+    parser.add_argument(
+        "--curated-manifest",
+        action=SingleValue,
+        help="Publish only Alex's exact reviewed Midterms manifest; preview is the default",
+    )
     parser.add_argument(
         "--hub-revision",
         dest="hub_revisions",
@@ -356,6 +402,8 @@ def rollback_prerequisites(facts: dict, result: corrections.CorrectionResult) ->
 async def prepare(session, options: Options) -> dict:
     """Use a caller-owned transaction; never commit or roll back inside here."""
     validate(options)
+    if options.curated_manifest:
+        return await prepare_curated(session, options)
     schema = await corrections.correction_schema_present(session)
     if not schema.complete:
         raise corrections.CorrectionSchemaAbsent(
@@ -415,6 +463,187 @@ async def prepare(session, options: Options) -> dict:
         },
         correction=asdict(result),
         rollback=rollback_prerequisites(facts, result),
+    )
+    return receipt
+
+
+async def prepare_curated(session, options: Options) -> dict:
+    """Populate the named human-reviewed collection and publish in one transaction.
+
+    A repeat never edits existing membership. Any revision, identity or member
+    drift refuses the invocation, including a previously withdrawn member.
+    """
+    schema = await corrections.correction_schema_present(session)
+    if not schema.complete:
+        raise corrections.CorrectionSchemaAbsent(
+            "container correction schema is not available"
+        )
+    if options.apply:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:slug))"),
+            {"slug": MIDTERMS_SLUG},
+        )
+    row = (
+        (
+            await session.execute(
+                text(
+                    "SELECT id, kind, name, slug, parent_container_id, publication_state, membership_revision AS revision "
+                    "FROM containers WHERE slug = :slug"
+                ),
+                {"slug": MIDTERMS_SLUG},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    existing = dict(row) if row is not None else None
+    if existing and options.apply:
+        await corrections.lock_container_chain(session, existing["id"])
+        # The revision supplied to publish_container is rechecked under its lock.
+    revision = existing["revision"] if existing else 0
+    if revision != options.expected_revision:
+        raise corrections.StaleRevision(
+            existing["id"] if existing else 0, options.expected_revision, revision
+        )
+    if options.container_id is not None and (
+        not existing or existing["id"] != options.container_id
+    ):
+        raise OperatorRefused(
+            "curated container-id does not match the reviewed identity"
+        )
+    if existing and (
+        existing["kind"] != "theme"
+        or existing["name"] != MANIFEST["title"]
+        or existing["parent_container_id"] is not None
+    ):
+        raise OperatorRefused("existing Midterms container has a different identity")
+    expected_edges = {
+        ("market", mid, section["key"])
+        for section in MANIFEST["sections"]
+        for mid in section["market_ids"]
+    }
+    edges = set()
+    if existing:
+        edges = set(
+            (
+                await session.execute(
+                    text(
+                        "SELECT child_type, child_id, class FROM event_edges WHERE parent_type = 'container' "
+                        "AND parent_id = :cid AND kind = 'contains'"
+                    ),
+                    {"cid": existing["id"]},
+                )
+            ).fetchall()
+        )
+        children = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM containers WHERE parent_container_id = :cid"
+                ),
+                {"cid": existing["id"]},
+            )
+        ).scalar()
+        if children:
+            raise OperatorRefused(
+                "existing Midterms collection has unreviewed nested members"
+            )
+        if edges != expected_edges and not (
+            not edges
+            and revision == 0
+            and existing["publication_state"] == "unpublished"
+        ):
+            raise OperatorRefused(
+                "existing Midterms membership differs from the reviewed manifest"
+            )
+    cards, twins, twin_report = await load_midterms_cards(session, MARKET_IDS)
+    missing = set(MARKET_IDS) - {
+        mid for mid, card in cards.items() if not card.get("_withheld_reason")
+    }
+    if missing:
+        raise OperatorRefused(
+            f"reviewed Midterms markets are missing: {sorted(missing)}"
+        )
+    if cards[112905]["source"] != "polymarket":
+        raise OperatorRefused("reviewed balance-of-power twin is not Polymarket")
+    left = {outcome_key(o["name"]) for o in cards[108619]["top_outcomes"]}
+    right = {outcome_key(o["name"]) for o in cards[112905]["top_outcomes"]}
+    if left != right or len(left) < 2:
+        raise OperatorRefused(
+            "reviewed balance-of-power venues cannot align their outcomes"
+        )
+    facts = {
+        "id": existing["id"] if existing else None,
+        "slug": MIDTERMS_SLUG,
+        "name": MANIFEST["title"],
+        "kind": "theme",
+        "parent_container_id": None,
+        "publication_state": (
+            existing["publication_state"] if existing else "unpublished"
+        ),
+        "revision": revision,
+        "edge_count": len(expected_edges),
+        "game_count": 0,
+        "question_count": 15,
+    }
+    receipt = {
+        "operator": "collection_publication",
+        "status": "preview",
+        "committed": False,
+        "operation": "publish",
+        "target": facts,
+        "hand_curated_accepted": True,
+        "twin_report": twin_report,
+        "market_ids": list(MARKET_IDS),
+        "rollback": None,
+    }
+    if not options.apply:
+        return receipt
+    cid = (
+        existing["id"]
+        if existing
+        else (
+            await session.execute(
+                text(
+                    "INSERT INTO containers (kind, name, slug, category, status, publication_state, membership_revision) "
+                    "VALUES ('theme', :name, :slug, 'politics', 'scheduled', 'unpublished', 0) RETURNING id"
+                ),
+                {"name": MANIFEST["title"], "slug": MIDTERMS_SLUG},
+            )
+        ).scalar()
+    )
+    if not edges:
+        for section in MANIFEST["sections"]:
+            for mid in section["market_ids"]:
+                await session.execute(
+                    text(
+                        "INSERT INTO event_edges (parent_type, parent_id, child_type, child_id, kind, class, source, confidence) "
+                        "VALUES ('container', :cid, 'market', :mid, 'contains', :section, 'human', 1.0)"
+                    ),
+                    {"cid": cid, "mid": mid, "section": section["key"]},
+                )
+    result = await corrections.publish_container(
+        session,
+        container_id=cid,
+        expected_revision=revision,
+        actor=options.actor,
+        reason=options.reason,
+        evidence={
+            **options.evidence,
+            "manifest": MANIFEST,
+            "hand_curated_accepted": True,
+            "twin_report": twin_report,
+        },
+    )
+    receipt.update(
+        status="prepared",
+        correction=asdict(result),
+        target={
+            **facts,
+            "id": cid,
+            "revision": result.revision,
+            "publication_state": "published",
+        },
+        rollback=rollback_prerequisites({**facts, "id": cid}, result),
     )
     return receipt
 

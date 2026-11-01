@@ -60,6 +60,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
+from app.services.midterms_collection import load_midterms_cards
+from app.utils.midterms_collection import MANIFEST, MARKET_IDS, SECTION_CLASSES, SLUG as MIDTERMS_SLUG, midterms_pin, present_midterms_sections
 from app.utils.container_corrections import (
     READ_EMPTY,
     READ_PUBLISHED,
@@ -97,6 +99,11 @@ def containers_read_enabled() -> bool:
     flag nobody flips during an incident.
     """
     return os.getenv("CONTAINERS_READ_ENABLED", "false").lower() == "true"
+
+
+def midterms_enabled() -> bool:
+    from app.tasks.container_assembly import collections_enabled
+    return os.getenv("COLLECTIONS_ENABLED", "false").lower() == "true" and collections_enabled()
 
 
 #: The order sections are rendered in. Explicit rather than alphabetical: the
@@ -419,7 +426,7 @@ async def get_container(
     ``include_children=false`` keeps only the collection's own members; the
     published read itself is unchanged, so the revision still covers the draws.
     """
-    if not containers_read_enabled():
+    if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
 
     published = await read_published(db, slug)
@@ -438,13 +445,26 @@ async def get_container(
         "withheld": [],
         "withheld_count": 0,
         "assembled": False,
-        "known_classes": sorted(EDGE_CLASSES),
+        "known_classes": sorted(EDGE_CLASSES if published.slug == MIDTERMS_SLUG else EDGE_CLASSES - SECTION_CLASSES),
     }
     if published.state not in (READ_PUBLISHED, READ_EMPTY):
         # unpublished / withdrawn: nothing a reader could open, not even the
         # nested collections — no member and no path leaks out of a collection
         # that is not for readers.
         return {**payload, **base_empty}
+
+    if slug == MIDTERMS_SLUG:
+        ids = {m["id"] for m in published.members if m.get("type") == MEMBER_MARKET} & set(MARKET_IDS)
+        cards, twins, twin_report = await load_midterms_cards(db, ids)
+        sections, withheld = present_midterms_sections(published.members, cards, twins)
+        result = {**payload, **base_empty,
+                  "container": {"id": published.container_id, "slug": slug, "name": MANIFEST["title"]},
+                  "subtitle": MANIFEST["subtitle"], "sections": sections,
+                  "member_count": sum(s["count"] for s in sections), "withheld": withheld,
+                  "withheld_count": len(withheld), "assembled": bool(published.members),
+                  "twin_report": twin_report}
+        result["discover_pin"] = midterms_pin(result)
+        return result
 
     if not container_read_cache_enabled():
         return await _build_published_payload(db, published, include_children)
@@ -520,7 +540,7 @@ async def _build_published_payload(db: AsyncSession, published, include_children
         # Kept for released readers of the pre-#9636 shape: true when the
         # published read returned any member at all, withheld or not.
         "assembled": bool(members),
-        "known_classes": sorted(EDGE_CLASSES),
+        "known_classes": sorted(EDGE_CLASSES if published.slug == MIDTERMS_SLUG else EDGE_CLASSES - SECTION_CLASSES),
     }
 
 

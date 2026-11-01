@@ -74,6 +74,8 @@ def edition_for_slug(slug: str) -> Optional[dict]:
     """
     if not isinstance(slug, str):
         return None
+    if slug == "midterms-2026":
+        return {"kind": "midterms", "league": "politics", "season": 2026}
 
     match = _NFL_WEEK_RE.match(slug)
     if match:

@@ -7,6 +7,8 @@ import { outcomeRowVerdict, type GradedRow } from "@/components/futures/OutcomeR
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedFuturesData, FeedFuturesOutcome } from "@/lib/types";
 import type { CollectionMember } from "@/lib/collections";
+import MarketCard from "@/components/politics/MarketCard";
+import { SourceBadge } from "@/components/politics/atoms";
 
 // #10089: Polymarket's mixed game listing (totals, spreads and a team-win leg)
 // shown under its own game would print that game's winner a second time with a
@@ -20,7 +22,7 @@ export function isRelatedMixedListing(member: CollectionMember, relatedGame?: Co
   return market.market_type === "field" && market.source === "polymarket";
 }
 
-export function CollectionMemberCard({ member, relatedGame }: { member: CollectionMember; relatedGame?: CollectionMember }) {
+export function CollectionMemberCard({ member, relatedGame, presentation }: { member: CollectionMember; relatedGame?: CollectionMember; presentation?: string }) {
   const market = member.type === "market" ? member.item.data as FeedFuturesData : null;
   if (market && isRelatedMixedListing(member, relatedGame)) {
     const count = market.outcome_count > 0 ? market.outcome_count : 0;
@@ -35,13 +37,21 @@ export function CollectionMemberCard({ member, relatedGame }: { member: Collecti
   const outcomes = market?.top_outcomes as (FeedFuturesOutcome & GradedRow)[] | undefined;
   const resolved = !!market && ["resolved", "closed", "settled", "finalized", "final"].includes(market.status);
   const hasVerdict = outcomes?.some((outcome) => outcomeRowVerdict(outcome, resolved) !== null) ?? false;
-  const missingPrices = !!market && (!outcomes?.length || outcomes.some((outcome) => outcome.probability == null));
+  const missingPrices = !!market && (!outcomes?.length || (presentation && outcomes.length < market.outcome_count) || outcomes.some((outcome) => outcome.probability == null));
+  const winner = (market as (FeedFuturesData & { settled_winner?: string }) | null)?.settled_winner;
+  if (presentation && market && !resolved && !hasVerdict && !missingPrices) {
+    return <MarketCard theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} market={{
+      q: market.name, market_id: market.id, src: market.source ?? "", prob: (outcomes?.[0]?.probability ?? 0) * 100,
+      top_outcomes: (outcomes ?? []).map(o => ({ name: o.name, prob: o.probability! * 100 })), outcome_count: market.outcome_count,
+    }} />;
+  }
   // The existing sports card owns game lifecycle and probabilities. A missing
   // price or served result uses the existing verdict/format rule, never nil -> 0%.
   const card = market && (resolved || hasVerdict || missingPrices) ? (
     <Link href={member.href} className="block rounded-card border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand">
+      {presentation && market.source && <SourceBadge source={market.source} />}
       <h3 className="font-semibold text-text-primary mb-3">{market.name}</h3>
-      <div className="space-y-2 text-sm">
+      {winner ? <p className="font-semibold text-text-primary">Settled - {winner}</p> : <div className="space-y-2 text-sm">
         {outcomes?.map((outcome, index) => {
           const verdict = outcomeRowVerdict(outcome, resolved);
           const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability);
@@ -51,8 +61,8 @@ export function CollectionMemberCard({ member, relatedGame }: { member: Collecti
           </div>;
         })}
         {!outcomes?.length && <p className="text-text-secondary">{resolved ? "Result unavailable" : "Probabilities aren't available right now."}</p>}
-      </div>
+      </div>}
     </Link>
   ) : <FeedCard item={member.item} />;
-  return <ErrorBoundary resetKey={member.item.data} fallback={<p role="status" className="rounded-card border border-surface-border bg-surface-card p-4 text-text-secondary">This game or question isn&apos;t available right now.</p>}>{card}</ErrorBoundary>;
+  return <ErrorBoundary resetKey={member.item.data} fallback={<p role="status" className="rounded-card border border-surface-border bg-surface-card p-4 text-text-secondary">{presentation ? "This market isn’t available right now." : "This game or question isn’t available right now."}</p>}>{card}</ErrorBoundary>;
 }

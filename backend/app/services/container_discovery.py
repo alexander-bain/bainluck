@@ -74,7 +74,7 @@ CARD_TYPE = "collection"
 
 #: The editions this ship offers. ``nfl_season`` has an identity but no hub a
 #: reader was promised; it is ``wrong_edition`` here until a ship names it.
-DISCOVERABLE_EDITIONS = frozenset({EDITION_NFL_WEEK, EDITION_MLB_POSTSEASON})
+DISCOVERABLE_EDITIONS = frozenset({EDITION_NFL_WEEK, EDITION_MLB_POSTSEASON, "midterms"})
 
 #: League filter → the slug prefix both SQL and the pure check agree on.
 LEAGUE_SLUG_PREFIXES = {"nfl": "nfl-", "mlb": "mlb-"}
