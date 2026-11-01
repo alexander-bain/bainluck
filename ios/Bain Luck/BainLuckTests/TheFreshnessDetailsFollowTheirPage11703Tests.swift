@@ -147,10 +147,12 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         return stack(controller)?.topViewController?.view ?? controller.view
     }
 
-    /// The page's details control, found the way VoiceOver finds it.
+    /// The page's details control, found the way VoiceOver finds it. On a live
+    /// page with the EKG (Alex 69) the EKG is the opener and the (i) is not a stop.
     private func detailsControl(in root: NSObject) -> NSObject? {
         if let label = root.accessibilityLabel,
-           label.hasPrefix("Probability confidence and update details") { return root }
+           label.hasPrefix("Probability confidence and update details")
+            || label.hasPrefix("Markets reporting") { return root }
         var children: [NSObject] = []
         if let elements = root.accessibilityElements as? [NSObject] { children += elements }
         let count = root.accessibilityElementCount()

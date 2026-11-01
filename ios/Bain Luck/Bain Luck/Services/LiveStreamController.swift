@@ -474,6 +474,11 @@ final class LiveStreamController {
     /// #10090 — previews are never replayed, so every (re)open, every
     /// transport `error` (contract D2) and `stop()` clear them.
     private let onPreviewReset: @MainActor () -> Void
+    /// #10090 decision J — a heartbeat's `confirmed_at` (`heartbeatConfirmedAt`),
+    /// whenever one carries a value. The owner keeps the newest and decides
+    /// whether it is about the number on screen. Touches no clock or delivery
+    /// state.
+    private let onConfirmedAt: @MainActor (Date) -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -522,6 +527,7 @@ final class LiveStreamController {
         onPreviewOpenV3: @escaping @MainActor (String) -> Void = { _ in },
         onPreviewV3: @escaping @MainActor (String, TimeInterval?) -> Void = { _, _ in },
         onPreviewReset: @escaping @MainActor () -> Void = {},
+        onConfirmedAt: @escaping @MainActor (Date) -> Void = { _ in },
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
         healthyRolloverDelay: @escaping () -> TimeInterval = {
@@ -541,6 +547,7 @@ final class LiveStreamController {
         self.onPreviewOpenV3 = onPreviewOpenV3
         self.onPreviewV3 = onPreviewV3
         self.onPreviewReset = onPreviewReset
+        self.onConfirmedAt = onConfirmedAt
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
         self.healthyRolloverDelay = healthyRolloverDelay
@@ -556,6 +563,16 @@ final class LiveStreamController {
             action()
         }
         return { task.cancel() }
+    }
+
+    /// #10090 decision J — the heartbeat's `confirmed_at` (ISO-8601 UTC,
+    /// milliseconds: `{"t": …, "confirmed_at": "…" | null}`), or nil for a
+    /// server that sends none, an explicit null, junk or an unparseable time.
+    nonisolated static func heartbeatConfirmedAt(_ raw: String) -> Date? {
+        struct Beat: Decodable { let confirmed_at: String? }
+        guard let data = raw.data(using: .utf8),
+              let beat = try? JSONDecoder().decode(Beat.self, from: data) else { return nil }
+        return beat.confirmed_at?.asDate
     }
 
     // MARK: Public surface
@@ -816,7 +833,7 @@ final class LiveStreamController {
             self.onPreviewFloor(raw)
         }
 
-        next.on("heartbeat") { [weak self, weak next] _ in
+        next.on("heartbeat") { [weak self, weak next] raw in
             guard let self, let next, !self.stopped, self.handle === next else { return }
             // TRANSPORT clock only. A heartbeat proves this server process is
             // alive and its socket is open. It proves nothing about the
@@ -824,6 +841,11 @@ final class LiveStreamController {
             // is exactly how a dead `worker-ws` kept polling switched off behind
             // a frozen number.
             self.lastMessageAt = self.now()
+            // #10090 decision J: its `confirmed_at` is a clock for prices
+            // the stream already published, never a delivery — no clock above
+            // but the transport's moves. The server sends it only after the
+            // connect replay (live R3), so the replay is already applied here.
+            if let confirmed = Self.heartbeatConfirmedAt(raw) { self.onConfirmedAt(confirmed) }
         }
 
         // The match ended. Terminal: the caller refetches once and settles the
