@@ -6,7 +6,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket, CalibrationExample, CalibrationExamplesSampling } from "@/lib/api";
-import { examplesFooterCopy } from "@/lib/calibrationExamples";
+import { correctedGradeNote, examplesFooterCopy } from "@/lib/calibrationExamples";
 import ErrorState from "@/components/ErrorState";
 import { describeLoadFailure } from "@/lib/loadFailure";
 import LoadingState from "@/components/LoadingState";
@@ -256,7 +256,9 @@ export default function CalibrationPage() {
       // The API's `well_traded` flag is a wire contract with the backend and is
       // not renamed here; what it selects is the same `price_moved !== false`
       // cohort this page shows.
-      const res = await fetchCalibrationExamples(source, bucketIdx, !includeNeverMoved);
+      const res = await fetchCalibrationExamples(
+        source, bucketIdx, !includeNeverMoved, data?.generated_at ?? null,
+      );
       setDrillIn({
         source, bucketLabel, bucketIdx,
         loading: false, error: false,
@@ -3805,6 +3807,9 @@ function BucketExamples({ state, onClose, sourceLabel }: {
                     <span className="text-text-primary">{(ex.price * 100).toFixed(1)}%</span>
                     {" "}
                     <span className={`font-medium ${resultClass(ex.result)}`}>{ex.result}</span>
+                    {correctedGradeNote(ex) && (
+                      <span className="text-text-muted"> ({correctedGradeNote(ex)})</span>
+                    )}
                     <span className="text-text-muted"> &middot; {fmtDate(ex.settle_date)}</span>
                   </span>
                 </div>
@@ -3828,7 +3833,12 @@ function BucketExamples({ state, onClose, sourceLabel }: {
                     <td className="py-1.5 pr-3 text-text-secondary max-w-[260px] truncate" title={ex.market_name}>{ex.market_name}</td>
                     <td className="py-1.5 pr-3 text-text-secondary max-w-[160px] truncate" title={ex.outcome_name}>{ex.outcome_name}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums text-text-primary">{(ex.price * 100).toFixed(1)}%</td>
-                    <td className={`py-1.5 pr-3 text-right font-medium ${resultClass(ex.result)}`}>{ex.result}</td>
+                    <td className={`py-1.5 pr-3 text-right font-medium ${resultClass(ex.result)}`}>
+                      {ex.result}
+                      {correctedGradeNote(ex) && (
+                        <span className="font-normal text-text-muted"> ({correctedGradeNote(ex)})</span>
+                      )}
+                    </td>
                     <td className="py-1.5 text-right tabular-nums text-text-muted whitespace-nowrap">{fmtDate(ex.settle_date)}</td>
                   </tr>
                 ))}

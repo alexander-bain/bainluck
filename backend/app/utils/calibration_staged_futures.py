@@ -86,6 +86,7 @@ so, rather than guessing.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -112,6 +113,9 @@ __all__ = [
     "ADDITIVE_COLUMNS",
     "AVG_PROB_COLUMN",
     "ACCUMULATOR_SCHEMA",
+    "MEMBER_COLUMN",
+    "MEMBER_SOURCE",
+    "MEMBERSHIP_SCHEMA",
     "DECLARED_CENSUS_COLUMNS",
     "DEFAULT_CENSUS_COLUMNS",
     "DISTINCT_CENSUS_COLUMNS",
@@ -134,19 +138,23 @@ __all__ = [
     "attempt_order",
     "bucket_of",
     "can_advance",
+    "collect_unit_members",
     "collect_unit_results",
     "decode_accumulator",
+    "decode_members",
     "decode_staged_cursor",
     "decode_staged_cursor_detailed",
     "decode_unit_rows",
     "describe_malformed_cursor_field",
     "encode_accumulator",
+    "encode_members",
     "encode_unit_rows",
     "fold_unit_rows",
     "generation_fingerprint",
     "is_complete",
     "is_encoded_accumulator",
     "is_encoded_unit_rows",
+    "membership_cell_key",
     "merge_futures_rows",
     "note_unit_cancelled",
     "parse_slot_ref",
@@ -158,6 +166,7 @@ __all__ = [
     "sanitize_refinements",
     "slot_ref",
     "split_factor",
+    "split_unit_members",
     "split_unit_rows",
     "new_staged_cursor",
     "plan_units",
@@ -500,6 +509,31 @@ DECLARED_CENSUS_COLUMNS: tuple[str, ...] = (
     + (REPRESENTATIVE_TIE_COLUMN,)
     + NONEXCLUSIVE_BUNDLE_CELL_COLUMNS
 )
+
+# --- #994: who is IN a DataGolf cell, not only how many ----------------------
+#
+# The fold keeps a cell's MASS (n, winners, sums) and nothing about which rows
+# made it, so the Accuracy drill-in could only re-derive a bucket by re-running
+# the population chain per click — the full-cohort work #994 is removing. Stage
+# B now also emits, for each DataGolf group, the rows it counted. A fourth kind
+# of column: not a group key, not additive, not census. It is lifted out of the
+# unit at bank time (:func:`split_unit_members`) and kept beside the fold, keyed
+# by UNIT, so banking a unit twice or out of order cannot duplicate a member and
+# a unit banked without the column reads as unknown rather than empty.
+
+#: The Stage B column. One string per DataGolf group, NULL for every other source.
+MEMBER_COLUMN = "datagolf_members"
+#: The only source whose members are retained. Bounded by DataGolf's size
+#: (23,397 published outcomes on 2026-10-13); every other source stays mass-only.
+MEMBER_SOURCE = "datagolf"
+#: Version of the per-unit membership map carried inside the accumulator.
+MEMBERSHIP_SCHEMA = "calibration-staged-members/v1"
+#: ``market_id,outcome_id,price,winner`` per record, records joined by ``;`` —
+#: the exact text Stage B's ``string_agg`` writes. ``price`` is the published
+#: ``adj_opening_probability`` as NUMERIC text (no float round trip) and
+#: ``winner`` is the curve's own ``CASE WHEN is_winner THEN 1 ELSE 0``.
+MEMBER_RECORD_SEPARATOR = ";"
+MEMBER_FIELD_SEPARATOR = ","
 
 
 # =============================================================================
@@ -1578,8 +1612,11 @@ def merge_futures_rows(
     group_key_columns = tuple(group_key_columns)
     additive_columns = tuple(additive_columns)
     census_columns = tuple(census_columns)
+    # #994: the member column is declared, not census — the merge has no use
+    # for it (membership is lifted out at bank time) and must not refuse it.
     known = set(group_key_columns) | set(additive_columns) | set(census_columns) | {
-        AVG_PROB_COLUMN
+        AVG_PROB_COLUMN,
+        MEMBER_COLUMN,
     }
 
     merged: dict[tuple, dict[str, Any]] = {}
@@ -1671,7 +1708,7 @@ def _known_columns(census_columns: Sequence[str]) -> set[str]:
         set(GROUP_KEY_COLUMNS)
         | set(ADDITIVE_COLUMNS)
         | set(census_columns)
-        | {AVG_PROB_COLUMN}
+        | {AVG_PROB_COLUMN, MEMBER_COLUMN}
     )
 
 
@@ -1725,7 +1762,11 @@ def split_unit_rows(
                 "undeclared column(s) in a chunk result: " + ", ".join(undeclared)
             )
         if mapping.get("bucket_idx") is None:
-            carriers.append(dict(mapping))
+            # #994: the member column is not census; a carrier keeps the shape
+            # it had before the statement emitted it.
+            carriers.append(
+                {name: value for name, value in mapping.items() if name != MEMBER_COLUMN}
+            )
             continue
         if not census_taken:
             carrier = {name: mapping[name] for name in census_columns if name in mapping}
@@ -1821,19 +1862,30 @@ def fold_unit_rows(
 
 
 def encode_accumulator(
-    buckets: Iterable[Any], carriers: Iterable[Any]
+    buckets: Iterable[Any],
+    carriers: Iterable[Any],
+    members: Optional[Mapping[str, Mapping[str, str]]] = None,
 ) -> dict[str, Any]:
     """The running fold, JSON-safe, through CAL-P033's envelope.
 
     Reusing :func:`encode_unit_rows` rather than inventing a second encoding is
     the whole of CAL-P033's lesson applied one level up: the bug it fixed was
     two representations of a banked row, not a wrong one.
+
+    #994: ``members`` is the per-unit DataGolf membership (:func:`encode_members`).
+    ``None`` leaves the key out, and an absent key reads back as UNKNOWN — the
+    envelope a bank written before #994 has, which must never decode as "no
+    members". Promotion copies the whole envelope, so the serving bank's
+    membership always belongs to the serving bank's fold.
     """
-    return {
+    envelope: dict[str, Any] = {
         "schema": ACCUMULATOR_SCHEMA,
         "buckets": encode_unit_rows(buckets),
         "carriers": encode_unit_rows(carriers),
     }
+    if members is not None:
+        envelope["members"] = encode_members(members)
+    return envelope
 
 
 def is_encoded_accumulator(stored: Any) -> bool:
@@ -1854,6 +1906,172 @@ def decode_accumulator(stored: Any) -> tuple[list[SimpleNamespace], list[SimpleN
         decode_unit_rows(stored.get("buckets")),
         decode_unit_rows(stored.get("carriers")),
     )
+
+
+# =============================================================================
+# #994 — DataGolf membership beside the fold
+# =============================================================================
+
+
+def membership_cell_key(row: Any) -> str:
+    """A Stage B group's identity minus ``source``, as one JSON-safe string.
+
+    ``[bucket_idx, category, price_moved, is_nonexclusive_bundle]`` — the group
+    key with the source dropped, because only one source is retained.
+    """
+    mapping = row if isinstance(row, Mapping) else _row_mapping(row)
+    return json.dumps(
+        [
+            mapping.get("bucket_idx"),
+            mapping.get("category"),
+            mapping.get("price_moved"),
+            mapping.get("is_nonexclusive_bundle"),
+        ],
+        separators=(",", ":"),
+    )
+
+
+def member_records(value: Any) -> list[str]:
+    """One group's member string split into its records (``[]`` for none)."""
+    if not isinstance(value, str) or not value:
+        return []
+    return value.split(MEMBER_RECORD_SEPARATOR)
+
+
+def _records_agree(value: str, n: Any, winners: Any) -> bool:
+    """Whether a group's member string holds exactly its own n and winners."""
+    records = member_records(value)
+    if len(records) != _as_int(n):
+        return False
+    won = 0
+    for record in records:
+        fields = record.split(MEMBER_FIELD_SEPARATOR)
+        if len(fields) != 4 or fields[3] not in ("0", "1"):
+            return False
+        won += fields[3] == "1"
+    return won == _as_int(winners)
+
+
+def split_unit_members(rows: Iterable[Any]) -> Optional[dict[str, str]]:
+    """One unit's DataGolf members, as ``{cell key: member string}``, or ``None``.
+
+    ``None`` means UNKNOWN and is returned whenever the unit cannot vouch for
+    its own membership:
+
+    * the statement did not emit :data:`MEMBER_COLUMN` at all (a unit banked by
+      the pre-#994 statement) — absent is not empty (gotcha #53);
+    * a DataGolf group with rows carries no member string, a non-DataGolf group
+      or a census carrier carries one, or a cell repeats inside the unit;
+    * a member string's record count or winner count disagrees with the same
+      row's ``n`` / ``winners`` — the mass and the membership come from one
+      GROUP BY, so a disagreement means the column is not what it claims.
+
+    ``{}`` is a KNOWN empty membership: the column was emitted and this unit
+    simply holds no DataGolf rows, which is true of most units.
+    """
+    members: dict[str, str] = {}
+    emitted = False
+    for row in rows or ():
+        mapping = _row_mapping(row)
+        if MEMBER_COLUMN not in mapping:
+            continue
+        emitted = True
+        value = mapping.get(MEMBER_COLUMN)
+        if mapping.get("bucket_idx") is None:
+            if value is not None:
+                return None
+            continue
+        is_member_source = mapping.get("source") == MEMBER_SOURCE
+        if value is None:
+            if is_member_source and _as_int(mapping.get("n")) > 0:
+                return None
+            continue
+        if not is_member_source or not isinstance(value, str):
+            return None
+        if not _records_agree(value, mapping.get("n"), mapping.get("winners")):
+            return None
+        key = membership_cell_key(mapping)
+        if key in members:
+            return None
+        members[key] = value
+    return members if emitted else None
+
+
+def encode_members(units: Mapping[str, Mapping[str, str]]) -> dict[str, Any]:
+    """The per-unit membership map as the accumulator carries it."""
+    return {
+        "schema": MEMBERSHIP_SCHEMA,
+        "source": MEMBER_SOURCE,
+        "units": {
+            str(unit): {str(cell): str(value) for cell, value in cells.items()}
+            for unit, cells in units.items()
+        },
+    }
+
+
+def decode_members(stored: Any) -> Optional[dict[str, dict[str, str]]]:
+    """An :func:`encode_members` envelope back to ``{unit: {cell: members}}``.
+
+    ``None`` for anything else — absent, another schema, another source, or a
+    malformed map. Every one of those is UNKNOWN, never an empty membership.
+    """
+    if not isinstance(stored, Mapping):
+        return None
+    if stored.get("schema") != MEMBERSHIP_SCHEMA or stored.get("source") != MEMBER_SOURCE:
+        return None
+    units = stored.get("units")
+    if not isinstance(units, Mapping):
+        return None
+    decoded: dict[str, dict[str, str]] = {}
+    for unit, cells in units.items():
+        if not isinstance(unit, str) or not isinstance(cells, Mapping):
+            return None
+        if not all(isinstance(c, str) and isinstance(v, str) for c, v in cells.items()):
+            return None
+        decoded[unit] = dict(cells)
+    return decoded
+
+
+def accumulator_members(stored: Any) -> Optional[dict[str, dict[str, str]]]:
+    """The membership an accumulator envelope carries, or ``None`` (unknown)."""
+    if not is_encoded_accumulator(stored):
+        return None
+    return decode_members(stored.get("members"))
+
+
+def collect_unit_members(
+    cursor: "StagedFuturesCursor", chunks: Sequence[Any]
+) -> tuple[Optional[dict[str, list[str]]], str]:
+    """The published bank's DataGolf membership, per cell, or why there is none.
+
+    Selects the bank exactly as :func:`collect_unit_results` does — building if
+    it covers the plan, else serving — so the members always come from the SAME
+    fold the curve is finalized from, never from the other bank.
+
+    Complete means every unit that bank holds has a membership entry. A bank
+    resumed from before #994, or with any unit that could not vouch for its
+    members, is incomplete, and incomplete is reported, never filled in.
+
+    Returns ``(cells, "complete")`` where ``cells`` maps a cell key to the member
+    strings of every unit that contributed to it, or ``(None, reason)``.
+    """
+    chunk_list = list(chunks)
+    if cursor.covers(chunk_list):
+        stored, units = cursor.accumulator, cursor.committed_units
+    elif cursor.served_covers(chunk_list):
+        stored, units = cursor.served_accumulator, cursor.served_units
+    else:
+        return None, "no_complete_bank"
+    members = accumulator_members(stored)
+    if members is None:
+        return None, "membership_absent"
+    if set(members) != set(units):
+        return None, "membership_incomplete"
+    cells: dict[str, list[str]] = {}
+    for unit in sorted(units):
+        for cell, value in sorted(members[unit].items()):
+            cells.setdefault(cell, []).append(value)
+    return cells, "complete"
 
 
 # =============================================================================
@@ -2962,6 +3180,21 @@ def advance(
     buckets, carriers = fold_unit_rows(
         accumulated, carried, rows, census_columns=census_columns
     )
+    # #994: membership rides beside the fold, keyed by UNIT. A bank that already
+    # holds units with no membership (resumed from before #994) stays unknown —
+    # adding known units to it cannot make the earlier ones known. A unit that
+    # cannot vouch for its own members is simply not entered, which leaves the
+    # bank incomplete for :func:`collect_unit_members` rather than wrong.
+    if cursor.accumulator is None and not cursor.committed_units:
+        prior_members: Optional[dict[str, dict[str, str]]] = {}
+    else:
+        prior_members = accumulator_members(cursor.accumulator)
+    members: Optional[dict[str, dict[str, str]]] = None
+    if prior_members is not None:
+        members = dict(prior_members)
+        unit_members = split_unit_members(rows)
+        if unit_members is not None:
+            members[key] = unit_members
     advanced = replace(
         cursor,
         owner=owner,
@@ -2969,7 +3202,7 @@ def advance(
         committed_units=tuple(list(cursor.committed_units) + [key]),
         # CAL-P033: encode on the way IN, so a unit's representation never
         # depends on whether the process that computed it is still alive.
-        accumulator=encode_accumulator(buckets, carriers),
+        accumulator=encode_accumulator(buckets, carriers, members),
     )
     # CAL-P078: if that was the last unit, the bank is complete NOW — promote it
     # here rather than at the top of the next beat, so the beat that finishes a

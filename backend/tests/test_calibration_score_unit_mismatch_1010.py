@@ -290,8 +290,10 @@ class TestPredicateIdentity:
         """The staged UNIT digest keys on the futures statement's bytes, which
         this rule does not touch, so banked units stay resumable. #938 later
         moved it (``dec3026b…`` -> ``5de54fd2…``) by adding a per-outcome flag
-        to ``_calibration_population_ctes``; this rule still does not touch it."""
-        assert pc.staged_unit_fingerprint() == "5de54fd27524df3c6af470d7f3c15bb9"
+        to ``_calibration_population_ctes``; this rule still does not touch it.
+        #994 moved it again, deliberately (``5de54fd2…`` -> ``74356774…``): Stage
+        B's outer SELECT emits each DataGolf cell's members. Nor that."""
+        assert pc.staged_unit_fingerprint() == "7435677428a14a4ecebfe02c9310e101"
 
 
 def _gate_payload(*, outcomes, predicate, categories, score_unit=None, cells=None):
