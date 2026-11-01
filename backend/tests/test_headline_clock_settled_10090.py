@@ -44,7 +44,7 @@ def test_an_input_received_after_full_time_leaves_the_clock(monkeypatch):
     r._hl_settle_finished(_read(1, ended_ago=31.0))
 
     assert r._hl_pending == {}
-    assert r._hl_summary() == "n=0 late=0 settled=1 nobook=0"
+    assert r._hl_summary() == "n=0 late=0 settled=1 nobook=0 noreading=0"
 
 
 def test_an_input_received_before_full_time_is_a_wait_ended_at_the_read(monkeypatch):
@@ -56,7 +56,7 @@ def test_an_input_received_before_full_time_is_a_wait_ended_at_the_read(monkeypa
     assert r._hl_pending == {}
     line = r._hl_summary()
     assert "max_ms=40000 worst=1:40000:mutate_read_required>stamp_settled[f-,a1]" in line
-    assert line.endswith("late=0 settled=0 nobook=0")
+    assert line.endswith("late=0 settled=0 nobook=0 noreading=0")
 
 
 def test_a_finished_status_without_an_end_time_is_counted(monkeypatch):
@@ -77,7 +77,7 @@ def test_a_live_event_is_untouched(monkeypatch):
     r._hl_settle_finished(_read(1, status="live"))
 
     assert r._hl_pending == {1: entry}
-    assert r._hl_summary() == "n=0 late=0 settled=0 nobook=0"
+    assert r._hl_summary() == "n=0 late=0 settled=0 nobook=0 noreading=0"
 
 
 def test_the_read_path_settles_before_it_returns():
@@ -149,7 +149,7 @@ def test_an_unpriceable_receipt_leaves_the_clock(monkeypatch):
     r._hl_no_price(1)
 
     assert r._hl_pending == {}
-    assert r._hl_summary() == "n=0 late=0 settled=0 nobook=1"
+    assert r._hl_summary() == "n=0 late=0 settled=0 nobook=1 noreading=0"
 
 
 def test_an_input_an_earlier_refusal_holds_is_a_wait(monkeypatch):
@@ -191,3 +191,40 @@ def test_both_refusal_kinds_share_the_attribution_bound():
     source = inspect.getsource(LiveBlendRefresher._receipt_preview_plan)
     assert "self._log_na_orientation(event_id, patched, overlaid, reading)" in source
     assert "if self._na_proof_logged < 6:" in source
+
+
+# ── no valid reading: the stamp had nothing valid to show ────────────────────
+
+
+def test_an_input_whose_stamp_found_no_valid_reading_leaves_the_clock(monkeypatch):
+    """08:44Z 11/01: five `na_orientation>stamp_no_reading` waits on one
+    three-way market (event 15336109, up to 16.1 s) were the minute's whole
+    top five, so the meter could not see any real wait. No valid price to show
+    is not a miss (Alex 2026-10-31): such an input is counted, not ranked."""
+    r = _refresher(monkeypatch)
+    r._hl_pending[7] = [MONO - 16.129, "na_orientation", None, 2]
+    r._hl_pending[8] = [MONO - 2.57, "na_orientation", None, 2]
+    r._hl_pending[9] = [MONO - 0.25, "receipt", None, 1]
+
+    r._hl_resolve(7, "stamp_no_reading")
+    r._hl_resolve(8, "stamp_no_reading")
+    r._hl_resolve(9, "committed")
+
+    assert r._hl_pending == {}
+    line = r._hl_summary()
+    assert "n=1 " in line and "max_ms=250 " in line
+    assert "stamp_no_reading" not in line
+    assert line.endswith("nobook=0 noreading=2/16129ms@7")
+    # The next minute starts from nothing.
+    assert r._hl_summary() == "n=0 late=0 settled=0 nobook=0 noreading=0"
+
+
+def test_other_stamp_endings_still_count_as_waits(monkeypatch):
+    r = _refresher(monkeypatch)
+    for eid, how in ((1, "stamp_unchanged"), (2, "stamp_unobserved"), (3, "stamp_preview_only")):
+        r._hl_pending[eid] = [MONO - 1.0, "na_proof", None, 1]
+        r._hl_resolve(eid, how)
+
+    line = r._hl_summary()
+    assert line.startswith("n=3 ")
+    assert "na_proof>stamp_unchanged" in line and line.endswith("noreading=0")
