@@ -3958,10 +3958,6 @@ class LiveBlendRefresher:
         self._hl_settled = 0
         #: Inputs refused while the live book offered no price (`_hl_no_price`).
         self._hl_nobook = 0
-        #: Inputs whose stamp found no valid reading (`_hl_resolve`), and the
-        #: longest of their waits this minute as (seconds, event id).
-        self._hl_noreading = 0
-        self._hl_noreading_max: tuple[float, Optional[int]] = (0.0, None)
         self._hl_fallback: dict[str, int] = {}
         #: event id -> mono when its receipt proposal was composed (split timing).
         self._hl_composed: dict[int, float] = {}
@@ -9220,18 +9216,6 @@ class LiveBlendRefresher:
         self._hl_commit_at.pop(event_id, None)
         if entry is None:
             return
-        if how == "stamp_no_reading":
-            # Alex 2026-10-31: "If there's no valid price to show, I won't
-            # count that as a miss." The stamp found no valid reading, so the
-            # input leaves the clock (``noreading=``, with the longest such
-            # wait kept for diagnosis) instead of filling the minute's worst
-            # list: at 08:44Z 11/01 five of them on one three-way market
-            # (event 15336109) were the whole top five, hiding every real wait.
-            age = max(0.0, _mono() - entry[0])
-            self._hl_noreading += 1
-            if age > self._hl_noreading_max[0]:
-                self._hl_noreading_max = (age, event_id)
-            return
         if how is not None and (how == "committed" or how.startswith("stamp_")) \
                 and entry[1] != "receipt":
             entry[1] += ">" + how  # a fallback ended by the stamp (its frame, or nothing to send)
@@ -9440,22 +9424,16 @@ class LiveBlendRefresher:
         late, self._hl_late = self._hl_late, 0
         settled, self._hl_settled = self._hl_settled, 0
         nobook, self._hl_nobook = self._hl_nobook, 0
-        noreading, self._hl_noreading = self._hl_noreading, 0
-        (nr_age, nr_event), self._hl_noreading_max = self._hl_noreading_max, (0.0, None)
-        if noreading:
-            noreading = "%d/%dms@%s" % (noreading, int(round(nr_age * 1000)), nr_event)
         fallback, self._hl_fallback = self._hl_fallback, {}
         if not samples:
-            return "n=0 late=%d settled=%d nobook=%d noreading=%s" % (late, settled, nobook, noreading)
+            return "n=0 late=%d settled=%d nobook=%d" % (late, settled, nobook)
         ordered = sorted(x[0] for x in samples)
         pick = lambda q: int(round(ordered[min(len(ordered) - 1, int(q * len(ordered)))] * 1000))
         worst = sorted(samples, key=lambda x: -x[0])[:5]
-        return ("n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d settled=%d "
-                "nobook=%d noreading=%s") % (
+        return "n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d settled=%d nobook=%d" % (
             len(samples), pick(0.5), pick(0.9), int(round(ordered[-1] * 1000)),
             ",".join("%s:%d:%s" % (eid, int(round(lat * 1000)), how) for lat, eid, how in worst),
-            ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late, settled, nobook,
-            noreading)
+            ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late, settled, nobook)
 
     def _note_receipt_class(self, kind: str, event_id) -> None:
         """Count one receipt composition outcome against its event (stats line)."""
