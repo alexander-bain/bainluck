@@ -797,7 +797,8 @@ def _kalshi_upcoming_hours_env() -> int:
 
 KALSHI_WS_UPCOMING_HOURS = _kalshi_upcoming_hours_env()
 #: #10090: a game contract's price is its last trade while that trade sits
-#: inside the live book (`handle_ticker`). "0" restores the midpoint.
+#: strictly inside the live book (`handle_ticker`); a trade at the bid or the
+#: ask keeps the midpoint. "0" restores the midpoint always.
 KALSHI_WS_GAME_LAST_TRADE = os.getenv("KALSHI_WS_GAME_LAST_TRADE", "1").strip() != "0"
 
 
@@ -3206,12 +3207,19 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 and ticker in ticker_to_ids and _is_team_game_ticker(ticker)
                 and last_price is not None
                 and yes_bid is not None and yes_ask is not None
-                and 0 < yes_bid <= last_price <= yes_ask < 1):
+                and 0 < yes_bid < last_price < yes_ask < 1):
             # #10090 (Alex 11/01 ~12:25 PM PT, watching Jets-Raiders in the
             # Kalshi app, "moving constantly"): on a game's contracts the price
             # is the last trade while it sits inside the live book, as Kalshi
             # shows it and as a Polymarket trade already prices its leg. A
             # trade the book has moved past is still refused (#8753's rule).
+            #
+            # STRICTLY inside (Alex 11/01 3:57 PM PT, "they happen with such
+            # regularity that I doubt they represent accuracy"): a trade AT the
+            # bid or the ask is the bid-ask bounce. On a one-cent book the last
+            # trade alternates 35/36 while the book never moves, and the chart
+            # drew a spike every minute (Dolphins-Patriots 11/01: Kalshi's
+            # stamps flipped 0.35/0.36 every ~20 s). Those keep the midpoint.
             prob = last_price
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
