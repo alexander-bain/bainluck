@@ -3890,6 +3890,16 @@ class LiveBlendRefresher:
         self._hl_fallback: dict[str, int] = {}
         #: event id -> mono when its receipt proposal was composed (split timing).
         self._hl_composed: dict[int, float] = {}
+        #: #10090: live events whose kept graph a change outside a price write
+        #: dropped (`forget_preview_outcomes`): event id -> `_mono` lost. One
+        #: worker re-reads them at once (`_drain_graph_refetch`) instead of
+        #: leaving them graphless until the next stamp read (a 5 s floor).
+        self._graph_refetch: dict[int, float] = {}
+        self._graph_lost_at: dict[int, float] = {}
+        self._graph_refetch_task: Optional[asyncio.Task] = None
+        self.graph_refetch_stats: dict[str, int] = {"reads": 0, "events": 0, "kept": 0, "errors": 0}
+        #: Receipt-path claim-lock waits this minute: (count, total s, max s, timeouts).
+        self._receipt_lock_wait = [0, 0.0, 0.0, 0]
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -8370,7 +8380,10 @@ class LiveBlendRefresher:
                                      if callable(values) else {})
                     group = _unoverlaid_group(group, original_rows, originals) if receipt else None
                     if group is None:
+                        lost = event_id in graphs
                         self._forget_preview_graph(event_id)
+                        if lost and receipt:
+                            self._schedule_graph_refetch((event_id,))
                         continue
                 forgotten = self._forgotten_outcomes
                 if any(forgotten.get(row.id, -math.inf) >= read_started
@@ -8396,6 +8409,9 @@ class LiveBlendRefresher:
     def _install_preview_graph(self, event_id: int, entry: tuple) -> None:
         self._forget_preview_graph(event_id)
         self._preview_graphs[event_id] = entry
+        lost = getattr(self, "_graph_lost_at", None)
+        if lost is not None:
+            lost.pop(event_id, None)
         for market in entry[2]:
             for row in market.outcomes:
                 self._preview_graph_outcomes[row.id] = event_id
@@ -8409,6 +8425,60 @@ class LiveBlendRefresher:
             for row in market.outcomes:
                 if self._preview_graph_outcomes.get(row.id) == event_id:
                     del self._preview_graph_outcomes[row.id]
+
+    def _schedule_graph_refetch(self, event_ids) -> None:
+        """#10090: re-read these live events' graphs now (they had one). Never raises."""
+        try:
+            now = _mono()
+            for event_id in event_ids:
+                if event_id is None:
+                    continue
+                self._graph_lost_at.setdefault(event_id, now)
+                self._graph_refetch.setdefault(event_id, now)
+            if not self._graph_refetch:
+                return
+            task = self._graph_refetch_task
+            if task is None or task.done():
+                self._graph_refetch_task = asyncio.get_running_loop().create_task(
+                    self._drain_graph_refetch(), name=f"graph-refetch-{self.source}",
+                )
+        except Exception:
+            self.graph_refetch_stats["errors"] += 1
+
+    async def _drain_graph_refetch(self) -> None:
+        """The one graph re-read worker: a plain committed read (no held
+        overlay) of every lost event, which `_read_groups` keeps through
+        `_remember_preview_graphs` exactly as a stamp read's graph (same
+        ticket, revision and forget fence). Each event that holds received
+        quotes is then queued for a receipt composition."""
+        from app.tasks.base import get_task_session
+
+        factory = self._session_factory or get_task_session
+        while self._graph_refetch:
+            batch = list(self._graph_refetch)[:16]
+            for event_id in batch:
+                self._graph_refetch.pop(event_id, None)
+            try:
+                async with self._session_slot(), factory() as session:
+                    await self._read_groups(session, batch, overlay_held=False)
+                self.graph_refetch_stats["reads"] += 1
+                self.graph_refetch_stats["events"] += len(batch)
+            except Exception:
+                self.graph_refetch_stats["errors"] += 1
+                logger.warning("live_blend_refresh[%s]: graph re-read failed", self.source,
+                               exc_info=True)
+                continue
+            queued = False
+            kept = set(batch).intersection(self._preview_graphs)
+            self.graph_refetch_stats["kept"] += len(kept)
+            if kept:
+                for quote in list(self._receipt_quotes.values()):
+                    if quote[3] in kept and self._preview_graph_outcomes.get(
+                            getattr(quote[2], "outcome_id", None)) == quote[3]:
+                        self._receipt_due[quote[3]] = None
+                        queued = True
+            if queued:
+                self._wake_receipt(True)
 
     def note_committed_rows(self, rows) -> None:
         """A committed price write's RETURNING rows. Never raises.
@@ -8491,6 +8561,7 @@ class LiveBlendRefresher:
             _prune_notes(forgotten, now, lambda at: at)
             if receipt:
                 self.note_receipt_withdrawn(outcome_ids, events)
+                self._schedule_graph_refetch(events)
         except Exception:
             self.commit_preview_stats["errors"] += 1
             logger.warning("live_blend_refresh[%s]: changed rows not forgotten", self.source,
@@ -8691,6 +8762,13 @@ class LiveBlendRefresher:
             self._note_receipt_class(
                 "leg_not_in_graph" if event_id in self._preview_graphs else "event_no_graph",
                 event_id)
+            lost = self._graph_lost_at.get(event_id)
+            if (lost is not None and event_id not in self._preview_graphs
+                    and now - lost <= RECEIPT_QUOTE_RETENTION_S
+                    and event_id not in self._hl_pending):
+                # A live event between a drop and its re-read: this input
+                # waits too, so the headline clock counts it.
+                self._hl_pending[event_id] = [getattr(mark, "recv_mono", now), "refetch", None, 0]
             return  # kept for the overlay; no graph to compose it on yet
         speaking = self._receipt_speaking.get(event_id)
         if speaking is not None and oid not in speaking:
@@ -8759,7 +8837,11 @@ class LiveBlendRefresher:
                     self.receipt_compose_s, interval, _receipt_graph_max_age(),
                     self._receipt_class_summary(),
                 )
-                logger.info("live_blend_refresh[%s]: headline-clock %s", self.source, self._hl_summary())
+                lw, self._receipt_lock_wait = self._receipt_lock_wait, [0, 0.0, 0.0, 0]
+                logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d",
+                            self.source, self._hl_summary(),
+                            ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
+                            lw[0], int(lw[1] * 1000), int(lw[2] * 1000), lw[3])
             due, deferred = [], {}
             for event_id in self._receipt_due:
                 last = self._receipt_last.get(event_id)
@@ -8795,10 +8877,10 @@ class LiveBlendRefresher:
         if len(self._hl_samples) < 20000:
             # A fallback keeps its reason (why it waited); else how it reached the screen.
             why = entry[1] if entry[1] != "receipt" else (how or "receipt")
-            if composed is not None and why == "receipt":
+            if composed is not None and why in ("receipt", "refetch", "no_graph"):
                 # receipt->compose / compose->publish, ms
-                why = "receipt(c%d,p%d)" % (int((composed - entry[0]) * 1000),
-                                             int((_mono() - composed) * 1000))
+                why = "%s(c%d,p%d)" % (why, int((composed - entry[0]) * 1000),
+                                       int((_mono() - composed) * 1000))
             # first composition after receipt (ms) and compositions it took
             why += "[f%s,a%d]" % ("-" if entry[2] is None else int((entry[2] - entry[0]) * 1000),
                                    entry[3])
@@ -10040,7 +10122,14 @@ class LiveBlendRefresher:
                 if preview.claim_lock is None:
                     preview.claim_lock = asyncio.Lock()
                 pool = self._client().connection_pool
+                lock_asked = _mono()
                 async with preview.claim_lock:
+                    if prepare_frames is not None:
+                        waited = _mono() - lock_asked
+                        lw = self._receipt_lock_wait
+                        lw[0] += 1
+                        lw[1] += waited
+                        lw[2] = max(lw[2], waited)
                     connection = await _checkout(pool)
                     try:
                         if preview.unclaimed(self.source):
@@ -10101,8 +10190,10 @@ class LiveBlendRefresher:
                     "live_blend_refresh[%s]: %s preview frame(s) fenced: epoch=%s owner=%s",
                     self.source, fenced, preview.epoch, owner or "missing",
                 )
-        except Exception:
+        except Exception as exc:
             self.preview_stats["publish_errors"] += 1
+            if prepare_frames is not None and isinstance(exc, TimeoutError):
+                self._receipt_lock_wait[3] += 1
             logger.warning(
                 "live_blend_refresh[%s]: preview publication incomplete (%s frames)",
                 self.source, len(frames), exc_info=True,

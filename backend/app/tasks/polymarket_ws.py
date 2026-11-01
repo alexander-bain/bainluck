@@ -5176,7 +5176,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     withdrawal_retry_until.update(dict.fromkeys(books, until))
                     return []
                 return None
-            forget_preview_outcomes(blend_refresher, books)
+            # #10090: only the rows this UPDATE withdrew changed. A book that
+            # did not refute its stored price wrote nothing ("a skip is still a
+            # skip"), so its event keeps its cached graph and received quotes:
+            # forgetting every wide book's event left thin live markets with no
+            # graph most of the time (receipt previews waited 3-5 s for a stamp).
+            forget_preview_outcomes(blend_refresher, {row.id for row in rows})
             if withdrawal_debt is not None:
                 withdrawal_debt.adopt(recorded)
                 # A leg whose newer quote arrived meanwhile waits for that write.
