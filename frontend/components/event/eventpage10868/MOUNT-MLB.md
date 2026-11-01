@@ -94,8 +94,9 @@ already passed above.
 Never give the section a `key` that changes per refresh. Its history and All props are keyed by the
 model's own `scope` (`mlb:<event>:<phase>`), so an open list, an open Details or a chart disclosure
 survives a refresh in the same scope (each Details is held by the original's exact key) and resets on
-a new event or phase. The run-total card gets the same `scope` and no key; it holds its chosen line
-itself. `resetKey={event}` only retries a failed section; it does not remount it.
+a new event or phase. The run-total card's chosen line is held inside the section, above the card,
+for the same `scope` (see "Final run totals"). `resetKey={event}` only retries a failed section; it
+does not remount it.
 
 ## Owner-binding debt (all UNPAID)
 
@@ -176,14 +177,27 @@ itself. `resetKey={event}` only retries a failed section; it does not remount it
   - Source result: the venue's won / lost in `propVerdictLabel` words, else "Result unavailable".
     It is never graded from the runs; the comparison ("above / below / on this line") is the pair
     against the number.
-- **Page.** `<MlbRunTotalsCard totals={model.runTotals} scope={model.scope} colors={lineColors} />`
-  with no key, drawn only for a final model with a non-null card. The chosen line is held inside
-  the card by option key:
-  - a same-scope refresh keeps it;
-  - a withdrawn or duplicated key reads "Selected line unavailable", never a substitute, and the
-    line returns when it is offered again;
-  - a new event or phase resets it;
-  - if the card itself leaves (its matrix is gone) and comes back, it opens on the default line.
+- **Page.** The row's second item is `MlbRunTotalsSlot` (page-local, in `MlbGamePage.tsx`, no
+  key). It draws `<MlbRunTotalsCard totals={runTotals} scope={model.scope} colors={lineColors}
+  selection={{ held, onSelect }} />` only for a final model with a non-null card, and draws nothing
+  otherwise.
+- **The chosen line persists (B1; native `BaseballStoriesAdapter10868` holds `selectedOptionKey`
+  outside the card).** The slot stays mounted whether or not a card is drawn. It holds the chosen
+  option key for `model.scope`. Its only state is that scope and key: no totals model, line or
+  probability is cached.
+  - A same-scope refresh keeps the key.
+  - A same-scope pass with no matrix at all draws NO card, placeholder or stale card. The key
+    survives, and when this event's own matrix returns the card opens on it, readout included.
+  - A held key the returned lines do not carry exactly once (withdrawn or duplicated) reads
+    "Selected line unavailable", never the default or a neighbour. The line shows again when it is
+    offered once more.
+  - A new event or phase (a new scope) clears the key while rendering, even while no card is
+    drawn, so the new scope opens on its own default.
+  - Each deliberate tap calls `onSelect` once. There is no effect, timer, fetch or automatic
+    selection.
+- **The card's optional `selection` input** (`MlbRunTotalsCard.tsx`) is a host-held key plus that
+  callback. Without it, the card keeps S1's own per-scope selection exactly as before, which is how
+  the standalone and census uses render it.
 - **The row (D4, built for this card).** `data-mlb-history-row` is a wrapping flex row with a 1.5rem
   gap.
   - The history is always its first item, in the same tree position, so the chart and its

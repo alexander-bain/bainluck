@@ -12,14 +12,15 @@
  *
  * PRESENTATION ONLY. It draws the model `buildMlbGame`
  * (lib/eventPage10868/mlbGame.ts) built from values the page already holds,
- * through the accepted components, unchanged: `HockeyJourneyMatrix` (the
- * team-paired headline, its measured arrangement steps and its
- * once-for-both-teams absence lines), `HockeyJourneyHistoryChart` (the
- * two-team history and its own Details), `MlbRunTotalsCard` (after the final
- * only: the run total against every offered line, its selection held inside
- * it) and `HockeyJourneyAllProps` (every original with its exact Details). No
- * fetch, subscription, SWR key, timer, effect or animation is added here; the
- * only state is inside those four.
+ * through the accepted components: `HockeyJourneyMatrix` (the team-paired
+ * headline, its measured arrangement steps and its once-for-both-teams
+ * absence lines), `HockeyJourneyHistoryChart` (the two-team history and its
+ * own Details), `MlbRunTotalsCard` (after the final only: the run total against
+ * every offered line, through its optional controlled selection) and
+ * `HockeyJourneyAllProps` (every original with its exact Details). No fetch,
+ * subscription, SWR key, timer, effect or animation is added here; the only
+ * state is inside those components plus the run-line slot's scope and chosen
+ * key (see THE CHOSEN RUN LINE).
  *
  * ORDER, top to bottom (native `BaseballEventPagePresentation10868`): the state
  * lines → the matrix, each column's source and clock said once under it (native
@@ -52,15 +53,26 @@
  * phase does — so an open Details, an open list or a chart disclosure never
  * survives into another game or another phase, and a refresh in the same scope
  * keeps every one of them (All props holds each open Details by the original's
- * exact key). The run-total card is given the same `scope` and NO key: it
- * holds its chosen line by option key and resets itself on a new scope. Never
- * give this section a key that changes per refresh.
+ * exact key). Never give this section a key that changes per refresh.
+ *
+ * THE CHOSEN RUN LINE (B1). The run-total card's chosen line is held ABOVE the
+ * card by `MlbRunTotalsSlot`, a page-local slot that stays mounted in the row
+ * whether or not a card is drawn. Its only state is the scope and the chosen
+ * option key — never a totals model, line or probability. A same-scope pass
+ * with no card (the matrix gone) draws nothing at all, and the key survives;
+ * when this event's own matrix returns, the card opens on that key (or says
+ * "Selected line unavailable" if the lines do not carry it exactly once — never
+ * the default — and shows it again when it returns). A new scope (event or
+ * phase) clears it, while rendering. One callback per deliberate tap; no
+ * effect, timer or automatic selection. Native: `BaseballStoriesAdapter10868`
+ * holds `selectedOptionKey` outside the card.
  *
  * THE HISTORY ROW (Design D4, built for the FINAL run-total card only; no empty
  * panel). `data-mlb-history-row` is a wrapping flex row with a 1.5rem gap. The
  * history is ALWAYS its first item, at the same place in the tree, so its chart
  * and disclosures never remount when the card comes or goes. The card is a
- * second item only for a final model whose `runTotals` is non-null. Each item
+ * second item only for a final model whose `runTotals` is non-null (the slot
+ * draws no element otherwise). Each item
  * grows from native's minimum readable width (`anchorMinWidth` 460 pt /
  * `storiesMinWidth` 360 pt, BaseballEventPagePresentation10868.swift, as
  * 28.75rem / 22.5rem flex bases) and may shrink below it (`min-w-0`): the two
@@ -70,14 +82,47 @@
  * card, the history alone fills the row exactly as before.
  */
 
+import { useState } from "react";
 import type { HockeyJourneyHeadline, HockeyJourneyHistory } from "@/lib/eventPage10868/hockeyJourneyTypes";
 import { MLB_WORDS, type MlbGameModel } from "@/lib/eventPage10868/mlbGame";
+import type { MlbFinalTotals } from "@/lib/eventPage10868/mlbRunTotals";
 import { teamColorStyle } from "@/lib/teamColors";
 import HockeyJourneyMatrix, { matrixSharedAbsences } from "./HockeyJourneyMatrix";
 import HockeyJourneyHistoryChart from "./HockeyJourneyHistoryChart";
 import HockeyJourneyAllProps from "./HockeyJourneyAllProps";
-import MlbRunTotalsCard from "./MlbRunTotalsCard";
+import MlbRunTotalsCard, { type MlbRunTotalsColors } from "./MlbRunTotalsCard";
 import { inDisplayOrder } from "./FootballJourneySection";
+
+/**
+ * The row's second item: holds the chosen run line for `scope` and draws the
+ * card only while `totals` exists. Stays mounted when it draws nothing, so a
+ * same-scope absence keeps the key (B1, see header). State = scope + key only.
+ */
+function MlbRunTotalsSlot({
+  totals,
+  scope,
+  colors,
+}: {
+  totals: MlbFinalTotals | null;
+  scope: string;
+  colors: MlbRunTotalsColors;
+}) {
+  const [chosen, setChosen] = useState<{ scope: string; key: string | null }>(() => ({ scope, key: null }));
+  // A new event or phase clears the choice while rendering, whether or not a card is drawn.
+  if (chosen.scope !== scope) setChosen({ scope, key: null });
+  const held = chosen.scope === scope ? chosen.key : null;
+  if (!totals) return null;
+  return (
+    <div data-mlb-row-item="runTotals" className="min-w-0 grow basis-[22.5rem]">
+      <MlbRunTotalsCard
+        totals={totals}
+        scope={scope}
+        colors={colors}
+        selection={{ held, onSelect: (key) => setChosen({ scope, key }) }}
+      />
+    </div>
+  );
+}
 
 export default function MlbGamePage({ model }: { model: MlbGameModel }) {
   if (model.kind === "refused") {
@@ -147,11 +192,7 @@ export default function MlbGamePage({ model }: { model: MlbGameModel }) {
         <div data-mlb-row-item="history" className="min-w-0 grow basis-[28.75rem]">
           <HockeyJourneyHistoryChart key={model.scope} history={history} colors={lineColors} />
         </div>
-        {runTotals && (
-          <div data-mlb-row-item="runTotals" className="min-w-0 grow basis-[22.5rem]">
-            <MlbRunTotalsCard totals={runTotals} scope={model.scope} colors={lineColors} />
-          </div>
-        )}
+        <MlbRunTotalsSlot totals={runTotals} scope={model.scope} colors={lineColors} />
       </div>
 
       <HockeyJourneyAllProps key={model.originals.scope} originals={model.originals} entryLabel={model.allPropsLabel} />

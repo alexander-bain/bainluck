@@ -27,6 +27,10 @@
  * events given the final matrix, and a live model handed a final card. The
  * row's side-by-side or stacked fit is not provable in jsdom (owed to the
  * browser check); these prove its order, its contents and what it holds.
+ * B1 (CONSTRUCTED same-scope passes with no matrix, and a host-held selection
+ * given to the card directly): the chosen line is held above the card, so a
+ * same-scope absence keeps it; the standalone card's own S1 tests stay as they
+ * are and prove its default, uncontrolled behaviour.
  */
 import React, { act } from "react";
 import fs from "node:fs";
@@ -48,6 +52,7 @@ import {
   type MlbGameView,
 } from "@/lib/eventPage10868/mlbGame";
 import MlbGamePage from "@/components/event/eventpage10868/MlbGamePage";
+import MlbRunTotalsCard from "@/components/event/eventpage10868/MlbRunTotalsCard";
 import { BOTH_TEAMS_LABEL } from "@/components/event/eventpage10868/HockeyJourneyMatrix";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -646,6 +651,105 @@ describe("the final run-total card beside the history", () => {
     expect(runCard()).toBeNull();
     render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
     expect(pressedRuns()).toEqual([KEY_9_5]);
+  });
+
+  // ─── B1: the chosen line is held above the card, through a same-scope absence ───
+
+  /** Every full-game line except 10.5 (TEST MUTATION). */
+  const WITHOUT_10_5 = [2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 11.5, 12.5, 13.5, 14.5];
+
+  it("B1: 10.5 survives the WHOLE matrix going away in the same scope — no card meanwhile — and returns pressed with its readout, not 9.5", () => {
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    click(runChoice(KEY_10_5));
+    expect(pressedRuns()).toEqual([KEY_10_5]);
+    // CONSTRUCTED same-scope passes with NO matrix: the member removed (the reduced body), then a null member.
+    for (const gameMarkets of [finalMarkets, withMatrix(null)]) {
+      const absent = model(finalDetail, { ...finalHost, nowMs: FINAL_NOW + 60_000 }, { gameMarkets });
+      expect(view(absent).scope).toBe("mlb:15321836:final");
+      expect(view(absent).runTotals).toBeNull();
+      render(absent);
+      // No card, placeholder or stale card: the row holds the history alone (DOM order only; no geometry claim).
+      expect({ card: runCard(), items: rowItems() }).toEqual({ card: null, items: ["history"] });
+      expect(runChoices()).toHaveLength(0);
+      expect(host.textContent).not.toContain(MLB_RUN_TOTAL_WORDS.title);
+      expect(host.textContent).not.toContain(MLB_RUN_TOTAL_WORDS.selectedUnavailable);
+    }
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(rowItems()).toEqual(["history", "runTotals"]);
+    expect(pressedRuns()).toEqual([KEY_10_5]);
+    expect(runText("[data-run-heading]")).toBe("Over 10.5 runs");
+    expect(runText("[data-run-comparison]")).toBe("Final 10 runs · below this line");
+    expect(runText("[data-run-source]")).toBe(sourceSays(PROP_MISS_LABEL));
+    expect(runCard()?.querySelector("[data-run-marker]")?.getAttribute("data-run-marker")).toBe("10.5");
+  });
+
+  it("B1: after an absence, a matrix without the held key says Selected line unavailable (never the 9.5 default); the key's return restores 10.5", () => {
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    click(runChoice(KEY_10_5));
+    render(model(finalDetail, finalHost, { gameMarkets: finalMarkets })); // CONSTRUCTED: the matrix gone, same scope
+    expect(runCard()).toBeNull();
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(matrixKeeping(WITHOUT_10_5)) }));
+    expect(runText("[data-run-heading]")).toBe(MLB_RUN_TOTAL_WORDS.selectedUnavailable);
+    expect(runCard()?.querySelector("[data-run-selected]")?.getAttribute("data-run-selected")).toBe("unavailable");
+    expect(pressedRuns()).toEqual([]);
+    expect(host.querySelector("[data-run-source]")).toBeNull();
+    expect(host.querySelector("[data-run-comparison]")).toBeNull();
+    expect(host.querySelector("[data-run-marker]")).toBeNull();
+    expect(runChoices().map((b) => b.textContent)).toEqual(LINE_TEXTS.filter((t) => t !== "10.5"));
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(pressedRuns()).toEqual([KEY_10_5]);
+    expect(runText("[data-run-heading]")).toBe("Over 10.5 runs");
+    expect(runText("[data-run-comparison]")).toBe("Final 10 runs · below this line");
+  });
+
+  it("B1: a scope change while the card is absent opens the new scope on its default (CONSTRUCTED: another event id; then a phase change)", () => {
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    click(runChoice(KEY_10_5));
+    render(model(finalDetail, finalHost, { gameMarkets: finalMarkets })); // absent, same scope
+    const otherId = 15321837;
+    const other = (gameMarkets: GameMarketsResponse) =>
+      model(mutate(finalDetail, { id: otherId }), finalHost, { history: mutate(finalHistory, { event_id: otherId }), gameMarkets });
+    render(other(mutate(finalMarkets, { event_id: otherId }))); // the new event, still without a matrix
+    expect(runCard()).toBeNull();
+    render(other(withMatrix(ownMatrix(), mutate(finalMarkets, { event_id: otherId }))));
+    expect(runCard()?.getAttribute("data-mlb-run-totals")).toBe("mlb:15321837:final");
+    expect(pressedRuns()).toEqual([KEY_9_5]);
+    // Back on 15321836's final: choose 10.5, lose the matrix, pass through live (a new scope), return.
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    click(runChoice(KEY_10_5));
+    render(model(finalDetail, finalHost, { gameMarkets: finalMarkets }));
+    render(model(liveDetail, liveHost));
+    expect(runCard()).toBeNull();
+    render(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) }));
+    expect(pressedRuns()).toEqual([KEY_9_5]);
+  });
+
+  it("B1 seam (CONSTRUCTED host-held selection): one onSelect per tap, no automatic selection, and the card shows only the key it is given", () => {
+    const own = view(model(finalDetail, finalHost, { gameMarkets: withMatrix(ownMatrix()) })).runTotals;
+    const withdrawn = view(model(finalDetail, finalHost, { gameMarkets: withMatrix(matrixKeeping(WITHOUT_10_5)) })).runTotals;
+    if (!own || !withdrawn) throw new Error("no run-total card");
+    const totals = own;
+    const withdrawnTotals = withdrawn;
+    const onSelect = jest.fn();
+    const show = (held: string | null, t = totals) =>
+      act(() => root.render(<MlbRunTotalsCard totals={t} scope="mlb:15321836:final" selection={{ held, onSelect }} />));
+    show(null);
+    expect(pressedRuns()).toEqual([KEY_9_5]); // no choice yet: native's default
+    expect(onSelect).not.toHaveBeenCalled();
+    click(runChoice(KEY_10_5));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenLastCalledWith(KEY_10_5);
+    // The host has not changed its key yet, so the card does not move on its own.
+    expect(pressedRuns()).toEqual([KEY_9_5]);
+    show(KEY_10_5);
+    expect(pressedRuns()).toEqual([KEY_10_5]);
+    // A held key the lines do not carry: unavailable, and nothing is selected on the host's behalf.
+    show(KEY_10_5, withdrawnTotals);
+    expect(runText("[data-run-heading]")).toBe(MLB_RUN_TOTAL_WORDS.selectedUnavailable);
+    expect(pressedRuns()).toEqual([]);
+    show(KEY_10_5);
+    expect(pressedRuns()).toEqual([KEY_10_5]);
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it("the history chart and its open disclosure survive the card arriving and leaving in the same scope; a new event resets them", () => {

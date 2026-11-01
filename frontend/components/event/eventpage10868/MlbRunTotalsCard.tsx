@@ -29,6 +29,15 @@
  * new reading inside this component (adjusted while rendering); no parent
  * `key` is needed.
  *
+ * CONTROLLED SELECTION (optional, B1). A host that must keep the chosen line
+ * while the card itself is absent (native `BaseballStoriesAdapter10868`
+ * holds `selectedOptionKey` outside the card) passes `selection`: its `held`
+ * key (null = no choice yet, so the default) replaces the internal one, and
+ * each deliberate tap calls `onSelect(optionKey)` exactly once; the card never
+ * selects by itself. The same resolution applies: a held key the lines do not
+ * carry exactly once is "Selected line unavailable", never the default. With
+ * no `selection` the card behaves exactly as above.
+ *
  * The axis never depends on the selection, so choosing a line never rescales
  * the bar. No chart library, fetch, timer or subscription; tokens and the
  * host's team colours only. The plot is hidden from screen readers: every
@@ -52,6 +61,12 @@ export interface MlbRunTotalsColors {
 
 const DEFAULT_COLORS: MlbRunTotalsColors = { home: "var(--series-1)", away: "var(--series-2)" };
 
+/** A host-held selection: the chosen option key (null = none yet) and the tap callback. */
+export interface MlbRunTotalsSelection {
+  held: string | null;
+  onSelect: (optionKey: string) => void;
+}
+
 /** The source's verdict in web's one settled vocabulary, or the documented partial. */
 const resultWords = (result: boolean | null): string => (result === null ? W.resultUnavailable : propVerdictLabel(result));
 
@@ -61,20 +76,23 @@ export default function MlbRunTotalsCard({
   totals,
   scope,
   colors = DEFAULT_COLORS,
+  selection,
 }: {
   /** `mlbFinalTotals(mlbRunLines(matrix), displayedScore, names)` for THIS event's final. */
   totals: MlbFinalTotals;
   /** `mlb:<event id>:<phase>`: a change resets the held line. */
   scope: string;
   colors?: MlbRunTotalsColors;
+  /** Optional host-held selection (see CONTROLLED SELECTION); absent = the card holds it itself. */
+  selection?: MlbRunTotalsSelection;
 }) {
   const titleId = useId();
   const stripId = useId();
   const [stored, setStored] = useState<{ scope: string; held: string | null }>(() => ({ scope, held: null }));
   // A new event or phase is a new reading: adjusted while rendering, so no frame shows the old choice.
   if (stored.scope !== scope) setStored({ scope, held: null });
-  const held = stored.scope === scope ? stored.held : null;
-  const choose = (key: string) => setStored({ scope, held: key });
+  const held = selection ? selection.held : stored.scope === scope ? stored.held : null;
+  const choose = (key: string) => (selection ? selection.onSelect(key) : setStored({ scope, held: key }));
 
   const selected = mlbRunSelected(totals, held);
   const { total, bar, axis } = totals;
