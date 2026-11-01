@@ -587,6 +587,17 @@ PREVIEW_PUBLISH_CHUNK = 8
 
 _ACCEPTS_REFUSED: dict = {}
 
+#: #10090: how often the receipt path re-reads the source's current read
+#: barrier (one `read_ticket` call), to re-read a kept graph whose ticket a
+#: retirement has staled BEFORE proposing on it (a refused open costs a refetch).
+RECEIPT_BARRIER_POLL_S = 0.2
+
+
+def _barrier_of(ticket) -> Optional[int]:
+    """The retirement barrier a read ticket carries (AuthorityTicket or int)."""
+    barrier = getattr(ticket, "barrier", ticket)
+    return barrier if type(barrier) is int else None
+
 
 def _accepts_refused(preview) -> bool:
     """Whether this registry's `execute` takes the #10090 ``refused`` hook."""
@@ -3918,6 +3929,13 @@ class LiveBlendRefresher:
         self._graph_refetch: dict[int, float] = {}
         self._graph_lost_at: dict[int, float] = {}
         self._graph_refetch_task: Optional[asyncio.Task] = None
+        #: event id -> `_mono` this process committed the received price of one
+        #: of its waiting headline legs: a stamp whose read began after it
+        #: publishes a committed frame that carries that input.
+        self._hl_commit_at: dict[int, float] = {}
+        #: The source's newest read barrier (`RECEIPT_BARRIER_POLL_S`), or None.
+        self._barrier_now: Optional[int] = None
+        self._barrier_task: Optional[asyncio.Task] = None
         self.graph_refetch_stats: dict[str, int] = {"reads": 0, "events": 0, "kept": 0, "errors": 0}
         #: Receipt-path claim-lock waits this minute: (count, total s, max s, timeouts).
         self._receipt_lock_wait = [0, 0.0, 0.0, 0]
@@ -6760,9 +6778,11 @@ class LiveBlendRefresher:
             reserved, history_ready = reservation
             self._stage_trace("attempt_session", event_ids)
             if prepared is None:
+                read_t0 = _mono()  # before the read's statement: a lower bound
                 with tx.span("read"):
                     grouped = await self._read_groups(session, event_ids)
             else:
+                read_t0 = None  # read earlier: no headline input is credited to it
                 grouped = {
                     eid: prepared[eid] for eid in event_ids if eid in prepared
                 }
@@ -7308,6 +7328,7 @@ class LiveBlendRefresher:
                 ]
                 if independent:
                     await publish_committed(independent)
+                    self._hl_committed_frames(independent, read_t0)
                 # After COMMIT, BEFORE the committed canary frames: a sibling still
                 # pending is recomposed on the new base and goes out first, so
                 # the committed frame (rev == that base) cannot briefly put the
@@ -7323,6 +7344,7 @@ class LiveBlendRefresher:
                     [f for f in settled if f["preview"]["kind"] == "blend"]
                 )
             await publish_committed(pending)
+            self._hl_committed_frames(pending, read_t0)
             if settled:
                 await self._publish_previews(
                     [f for f in settled if f["preview"]["kind"] != "blend"]
@@ -8415,6 +8437,9 @@ class LiveBlendRefresher:
                         or getattr(event, "completed_at", None) is not None
                         or getattr(event, "preview_read_ticket", None) is None):
                     self._forget_preview_graph(event_id)
+                    lost = getattr(self, "_graph_lost_at", None)
+                    if lost is not None and getattr(event, "status", None) != "live":
+                        lost.pop(event_id, None)
                     continue
                 if any(id(row) not in original_rows
                        for entry in group for row in entry.outcomes):
@@ -8485,18 +8510,20 @@ class LiveBlendRefresher:
         try:
             if _preview_at_receipt_possible(getattr(self, "source", None)) and self._preview_graphs:
                 self.graph_refetch_stats["barrier"] = self.graph_refetch_stats.get("barrier", 0) + 1
-                self._schedule_graph_refetch(list(self._preview_graphs))
+                self._schedule_graph_refetch(list(self._preview_graphs), lost=False)
         except Exception:
             self.graph_refetch_stats["errors"] += 1
 
-    def _schedule_graph_refetch(self, event_ids) -> None:
-        """#10090: re-read these live events' graphs now (they had one). Never raises."""
+    def _schedule_graph_refetch(self, event_ids, lost: bool = True) -> None:
+        """#10090: re-read these live events' graphs now (they had one;
+        ``lost``: it was dropped, not just staled). Never raises."""
         try:
             now = _mono()
             for event_id in event_ids:
                 if event_id is None:
                     continue
-                self._graph_lost_at.setdefault(event_id, now)
+                if lost:
+                    self._graph_lost_at.setdefault(event_id, now)
                 self._graph_refetch.setdefault(event_id, now)
             if not self._graph_refetch:
                 return
@@ -8536,6 +8563,14 @@ class LiveBlendRefresher:
             queued = False
             kept = set(batch).intersection(self._preview_graphs)
             self.graph_refetch_stats["kept"] += len(kept)
+            for event_id in set(batch) - kept:
+                # Not kept: no longer a live preview event. Its inputs are not
+                # live headline waits, so no clock stays open for them.
+                self._graph_lost_at.pop(event_id, None)
+                entry = self._hl_pending.get(event_id)
+                if entry is not None and entry[1].startswith("refetch"):
+                    self._hl_pending.pop(event_id, None)
+                    self._hl_composed.pop(event_id, None)
             for event_id in kept:
                 self._graph_unstamped[event_id] = _mono()
             if kept:
@@ -8588,6 +8623,12 @@ class LiveBlendRefresher:
                     commits.pop(oid, None)
                     commits[oid] = (now, values)
                     entry = self._hl_pending.get(event_id) if event_id is not None else None
+                    if entry is not None:
+                        quote = self._receipt_quotes.get(oid)
+                        price = values.get("current_probability")
+                        if (quote is not None and quote[3] == event_id and price is not None
+                                and round(float(price), 6) == quote[0]):
+                            self._hl_commit_at[event_id] = now
                     if entry is not None and entry[1] != "receipt":
                         self._receipt_due[event_id] = None
                         wake = True
@@ -8868,6 +8909,15 @@ class LiveBlendRefresher:
         if event_id not in self._hl_pending:
             # [recv mono, how, first composition mono, compositions]
             self._hl_pending[event_id] = [getattr(mark, "recv_mono", now), "receipt", None, 0]
+        barrier = self._barrier_now
+        if barrier is not None and event_id not in self._graph_refetch:
+            cached = self._preview_graphs.get(event_id)
+            held = _barrier_of(getattr(cached[1], "preview_read_ticket", None)) if cached else None
+            if held is not None and held < barrier:
+                # A retirement staled this graph's ticket: its next open would be
+                # refused (`read_required`). Re-read it now, during the interval.
+                self.graph_refetch_stats["stale_ticket"] = self.graph_refetch_stats.get("stale_ticket", 0) + 1
+                self._schedule_graph_refetch((event_id,), lost=False)
         self._receipt_due[event_id] = None
         last = self._receipt_last.get(event_id)
         self._wake_receipt(last is None or now - last[0] >= _receipt_interval())
@@ -8894,7 +8944,39 @@ class LiveBlendRefresher:
         except Exception:
             self.receipt_preview_stats["errors"] += 1
 
+    async def _watch_barrier(self) -> None:
+        """#10090: keep `_barrier_now` within `RECEIPT_BARRIER_POLL_S` while the
+        receipt worker is active (one lightweight `read_ticket` per poll)."""
+        idle_since = None
+        while True:
+            task = self._receipt_task
+            if task is None or task.done():
+                idle_since = idle_since or _mono()
+                if _mono() - idle_since > 5.0:
+                    self._barrier_now = None
+                    return
+            else:
+                idle_since = None
+            try:
+                async with asyncio.timeout(0.5):
+                    ticket, _ = await self._preview_ticket()
+                barrier = _barrier_of(ticket)
+                if barrier is not None:
+                    self._barrier_now = barrier
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._barrier_now = None  # unknown: propose and let Redis judge
+            await asyncio.sleep(RECEIPT_BARRIER_POLL_S)
+
     def _wake_receipt(self, now: bool) -> None:
+        barrier_task = self._barrier_task
+        if barrier_task is None or barrier_task.done():
+            try:
+                self._barrier_task = asyncio.get_running_loop().create_task(
+                    self._watch_barrier(), name=f"receipt-barrier-{self.source}")
+            except RuntimeError:
+                pass
         task = self._receipt_task
         if task is None or task.done():
             try:
@@ -8934,6 +9016,8 @@ class LiveBlendRefresher:
                     del self._urgent_stamp[eid]
                 for eid in [e for e in self._graph_unstamped if e not in self._preview_graphs]:
                     del self._graph_unstamped[eid]
+                for eid in [e for e in self._hl_commit_at if e not in self._hl_pending]:
+                    del self._hl_commit_at[eid]
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -8972,8 +9056,11 @@ class LiveBlendRefresher:
         """The headline clock stops: the page now shows this event's inputs."""
         entry = self._hl_pending.pop(event_id, None)
         composed = self._hl_composed.pop(event_id, None)
+        self._hl_commit_at.pop(event_id, None)
         if entry is None:
             return
+        if how == "committed" and entry[1] != "receipt":
+            entry[1] += ">committed"  # a fallback ended by the stamp's committed frame
         if len(self._hl_samples) < 20000:
             # A fallback keeps its reason (why it waited); else how it reached the screen.
             why = entry[1] if entry[1] != "receipt" else (how or "receipt")
@@ -9031,6 +9118,21 @@ class LiveBlendRefresher:
         except Exception:
             pass
 
+    def _hl_committed_frames(self, frames, read_t0) -> None:
+        """#10090: committed frames just published. A waiting headline input
+        whose received price this process committed before the stamp's read
+        began is on screen in that frame (headline clock stops). Never raises."""
+        try:
+            if read_t0 is None or not self._hl_pending:
+                return
+            for frame in frames:
+                event_id = frame.get("event_id") if isinstance(frame, dict) else None
+                at = self._hl_commit_at.get(event_id)
+                if at is not None and at <= read_t0 and event_id in self._hl_pending:
+                    self._hl_resolve(event_id, "committed")
+        except Exception:
+            pass
+
     def _hl_mutate_refused(self, event_id, status) -> None:
         """A proposal's ledger call composed no frame. ``ok``: accepted with
         nothing to send (the screen already shows that composition). A stale
@@ -9045,7 +9147,7 @@ class LiveBlendRefresher:
                 return
             self._hl_mark(event_id, "mutate_" + status)
             if status in ("read_required", "stale_context") and event_id in self._preview_graphs:
-                self._schedule_graph_refetch((event_id,))
+                self._schedule_graph_refetch((event_id,), lost=False)
         except Exception:
             self.receipt_preview_stats["errors"] += 1
 
@@ -9156,6 +9258,15 @@ class LiveBlendRefresher:
             stats["old_graph"] += 1
             self._note_receipt_class("old_graph", event_id)
             self._hl_mark(event_id, "old_graph")
+            return None
+        barrier = self._barrier_now
+        held = _barrier_of(getattr(event, "preview_read_ticket", None))
+        if barrier is not None and held is not None and held < barrier:
+            # Its open would be refused: the re-read (`_note_receipt_input`)
+            # re-queues this event with a current ticket.
+            self._note_receipt_class("stale_ticket", event_id)
+            if event_id not in self._graph_refetch:
+                self._schedule_graph_refetch((event_id,), lost=False)
             return None
         commit_patched = False
         waiting = self._hl_pending.get(event_id)
@@ -9388,7 +9499,7 @@ class LiveBlendRefresher:
                     self._note_receipt_class("drop_" + why[:24], event_id)
                     self._hl_mark(event_id, "drop_" + why[:24])
                     if why == "local_ticket" and event_id in self._preview_graphs:
-                        self._schedule_graph_refetch((event_id,))
+                        self._schedule_graph_refetch((event_id,), lost=False)
                     continue
                 if pending is None or not pending.at_receipt or pending.value != value:
                     self._hl_mark(event_id, "refused_local")
