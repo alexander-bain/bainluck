@@ -22,8 +22,9 @@ def _tick_at(price_of):
     return tick
 
 
-async def _committed(monkeypatch, price_of):
+async def _committed(monkeypatch, price_of, game_ticker="KXNFLGAME-26NOV01LVNYJ-NYJ"):
     monkeypatch.setattr(rig_mod, "_tick", _tick_at(price_of))
+    monkeypatch.setattr(rig_mod, "GAME_TICKER", game_ticker)
     rig = rig_mod._Rig()
     task = await rig_mod._start(monkeypatch, rig, recycle=rig_mod.STEP * 2)
     await rig_mod._until(
@@ -52,3 +53,18 @@ async def test_the_switch_restores_the_midpoint(monkeypatch):
     monkeypatch.setattr(kalshi_ws, "KALSHI_WS_GAME_LAST_TRADE", False)
     rows = await _committed(monkeypatch, lambda t, bid, ask: bid)
     assert rows[rig_mod.GAME_OUTCOME] == pytest.approx(0.61)
+
+
+async def test_a_tennis_match_keeps_the_midpoint(monkeypatch):
+    """11/01 20:34Z: a trade price failed the Challenger pairs' current-book
+    proof (15-28 s na_proof waits); tennis keeps the midpoint."""
+    rows = await _committed(monkeypatch, lambda t, bid, ask: bid,
+                            game_ticker="KXATPMATCH-26SEP28ANGJOH-ANG")
+    assert rows[rig_mod.GAME_OUTCOME] == pytest.approx(0.61)
+
+
+def test_only_team_game_series_qualify():
+    assert kalshi_ws._is_team_game_ticker("KXNFLGAME-26NOV01LVNYJ-NYJ")
+    assert kalshi_ws._is_team_game_ticker("KXNCAAFGAME-26OCT31BSUTXST-BSU")
+    assert not kalshi_ws._is_team_game_ticker("KXATPMATCH-26SEP28ANGJOH-ANG")
+    assert not kalshi_ws._is_team_game_ticker("KXATPCHALLENGERMATCH-26NOV01AB-A")

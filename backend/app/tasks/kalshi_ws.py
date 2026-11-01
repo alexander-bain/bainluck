@@ -801,6 +801,15 @@ KALSHI_WS_UPCOMING_HOURS = _kalshi_upcoming_hours_env()
 KALSHI_WS_GAME_LAST_TRADE = os.getenv("KALSHI_WS_GAME_LAST_TRADE", "1").strip() != "0"
 
 
+def _is_team_game_ticker(ticker: str) -> bool:
+    """A team-sport game contract (``KXNFLGAME-...``): its series ends in GAME.
+    Tennis matches (``...MATCH-``) are excluded: their bundled pairs need
+    current-book proof, which a trade price fails (11/01 20:34Z: 15-28 s
+    na_proof waits on Challenger matches; G4F76 rolled back)."""
+    series = ticker.split("-", 1)[0]
+    return series.endswith("GAME")
+
+
 def _kalshi_slate_event_window():
     """The events whose Kalshi markets the socket subscribes to.
 
@@ -3194,7 +3203,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # longshot ask, else nothing (a wide book with no trade is not a price).
         prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
         if (globals().get("KALSHI_WS_GAME_LAST_TRADE", False) and prob is not None
-                and ticker in ticker_to_ids and last_price is not None
+                and ticker in ticker_to_ids and _is_team_game_ticker(ticker)
+                and last_price is not None
                 and yes_bid is not None and yes_ask is not None
                 and 0 < yes_bid <= last_price <= yes_ask < 1):
             # #10090 (Alex 11/01 ~12:25 PM PT, watching Jets-Raiders in the
