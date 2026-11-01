@@ -80,7 +80,10 @@ export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel
           className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-lg font-bold"
           aria-label={figures ? figures.spoken : `${header.home}, ${header.away}`}
         >
-          <span className="min-w-0 break-words">{header.home}</span>
+          {/* The team names wear the headline's outcome-label role (text-base semibold): a fixed type role that scales with the reader's text, never fit-to-width. */}
+          <span className="min-w-0 break-words text-base font-semibold" data-soccer-scoreboard-name="home">
+            {header.home}
+          </span>
           {figures && (
             <span className="whitespace-nowrap text-2xl tabular-nums" aria-hidden="true">
               {figures.home}
@@ -88,7 +91,9 @@ export default function SoccerMatchPage({ match }: { match: SoccerMatchViewModel
               {figures.away}
             </span>
           )}
-          <span className="min-w-0 break-words text-right">{header.away}</span>
+          <span className="min-w-0 break-words text-right text-base font-semibold" data-soccer-scoreboard-name="away">
+            {header.away}
+          </span>
         </h2>
 
         {(scoreLine || header.clock || header.projection) && (

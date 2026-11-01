@@ -1182,3 +1182,70 @@ describe("exact map: a contained, labelled, keyboard-reachable horizontal scroll
     expect(scroller.querySelectorAll("td button")).toHaveLength(36);
   });
 });
+
+// ─── Design's 91d presentation review: scoreboard type role and final tense ──
+
+describe("the scoreboard's team names wear the headline's outcome-label type role", () => {
+  const nameSpans = () => ["home", "away"].map((side) => host.querySelector(`h2 [data-soccer-scoreboard-name="${side}"]`) as HTMLElement);
+
+  it("both names are text-base semibold; the heading, its spoken words and the score numerals are unchanged", () => {
+    act(() => root.render(<SoccerMatchPage match={live} />));
+    const [home, away] = nameSpans();
+    for (const name of [home, away]) {
+      expect(name.className).toContain("text-base");
+      expect(name.className).toContain("font-semibold");
+      expect(name.getAttribute("style")).toBeNull();
+    }
+    expect([home.textContent, away.textContent]).toEqual([live.header.home, live.header.away]);
+    // The same role as the headline's outcome labels (SoccerMatchHeadline's blocks label).
+    withRootFont(32);
+    act(() => root.render(<SoccerMatchHeadline headline={live.headline} />));
+    const label = host.querySelector("li[data-soccer-outcome] > p") as HTMLElement;
+    expect(label.className).toContain("text-base");
+    expect(label.className).toContain("font-semibold");
+    act(() => root.render(<SoccerMatchPage match={live} />));
+    const heading = host.querySelector("h2")!;
+    expect(heading.className).toContain("text-lg font-bold");
+    expect(heading.getAttribute("aria-label")).toBe(`${live.header.home} 4, ${live.header.away} 0`);
+    expect(heading.querySelector('[aria-hidden="true"]')?.className).toContain("text-2xl");
+  });
+
+  it("CONSTRUCTED long names at a 32 px root font keep the same fixed role, whole, with no fit-to-width sizing", () => {
+    // CONSTRUCTED: the real Hull before body with only the two team names replaced.
+    const longNames = page(
+      { ...detail("hullDetail"), home_team: "Borussia Mönchengladbach", away_team: "Wolverhampton Wanderers" },
+      history("hullHistory"),
+      markets("hullExactMarkets"),
+      EXACT_PRE_NOW,
+    );
+    withRootFont(32);
+    act(() => root.render(<SoccerMatchPage match={longNames} />));
+    const [home, away] = nameSpans();
+    expect([home.textContent, away.textContent]).toEqual([longNames.header.home, longNames.header.away]);
+    expect(home.textContent).toContain("Mönchengladbach");
+    for (const name of [home, away]) {
+      expect(name.className).toContain("text-base font-semibold");
+      expect(name.getAttribute("style")).toBeNull();
+    }
+  });
+});
+
+describe("the exact-score map speaks in the past tense only after the final", () => {
+  it("before kickoff it asks how the match might finish", () => {
+    const before = page(detail("hullDetail"), history("hullHistory"), markets("hullExactMarkets"), EXACT_PRE_NOW, HULL_BEFORE_ADMISSION);
+    act(() => root.render(<SoccerMatchStories stream={oneCard(before.stories.cards.find((c) => c.id === "exact")!)} />));
+    expect(host.querySelector('[data-soccer-card="exact"] h4')?.textContent).toBe("How might it finish?");
+  });
+
+  it("after Hull–Everton's 2–2 final it says how the match finished, with the result and actual line unchanged", () => {
+    const event = detail("hullFinalDetail");
+    const settled = soccerExactCard(event, markets("hullFinalMarkets"), HULL_BEFORE_ADMISSION, soccerMatchPhase(event, EXACT_FINAL_NOW), soccerNames(event), EXACT_FINAL_NOW)!;
+    act(() => root.render(<SoccerMatchStories stream={oneCard(settled)} />));
+    const card = host.querySelector('[data-soccer-card="exact"]')!;
+    expect(card.querySelector("h4")?.textContent).toBe("How it finished");
+    expect(card.textContent).not.toContain("How might it finish?");
+    expect(card.querySelectorAll("button[data-confirmed]")).toHaveLength(1);
+    const names = soccerNames(event);
+    expect(card.querySelector("[data-exact-actual]")?.textContent).toBe(`${EXACT_WORDS.finalScore}: ${names.home} 2–2 ${names.away}`);
+  });
+});

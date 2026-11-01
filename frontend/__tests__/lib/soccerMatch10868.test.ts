@@ -757,6 +757,7 @@ describe("#10868 soccer — exact final score (CONSTRUCTED descriptor)", () => {
   it("before kickoff every listed score of both scopes is on the map with its own chance and clock", () => {
     const card = map(hull, markets("hullExactMarkets"), EXACT_PRE_NOW);
     expect(card.title).toBe(EXACT_WORDS.title);
+    expect(EXACT_WORDS.title).toBe("How might it finish?");
     expect(card.intro).toBe(EXACT_WORDS.beforeIntro);
     expect(card.scopes.map((s) => [s.id, s.label])).toEqual([
       ["full", "Full match"],
@@ -789,6 +790,8 @@ describe("#10868 soccer — exact final score (CONSTRUCTED descriptor)", () => {
     let body = editedRow(markets("hullExactMarkets"), 238846931, { observed_at: stamp });
     body = editedRow(body, 244588607, { observed_at: stamp });
     const card = map(event, body, EXACT_LIVE_NOW);
+    // During play the map still asks how it might finish.
+    expect(card.title).toBe("How might it finish?");
     expect(card.intro).toBe(EXACT_WORDS.liveIntro);
     const full = scope(card, "full");
     expect(original(full, "238846931").current).toMatchObject({ kind: "recorded", observation: { probability: 0.0952 } });
@@ -805,6 +808,9 @@ describe("#10868 soccer — exact final score (CONSTRUCTED descriptor)", () => {
 
   it("Design parity case 2 — after Hull–Everton's 2–2 final the draw is the one HIT and no settled value is a pre-match chance", () => {
     const card = map(hullFinal, markets("hullFinalMarkets"), EXACT_FINAL_NOW);
+    // A completed game speaks in the past tense; nothing else on the card changes with it.
+    expect(card.title).toBe("How it finished");
+    expect(EXACT_WORDS.finalTitle).toBe("How it finished");
     expect(card.intro).toBe(EXACT_WORDS.finalIntro);
     const full = scope(card, "full");
     expect(full.originals.map((o) => o.id)).toEqual(listed("full"));

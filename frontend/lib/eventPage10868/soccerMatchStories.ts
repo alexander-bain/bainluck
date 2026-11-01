@@ -902,6 +902,8 @@ export function soccerHalvesCard(
 
 export const EXACT_WORDS = {
   title: "How might it finish?",
+  /** After the final the map shows a completed game, so its title is in the past tense. */
+  finalTitle: "How it finished",
   beforeIntro:
     "Each listed score’s pre-match chance, recorded at its own time. The chances are not adjusted to add up to 100%.",
   liveIntro: "Each listed score’s pre-match chance beside its own current chance.",
@@ -964,7 +966,7 @@ export function soccerExactCard(
   return {
     id: "exact",
     name: storyName("exact", phase),
-    title: EXACT_WORDS.title,
+    title: phase === "final" ? EXACT_WORDS.finalTitle : EXACT_WORDS.title,
     titles: { pregame: EXACT_WORDS.pregameTitle, current: EXACT_WORDS.currentTitle, result: EXACT_WORDS.finalResultTitle },
     legend: EXACT_WORDS.legend,
     noSelection: EXACT_WORDS.noSelection,
