@@ -86,7 +86,14 @@ d("the iOS event detail hero prints a decided pair", () => {
     // the settled and live captions indistinguishable here — which is the
     // point of the separate both-branches test below. The claim is unchanged:
     // every side of a two-sided question carries a decided percent.
+    //
+    // #10090 RE-ANCHORED (ALEX item 39). The hero pair prints in TENTHS through
+    // `EventHeadlineTenths10090.pair(home:away:)`, which decides both sides as
+    // one (the away tenth is derived from the home one, so the pair sums to
+    // 100.0) — the same claim in a finer unit. So `away` and `home` are asserted
+    // on that call below, and `away` stays banned from a bare rounding.
     const PAIRED_ARGS = ["away", "home", "awayOpen", "opened\\.home"];
+    const TENTHS_PAIRED = new Set(["away", "home"]);
 
     // `home` and `opened.home` also each have exactly ONE legitimate bare use —
     // the withheld arm, where there is no second side to sum with. Those are
@@ -99,10 +106,15 @@ d("the iOS event detail hero prints a decided pair", () => {
         const bare = new RegExp(`formatProbability\\(${arg}\\)`);
         expect({ arg, bare: bare.test(view) }).toEqual({ arg, bare: false });
       }
+      if (TENTHS_PAIRED.has(arg)) continue;
       expect(view).toMatch(
         new RegExp(`formatProbability\\(${arg}, renderedPercent:`),
       );
     }
+    // The hero pair and the NFL paired headline, each decided as one pair.
+    expect(view).toContain("let printed = EventHeadlineTenths10090.pair(home: home, away: away)");
+    expect(view).toContain("let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)");
+    expect(view).not.toMatch(/formatProbability\(away, renderedPercent:/);
   });
 
   /**
@@ -125,8 +137,9 @@ d("the iOS event detail hero prints a decided pair", () => {
     // The hero's lone named number, directly under the name that attributes
     // it — the two are one unit, and the name is what makes the bare rounding
     // legitimate.
+    // #10090: in tenths, and still alone — `away: nil`, no complement.
     expect(view).toMatch(
-      /Text\(named\.home\)[\s\S]{0,400}Text\(formatProbability\(home\)\)/,
+      /Text\(named\.home\)[\s\S]{0,400}Text\(EventHeadlineTenths10090\.pair\(home: home, away: nil\)\.home\)/,
     );
     // Both "Opened {Home} 47%" captions, settled and live. #8320 moved the
     // live one off the hero into Game Info, where `openedText` RETURNS the
@@ -142,7 +155,10 @@ d("the iOS event detail hero prints a decided pair", () => {
     // EXACTLY those three bare uses and no fourth — this is the half the test
     // above hands over, so a bare `home` appearing anywhere else (in the duel
     // arm, say, where it would re-open the 101) fails here.
-    expect(view.match(/formatProbability\(home\)/g) ?? []).toHaveLength(1);
+    // #10090: the lone hero side moved to the tenths call above, so the bare
+    // whole rounding of `home` is gone entirely and its tenths twin is unique.
+    expect(view.match(/formatProbability\(home\)/g) ?? []).toHaveLength(0);
+    expect(view.match(/EventHeadlineTenths10090\.pair\(home: home, away: nil\)/g) ?? []).toHaveLength(1);
     expect(view.match(/formatProbability\(opened\.home\)/g) ?? []).toHaveLength(2);
 
     // AND THE DIRECTION THAT MATTERS: no withheld side is ever printed. If a

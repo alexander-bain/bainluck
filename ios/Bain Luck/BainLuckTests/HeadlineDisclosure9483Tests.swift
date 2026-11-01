@@ -376,8 +376,9 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         let text = try page()
         let call = try XCTUnwrap(text.range(of: "EventHeadlinePhase9483.resolve("))
         let args = String(text[call.upperBound...].prefix(500))
-        // #10090 — the displayed number's clock: committed, or a shown preview's own.
-        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityObservedAt(event)"),
+        // #10090 — the displayed number's clock: committed, or a shown preview's own;
+        // decision J: aged by a confirmation of it (`displayedProbabilityAgeClock`).
+        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityAgeClock(event)"),
                       "the phase must read the hero quote's own clock")
         // #9483 — on the page's display clock, which is the tick in production.
         XCTAssertTrue(args.contains("now: displayNow(tick.date)"), "the phase must age on the minute tick")
