@@ -3923,6 +3923,12 @@ class LiveBlendRefresher:
         self._receipt_lock_wait = [0, 0.0, 0.0, 0]
         #: Receipt publish passes this minute: (count, longest s, its plans).
         self._receipt_pass_max = [0, 0.0, 0]
+        #: #10090: events whose kept graph holds a row this process committed
+        #: after the stamp read the page shows was taken (patched in by
+        #: `note_committed_rows`, or re-read by `_drain_graph_refetch`):
+        #: event id -> `_mono`. A receipt composition then proposes the
+        #: committed rows' reading instead of assuming they are on screen.
+        self._graph_unstamped: dict[int, float] = {}
         #: Claim-lock holds this minute: label -> [count, total s, max s].
         self._claim_holds: dict[str, list] = {}
         #: event id -> `_mono` its stamp became urgent (`URGENT_STAMP_MIN_S`).
@@ -6382,7 +6388,8 @@ class LiveBlendRefresher:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
         if preview_ticket is not None:
-            self._remember_preview_graphs(grouped, original_rows, read_started)
+            self._remember_preview_graphs(grouped, original_rows, read_started,
+                                          stamp_read=overlay_held)
         if preview_ticket is not None:
             # Marked so a caller whose deadline lands here cancels it as before:
             # a retirement writes Redis and the row, never after its caller left.
@@ -8371,7 +8378,8 @@ class LiveBlendRefresher:
 
     # ── #10090 `preview_from_commit` ────────────────────────────────────────
 
-    def _remember_preview_graphs(self, grouped, original_rows, read_started) -> None:
+    def _remember_preview_graphs(self, grouped, original_rows, read_started,
+                                 stamp_read: bool = True) -> None:
         """Keep each live preview event's graph exactly as this read returned it.
 
         Committed rows only: an event with a held-quote overlay (#11138) is not
@@ -8434,6 +8442,13 @@ class LiveBlendRefresher:
                     self._forget_preview_graph(event_id)
                     continue
                 self._install_preview_graph(event_id, (read_started, event, patched))
+                unstamped = getattr(self, "_graph_unstamped", None)
+                if unstamped is not None:
+                    if (stamp_read and len(patched) == len(group)
+                            and all(new is old for new, old in zip(patched, group))):
+                        unstamped.pop(event_id, None)  # the stamp's own read: on screen
+                    elif receipt:
+                        unstamped[event_id] = _mono()
             while len(graphs) > PREVIEW_GRAPH_MAX_EVENTS:
                 self._forget_preview_graph(min(graphs, key=lambda eid: graphs[eid][0]))
         except Exception:
@@ -8508,6 +8523,8 @@ class LiveBlendRefresher:
             queued = False
             kept = set(batch).intersection(self._preview_graphs)
             self.graph_refetch_stats["kept"] += len(kept)
+            for event_id in kept:
+                self._graph_unstamped[event_id] = _mono()
             if kept:
                 for quote in list(self._receipt_quotes.values()):
                     if quote[3] in kept and self._preview_graph_outcomes.get(
@@ -8533,10 +8550,12 @@ class LiveBlendRefresher:
             rows = rows if isinstance(rows, (list, tuple)) else list(rows)
             self._receipt_call(note_rows, rows)
         graphs = getattr(self, "_preview_graphs", None)
-        if graphs is None or not _preview_from_commit_possible():
+        receipt = _preview_at_receipt_possible(getattr(self, "source", None))
+        if graphs is None or not (receipt or _preview_from_commit_possible()):
             return
         try:
             now = _mono()
+            wake = False
             noted = self._noted_commits
             patches: dict[int, dict[int, dict]] = {}
             for row in rows:
@@ -8558,7 +8577,18 @@ class LiveBlendRefresher:
                     # The write's re-rank moved a stored `rank` the resolver sorts by.
                     self._forget_preview_graph(event_id)
                     continue
+                speaking = self._receipt_speaking.get(event_id)
                 self._install_preview_graph(event_id, (read_at, event, patched))
+                if speaking is not None:
+                    self._receipt_speaking[event_id] = speaking  # same markets
+                if receipt:
+                    # #10090: a headline input still waiting (a fallback such as
+                    # `ambiguous`) is composed now from the committed rows,
+                    # before the stamp's read and publish.
+                    self._graph_unstamped[event_id] = now
+                    if event_id in self._hl_pending:
+                        self._receipt_due[event_id] = None
+                        wake = True
                 if _preview_from_commit(event_id):
                     self._commit_preview_due.setdefault(event_id, {}).update(
                         (oid, values["last_updated"]) for oid, values in returned.items()
@@ -8569,6 +8599,8 @@ class LiveBlendRefresher:
                     self._commit_preview_task = asyncio.create_task(
                         self._drain_commit_previews(), name=f"commit-preview-{self.source}",
                     )
+            if wake:
+                self._wake_receipt(True)
         except Exception:
             self.commit_preview_stats["errors"] += 1
             logger.warning("live_blend_refresh[%s]: committed rows not noted", self.source,
@@ -8880,6 +8912,8 @@ class LiveBlendRefresher:
                 holds, self._claim_holds = self._claim_holds, {}
                 for eid in [e for e, at in self._urgent_stamp.items() if now - at > 60.0]:
                     del self._urgent_stamp[eid]
+                for eid in [e for e in self._graph_unstamped if e not in self._preview_graphs]:
+                    del self._graph_unstamped[eid]
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -9158,7 +9192,8 @@ class LiveBlendRefresher:
                 patched.append(_replace(entry, outcomes=outcomes))
             else:
                 patched.append(entry)
-        if not overlaid:
+        from_commit = not overlaid and event_id in self._graph_unstamped
+        if not overlaid and not from_commit:
             # Every received leg is already in the stored rows the graph read:
             # committed and stamped, so on screen (headline clock stops).
             self._hl_resolve(event_id, "in_graph")
@@ -9178,7 +9213,7 @@ class LiveBlendRefresher:
         ids = {getattr(row, "id", None) for row in contributing}
         self._receipt_speaking[event_id] = frozenset(
             row.id for oid in ids if oid in rows for row in rows[oid][0].outcomes)
-        if ids.isdisjoint(overlaid):
+        if not from_commit and ids.isdisjoint(overlaid):
             # The received legs do not contribute to this reading: no headline effect.
             self._hl_resolve(event_id, "not_contributing")
             return None  # the received legs are not this reading's
@@ -9219,6 +9254,11 @@ class LiveBlendRefresher:
             self._note_receipt_class("unchanged", event_id)
             self._hl_resolve(event_id, "unchanged")
             return None
+        if from_commit:
+            self._note_receipt_class("from_commit", event_id)
+            entry = self._hl_pending.get(event_id)
+            if entry is not None and not entry[1].endswith("+commit"):
+                entry[1] += "+commit"  # this wait ends through its committed rows
         return ("propose", event, reading, value, contributing, newest)
 
     async def _preview_at_receipt_rows(self, due: list, withdrawn: list) -> None:
