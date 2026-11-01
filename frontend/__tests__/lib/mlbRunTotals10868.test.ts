@@ -329,6 +329,45 @@ describe("CONSTRUCTED: the total comes only from the displayed pair", () => {
     expect(mlbRunComparison(0, lineAt(lines, 2.5))).toBe("Final 0 runs · below this line");
   });
 
+  it("RT1: an overflowing or unrepresentable sum is no total and no bar, with a finite axis over the offered lines (CONSTRUCTED pairs)", () => {
+    const lines = realLines();
+    const offered = JSON.parse(JSON.stringify(lines)) as MlbRunLine[];
+    // Each side passes the whole, non-negative count rule on its own; only the SUM is wrong.
+    for (const score of [
+      { home: Number.MAX_VALUE, away: Number.MAX_VALUE }, // adds to Infinity
+      { home: Number.MAX_SAFE_INTEGER, away: 1 }, // 2^53: no longer exact
+    ]) {
+      expect([Number.isInteger(score.home), Number.isInteger(score.away), Number.isSafeInteger(score.home + score.away)]).toEqual([true, true, false]);
+      const totals = totalsOf(lines, score);
+      expect({ score, total: totals.total, bar: totals.bar, defaultKey: totals.defaultKey }).toEqual({
+        score,
+        total: null,
+        bar: { kind: "none" },
+        defaultKey: KEY_2_5,
+      });
+      expect(totals.axis).toEqual({ step: 5, upper: 15, labels: [0, 5, 10, 15] });
+      expect([totals.axis.step, totals.axis.upper, ...totals.axis.labels].every(Number.isFinite)).toBe(true);
+      expect(totals.lines.every((l) => l.line <= totals.axis.upper)).toBe(true);
+      expect(totals.lines).toEqual(offered);
+      for (const l of totals.lines) expect(mlbRunComparison(totals.total, l)).toBeNull();
+      const html = renderToStaticMarkup(createElement(MlbRunTotalsCard, { totals, scope: "mlb:15321836:final" }));
+      expect(html).toContain('data-run-total="unavailable"');
+      expect(html).toContain(`>${MLB_RUN_TOTAL_WORDS.unavailable}</dd>`);
+      expect(html).not.toContain("data-run-segment");
+      expect(html).not.toContain("data-run-comparison");
+      expect(html).not.toMatch(/Infinity|NaN/);
+    }
+    // No score ceiling: the largest exact sum is still a total, with a finite axis above it.
+    const largest = totalsOf(lines, { home: Number.MAX_SAFE_INTEGER - 1, away: 1 });
+    expect([largest.total, largest.bar]).toEqual([Number.MAX_SAFE_INTEGER, { kind: "stacked", home: Number.MAX_SAFE_INTEGER - 1, away: 1 }]);
+    expect(Number.isFinite(largest.axis.upper) && largest.axis.upper >= Number.MAX_SAFE_INTEGER).toBe(true);
+    expect(largest.axis.labels.length).toBeGreaterThanOrEqual(2);
+    expect(largest.axis.labels.every(Number.isFinite)).toBe(true);
+    // CONTROL: the ordinary pairs are unchanged.
+    expect(totalsOf(lines, { home: 0, away: 0 }).total).toBe(0);
+    expect(totalsOf(lines).total).toBe(10);
+  });
+
   it("the sporting comparison never reads the source's verdict, and no verdict is read from the count", () => {
     const m = matrix();
     (overOf(fullGameAt(m, 9.5)).result as Json).state = "lost";

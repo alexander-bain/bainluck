@@ -38,7 +38,13 @@
  * (structurally `MlbDisplayedScore`; each side may be null). Only two whole,
  * non-negative counts give a total and a stacked team split; anything else
  * gives no total and no bar — a missing side is never 0, and no total is read
- * off a line or a result.
+ * off a line or a result. The COMPUTED sum is checked too (RT1, native's
+ * `addingReportingOverflow`): only a sum that is a safe integer
+ * (`Number.isSafeInteger`, at most 2^53 − 1, so the addition was exact) is a
+ * total. An overflowing or unrepresentable sum (two `Number.MAX_VALUE` sides
+ * add to Infinity; `MAX_SAFE_INTEGER + 1` is no longer exact) gives no total
+ * and no bar, and the axis then comes from the offered lines alone — never
+ * Infinity, NaN or a made-up 0. There is no sport score ceiling.
  *
  * AXIS (native L76-85): the top is the largest of EVERY line and the total,
  * never the selection, so choosing a line never rescales the bar. Step 5 up to
@@ -191,8 +197,11 @@ export function mlbFinalTotals(
   const home = score?.home ?? null;
   const away = score?.away ?? null;
   // Two whole, non-negative counts, or nothing: a missing side is never 0.
-  const pair = count(home) && count(away) ? { home, away } : null;
-  const total = pair ? pair.home + pair.away : null;
+  const sides = count(home) && count(away) ? { home, away } : null;
+  // RT1: the sum itself must be exact. Both sides are >= 0, so a safe sum also means each side is safe.
+  const sum = sides ? sides.home + sides.away : null;
+  const pair = sides && sum !== null && Number.isSafeInteger(sum) ? sides : null;
+  const total = pair && sum !== null ? sum : null;
   const sorted = [...lines].sort((a, b) => a.line - b.line);
   let defaultIndex = 0;
   if (total !== null) {
