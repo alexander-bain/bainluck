@@ -105,6 +105,9 @@ import SoccerMatchStories from "@/components/event/eventpage10868/SoccerMatchSto
 import mlbFixtures from "./mlbGame10868.fixtures.json";
 import { buildMlbGame } from "@/lib/eventPage10868/mlbGame";
 import MlbGamePage from "@/components/event/eventpage10868/MlbGamePage";
+import mlbRunTotalsFixture from "./mlbRunTotals10868.fixtures.json";
+import { mlbFinalTotals, mlbRunLines } from "@/lib/eventPage10868/mlbRunTotals";
+import MlbRunTotalsCard from "@/components/event/eventpage10868/MlbRunTotalsCard";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
 
@@ -602,6 +605,22 @@ const SURFACES: Surface[] = [
   {
     file: `${HOCKEY}/MlbGamePage.tsx`,
     render: (hit) => renderToStaticMarkup(<MlbGamePage model={mlbGame(hit)} />),
+  },
+  // #10868 — the MLB run-total final leaf: each line's source result in the registered words, apart
+  // from the sporting comparison. CONSTRUCTED forced pair: every option of the REAL final matrix
+  // (`mlbRunTotals10868.fixtures.json`) graded one way, nothing else changed; the displayed pair and
+  // names are the retained final row's (3–7), so the default line and every number stay the same.
+  {
+    file: `${HOCKEY}/MlbRunTotalsCard.tsx`,
+    render: (hit) => {
+      const matrix = JSON.parse(JSON.stringify(mlbRunTotalsFixture.game_question_matrix)) as {
+        questions: Array<{ options: Array<Record<string, unknown>> }>;
+      };
+      for (const q of matrix.questions) for (const o of q.options) o.result = { state: hit ? "won" : "lost" };
+      const row = mlbFixtures.finalDetail;
+      const totals = mlbFinalTotals(mlbRunLines(matrix), { home: row.home_score, away: row.away_score }, { home: row.home_team, away: row.away_team });
+      return totals ? renderToStaticMarkup(<MlbRunTotalsCard totals={totals} scope="mlb:15321836:final" />) : "";
+    },
   },
 ];
 
