@@ -34,6 +34,10 @@ struct EventDetailView: View {
     /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
     @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
+    #if os(iOS)
+    /// #11703 — dismisses the details from UIKit when this page is covered.
+    @State private var detailsCloser = PresentedDetailsCloser()
+    #endif
     @ScaledMetric(relativeTo: .largeTitle) private var eventHeadlineChanceSize9483: CGFloat = 44
     /// v476 — actual score and projected final share one scaled figure style.
     @ScaledMetric(relativeTo: .title2) private var eventHeadlineScoreSize9483: CGFloat = 24
@@ -398,12 +402,17 @@ struct EventDetailView: View {
                 nflCards.resetNBAStream()
                 showProbabilityDetails = false
             }
+            #if os(iOS)
+            .background(PageWindowAnchor(closer: detailsCloser))
+            #endif
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
                 // popover is presented above the whole stack, so a link that
                 // pushes another game would otherwise leave it up over that
                 // page, reading this one's stopped model (build 89: "Update
                 // interrupted … 34 minutes ago" over a healthy live game).
+                // This runs seconds after the push on iOS 27, so the
+                // `PageWindowAnchor` above dismisses the popover first.
                 showProbabilityDetails = false
                 duringPageAnchor.cancel()
                 afterPageAnchor.cancel()
@@ -1098,6 +1107,7 @@ struct EventDetailView: View {
                 // max it measured the text unwrapped and came out 144pt tall.
                 .frame(idealWidth: 300, maxWidth: 300)
                 #if os(iOS)
+                .background(PresentedDetailsAnchor(closer: detailsCloser))
                 .presentationCompactAdaptation(.popover)
                 #endif
         }
