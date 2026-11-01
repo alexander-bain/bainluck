@@ -189,6 +189,8 @@ struct FreshnessRevealView: View {
     /// from, below its own divider so its clocks never read as delivery's.
     var forecast: LivePregameComparison11296.Headline? = nil
     @Environment(\.scenePhase) private var scenePhase
+    /// #10090 — the event page's observation readout; nil elsewhere.
+    @Environment(\.observationReadout10090) private var observation
 
     var body: some View {
         // #9408 — a popover is capped at the space beside its anchor; pinned to
@@ -221,6 +223,10 @@ struct FreshnessRevealView: View {
                     .accessibilityLabel("Received on this device at \(lastReceivedAt.formatted(date: .abbreviated, time: .standard)).")
             } else {
                 Text("No newer probability update received since opening this page.")
+            }
+            if let observation {
+                // The displayed value's own clock, not the receipt above.
+                ObservationReadoutRows10090(readout: observation, now: .now)
             }
             if let tier = Confidence.normalize(confidenceTier) {
                 // #10830 — confidence is not delivery: set apart, and described by

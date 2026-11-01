@@ -164,6 +164,8 @@ final class EventDetailViewModel: ObservableObject {
     /// #10090 — the preview and the epoch floor that orders the next one. The
     /// floor survives every reset: epochs only rise.
     private var blendPreviewReader = BlendPreviewReader.empty
+    /// #10090 — this page visit's forward observation count (`displayedObservation`).
+    private(set) var observationCount = ObservationCount10090()
     private var blendPreviewExpiry: Task<Void, Never>?
 
     /// #8320: a successful stream-triggered authoritative fold read also
@@ -1392,6 +1394,27 @@ final class EventDetailViewModel: ObservableObject {
     func displayedProbabilityObservedAt(_ event: EventDetail) -> Date? {
         BlendPreview.displayedObservedAt(blendPreview, held: event, now: previewNow(),
                                          committed: event.heroProbabilityObservedAt?.asDate)
+    }
+
+    /// #10090 — the details popover's observation readout for the value the
+    /// headline prints. `printsPrice` is the caller's arm: false where the
+    /// hero prints no priced pair (the `vs` arm), which owns no clock, so it
+    /// reads "Time unavailable", `unknown`, and counts nothing.
+    ///
+    /// Called from the hero's body on every render; the count advances only on
+    /// a strictly newer displayed clock (`ObservationCount10090`), so the same
+    /// render read twice counts once. Not `@Published`: it changes only when
+    /// `event` or `blendPreview` already re-rendered the page.
+    @MainActor
+    func displayedObservation(printsPrice: Bool) -> ObservationReadout10090 {
+        guard printsPrice, let event else {
+            return ObservationReadout10090(observedAt: nil, count: observationCount.count, delivery: .unknown)
+        }
+        let observedAt = displayedProbabilityObservedAt(event)
+        observationCount.observe(observedAt)
+        let preview = BlendPreview.displayed(blendPreview, held: event, now: now()) != nil
+        return ObservationReadout10090(observedAt: observedAt, count: observationCount.count,
+                                       delivery: preview ? .dnpl : .committed)
     }
 
     /// `liveBlend` with the displayed preview projected onto its end, for the

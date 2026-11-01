@@ -131,7 +131,10 @@ final class CompactEventPriceStatusTests: XCTestCase {
     func testThePageMountsOneCompactCueInsideTheExistingDisclosureButton() throws {
         let page = try code("Views", "EventDetailView.swift")
         let body = try probabilityDetailsBody()
-        XCTAssertTrue(body.hasPrefix("Button{showProbabilityDetails.toggle()}label:{"),
+        // #10090 — the observation readout is read first, then the button.
+        XCTAssertTrue(body.hasPrefix("letobservation=vm.displayedObservation("),
+                      "control: the scan is reading the disclosure")
+        XCTAssertTrue(body.contains("returnButton{showProbabilityDetails.toggle()}label:{"),
                       "control: the scan is reading the disclosure button")
         XCTAssertEqual(occurrences(of: "CompactEventPriceStatusView(status:vm.liveUpdateStatus", in: page), 1)
         XCTAssertEqual(occurrences(of: "CompactEventPriceStatusView(status:vm.liveUpdateStatus", in: body), 1)
