@@ -40,12 +40,24 @@ def test_the_line_names_kalshis_fields_for_the_game_flush():
     t.add("stamp", 0.5)
     t.flushed(3.0)
     t.flushed(1.0)
+    t.note_sizes(8120, 37)
+    t.note_sizes(7990, 52)
     assert t.line() == (
         "game_flush n=2 total=4.0s max=3.0s phases=2 save=1.8s rank_commit=1.5s "
-        "publish=0.2s stamp=0.5s"
+        "publish=0.2s stamp=0.5s buf_max=8120 batch_max=52"
     )
     t.reset()
     assert t.line().startswith("game_flush n=0 total=0.0s max=0.0s phases=0 ")
+    assert t.line().endswith(" buf_max=0 batch_max=0")
+
+
+def test_every_game_flush_reports_its_buffer_and_batch_sizes():
+    """#10090 CPU: the flush copies the whole price buffer and walks it four
+    times a second; the minute line names the largest of each."""
+    import inspect
+
+    source = inspect.getsource(pm._run_polymarket_ws_consumer)
+    assert "timings.note_sizes(len(price_buffer), len(batch))" in source
 
 
 def test_the_segment_sits_before_held_and_repeats_skipped_still_ends_the_line(caplog):

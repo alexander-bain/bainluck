@@ -469,13 +469,28 @@ class _PMGameFlushTimings(_FlushTimings):
     the same line. Log only: monotonic deltas, no await, no query.
     """
 
+    def reset(self):
+        super().reset()
+        #: #10090 CPU: the largest price buffer a game flush copied this
+        #: minute, and its batch once the side loops' legs left it (each flush
+        #: walks both, four times a second).
+        self.buffer_max = 0
+        self.batch_max = 0
+
+    def note_sizes(self, buffered: int, batch: int) -> None:
+        if buffered > self.buffer_max:
+            self.buffer_max = buffered
+        if batch > self.batch_max:
+            self.batch_max = batch
+
     def line(self):
         rank_commit = max(0.0, self.total - sum(self.spent.values()))
         return (
             f"game_flush n={self.flushes} total={self.total:.1f}s "
             f"max={self.longest:.1f}s phases={self.phases} "
             f"save={self.spent['save']:.1f}s rank_commit={rank_commit:.1f}s "
-            f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s"
+            f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s "
+            f"buf_max={self.buffer_max} batch_max={self.batch_max}"
         )
 
 
@@ -5344,7 +5359,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.polymarket_ws import (
             _PMHeadlineEvents, _pm_lock_isolated_chunks, _pm_pure_bridged_legs,
             _pm_pack_preview_cohort_chunks,
-            _pm_game_flush_span,
+            _pm_game_flush_span, _PM_GAME_FLUSH_TIMINGS,
         )
 
         stamp_owner = catalog_boundary.stamp_owner(blend_refresher)
@@ -5474,6 +5489,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     del batch[oid]
                 for oid in [oid for oid in batch if oid in non_blend_outcome_ids]:
                     del batch[oid]
+            timings = _PM_GAME_FLUSH_TIMINGS.get()
+            if timings is not None:
+                timings.note_sizes(len(price_buffer), len(batch))
             batch_marks = {oid: input_marks[oid] for oid in batch if oid in input_marks}
             stage_trace = getattr(tail_receipts, "exact_trace", None)
             if stage_trace is not None:
