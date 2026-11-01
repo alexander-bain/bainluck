@@ -9550,6 +9550,11 @@ class LiveBlendRefresher:
             stats["old_graph"] += 1
             self._note_receipt_class("old_graph", event_id)
             self._hl_mark(event_id, "old_graph")
+            # 11/01 13:50Z: a Polymarket input waited 98.7 s as late:old_graph.
+            # Its live game's graph had aged out and nothing re-read it until
+            # a stamp did. Re-read it now, as a read_required refusal does;
+            # the re-read queues this event's held quotes for composition.
+            self._schedule_graph_refetch((event_id,), lost=False)
             return None
         commit_patched = False
         waiting = self._hl_pending.get(event_id)

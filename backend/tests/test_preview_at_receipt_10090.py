@@ -592,3 +592,35 @@ def test_the_switch_is_registered_off_with_both_trial_modes():
 def test_observation_basis_of_an_overlaid_row_is_its_bound():
     at = NOW - timedelta(seconds=1)
     assert observation_basis([Row(id=1, last_updated=at)]) == {"1": pytest.approx(at.timestamp())}
+
+
+# ── an aged graph is re-read, not left to the next stamp ─────────────────────
+
+async def test_an_aged_graph_is_reread_at_once_not_left_to_the_next_stamp(r, monkeypatch):
+    """11/01 13:50Z: a Polymarket input waited 98.7 s as `late:old_graph`. Its
+    live game's graph was past the age limit and nothing re-read it until a
+    stamp did. The refusal now schedules the re-read, as a read_required
+    refusal does (not a lost graph: the event still has one)."""
+    read(r, event(), legs())
+    read_at, ev, group = r._preview_graphs[EV]
+    r._preview_graphs[EV] = (read_at - module._receipt_graph_max_age() - 1.0, ev, group)
+    scheduled = []
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: scheduled.append((tuple(ids), lost)))
+
+    assert r._receipt_preview_plan(EV, module._mono(), blend_preview.registry()) is None
+
+    assert r.receipt_preview_stats["old_graph"] == 1
+    assert scheduled == [((EV,), False)]
+
+
+async def test_a_fresh_graph_schedules_no_reread(r, monkeypatch):
+    read(r, event(), legs())
+    receive(r, 0.48)
+    scheduled = []
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: scheduled.append((tuple(ids), lost)))
+
+    r._receipt_preview_plan(EV, module._mono(), blend_preview.registry())
+
+    assert scheduled == [] and r.receipt_preview_stats["old_graph"] == 0

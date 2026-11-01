@@ -25,10 +25,17 @@ class KalshiOrderBook:
         self._last_quotes: dict[str, tuple] = {}
         self._awaiting: set[str] = set()
         self._resnapshots: dict[int, set[str]] = {}
+        #: #10090: a ticker's best quote, computed once per book change. The
+        #: observation and stamp proofs read it several times per frame, and
+        #: each read was a max() over both sides (11/01 kalshi-cpu-sample:
+        #: `_quote` 5.7% self, the loop's top function). Every mutation of a
+        #: ticker's book drops its entry first.
+        self._quote_cache: dict[str, dict] = {}
 
     def forget(self, tickers) -> None:
         """Remove departed subscriptions, including their queued resync work."""
         for ticker in tickers:
+            self._quote_cache.pop(ticker, None)
             self._books.pop(ticker, None)
             self._owners.pop(ticker, None)
             self._observation_snapshot_sids.pop(ticker, None)
@@ -43,6 +50,7 @@ class KalshiOrderBook:
         return requests
 
     def _invalidate(self, ticker: str, sid: int) -> None:
+        self._quote_cache.pop(ticker, None)
         self._books.pop(ticker, None)
         self._observation_snapshot_sids.pop(ticker, None)
         self._last_quotes.pop(ticker, None)
@@ -51,15 +59,19 @@ class KalshiOrderBook:
             self._awaiting.add(ticker)
 
     def _quote(self, ticker: str) -> dict:
-        book = self._books[ticker]
-        bid = max(book["yes"], default=None)
-        no_bid = max(book["no"], default=None)
-        ask = None if no_bid is None else Decimal(1) - no_bid
-        return {
-            "market_ticker": ticker,
-            "yes_bid_dollars": None if bid is None else str(bid),
-            "yes_ask_dollars": None if ask is None else str(ask),
-        }
+        """A fresh dict each call (callers add fields to it), from the cache."""
+        cached = self._quote_cache.get(ticker)
+        if cached is None:
+            book = self._books[ticker]
+            bid = max(book["yes"], default=None)
+            no_bid = max(book["no"], default=None)
+            ask = None if no_bid is None else Decimal(1) - no_bid
+            cached = self._quote_cache[ticker] = {
+                "market_ticker": ticker,
+                "yes_bid_dollars": None if bid is None else str(bid),
+                "yes_ask_dollars": None if ask is None else str(ask),
+            }
+        return dict(cached)
 
     def overlay_ticker(self, payload: dict) -> dict:
         """Keep a delayed ticker summary from replacing a newer healthy book.
@@ -105,6 +117,7 @@ class KalshiOrderBook:
             # re-date it using a new subscription without that owner's snapshot.
             self._observation_snapshot_sids.pop(ticker, None)
         self._owners[ticker] = sid
+        self._quote_cache.pop(ticker, None)  # this frame may change the book
         try:
             if kind == "orderbook_snapshot":
                 book = {}

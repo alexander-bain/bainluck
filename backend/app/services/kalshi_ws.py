@@ -8,6 +8,7 @@ Runs as a long-lived async loop with auto-reconnect.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -45,6 +46,25 @@ async def _cooperative_messages(socket):
 # Includes lifecycle callbacks and quotes queued behind their own event's
 # settlement. The reader backpressures at this bound; it never drops a frame.
 MAX_PENDING_CALLBACKS = 64
+
+
+@functools.lru_cache(maxsize=4096)
+def _book_midpoint(bid_dollars, ask_dollars):
+    """#10090: a tight book's midpoint from its two quote strings; None when
+    either side is missing or invalid, or the spread is 0.50 or wider. Pure
+    (Decimal is immutable), so one parse per distinct quote: the proofs read
+    the same book's midpoint several times per frame (11/01
+    kalshi-cpu-sample: `current_book_midpoint` 3.5% self)."""
+    from decimal import Decimal, InvalidOperation
+    try:
+        bid = Decimal(bid_dollars)
+        ask = Decimal(ask_dollars)
+        if (bid.is_finite() and ask.is_finite()
+                and 0 < bid <= ask < 1 and ask - bid < Decimal("0.50")):
+            return (bid + ask) / 2
+    except (TypeError, ValueError, InvalidOperation):
+        pass
+    return None
 
 
 class _KalshiCallbackDispatch:
@@ -287,19 +307,10 @@ class KalshiWebSocket:
 
     def current_book_midpoint(self, ticker):
         """#10090: live sequenced-book evidence, never an observation clock."""
-        from decimal import Decimal, InvalidOperation
         quote = self._current_book_quote(ticker)
         if quote is None:
             return None
-        try:
-            bid = Decimal(quote["yes_bid_dollars"])
-            ask = Decimal(quote["yes_ask_dollars"])
-            if (bid.is_finite() and ask.is_finite()
-                    and 0 < bid <= ask < 1 and ask - bid < Decimal("0.50")):
-                return (bid + ask) / 2
-        except (KeyError, TypeError, ValueError, InvalidOperation):
-            pass
-        return None
+        return _book_midpoint(quote.get("yes_bid_dollars"), quote.get("yes_ask_dollars"))
 
     def current_book_primary_price(self, ticker):
         """Primary-only proof; an ask/trade fallback never proves a midpoint.
