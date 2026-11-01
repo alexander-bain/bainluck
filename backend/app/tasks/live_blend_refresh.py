@@ -107,6 +107,10 @@ PREVIEW_CAPACITY_RECEIPT_FORMAT = (
 #: ONE Redis connection; one statement and one lock wait per resident spent
 #: the pass's one-second budget before the pass reached most of them.
 PREVIEW_CAPACITY_BATCH = 32
+#: #10090: idle residents are reclaimed only at this fill of the ledger. Each
+#: reclaim moves the global barrier, refusing every other event's next open
+#: (`read_required`); full buckets keep their own reclamation (`retire_policy`).
+PREVIEW_IDLE_RECLAIM_FILL = 0.75
 PREVIEW_CAPACITY_LIVE_OLD_HOURS = 6.0
 
 
@@ -9968,12 +9972,16 @@ class LiveBlendRefresher:
         from sqlalchemy import and_, or_, text
         from app.models.models import Event
         from app.tasks.ws_slate import SUSPENDED_SLATE_MAX_AGE_HOURS
-        from app.utils.blend_preview import PREVIEW_STATUSES
+        from app.utils.blend_preview import PREVIEW_STATUSES, PREVIEW_SUSPENDED_RETIRE_HOURS
 
         return or_(Event.status.not_in(PREVIEW_STATUSES), Event.completed_at.is_not(None),
-                   and_(Event.status.in_(("scheduled", "suspended")),
+                   and_(Event.status == "scheduled",
                         Event.commence_time < text(
-                            f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'")))
+                            f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'")),
+                   # #10090: see `PREVIEW_SUSPENDED_RETIRE_HOURS`.
+                   and_(Event.status == "suspended",
+                        Event.commence_time < text(
+                            f"NOW() - INTERVAL '{int(PREVIEW_SUSPENDED_RETIRE_HOURS * 60)} minutes'")))
 
     @staticmethod
     def _preview_capacity_counts(candidates, rows, now: Optional[datetime], idle=()) -> dict:
@@ -10044,6 +10052,8 @@ class LiveBlendRefresher:
                     end = "ticket_lost" if ticket is None else "no_candidates"
                     return
                 factory = self._session_factory or get_task_session
+                idle_pressure = len(candidates) >= PREVIEW_IDLE_RECLAIM_FILL * max(
+                    1, int(getattr(preview, "max_events", 512) or 512))
 
                 # Fetch existence and retirement eligibility together. This is
                 # a fresh statement after the ticket, never cached slate data.
@@ -10084,7 +10094,8 @@ class LiveBlendRefresher:
 
                 targets = sorted((eid for eid in candidates
                                   if eid not in present or present[eid][2]
-                                  or (eid in idle and idle_target(present[eid]))),
+                                  or (idle_pressure and eid in idle
+                                      and idle_target(present[eid]))),
                                  key=priority)[:PREVIEW_CAPACITY_BATCH]
                 idle_targets = [eid for eid in targets
                                 if eid in present and not present[eid][2]]
@@ -10127,7 +10138,7 @@ class LiveBlendRefresher:
                         # Inline terminal callers already own their slot.
                         async with self._session_slot():
                             await self._retire_preview_event(eid, row[1], ticket)
-                    elif eid in idle and idle_target(row):
+                    elif idle_pressure and eid in idle and idle_target(row):
                         # A reread turned this row future-idle: the batch
                         # below proves it again under its own row lock.
                         idle_targets.append(eid)

@@ -17,6 +17,7 @@ from app.utils.blend_preview import (
     _basis_observation_time,
     _ledger_text,
     carry_selection,
+    long_suspended,
     observe_publication,
     recompose_traced,
 )
@@ -146,6 +147,10 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             return self._drop(source, "local_halted")
         if source not in self.claims:
             return self._drop(source, "local_unclaimed")
+        if long_suspended(kwargs.get("event")):
+            # #10090: retired by the capacity pass (`_preview_retirable_row`);
+            # a re-admission would churn the global barrier again.
+            return self._drop(source, "local_suspended_old")
         observed = _basis_observation_time(kwargs.get("observed_basis"))
         if observed is None or observed <= self._observed_after:
             return self._drop(source, "local_before_floor")

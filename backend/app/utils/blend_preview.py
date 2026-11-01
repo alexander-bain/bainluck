@@ -155,6 +155,26 @@ DEFAULT_MAX_UNCOMMITTED_S = 60.0
 DEFAULT_MAX_EVENTS = 512
 #: Statuses a quote stream serves (`routes/event_stream.QUOTE_STATUSES`).
 PREVIEW_STATUSES = frozenset({"live", "scheduled", "suspended"})
+#: #10090: a `suspended` event this many hours past its start no longer takes
+#: (or keeps) ledger residency. 2026-11-01 05:14Z: 417 of the ledger's ~478
+#: residents were such events (uncovered soccer/basketball/esports past start),
+#: so the ledger sat ~93% full and every capacity pass reclaimed idle scheduled
+#: residents, each reclaim moving the global barrier under every live game's
+#: next open (`read_required`, 300-750 ms receipt waits).
+PREVIEW_SUSPENDED_RETIRE_HOURS = float(os.getenv("PREVIEW_SUSPENDED_RETIRE_HOURS", "6"))
+
+
+def long_suspended(event, now: Optional[datetime] = None) -> bool:
+    """A `suspended` event more than `PREVIEW_SUSPENDED_RETIRE_HOURS` past its start."""
+    if getattr(event, "status", None) != "suspended":
+        return False
+    start = getattr(event, "commence_time", None)
+    if not isinstance(start, datetime):
+        return False
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    return (now - start).total_seconds() > PREVIEW_SUSPENDED_RETIRE_HOURS * 3600
 
 #: The fence (module doc). One counter for every source, so epochs only rise.
 FENCE_EPOCH_KEY = "live:blend_preview:epoch"
