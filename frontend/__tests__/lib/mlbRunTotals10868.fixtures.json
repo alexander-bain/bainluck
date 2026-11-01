@@ -1,0 +1,5489 @@
+{
+ "_header": {
+  "capture": "REAL final capture",
+  "event": "15321836, Chicago White Sox at Houston Astros, 2026-09-30, completed 3-7 (away won)",
+  "generator": "/tmp/cli-10868-tools/make_mlb_run_totals_fixture.py",
+  "generatorSha256": "1a2585574c10698344e3d0d1bbf3ca0c4ea6fffa3408e4ea0ec4f9a891b4c538",
+  "verifier": "/tmp/cli-10868-tools/verify_mlb_run_totals_fixture.py",
+  "source": {
+   "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/atlas-v6/raw/mlb-15321836-game-markets.json",
+   "sha256": "42dfb4898c993c2972eccee4c71634715082b2e6678f6da2c57917da2debdb89",
+   "bytes": 655328,
+   "member": "game_question_matrix"
+  },
+  "policy": "The ENTIRE game_question_matrix member of the source body, JSON-equal and in source key order: all 49 questions and every option, unedited. Nothing else from the body is kept. This is a REAL FINAL capture: it proves the final phase only and is never a before or live input; every before/live state, host value and mutation is CONSTRUCTED in the tests and labelled there."
+ },
+ "game_question_matrix": {
+  "contract": "10238.v1",
+  "display_scope": "game",
+  "questions": [
+   {
+    "question_key": "q:count|runs|game|full_game|ge:10",
+    "proposition_key": "count|runs|game|full_game|ge:10",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "10+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 10,
+     "line": 9.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311417",
+      "label": "Over 9.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311417
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311417,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:11",
+    "proposition_key": "count|runs|game|full_game|ge:11",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "11+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 11,
+     "line": 10.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311422",
+      "label": "Over 10.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311422
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311422,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:12",
+    "proposition_key": "count|runs|game|full_game|ge:12",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "12+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 12,
+     "line": 11.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311421",
+      "label": "Over 11.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311421
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311421,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:13",
+    "proposition_key": "count|runs|game|full_game|ge:13",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "13+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 13,
+     "line": 12.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311420",
+      "label": "Over 12.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311420
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311420,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:14",
+    "proposition_key": "count|runs|game|full_game|ge:14",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "14+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 14,
+     "line": 13.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311419",
+      "label": "Over 13.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311419
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311419,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:15",
+    "proposition_key": "count|runs|game|full_game|ge:15",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "15+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 15,
+     "line": 14.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311418",
+      "label": "Over 14.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311418
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311418,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:3",
+    "proposition_key": "count|runs|game|full_game|ge:3",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "3+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 3,
+     "line": 2.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311416",
+      "label": "Over 2.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311416
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311416,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:4",
+    "proposition_key": "count|runs|game|full_game|ge:4",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "4+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 4,
+     "line": 3.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311415",
+      "label": "Over 3.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311415
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311415,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:5",
+    "proposition_key": "count|runs|game|full_game|ge:5",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "5+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 5,
+     "line": 4.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311414",
+      "label": "Over 4.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311414
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311414,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:6",
+    "proposition_key": "count|runs|game|full_game|ge:6",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "6+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 6,
+     "line": 5.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311413",
+      "label": "Over 5.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311413
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311413,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:7",
+    "proposition_key": "count|runs|game|full_game|ge:7",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "7+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 7,
+     "line": 6.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311412",
+      "label": "Over 6.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311412
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311412,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:8",
+    "proposition_key": "count|runs|game|full_game|ge:8",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "8+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 8,
+     "line": 7.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311411",
+      "label": "Over 7.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311411
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311411,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|full_game|ge:9",
+    "proposition_key": "count|runs|game|full_game|ge:9",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "9+ runs",
+    "market_name": "Chicago White Sox vs Houston: Total Runs",
+    "source_array": "totals",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 9,
+     "line": 8.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311410",
+      "label": "Over 8.5 runs scored",
+      "side": "over",
+      "market_ids": [
+       64968891
+      ],
+      "contributor_outcome_ids": [
+       244311410
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968891,
+        "outcome_id": 244311410,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 13,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382637",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox Team Total: O/U 3.5",
+    "market_name": "Chicago White Sox Team Total: O/U 3.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826424+238826425",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63382637
+      ],
+      "contributor_outcome_ids": [
+       238826424,
+       238826425
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382637,
+        "outcome_id": 238826424,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63382637,
+        "outcome_id": 238826425,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382638",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Houston Astros Team Total: O/U 3.5",
+    "market_name": "Houston Astros Team Total: O/U 3.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826426+238826427",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63382638
+      ],
+      "contributor_outcome_ids": [
+       238826426,
+       238826427
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382638,
+        "outcome_id": 238826427,
+        "leg_side": "under",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63382638,
+        "outcome_id": 238826426,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63434129",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox Team Total: O/U 1.5",
+    "market_name": "Chicago White Sox Team Total: O/U 1.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006568+239006569",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63434129
+      ],
+      "contributor_outcome_ids": [
+       239006568,
+       239006569
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434129,
+        "outcome_id": 239006568,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434129,
+        "outcome_id": 239006569,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63434130",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox Team Total: O/U 2.5",
+    "market_name": "Chicago White Sox Team Total: O/U 2.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006570+239006571",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63434130
+      ],
+      "contributor_outcome_ids": [
+       239006570,
+       239006571
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434130,
+        "outcome_id": 239006570,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434130,
+        "outcome_id": 239006571,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63434132",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox Team Total: O/U 4.5",
+    "market_name": "Chicago White Sox Team Total: O/U 4.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006574+239006575",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63434132
+      ],
+      "contributor_outcome_ids": [
+       239006574,
+       239006575
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434132,
+        "outcome_id": 239006574,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434132,
+        "outcome_id": 239006575,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63434133",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox Team Total: O/U 5.5",
+    "market_name": "Chicago White Sox Team Total: O/U 5.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006576+239006577",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63434133
+      ],
+      "contributor_outcome_ids": [
+       239006576,
+       239006577
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434133,
+        "outcome_id": 239006576,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434133,
+        "outcome_id": 239006577,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63434134",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Houston Astros Team Total: O/U 2.5",
+    "market_name": "Houston Astros Team Total: O/U 2.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006578+239006579",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63434134
+      ],
+      "contributor_outcome_ids": [
+       239006578,
+       239006579
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434134,
+        "outcome_id": 239006578,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434134,
+        "outcome_id": 239006579,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63434136",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Houston Astros Team Total: O/U 4.5",
+    "market_name": "Houston Astros Team Total: O/U 4.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006582+239006583",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63434136
+      ],
+      "contributor_outcome_ids": [
+       239006582,
+       239006583
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434136,
+        "outcome_id": 239006583,
+        "leg_side": "under",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434136,
+        "outcome_id": 239006582,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63434137",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Houston Astros Team Total: O/U 5.5",
+    "market_name": "Houston Astros Team Total: O/U 5.5",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006584+239006585",
+      "label": "Over",
+      "side": "category",
+      "market_ids": [
+       63434137
+      ],
+      "contributor_outcome_ids": [
+       239006584,
+       239006585
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434137,
+        "outcome_id": 239006585,
+        "leg_side": "under",
+        "raw_probability": 1.0,
+        "observed_at": "2026-09-30T20:12:54.509108+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434137,
+        "outcome_id": 239006584,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-09-30T20:12:54.509108+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:64118689",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox vs Houston: Team Total",
+    "market_name": "Chicago White Sox vs Houston: Team Total",
+    "source_array": "team_totals",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:241361829",
+      "label": "Houston over 1.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361829
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361829,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361828",
+      "label": "Houston over 2.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361828
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361828,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361840",
+      "label": "Houston over 3.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361840
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361840,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361839",
+      "label": "Houston over 4.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361839
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361839,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361837",
+      "label": "Houston over 5.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361837
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361837,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361836",
+      "label": "Houston over 6.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361836
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361836,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361838",
+      "label": "Houston over 7.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361838
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361838,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361835",
+      "label": "Chicago White Sox over 1.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361835
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361835,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361834",
+      "label": "Chicago White Sox over 2.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361834
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361834,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361833",
+      "label": "Chicago White Sox over 3.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361833
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361833,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361832",
+      "label": "Chicago White Sox over 4.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361832
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361832,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361831",
+      "label": "Chicago White Sox over 5.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361831
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361831,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361830",
+      "label": "Chicago White Sox over 6.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361830
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361830,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:241361841",
+      "label": "Chicago White Sox over 7.5 runs scored",
+      "side": "category",
+      "market_ids": [
+       64118689
+      ],
+      "contributor_outcome_ids": [
+       241361841
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-04T04:52:28.357727+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64118689,
+        "outcome_id": 241361841,
+        "leg_side": "over",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-04T04:52:28.357727+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 14,
+     "returned": 14,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 8.0,
+      "legs": 14
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382625",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Spread: Houston Astros (-1.5)",
+    "market_name": "Spread: Houston Astros (-1.5)",
+    "source_array": "spreads",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826401",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63382625
+      ],
+      "contributor_outcome_ids": [
+       238826401
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T00:08:07.285306+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382625,
+        "outcome_id": 238826401,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [
+     {
+      "option_key": "o:238826400",
+      "outcome_id": 238826400,
+      "label": "Houston Astros",
+      "side": "home",
+      "value_state": "unavailable"
+     }
+    ],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 1
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382634",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Spread: Houston Astros (-2.5)",
+    "market_name": "Spread: Houston Astros (-2.5)",
+    "source_array": "spreads",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826419",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63382634
+      ],
+      "contributor_outcome_ids": [
+       238826419
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T00:08:07.285306+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382634,
+        "outcome_id": 238826419,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [
+     {
+      "option_key": "o:238826418",
+      "outcome_id": 238826418,
+      "label": "Houston Astros",
+      "side": "home",
+      "value_state": "unavailable"
+     }
+    ],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 1
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382635",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Spread: Chicago White Sox (-1.5)",
+    "market_name": "Spread: Chicago White Sox (-1.5)",
+    "source_array": "spreads",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826420",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63382635
+      ],
+      "contributor_outcome_ids": [
+       238826420
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T07:50:15.502661+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382635,
+        "outcome_id": 238826420,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [
+     {
+      "option_key": "o:238826421",
+      "outcome_id": 238826421,
+      "label": "Houston Astros",
+      "side": "home",
+      "value_state": "unavailable"
+     }
+    ],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 1
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382636",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Spread: Chicago White Sox (-2.5)",
+    "market_name": "Spread: Chicago White Sox (-2.5)",
+    "source_array": "spreads",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826422",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63382636
+      ],
+      "contributor_outcome_ids": [
+       238826422
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T07:50:15.502661+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382636,
+        "outcome_id": 238826422,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [
+     {
+      "option_key": "o:238826423",
+      "outcome_id": 238826423,
+      "label": "Houston Astros",
+      "side": "home",
+      "value_state": "unavailable"
+     }
+    ],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 1
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "m:63536353",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Spread: Chicago White Sox (-3.5)",
+    "market_name": "Spread: Chicago White Sox (-3.5)",
+    "source_array": "spreads",
+    "quantity": null,
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239372648",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63536353
+      ],
+      "contributor_outcome_ids": [
+       239372648
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T07:50:15.502661+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63536353,
+        "outcome_id": 239372648,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [
+     {
+      "option_key": "o:239372649",
+      "outcome_id": 239372649,
+      "label": "Houston Astros",
+      "side": "home",
+      "value_state": "unavailable"
+     }
+    ],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 1
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|home|first_5_innings|-1.5",
+    "proposition_key": "handicap|runs|home|first_5_innings|-1.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Houston Astros -1.5 runs · First 5 innings",
+    "market_name": "Chicago White Sox vs Houston: First 5 Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Houston Astros"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -1.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:242527398",
+      "label": "Houston wins by over 1.5 runs",
+      "side": "home",
+      "market_ids": [
+       64466817
+      ],
+      "contributor_outcome_ids": [
+       242527398
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466817,
+        "outcome_id": 242527398,
+        "leg_side": "home",
+        "raw_probability": 0.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 4,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|home|first_5_innings|-2.5",
+    "proposition_key": "handicap|runs|home|first_5_innings|-2.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Houston Astros -2.5 runs · First 5 innings",
+    "market_name": "Chicago White Sox vs Houston: First 5 Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Houston Astros"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -2.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:242527397",
+      "label": "Houston wins by over 2.5 runs",
+      "side": "home",
+      "market_ids": [
+       64466817
+      ],
+      "contributor_outcome_ids": [
+       242527397
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466817,
+        "outcome_id": 242527397,
+        "leg_side": "home",
+        "raw_probability": 0.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 4,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|away|full_game|-1.5",
+    "proposition_key": "handicap|runs|away|full_game|-1.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Chicago White Sox -1.5 runs",
+    "market_name": "Chicago White Sox vs Houston: Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Chicago White Sox"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -1.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311207",
+      "label": "Chicago White Sox wins by over 1.5 runs",
+      "side": "away",
+      "market_ids": [
+       64968872
+      ],
+      "contributor_outcome_ids": [
+       244311207
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968872,
+        "outcome_id": 244311207,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 9,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|away|full_game|-2.5",
+    "proposition_key": "handicap|runs|away|full_game|-2.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Chicago White Sox -2.5 runs",
+    "market_name": "Chicago White Sox vs Houston: Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Chicago White Sox"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -2.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311206",
+      "label": "Chicago White Sox wins by over 2.5 runs",
+      "side": "away",
+      "market_ids": [
+       64968872
+      ],
+      "contributor_outcome_ids": [
+       244311206
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968872,
+        "outcome_id": 244311206,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 9,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|away|full_game|-3.5",
+    "proposition_key": "handicap|runs|away|full_game|-3.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Chicago White Sox -3.5 runs",
+    "market_name": "Chicago White Sox vs Houston: Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Chicago White Sox"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -3.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311205",
+      "label": "Chicago White Sox wins by over 3.5 runs",
+      "side": "away",
+      "market_ids": [
+       64968872
+      ],
+      "contributor_outcome_ids": [
+       244311205
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968872,
+        "outcome_id": 244311205,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 9,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|home|full_game|-1.5",
+    "proposition_key": "handicap|runs|home|full_game|-1.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Houston Astros -1.5 runs",
+    "market_name": "Chicago White Sox vs Houston: Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Houston Astros"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -1.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311213",
+      "label": "Houston wins by over 1.5 runs",
+      "side": "home",
+      "market_ids": [
+       64968872
+      ],
+      "contributor_outcome_ids": [
+       244311213
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968872,
+        "outcome_id": 244311213,
+        "leg_side": "home",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 9,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|home|full_game|-2.5",
+    "proposition_key": "handicap|runs|home|full_game|-2.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Houston Astros -2.5 runs",
+    "market_name": "Chicago White Sox vs Houston: Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Houston Astros"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -2.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311212",
+      "label": "Houston wins by over 2.5 runs",
+      "side": "home",
+      "market_ids": [
+       64968872
+      ],
+      "contributor_outcome_ids": [
+       244311212
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968872,
+        "outcome_id": 244311212,
+        "leg_side": "home",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 9,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|runs|home|full_game|-3.5",
+    "proposition_key": "handicap|runs|home|full_game|-3.5",
+    "display_scope": "game",
+    "kind": "signed_handicap",
+    "label": "Houston Astros -3.5 runs",
+    "market_name": "Chicago White Sox vs Houston: Spread",
+    "source_array": "spreads",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Houston Astros"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -3.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:244311211",
+      "label": "Houston wins by over 3.5 runs",
+      "side": "home",
+      "market_ids": [
+       64968872
+      ],
+      "contributor_outcome_ids": [
+       244311211
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-09T04:12:27.146416+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64968872,
+        "outcome_id": 244311211,
+        "leg_side": "home",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-09T04:12:27.146416+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 9,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.0,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382627",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "1st 5 Innings Spread: Houston Astros (-1.5)",
+    "market_name": "1st 5 Innings Spread: Houston Astros (-1.5)",
+    "source_array": "period_markets",
+    "quantity": null,
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826405",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63382627
+      ],
+      "contributor_outcome_ids": [
+       238826405
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T00:08:07.285306+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382627,
+        "outcome_id": 238826405,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:238826404",
+      "label": "Houston Astros",
+      "side": "home",
+      "market_ids": [
+       63382627
+      ],
+      "contributor_outcome_ids": [
+       238826404
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T00:08:07.285306+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382627,
+        "outcome_id": 238826404,
+        "leg_side": "home",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 2,
+     "missing_identified": 0
+    },
+    "complete": true,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63382628",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "1st 5 Innings Spread: Chicago White Sox (-1.5)",
+    "market_name": "1st 5 Innings Spread: Chicago White Sox (-1.5)",
+    "source_array": "period_markets",
+    "quantity": null,
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_predicate"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826407",
+      "label": "Houston Astros",
+      "side": "home",
+      "market_ids": [
+       63382628
+      ],
+      "contributor_outcome_ids": [
+       238826407
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T00:08:07.285306+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382628,
+        "outcome_id": 238826407,
+        "leg_side": "home",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:238826406",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63382628
+      ],
+      "contributor_outcome_ids": [
+       238826406
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T00:08:07.285306+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382628,
+        "outcome_id": 238826406,
+        "leg_side": "away",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T00:08:07.285306+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 2,
+     "missing_identified": 0
+    },
+    "complete": true,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|first_5_innings|ge:3",
+    "proposition_key": "count|runs|game|first_5_innings|ge:3",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "3+ runs · First 5 innings",
+    "market_name": "Chicago White Sox vs. Houston Astros: 1st 5 Innings O/U 2.5",
+    "source_array": "period_markets",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 3,
+     "line": 2.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826408+238826409",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       63382629
+      ],
+      "contributor_outcome_ids": [
+       238826408,
+       238826409
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382629,
+        "outcome_id": 238826408,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63382629,
+        "outcome_id": 238826409,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|first_5_innings|ge:4",
+    "proposition_key": "count|runs|game|first_5_innings|ge:4",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "4+ runs · First 5 innings",
+    "market_name": "Chicago White Sox vs. Houston Astros: 1st 5 Innings O/U 3.5",
+    "source_array": "period_markets",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 4,
+     "line": 3.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826410+238826411",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       63382630
+      ],
+      "contributor_outcome_ids": [
+       238826410,
+       238826411
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382630,
+        "outcome_id": 238826410,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63382630,
+        "outcome_id": 238826411,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|first_5_innings|ge:5",
+    "proposition_key": "count|runs|game|first_5_innings|ge:5",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "5+ runs · First 5 innings",
+    "market_name": "Chicago White Sox vs. Houston Astros: 1st 5 Innings O/U 4.5",
+    "source_array": "period_markets",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 5,
+     "line": 4.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826412+238826413",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       63382631
+      ],
+      "contributor_outcome_ids": [
+       238826412,
+       238826413
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382631,
+        "outcome_id": 238826412,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63382631,
+        "outcome_id": 238826413,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|first_5_innings|ge:6",
+    "proposition_key": "count|runs|game|first_5_innings|ge:6",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "6+ runs · First 5 innings",
+    "market_name": "Chicago White Sox vs. Houston Astros: 1st 5 Innings O/U 5.5",
+    "source_array": "period_markets",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 6,
+     "line": 5.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238826414+238826415",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       63382632
+      ],
+      "contributor_outcome_ids": [
+       238826414,
+       238826415
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63382632,
+        "outcome_id": 238826414,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63382632,
+        "outcome_id": 238826415,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "unknown",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|runs|game|first_5_innings|ge:7",
+    "proposition_key": "count|runs|game|first_5_innings|ge:7",
+    "display_scope": "game",
+    "kind": "count_threshold",
+    "label": "7+ runs · First 5 innings",
+    "market_name": "Chicago White Sox vs. Houston Astros: 1st 5 Innings O/U 6.5",
+    "source_array": "period_markets",
+    "quantity": {
+     "key": "runs",
+     "singular": "run",
+     "plural": "runs",
+     "integer": true
+    },
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 7,
+     "line": 6.5
+    },
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:239006558+239006559",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       63434124
+      ],
+      "contributor_outcome_ids": [
+       239006558,
+       239006559
+      ],
+      "published": {
+       "value": null,
+       "value_state": "unblended_equivalents",
+       "basis": "unknown",
+       "source": null,
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63434124,
+        "outcome_id": 239006558,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       },
+       {
+        "source": "polymarket",
+        "market_id": 63434124,
+        "outcome_id": 239006559,
+        "leg_side": "under",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "unknown",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": false,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:64466841",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox vs Houston: First 5 Innings Total",
+    "market_name": "Chicago White Sox vs Houston: First 5 Innings Total",
+    "source_array": "period_markets",
+    "quantity": null,
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "untyped",
+     "reason": "untyped_unit"
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:242527526",
+      "label": "Over 0.5 runs",
+      "side": "category",
+      "market_ids": [
+       64466841
+      ],
+      "contributor_outcome_ids": [
+       242527526
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466841,
+        "outcome_id": 242527526,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527527",
+      "label": "Over 1.5 runs",
+      "side": "category",
+      "market_ids": [
+       64466841
+      ],
+      "contributor_outcome_ids": [
+       242527527
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466841,
+        "outcome_id": 242527527,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527528",
+      "label": "Over 2.5 runs",
+      "side": "category",
+      "market_ids": [
+       64466841
+      ],
+      "contributor_outcome_ids": [
+       242527528
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466841,
+        "outcome_id": 242527528,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527529",
+      "label": "Over 3.5 runs",
+      "side": "category",
+      "market_ids": [
+       64466841
+      ],
+      "contributor_outcome_ids": [
+       242527529
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466841,
+        "outcome_id": 242527529,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527530",
+      "label": "Over 4.5 runs",
+      "side": "category",
+      "market_ids": [
+       64466841
+      ],
+      "contributor_outcome_ids": [
+       242527530
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466841,
+        "outcome_id": 242527530,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527531",
+      "label": "Over 5.5 runs",
+      "side": "category",
+      "market_ids": [
+       64466841
+      ],
+      "contributor_outcome_ids": [
+       242527531
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466841,
+        "outcome_id": 242527531,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527532",
+      "label": "Over 6.5 runs",
+      "side": "category",
+      "market_ids": [
+       64466841
+      ],
+      "contributor_outcome_ids": [
+       242527532
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466841,
+        "outcome_id": 242527532,
+        "leg_side": "over",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 7,
+     "returned": 7,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 7.0,
+      "legs": 7
+     }
+    ]
+   },
+   {
+    "question_key": "m:62924880",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Game 2: Chicago White Sox vs Houston",
+    "market_name": "Game 2: Chicago White Sox vs Houston",
+    "source_array": "other",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:237408093",
+      "label": "Chicago White Sox",
+      "side": "category",
+      "market_ids": [
+       62924880
+      ],
+      "contributor_outcome_ids": [
+       237408093
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-11T01:54:38.949913+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 62924880,
+        "outcome_id": 237408093,
+        "leg_side": "category",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-11T01:54:38.949913+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:237408094",
+      "label": "Houston",
+      "side": "category",
+      "market_ids": [
+       62924880
+      ],
+      "contributor_outcome_ids": [
+       237408094
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-11T01:54:38.949913+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 62924880,
+        "outcome_id": 237408094,
+        "leg_side": "category",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-11T01:54:38.949913+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": 2,
+     "loaded": 2,
+     "returned": 2,
+     "missing_identified": 0
+    },
+    "complete": true,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:62972331",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox vs Houston: First Inning Run",
+    "market_name": "Chicago White Sox vs Houston: First Inning Run",
+    "source_array": "other",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:237550050",
+      "label": "Yes",
+      "side": "category",
+      "market_ids": [
+       62972331
+      ],
+      "contributor_outcome_ids": [
+       237550050
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-01T00:11:55.624702+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 62972331,
+        "outcome_id": 237550050,
+        "leg_side": "category",
+        "raw_probability": 0.99,
+        "observed_at": "2026-10-01T00:11:55.624702+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 1,
+     "returned": 1,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 0.99,
+      "legs": 1
+     }
+    ]
+   },
+   {
+    "question_key": "m:63031586",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox vs. Houston Astros",
+    "market_name": "Chicago White Sox vs. Houston Astros",
+    "source_array": "other",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:237749374",
+      "label": "Chicago White Sox",
+      "side": "away",
+      "market_ids": [
+       63031586
+      ],
+      "contributor_outcome_ids": [
+       237749374
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T07:50:15.502661+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63031586,
+        "outcome_id": 237749374,
+        "leg_side": "away",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:237749375",
+      "label": "Houston Astros",
+      "side": "home",
+      "market_ids": [
+       63031586
+      ],
+      "contributor_outcome_ids": [
+       237749375
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T07:50:15.502661+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63031586,
+        "outcome_id": 237749375,
+        "leg_side": "home",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 2,
+     "missing_identified": 0
+    },
+    "complete": true,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:63194397",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Will there be a run scored in the first inning?: Chicago White Sox vs. Houston Astros",
+    "market_name": "Will there be a run scored in the first inning?: Chicago White Sox vs. Houston Astros",
+    "source_array": "other",
+    "quantity": null,
+    "period": null,
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:238235977",
+      "label": "Yes",
+      "side": "category",
+      "market_ids": [
+       63194397
+      ],
+      "contributor_outcome_ids": [
+       238235977
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T07:50:15.502661+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63194397,
+        "outcome_id": 238235977,
+        "leg_side": "category",
+        "raw_probability": 1.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:238235978",
+      "label": "No",
+      "side": "category",
+      "market_ids": [
+       63194397
+      ],
+      "contributor_outcome_ids": [
+       238235978
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-01T07:50:15.502661+00:00"
+      },
+      "source_evidence": [
+       {
+        "source": "polymarket",
+        "market_id": 63194397,
+        "outcome_id": 238235978,
+        "leg_side": "category",
+        "raw_probability": 0.0,
+        "observed_at": "2026-10-01T07:50:15.502661+00:00"
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 2,
+     "returned": 2,
+     "missing_identified": 0
+    },
+    "complete": true,
+    "source_totals": [
+     {
+      "source": "polymarket",
+      "raw_sum": 1.0,
+      "legs": 2
+     }
+    ]
+   },
+   {
+    "question_key": "m:64466793",
+    "proposition_key": null,
+    "display_scope": "game",
+    "kind": "named_options",
+    "label": "Chicago White Sox vs Houston: First 5 Innings",
+    "market_name": "Chicago White Sox vs Houston: First 5 Innings",
+    "source_array": "other",
+    "quantity": null,
+    "period": {
+     "key": "first_5_innings",
+     "label": "First 5 innings"
+    },
+    "subject": null,
+    "predicate": null,
+    "complement_question_key": null,
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:242527314",
+      "label": "Chicago White Sox",
+      "side": "category",
+      "market_ids": [
+       64466793
+      ],
+      "contributor_outcome_ids": [
+       242527314
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466793,
+        "outcome_id": 242527314,
+        "leg_side": "category",
+        "raw_probability": 1.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527316",
+      "label": "Tie",
+      "side": "category",
+      "market_ids": [
+       64466793
+      ],
+      "contributor_outcome_ids": [
+       242527316
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466793,
+        "outcome_id": 242527316,
+        "leg_side": "category",
+        "raw_probability": 0.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     },
+     {
+      "option_key": "o:242527315",
+      "label": "Houston",
+      "side": "category",
+      "market_ids": [
+       64466793
+      ],
+      "contributor_outcome_ids": [
+       242527315
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": null
+      },
+      "source_evidence": [
+       {
+        "source": "kalshi",
+        "market_id": 64466793,
+        "outcome_id": 242527315,
+        "leg_side": "category",
+        "raw_probability": 0.0,
+        "observed_at": null
+       }
+      ],
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ],
+    "missing_options": [],
+    "option_counts": {
+     "declared": null,
+     "loaded": 3,
+     "returned": 3,
+     "missing_identified": 0
+    },
+    "complete": null,
+    "source_totals": [
+     {
+      "source": "kalshi",
+      "raw_sum": 1.0,
+      "legs": 3
+     }
+    ]
+   }
+  ],
+  "series_markets_count": null,
+  "coverage": {
+   "scope": "rows_served_by_this_response",
+   "questions": 49,
+   "options": 75,
+   "by_kind": {
+    "count_threshold": 18,
+    "signed_handicap": 8,
+    "rank_predicate": 0
+   },
+   "untyped": {
+    "untyped_period": 0,
+    "untyped_unit": 39,
+    "untyped_subject": 0,
+    "untyped_predicate": 9
+   },
+   "build_errors": 0
+  }
+ }
+}
