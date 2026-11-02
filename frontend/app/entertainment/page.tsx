@@ -14,7 +14,7 @@ import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 import type {
   EntertainmentData,
-  EntMarketRow,
+  EntMarketRow as ApiEntMarketRow,
   EntThresholdGroup,
   EntThemeMusic,
   EntThemeMoviesTV,
@@ -23,6 +23,26 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import EntertainmentSkeleton from "@/components/skeletons/EntertainmentSkeleton";
 import s from "./entertainment.module.css";
+
+// Additive category contract; older cached bodies omit the refusal flag.
+type EntMarketRow = ApiEntMarketRow & { ladder_treatment_refused?: boolean };
+
+function UnavailableLadderPrices() {
+  return <div className="text-text-secondary text-sm">
+    <p className="font-medium">Probabilities unavailable</p>
+    <p>The threshold probabilities conflict.</p>
+  </div>;
+}
+
+function RefusedLadderCard({ market }: { market: EntMarketRow }) {
+  return <Link href={`/futures/${market.market_id}`}>
+    <div className={`${s.card} p-4 flex flex-col gap-3`}>
+      <div className="font-semibold text-text-primary">{market.q}</div>
+      <UnavailableLadderPrices />
+      <EntSourceChip source={market.src} />
+    </div>
+  </Link>;
+}
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -463,7 +483,7 @@ function HeroCardContent({
           >
             {market.q}
           </div>
-          {market.hook && (
+          {!market.ladder_treatment_refused && market.hook && (
             <div
               style={{
                 fontSize: isLead ? 13 : 12,
@@ -591,6 +611,8 @@ function CardBodyByKind({
   // by name — the split below when they are one question, the list when not —
   // never under the default branch's "Yes likely".
   const named = namedPairLabels(market);
+
+  if (market.ladder_treatment_refused) return <UnavailableLadderPrices />;
 
   if (market.kind === "spotify" && outcomes.length >= 2) {
     return (
@@ -805,6 +827,7 @@ function MusicSection({ data }: { data: EntThemeMusic }) {
 }
 
 function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
+  if (markets.some(m => m.ladder_treatment_refused)) return <MarketList markets={markets} />;
   const best = markets.reduce(
     (a, b) => (b.top_outcomes.length > a.top_outcomes.length ? b : a),
     markets[0]
@@ -868,7 +891,7 @@ function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
 function AlbumGrid({ markets }: { markets: EntMarketRow[] }) {
   return (
     <div className={s.grid3}>
-      {markets.map((m, i) => (
+      {markets.map((m, i) => m.ladder_treatment_refused ? <RefusedLadderCard key={i} market={m} /> : (
         <Link key={i} href={`/futures/${m.market_id}`}>
           <div className={s.card} style={{ padding: 16, height: "100%" }}>
             <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
@@ -916,6 +939,7 @@ function StreamingGrid({ markets }: { markets: EntMarketRow[] }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
         {markets.map((m, i) => {
+          if (m.ladder_treatment_refused) return <RefusedLadderCard key={i} market={m} />;
           const qLower = m.q.toLowerCase();
           const isUp = qLower.includes("increase") || qLower.includes("above") || qLower.includes("over") || qLower.includes("up");
           const isDown = qLower.includes("decrease") || qLower.includes("below") || qLower.includes("under") || qLower.includes("down");
@@ -995,6 +1019,7 @@ function RTHeatmap({ groups }: { groups: EntThresholdGroup[] }) {
 }
 
 function BillboardHeatmap({ markets }: { markets: EntMarketRow[] }) {
+  if (markets.some(m => m.ladder_treatment_refused)) return <MarketList markets={markets} />;
   const best = markets.reduce(
     (a, b) => (b.top_outcomes.length > a.top_outcomes.length ? b : a),
     markets[0]
@@ -1075,7 +1100,7 @@ function MoviesTVSection({ data }: { data: EntThemeMoviesTV }) {
 
       {tab === "rt" && (
         data.rt_groups && data.rt_groups.length > 0
-          ? <RTHeatmap groups={data.rt_groups} />
+          ? <><RTHeatmap groups={data.rt_groups} /><MarketList markets={data.rt_markets.filter(m => (m as EntMarketRow).ladder_treatment_refused)} /></>
           : data.rt_markets.length > 0
             ? <MarketList markets={data.rt_markets} />
             : <MarketFallback markets={data.side_markets} />
@@ -1106,7 +1131,7 @@ function BoxOfficeCards({ markets }: { markets: EntMarketRow[] }) {
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {markets.map((m, i) => (
+        {markets.map((m, i) => m.ladder_treatment_refused ? <RefusedLadderCard key={i} market={m} /> : (
           <Link key={i} href={`/futures/${m.market_id}`}>
             <div>
               <div
@@ -1149,6 +1174,7 @@ function RealityCards({ markets }: { markets: EntMarketRow[] }) {
   return (
     <div className={s.grid3}>
       {markets.map((m, i) => {
+        if (m.ladder_treatment_refused) return <RefusedLadderCard key={i} market={m} />;
         const isBinary = m.outcome_count <= 2;
         return (
           <Link key={i} href={`/futures/${m.market_id}`}>
@@ -1276,6 +1302,7 @@ function CulturalMoments({ markets }: { markets: EntMarketRow[] }) {
 }
 
 function MomentCard({ market }: { market: EntMarketRow }) {
+  if (market.ladder_treatment_refused) return <RefusedLadderCard market={market} />;
   // #6766: a YES/NO bar may only draw a pair that IS a yes and a no — see the
   // note on `twoLegCardPair`. Anything else falls through to the rung list
   // below, which prints each served leg with its own name and its own price.
@@ -1407,6 +1434,7 @@ function TechCultureSidebar({ data }: { data: EntThemeTechCulture }) {
       </div>
 
       {data.markets.map((m, i) => {
+        if ((m as EntMarketRow).ladder_treatment_refused) return <RefusedLadderCard key={i} market={m} />;
         // #6766 — THIS RAIL IS WHERE THE DEFECT WAS PHOTOGRAPHED. "# of views of
         // next MrBeast video on week 1?" is two BUCKETS — `90-100M` 6.0% and
         // `100M+` 5.1% — and the bar read `YES 6% NO 94%`, a number no venue
@@ -1507,6 +1535,7 @@ function MarketFallback({ markets }: { markets: EntMarketRow[] }) {
 }
 
 function GenericMarketCard({ market }: { market: EntMarketRow }) {
+  if (market.ladder_treatment_refused) return <RefusedLadderCard market={market} />;
   // #9803: a ladder's priced leader is its loosest rung ("Above 45 · 95%");
   // the served headline is the rung the market actually leans on.
   const answer = market.headline ?? {

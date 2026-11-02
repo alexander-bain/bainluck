@@ -76,8 +76,12 @@ enum EntertainmentSectionRows {
 // MARK: - View
 
 struct EntertainmentView: View {
-    @StateObject private var viewModel = EntertainmentViewModel()
+    @StateObject private var viewModel: EntertainmentViewModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+
+    init(viewModel: @autoclosure @escaping () -> EntertainmentViewModel = EntertainmentViewModel()) {
+        _viewModel = StateObject(wrappedValue: viewModel())
+    }
 
     private var isCompact: Bool {
         #if os(macOS)
@@ -244,7 +248,7 @@ struct EntertainmentView: View {
                         .lineLimit(isLead ? 3 : 2)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if let hook = m.hook {
+                    if !m.refusesLadderPrices, let hook = m.hook {
                         Text(hook)
                             .font(.system(size: isLead ? 13 : 12))
                             .foregroundStyle(DS.textSecondary)
@@ -285,7 +289,9 @@ struct EntertainmentView: View {
         let outcomes = m.topOutcomes
         let kind = m.kind ?? "binary"
 
-        if kind == "spotify" && outcomes.count >= 2 {
+        if m.refusesLadderPrices {
+            unavailableLadderPrices
+        } else if kind == "spotify" && outcomes.count >= 2 {
             spotifyHeroBody(leader: outcomes[0], runnerUp: outcomes[1], isLead: isLead)
         } else if kind == "reality" && m.outcomeCount <= 2 && outcomes.count >= 2 {
             binaryHeroBody(a: outcomes[0], b: outcomes[1], isLead: isLead)
@@ -295,6 +301,15 @@ struct EntertainmentView: View {
             // Binary yes/no
             yesNoBar(yes: m.prob, no: 100 - m.prob)
         }
+    }
+
+    private var unavailableLadderPrices: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Probabilities unavailable").font(.subheadline.weight(.medium))
+            Text("The threshold probabilities conflict.").font(.subheadline)
+        }
+        .foregroundStyle(DS.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func spotifyHeroBody(leader: EntOutcome, runnerUp: EntOutcome, isLead: Bool) -> some View {
@@ -403,6 +418,7 @@ struct EntertainmentView: View {
             case .billboard:
                 if let groups = data.billboardGroups, !groups.isEmpty {
                     thresholdGroupSection(title: "Billboard", groups: groups)
+                    marketGrid((data.billboardWatch ?? []).filter(\.refusesLadderPrices))
                 } else if let billboard = data.billboardWatch, !billboard.isEmpty {
                     marketGrid(Array(billboard.prefix(6)))
                 } else if let side = data.sideMarkets, !side.isEmpty {
@@ -448,7 +464,7 @@ struct EntertainmentView: View {
                         HStack(spacing: 4) {
                             Text("🎧")
                                 .font(.system(size: 12))
-                            Text("Spotify Chart Race")
+                            Text(best.refusesLadderPrices ? "Spotify" : "Spotify Chart Race")
                                 .font(.system(size: 11, weight: .heavy))
                                 .tracking(0.5)
                                 .textCase(.uppercase)
@@ -465,48 +481,53 @@ struct EntertainmentView: View {
                 .padding(.bottom, 10)
 
                 // Contenders
-                VStack(spacing: 0) {
-                    ForEach(Array(best.topOutcomes.prefix(6).enumerated()), id: \.offset) { idx, o in
-                        HStack(spacing: 10) {
-                            Text("\(idx + 1)")
-                                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                                .foregroundStyle(idx == 0 ? spotifyGreen : DS.textMuted)
-                                .frame(width: 24, alignment: .trailing)
-                                .monospacedDigit()
+                if best.refusesLadderPrices {
+                    unavailableLadderPrices
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(best.topOutcomes.prefix(6).enumerated()), id: \.offset) { idx, o in
+                            HStack(spacing: 10) {
+                                Text("\(idx + 1)")
+                                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(idx == 0 ? spotifyGreen : DS.textMuted)
+                                    .frame(width: 24, alignment: .trailing)
+                                    .monospacedDigit()
 
-                            coverArt(imageUrl: nil, title: o.name, kind: "spotify", size: 32)
+                                coverArt(imageUrl: nil, title: o.name, kind: "spotify", size: 32)
 
-                            Text(o.name)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(DS.textPrimary)
-                                .lineLimit(1)
+                                Text(o.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(DS.textPrimary)
+                                    .lineLimit(1)
 
-                            Spacer()
+                                Spacer()
 
-                            VStack(alignment: .trailing, spacing: 2) {
-                                ProbabilityNumber(value: o.prob, size: 15, color: DS.textPrimary)
-                                if let delta = o.delta24h, abs(delta) > 0.1 {
-                                    DeltaBadge(value: delta)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    ProbabilityNumber(value: o.prob, size: 15, color: DS.textPrimary)
+                                    if let delta = o.delta24h, abs(delta) > 0.1 {
+                                        DeltaBadge(value: delta)
+                                    }
                                 }
                             }
-                        }
-                        .padding(.vertical, 8)
-                        .background(idx == 0 ? spotifyGreen.opacity(0.04) : .clear)
+                            .padding(.vertical, 8)
+                            .background(idx == 0 ? spotifyGreen.opacity(0.04) : .clear)
 
-                        // Probability track under each contender
-                        DSProbabilityBar(
-                            value: o.prob,
-                            height: 4,
-                            color: idx == 0
-                                ? spotifyGreen
-                                : spotifyGreen.opacity(0.35)
-                        )
+                            // Probability track under each contender
+                            DSProbabilityBar(
+                                value: o.prob,
+                                height: 4,
+                                color: idx == 0
+                                    ? spotifyGreen
+                                    : spotifyGreen.opacity(0.35)
+                            )
 
-                        if idx < min(best.topOutcomes.count, 6) - 1 {
-                            Divider()
-                                .padding(.leading, 34)
+                            if idx < min(best.topOutcomes.count, 6) - 1 {
+                                Divider()
+                                    .padding(.leading, 34)
+                            }
                         }
                     }
+
                 }
 
                 // Footer
@@ -539,6 +560,7 @@ struct EntertainmentView: View {
             case .rt:
                 if let groups = data.rtGroups, !groups.isEmpty {
                     thresholdGroupSection(title: "RT Score Thresholds", groups: groups)
+                    marketGrid((data.rtMarkets ?? []).filter(\.refusesLadderPrices))
                 } else if let rt = data.rtMarkets, !rt.isEmpty {
                     marketGrid(Array(rt.prefix(6)))
                 } else if let side = data.sideMarkets, !side.isEmpty {
@@ -547,6 +569,7 @@ struct EntertainmentView: View {
             case .boxoffice:
                 if let groups = data.boxOfficeGroups, !groups.isEmpty {
                     thresholdGroupSection(title: "Box Office Ranges", groups: groups)
+                    marketGrid((data.boxOffice ?? []).filter(\.refusesLadderPrices))
                 } else if let box = data.boxOffice, !box.isEmpty {
                     marketGrid(Array(box.prefix(6)))
                 } else if let side = data.sideMarkets, !side.isEmpty {
@@ -621,7 +644,7 @@ struct EntertainmentView: View {
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let hook = m.hook {
+            if !m.refusesLadderPrices, let hook = m.hook {
                 Text(hook)
                     .font(.system(size: 12))
                     .foregroundStyle(DS.textSecondary)
@@ -629,7 +652,9 @@ struct EntertainmentView: View {
             }
 
             // Body: binary yes/no or multi-outcome
-            if m.outcomeCount <= 2 {
+            if m.refusesLadderPrices {
+                unavailableLadderPrices
+            } else if m.outcomeCount <= 2 {
                 yesNoBar(yes: m.prob, no: 100 - m.prob)
             } else {
                 VStack(spacing: 6) {
@@ -750,7 +775,9 @@ struct EntertainmentView: View {
             }
 
             // Probability display
-            if m.outcomeCount <= 2 {
+            if m.refusesLadderPrices {
+                unavailableLadderPrices
+            } else if m.outcomeCount <= 2 {
                 // Binary: probability bar
                 HStack(spacing: 8) {
                     DSProbabilityBar(
@@ -779,7 +806,7 @@ struct EntertainmentView: View {
 
             // Delta + source
             HStack(spacing: 6) {
-                if let delta = m.topOutcomes.first?.delta24h, abs(delta) >= 1 {
+                if !m.refusesLadderPrices, let delta = m.topOutcomes.first?.delta24h, abs(delta) >= 1 {
                     DeltaBadge(value: delta)
                 }
                 if let vol = m.volume24h, vol > 0 {

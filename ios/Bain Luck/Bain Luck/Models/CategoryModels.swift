@@ -242,11 +242,14 @@ nonisolated struct EntMarketRow: Decodable, Identifiable, Sendable {
     let resolutionDate: String?
     let imageUrl: String?
     let hook: String?
+    /// Additive reader refusal; legacy numeric fields remain for older decoders.
+    let ladderTreatmentRefused: Bool?
+    var refusesLadderPrices: Bool { ladderTreatmentRefused == true }
 
     private enum CodingKeys: String, CodingKey {
         case q, prob, src, marketId, externalId, kind, topOutcomes, outcomeCount
         case volume24h = "volume24H"
-        case resolutionDate, imageUrl, hook
+        case resolutionDate, imageUrl, hook, ladderTreatmentRefused
     }
 }
 

@@ -9,11 +9,19 @@ final class EntertainmentViewModel: ObservableObject {
     @Published private(set) var loading = true
     @Published private(set) var error: String?
 
+    private let fetchEntertainment: @MainActor () async throws -> EntertainmentResponse
+
+    init(fetchEntertainment: @escaping @MainActor () async throws -> EntertainmentResponse = {
+        try await APIClient.shared.fetchEntertainment()
+    }) {
+        self.fetchEntertainment = fetchEntertainment
+    }
+
     @MainActor
     func load() async {
         loading = data == nil
         do {
-            data = try await APIClient.shared.fetchEntertainment()
+            data = try await fetchEntertainment()
             error = nil
             loading = false
         } catch {

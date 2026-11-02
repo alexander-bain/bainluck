@@ -9,6 +9,7 @@ Single endpoint returns the full response consumed by the frontend.
 
 import json
 import logging
+from math import isclose
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -22,7 +23,11 @@ from app.services import get_db
 from app.utils.futures_liveness import market_reads_settled
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.ladder_headline import ladder_median_row
-from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder, monotonicity_violations
+from app.utils.outcome_display import (
+    LADDER_MIN_DRAWN_RUNGS,
+    incoherent_ladder_verdict,
+)
 from app.utils.cross_source_matching import (
     # #2427 — the deduping pair, not bare `clean_outcomes`: every row this file
     # builds must also lose a Polymarket `_yes`/`_no` leg that duplicates a rung
@@ -280,6 +285,47 @@ def _market_row(
     ]
     if not priced:
         return None
+    # #4751 admits numeric cumulative fields only. Parse the FULL grammar
+    # before filtering absent prices, so an unpriced exception cannot invent
+    # a ladder. Date trimming/refusal awaits rule-backed #11620 adoption.
+    numeric_ladder = cumulative_outcome_ladder(
+        [{"name": o.name, "outcome": o} for o in outcomes],
+        question=market.name,
+    )
+    refused = False
+    if numeric_ladder is not None:
+        # Evaluate before selecting a leader or top-N slice, with withheld
+        # prices absent. Keep the shared attribution policy unchanged.
+        incoherent, priced_rungs = incoherent_ladder_verdict(
+            outcomes,
+            lambda o: o.name,
+            lambda o: o.current_probability if o.id not in withheld_ids else None,
+            market.name,
+        )
+        refused = bool(incoherent) and (
+            priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS
+        )
+        if incoherent and not refused:
+            rejected_ids = {outcomes[i].id for i in incoherent}
+            priced = [o for o in priced if o.id not in rejected_ids]
+        # The shared trim tolerates 2pp; 88/90 and 35/36 still contradict.
+        # Refuse surviving reversals without choosing another "wrong" rung.
+        # Ignore only arithmetic noise (e.g. .03 vs (.01 + .05) / 2),
+        # locally: shared diagnostics retain their strict raw comparisons.
+        legs, direction = numeric_ladder
+        eligible_ids = {o.id for o in priced}
+        violations = monotonicity_violations(
+            {
+                value: row["outcome"].current_probability
+                for value, row in legs
+                if row["outcome"].id in eligible_ids
+            },
+            direction,
+        )
+        refused = refused or any(
+            not isclose(low_prob, high_prob, rel_tol=0, abs_tol=1e-12)
+            for _low, low_prob, _high, high_prob in violations
+        )
     # #6255 — A RUNG WE HOLD NO PRICE FOR IS NOT A RUNG AT 0%.
     #
     # The refusal above is the same rule ONE LEVEL UP. It never reached inside
@@ -302,7 +348,15 @@ def _market_row(
     top = priced[:max_outcomes]
     outcome_count = len(outcomes)
     return {
-        **_ladder_headline(market, priced),
+        **(
+            {"headline": None}
+            if refused else _ladder_headline(market, priced, outcomes)
+        ),
+        # Explicit reader refusal: headline=None also means an ordinary
+        # non-ladder, so it cannot prohibit the client's numeric fallback.
+        # Legacy numbers retain decoder/ranking compatibility; updated readers
+        # must not render them when this flag is true. No stored price changes.
+        **({"ladder_treatment_refused": True} if refused else {}),
         "q": market.name,
         # #6255 — `priced[0]`, not `outcomes[0]`. Both name the leader on every
         # ladder that has one priced rung above zero, but they part when every
@@ -375,7 +429,7 @@ def _market_row(
         # staleness gate cannot come to disagree with the leader the card shows.
         "hook": (
             None
-            if is_hook_stale(
+            if refused or is_hook_stale(
                 hook_description=market.hook_description,
                 hook_generated_at=getattr(market, "hook_generated_at", None),
                 hook_leader_at_generation=getattr(
@@ -392,7 +446,7 @@ def _market_row(
     }
 
 
-def _ladder_headline(market: FuturesMarket, priced: list) -> dict:
+def _ladder_headline(market: FuturesMarket, priced: list, outcomes: list) -> dict:
     """#9803 — the rung a ladder card quotes, when it is not the priced leader.
 
     `priced` is sorted by price, so on a cumulative ladder `priced[0]` is the
@@ -411,11 +465,20 @@ def _ladder_headline(market: FuturesMarket, priced: list) -> dict:
     Every other row carries `headline: None` and renders exactly as before.
     `prob` stays the priced leader because `_is_interesting`, `_by_uncertainty`
     and the hook gate all read it, and a display fix must not reorder the page.
+
+    #4751: establish grammar from all cleaned outcomes, but use only prices
+    that survived admission and coherence. Neither an unpriced exception nor
+    a rejected rung can silently change the claim this headline makes.
     """
+    eligible_ids = {o.id for o in priced}
     median = ladder_median_row(
-        [{"name": o.name, "outcome": o} for o in priced],
+        [{"name": o.name, "outcome": o} for o in outcomes],
         question=market.name,
-        probability=lambda r: r["outcome"].current_probability,
+        probability=lambda r: (
+            r["outcome"].current_probability
+            if r["outcome"].id in eligible_ids
+            else None
+        ),
     )
     if median is None or median["outcome"] is priced[0]:
         return {"headline": None}
@@ -484,6 +547,11 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
     ungrouped = []
 
     for row in markets:
+        if row.get("ladder_treatment_refused"):
+            # A heatmap cell would lose the refusal and resurrect row['prob'].
+            # Keep the complete linked row available to the ordinary cards.
+            ungrouped.append(row)
+            continue
         key = _normalize_group_key(row["q"])
         if key:
             by_entity[key].append(row)
@@ -698,6 +766,8 @@ def _mark_ladder(row: dict) -> None:
     as a calendar. A race of named contenders fails the check on its first leg
     and is served exactly as before, price order and all.
 
+    This flag describes the served slice for presentation, not the full-board
+    grammar used to admit a headline or refuse numeric treatment.
     Only the ORDER of the served slice changes. `prob` stays the priced leader
     `_market_row` chose, and the slice is the same legs.
     """
