@@ -6,10 +6,15 @@ on:
   # GitHub has no pull_request_target review event. Reviewed default-branch
   # code observes submitted/dismissed reviews without running privileged PR code.
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/30 * * * *'
   repository_dispatch:
     types: [tier-b-review]
   workflow_dispatch:
+    inputs:
+      pull_number:
+        description: Pull request to evaluate
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -18,7 +23,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: tier-b-review-policy
+  group: tier-b-review-policy-${{ github.event.pull_request.number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep' }}
   cancel-in-progress: false
 
 jobs:

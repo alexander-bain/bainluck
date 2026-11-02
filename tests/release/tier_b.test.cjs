@@ -22,7 +22,7 @@ test('stale, dismissed and superseded approvals cannot pass', () => {
   assert.equal(verdict({...pr,labels:[]},[]).conclusion,'success');
 });
 
-test('an unlabeled PR cannot overwrite a failing check on a shared head', async () => {
+test('a sweep groups an unlabeled PR with a failing Tier-B sibling on the same head', async () => {
   const {evaluate} = require(file);
   const prs = [
     {number:1,state:'open',user:{login:'alex'},head:{sha:'same'},labels:[{name:'tier-b'}]},
@@ -32,7 +32,7 @@ test('an unlabeled PR cannot overwrite a failing check on a shared head', async 
   const github={rest:{pulls:{get:()=>{},list:()=>{},listReviews:()=>{},listFiles:()=>{}},checks:{listForRef:()=>{},create:async x=>created.push(x)}},
     paginate:async (fn,args)=>fn===github.rest.pulls.list ? prs : []};
   github.rest.pulls.get=async(args)=>({data:prs.find(pr=>pr.number===args.pull_number)});
-  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:2}}});
+  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},eventName:'schedule',payload:{}});
   assert.equal(created.length,1);
   assert.equal(created[0].conclusion,'failure');
 });
@@ -44,17 +44,17 @@ test('refreshed Tier-B sibling joining a head cannot disappear from the group',a
   const current=old.map(pr=>({...pr,head:{sha:'same'}}));const created=[];
   const github={rest:{pulls:{get:async args=>({data:current.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
     paginate:async fn=>fn===github.rest.pulls.list?old:[]};
-  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:2}}});
+  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},eventName:'schedule',payload:{}});
   assert.equal(created.find(c=>c.head_sha==='same')?.conclusion,'failure');
 });
 
-test('a surviving event reconciles a dismissed review on another head',async()=>{
+test('the scheduled sweep reconciles a dismissed review on another head',async()=>{
   const {evaluate}=require(file);
   const prs=[{number:1,state:'open',user:{login:'alex'},head:{sha:'a'},labels:[{name:'tier-b'}]},
     {number:2,state:'open',user:{login:'alex'},head:{sha:'b'},labels:[]}];const created=[];
   const github={rest:{pulls:{get:async args=>({data:prs.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
     paginate:async fn=>fn===github.rest.pulls.list?prs:[]};
-  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{client_payload:{pull_number:2}}});
+  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},eventName:'schedule',payload:{}});
   assert.equal(created.find(c=>c.head_sha==='a')?.conclusion,'failure');
 });
 
@@ -113,6 +113,101 @@ test('bot review works on ordinary changes but unknown file scope never publishe
   await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:1}}});
   assert.equal(created[0].conclusion,'success');
   unavailable=true;created.length=0;
-  await assert.rejects(evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{}}),/file API unavailable/);
+  await assert.rejects(evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},eventName:'schedule',payload:{}}),/file API unavailable/);
   assert.equal(created.length,0);
+});
+
+// Count actual mock API requests, including publishes, on the population that
+// exhausted the installation budget. No network or extra dependencies needed.
+function policyClient(prs) {
+  const calls=[],created=[];
+  const clone=pr=>({...pr,head:{...pr.head},labels:pr.labels.map(label=>({...label}))});
+  const request=(method,args)=>calls.push({method,...args});
+  const github={rest:{pulls:{},checks:{}},paginate:async(fn,args)=>fn(args)};
+  github.rest.pulls.list=async args=>{request('list',args);return prs.map(clone);};
+  github.rest.pulls.get=async args=>{request('get',args);return {data:clone(prs.find(pr=>pr.number===args.pull_number))};};
+  github.rest.pulls.listReviews=async args=>{request('reviews',args);return [];};
+  github.rest.pulls.listFiles=async args=>{request('files',args);return [];};
+  github.rest.checks.listForRef=async args=>{request('checks',args);return [];};
+  github.rest.checks.create=async args=>{request('create',args);created.push(args);};
+  return {github,calls,created};
+}
+const repo={owner:'alexander-bain',repo:'bainluck'};
+const openPRs=()=>Array.from({length:74},(_,i)=>({number:i+1,state:'open',user:{login:'author'},
+  head:{sha:`head-${i+1}`},labels:i<6?[{name:'tier-b'}]:[]}));
+
+for (const [eventName,payload] of [
+  ['pull_request_target',{pull_request:{number:1}}],
+  ['repository_dispatch',{client_payload:{pull_number:1}}],
+  ['workflow_dispatch',{inputs:{pull_number:'1'}}],
+]) test(`${eventName} evaluates only its PR, even with 74 open PRs`,async()=>{
+  const {evaluate}=require(file);
+  const {github,calls,created}=policyClient(openPRs());
+  await evaluate(github,{repo,eventName,payload});
+  assert.equal(calls.filter(c=>c.method==='list').length,0);
+  assert.deepEqual(calls.filter(c=>c.pull_number).map(c=>c.pull_number),[1,1,1,1]);
+  assert.equal(created.length,1);
+  assert.equal(created[0].head_sha,'head-1');
+  assert.equal(created[0].conclusion,'failure');
+  assert.equal(calls.length,6);
+});
+
+test('a Tier-A event skips reviews and files and publishes success',async()=>{
+  const {evaluate}=require(file);
+  const {github,calls,created}=policyClient(openPRs());
+  await evaluate(github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:74}}});
+  assert.equal(calls.filter(c=>['list','reviews','files'].includes(c.method)).length,0);
+  assert.deepEqual(calls.filter(c=>c.method==='get').map(c=>c.pull_number),[74,74]);
+  assert.equal(calls.length,4);
+  assert.equal(created[0].conclusion,'success');
+});
+
+test('a 74-PR sweep stays linear and never refreshes or reads review scope for Tier A',async()=>{
+  const {evaluate}=require(file);
+  const {github,calls,created}=policyClient(openPRs());
+  await evaluate(github,{repo,eventName:'schedule',payload:{}});
+  assert.equal(calls.filter(c=>c.method==='list').length,2);
+  assert.equal(calls.filter(c=>c.method==='get').length,12);
+  assert.equal(calls.filter(c=>c.method==='reviews').length,6);
+  assert.equal(calls.filter(c=>c.method==='files').length,6);
+  assert.ok(calls.filter(c=>c.pull_number).every(c=>c.pull_number<=6));
+  assert.equal(created.length,74);
+  assert.equal(created.filter(c=>c.conclusion==='failure').length,6);
+  assert.equal(created.filter(c=>c.conclusion==='success').length,68);
+  assert.equal(calls.length,174);
+});
+
+test('an unscoped event cannot accidentally sweep every open PR',async()=>{
+  const {evaluate}=require(file);
+  for (const pull_number of [undefined,0,-1,'not-a-number']) {
+    const {github,calls}=policyClient(openPRs());
+    await assert.rejects(evaluate(github,{repo,eventName:'repository_dispatch',payload:{client_payload:{pull_number}}}),/number is required/);
+    assert.equal(calls.length,0);
+  }
+});
+
+test('membership churn retries once, then fails every observed head',async()=>{
+  const {evaluate}=require(file);
+  let version=1,changes=0,gets=0;const created=[];
+  const current=()=>({number:1,state:'open',user:{login:'author'},head:{sha:`head-${version}`},labels:[]});
+  const github={rest:{pulls:{get:async()=>{gets++;return {data:current()};},list:()=>{},listReviews:()=>{},listFiles:()=>{}},
+    checks:{listForRef:()=>{},create:async result=>created.push(result)}},
+    paginate:async fn=>{
+      if(fn===github.rest.pulls.list)assert.fail('event must not list PRs');
+      if(fn===github.rest.checks.listForRef && changes<2){changes++;version++;}
+      return [];
+    }};
+  await evaluate(github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:1}}});
+  assert.equal(gets,4,'one initial and one final read per attempt, at most two attempts');
+  const latest=new Map(created.map(check=>[check.head_sha,check]));
+  assert.deepEqual([...latest.keys()].sort(),['head-1','head-2','head-3']);
+  assert.ok([...latest.values()].every(check=>check.conclusion==='failure'));
+});
+
+test('the workflow uses a half-hour sweep and keeps per-PR events from coalescing each other',()=>{
+  const workflow=fs.readFileSync(path.resolve(__dirname,'../../.github/workflows/tier-b.yml'),'utf8');
+  assert.match(workflow,/cron: '\*\/30 \* \* \* \*'/);
+  assert.match(workflow,/cancel-in-progress: false/);
+  assert.ok(workflow.includes("github.event.pull_request.number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));
+  assert.match(workflow,/pull_number:\s+description: Pull request to evaluate\s+required: true\s+type: number/);
 });
