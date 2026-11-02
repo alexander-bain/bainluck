@@ -697,6 +697,8 @@ export interface TeamFutureItem {
   display_tier?: number | null;
   /** #11493 — the grid's verdict on this row's column (see ChampionshipPathEntry.state). */
   state?: TeamDecidedState | null;
+  /** #11634 — the outcome is one of the club's players (see types.ts TeamFutureItem). */
+  outcome_is_player?: boolean;
 }
 
 /**

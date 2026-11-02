@@ -2286,6 +2286,9 @@ export interface TeamFutureItem {
   /** #11493 — team page only: "eliminated" | "won" when the championship grid has
    *  decided this row's column for the club. Absent when undecided or unknown. */
   state?: "eliminated" | "won" | null;
+  /** #11634 — the outcome names a player on the matched club's roster (Max
+   *  Muncy's Silver Slugger leg on the Dodgers). False also means "no roster". */
+  outcome_is_player?: boolean;
   canonical_market_key?: string | null;
   /** Season/year for display, e.g. "2025-26" or "2026" (BR52). */
   season_year?: string | null;
