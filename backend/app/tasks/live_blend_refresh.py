@@ -1055,14 +1055,10 @@ ADMITTED_LIVE_RUN = 3
 # event, its cohort, clock, supersession and fences as before. After
 # READER_FIRST_RUN held stamps in a row while an unheld live game waited, the
 # oldest unheld one goes next, so unheld games keep at least one turn in
-# READER_FIRST_RUN + 1. ``STAMP_READER_FIRST=0`` restores the old order; an
-# unreadable or stale held set is empty, which is the old order too.
-STAMP_READER_FIRST_ENV = "STAMP_READER_FIRST"
+# READER_FIRST_RUN + 1. An unreadable or stale held set is empty, which is the
+# old order. (Its ``STAMP_READER_FIRST`` off switch was removed in the settings
+# freeze, docs/live-settings.md.)
 READER_FIRST_RUN = 3
-
-
-def stamp_reader_first_on() -> bool:
-    return os.getenv(STAMP_READER_FIRST_ENV, "1").strip() != "0"
 
 
 def _reader_held_tag(source, event_id) -> str:
@@ -3890,7 +3886,7 @@ class LiveBlendRefresher:
         #: #10090 — events whose latest stamp read said live: admitted ones
         #: are stamped ahead of the rest (`_FreshAdmission.next_queued`).
         self._live_event_ids: set[int] = set()
-        #: #10090 held-first stamps (STAMP_READER_FIRST_ENV): the event ids a
+        #: #10090 held-first stamps: the event ids a
         #: reader holds open, installed by a consumer
         #: (`reader_presence.held_event_cache().event_ids`); None keeps the
         #: old order.
@@ -4141,9 +4137,9 @@ class LiveBlendRefresher:
 
     def _reader_held_ids(self) -> Container[int]:
         """#10090 held-first: the held event ids, or empty (the old order)
-        with the switch off, no source installed, or a failing one."""
+        with no source installed, or a failing one."""
         source = self.reader_held
-        if source is None or not stamp_reader_first_on():
+        if source is None:
             return frozenset()
         try:
             return source()
