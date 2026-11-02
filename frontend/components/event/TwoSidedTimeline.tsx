@@ -23,6 +23,8 @@ interface TwoSidedTimelineProps {
   competitors: EventConceptCompetitor[];
   label: string;
   evolutionMarketId?: number | null;
+  /** #11877: default range in hours (168 = 7d; 8760 = All when embedded in a collection). */
+  defaultHours?: number;
 }
 
 const RANGES: { label: string; hours: number }[] = [
@@ -31,22 +33,79 @@ const RANGES: { label: string; hours: number }[] = [
   { label: "All", hours: 8760 },
 ];
 
-export default function TwoSidedTimeline({
-  competitors,
-  label,
-  evolutionMarketId,
-}: TwoSidedTimelineProps) {
-  const [hours, setHours] = useState(168);
-  const pair = fieldOrder(competitors).slice(0, 2);
+export function TwoSidedHistoryTimeline({
+  marketId,
+  defaultHours = 168,
+  height = 240,
+}: {
+  marketId?: number | null;
+  defaultHours?: number;
+  height?: number;
+}) {
+  const [hours, setHours] = useState(defaultHours);
   const { data } = useSWR(
-    evolutionMarketId ? ["event-twosided", evolutionMarketId, hours] : null,
+    marketId ? ["event-twosided", marketId, hours] : null,
     // #683: the "All" rung also asks for every recovered archive interval.
     () => fetchFuturesHistory(
-      evolutionMarketId as number, hours, undefined, 4, undefined,
+      marketId as number, hours, undefined, 4, undefined,
       historyRangeOption(hours === 8760 ? "all" : null),
     ),
     { revalidateOnFocus: false },
   );
+
+  const outcomes: FuturesOutcomeHistory[] = Array.isArray(data?.outcomes) ? data.outcomes : [];
+  const hasHistory = outcomes.some(
+    // #10955 (U1): a settlement point is the result, not a recorded reading,
+    // so it never makes up the two readings a drawable history needs.
+    (o) => Array.isArray(o.history) && o.history.filter((p) => p.probability != null && !isSettlementPoint(p)).length >= 2,
+  );
+  // #683: the All rung's full read can leave older prices out and too few to
+  // draw; the timeline (and its rung chips, the way back) still shows, and the
+  // chart's sparse state says what was withheld.
+  const historyWithheld = servedPartialHistory(data);
+
+  if (!hasHistory && !historyWithheld) return null;
+
+  return (
+    <div className="mt-5" data-testid="two-sided-history-timeline" data-hours={hours}>
+      <div className="flex justify-end mb-2">
+        <div className="flex rounded-full bg-surface-elevated p-0.5">
+          {RANGES.map((r) => (
+            <button
+              key={r.hours}
+              type="button"
+              aria-pressed={hours === r.hours}
+              onClick={() => setHours(r.hours)}
+              className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                hours === r.hours
+                  ? "bg-surface-card text-text-primary shadow-card font-semibold"
+                  : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <FuturesChart
+        historyData={outcomes}
+        fixedYAxis
+        showAxes
+        showLegend={false}
+        height={height}
+        historyWithheld={servedPartialHistory(data)}
+      />
+    </div>
+  );
+}
+
+export default function TwoSidedTimeline({
+  competitors,
+  label,
+  evolutionMarketId,
+  defaultHours = 168,
+}: TwoSidedTimelineProps) {
+  const pair = fieldOrder(competitors).slice(0, 2);
 
   if (pair.length < 2) return null;
 
@@ -142,17 +201,7 @@ export default function TwoSidedTimeline({
      prints what this hero printed yesterday. Nothing here removes a number #6844
      put on the screen, and the rail (`MatchupsRail`) is the surface where the
      served value is the only pairing there has ever been. */
-  const [aServed, bServed] = fieldIsThePair ? servedBoutPercents(pair) : [null, null];
-  const outcomes: FuturesOutcomeHistory[] = data?.outcomes ?? [];
-  const hasHistory = outcomes.some(
-    // #10955 (U1): a settlement point is the result, not a recorded reading,
-    // so it never makes up the two readings a drawable history needs.
-    (o) => o.history.filter((p) => p.probability != null && !isSettlementPoint(p)).length >= 2,
-  );
-  // #683: the All rung's full read can leave older prices out and too few to
-  // draw; the timeline (and its rung chips, the way back) still shows, and the
-  // chart's sparse state says what was withheld.
-  const historyWithheld = servedPartialHistory(data);
+      const [aServed, bServed] = fieldIsThePair ? servedBoutPercents(pair) : [null, null];
 
   return (
     <section id="head-to-head" className="bg-surface-card rounded-card shadow-card p-6">
@@ -189,35 +238,7 @@ export default function TwoSidedTimeline({
       )}
 
       {/* Shared timeline */}
-      {(hasHistory || historyWithheld) && (
-        <div className="mt-5">
-          <div className="flex justify-end mb-2">
-            <div className="flex rounded-full bg-surface-elevated p-0.5">
-              {RANGES.map((r) => (
-                <button
-                  key={r.hours}
-                  onClick={() => setHours(r.hours)}
-                  className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                    hours === r.hours
-                      ? "bg-surface-card text-text-primary shadow-card font-semibold"
-                      : "text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <FuturesChart
-            historyData={outcomes}
-            fixedYAxis
-            showAxes
-            showLegend={false}
-            height={240}
-            historyWithheld={servedPartialHistory(data)}
-          />
-        </div>
-      )}
+      <TwoSidedHistoryTimeline marketId={evolutionMarketId} defaultHours={defaultHours} />
     </section>
   );
 }

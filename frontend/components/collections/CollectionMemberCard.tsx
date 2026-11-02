@@ -11,6 +11,8 @@ import type { CollectionMember } from "@/lib/collections";
 import MidtermsMarketCard from "./MidtermsMarketCard";
 import { SourceBadge } from "@/components/politics/atoms";
 import { MIDTERMS_PARTY_COLOR, midtermsOutcomeParty } from "@/lib/midtermsParty";
+import EntityImage from "@/components/EntityImage";
+import { cleanPersonOutcomeName, isPersonOutcomeName } from "@/lib/eventConceptDisplay";
 
 // #10089: Polymarket's mixed game listing (totals, spreads and a team-win leg)
 // shown under its own game would print that game's winner a second time with a
@@ -56,13 +58,26 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
     <Link href={member.href} className="block rounded-card border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand">
       {presentation && market.source && <SourceBadge source={market.source} />}
       <h3 className="font-semibold text-text-primary mb-3">{market.name}</h3>
-      {winner ? <p className="font-semibold text-text-primary">Settled - {winner}</p> : <div className="space-y-2 text-sm">
+      {winner ? (
+        <p className="flex items-center gap-2 font-semibold text-text-primary">
+          {isPersonOutcomeName(winner) && (
+            <EntityImage type="wikipedia" name={cleanPersonOutcomeName(winner)} size={24} showFallback={false} />
+          )}
+          Settled - {winner}
+        </p>
+      ) : <div className="space-y-2 text-sm">
         {shownOutcomes?.map((outcome, index) => {
           const verdict = outcomeRowVerdict(outcome, resolved);
           const party = presentation && !resolved && !verdict ? midtermsOutcomeParty(market.id, outcome) : null;
           const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability);
+          const showRowHeadshot = (index === 0 || verdict === "won") && isPersonOutcomeName(outcome.name);
           return <div key={`${outcome.id ?? index}:${outcome.name}`} className="flex items-baseline justify-between gap-3">
-            <span className="min-w-0 text-text-secondary">{outcome.name}</span>
+            <span className="min-w-0 flex items-center gap-1.5 text-text-secondary">
+              {showRowHeadshot && (
+                <EntityImage type="wikipedia" name={cleanPersonOutcomeName(outcome.name)} size={20} showFallback={false} />
+              )}
+              <span>{outcome.name}</span>
+            </span>
             <span className={`shrink-0 font-semibold ${verdict === "won" ? "text-accent-brand" : "text-text-primary"}`} style={party ? { color: MIDTERMS_PARTY_COLOR[party] } : undefined}>{label}</span>
           </div>;
         })}
@@ -72,7 +87,7 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
         {!outcomes?.length && <p className="text-text-secondary">{resolved ? "Result unavailable" : "Probabilities aren't available right now."}</p>}
       </div>}
     </Link>
-  ) : <FeedCard item={member.item} />;
+  ) : <FeedCard item={member.item} collectionCard />;
   // #11040: the card a collection draws has no action bar, so its
   // existing age mark never shows. Say when an open market's number is old, with
   // the same mark and the same futures cadence (draws nothing when fresh).
