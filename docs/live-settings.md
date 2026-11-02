@@ -43,8 +43,8 @@ here also reaches heavy. Each row says whether heavy runs the code it governs.
 | `LIVE_BLEND_PREVIEW_RESERVATIONS` | `96,48,192,128,448,112` | Preview ledger slots by league tier (v2 policy, cap 1024); Alex, decision 36: "A in perpetuity". Row 15. | Default (same bytes, same v2 fingerprint, so the running ledger is unchanged) | no |
 | `LIVE_BLEND_PREVIEW_MAX_UNCOMMITTED_S` | `180` | How long one uncommitted value may stay on a reader's screen; Alex's decision D of Nov 1. | Default 180 s | no |
 | `LIVE_BLEND_ABANDON_OPTIONAL_DB` | unset (on for 8 h on Oct 29) | An optional read past its deadline is abandoned, not cancelled. Lost its trial. | Stays unset. Its `abandon_optional_db` trial switch is deleted in the follow-up PR (below) | no |
-| `COLLECTIONS_ENABLED` | `true` (set Nov 1, night) | The Midterms 2026 collection page and its Discover/Politics pin (#11853). | Switch (a feature gate, not a speed setting) | no (web) |
-| `CONTAINER_COLLECTIONS_ENABLED` | `true` (set Nov 1, night) | The Midterms gate's second half; also the hourly NFL-week / MLB-postseason assembly pass, which writes membership and never publishes. | Switch | no (the pass runs on bainluck's background queue) |
+| `COLLECTIONS_ENABLED` | `true` (set Nov 2, 11:25 AM PT, after the publication) | The Midterms 2026 collection page and its Discover/Politics pin (#11853). | Switch (a feature gate, not a speed setting) | no (web) |
+| `CONTAINER_COLLECTIONS_ENABLED` | `true` (set Nov 2 with it) | The Midterms gate's second half; also the hourly NFL-week / MLB-postseason assembly pass, which writes membership and never publishes. | Switch | no (the pass runs on bainluck's background queue) |
 
 **Do not make `BUSY_DB_DEFER_HEAVY_SCANS` a code default:** it would start deferring the resolved-market sweep on `bainluck-heavy`, which has never run it, and settled results would wait up to 14 hours.
 
