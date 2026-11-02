@@ -1,9 +1,11 @@
 """#10090: the PM game flush may run faster than its linked props.
 
-`PM_WS_GAME_FLUSH_SECONDS` moves only the game flush timer and the blend
-floor. Linked props keep `PM_WS_PRICE_FLUSH_SECONDS` (or the legacy timer),
-every failed write keeps the legacy retry, and the standalone open-contract
-flush and the Kalshi consumer do not move at all. Unset, nothing changes.
+`PM_WS_GAME_FLUSH_SECONDS` moves only the game flush timer. Linked props keep
+`PM_WS_PRICE_FLUSH_SECONDS` (or the legacy timer), every failed write keeps the
+legacy retry, and the standalone open-contract flush and the Kalshi consumer do
+not move at all. Since the settings freeze (docs/live-settings.md) the blend
+floor is its own setting, 5 s unless `PM_WS_BLEND_FLOOR_SECONDS` says
+otherwise, and no flush cadence moves it.
 """
 
 import asyncio
@@ -59,21 +61,22 @@ async def _bindings(monkeypatch, arm, *, price, game, legacy):
 @pytest.mark.parametrize(
     "price,game,legacy,game_period,prop_period,floor",
     [
-        # Unset: exactly the #10662 behaviour, game and props together.
-        (None, None, 2, 2, 2, 2),
-        ("0.25", None, 2, 0.25, 0.25, 0.25),
-        # Production's shape for the candidate: game 25 ms, props stay 250 ms.
-        ("0.25", "0.025", 2, 0.025, 0.25, 0.025),
+        # Unset: the #10662 timers, game and props together; the floor is 5 s.
+        (None, None, 2, 2, 2, 5.0),
+        ("0.25", None, 2, 0.25, 0.25, 5.0),
+        # Game 25 ms, props stay 250 ms; the floor does not follow either.
+        ("0.25", "0.025", 2, 0.025, 0.25, 5.0),
         # Without the shared override the props keep the legacy timer.
-        (None, "0.025", 2, 0.025, 2, 0.025),
-        (None, "0.5", 3.5, 0.5, 3.5, 0.5),
+        (None, "0.025", 2, 0.025, 2, 5.0),
+        (None, "0.5", 3.5, 0.5, 3.5, 5.0),
         # A slower game timer is honoured too; props do not follow it.
-        ("0.25", "1", 2, 1, 0.25, 1),
+        ("0.25", "1", 2, 1, 0.25, 5.0),
     ],
 )
 async def test_game_override_moves_only_the_game_timer_and_blend_floor(
     monkeypatch, price, game, legacy, game_period, prop_period, floor,
 ):
+    monkeypatch.delenv("PM_WS_BLEND_FLOOR_SECONDS", raising=False)
     calls, refresher_floor = await _bindings(
         monkeypatch, "polymarket", price=price, game=game, legacy=legacy,
     )
@@ -83,6 +86,15 @@ async def test_game_override_moves_only_the_game_timer_and_blend_floor(
         "flush_standalone": (legacy, None),
     }
     assert refresher_floor == floor
+
+
+async def test_only_the_blend_floor_setting_moves_the_blend_floor(monkeypatch):
+    monkeypatch.setenv("PM_WS_BLEND_FLOOR_SECONDS", "2.5")
+    calls, refresher_floor = await _bindings(
+        monkeypatch, "polymarket", price="0.25", game="0.025", legacy=2,
+    )
+    assert calls["flush_prices"] == (0.025, 2)
+    assert refresher_floor == 2.5
 
 
 @pytest.mark.parametrize("override", ["", "garbage", "0", "-1", "nan", "inf", "-inf"])

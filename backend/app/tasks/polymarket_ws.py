@@ -774,7 +774,13 @@ PM_PACK_PREVIEW_COHORTS = _pack_preview_cohorts_env()
 
 #: #10090: how long a repeated top of book stays skippable, and how often the
 #: per-token memo of the last handled book drops entries too old to skip on.
-PM_WS_REPEAT_SKIP_DEFAULT_MS = 250
+#: Production's value since 2026-11-01 (docs/live-settings.md): held-page p90
+#: did not rise against the 250 ms windows (874 ms vs 1,434 ms per-minute worst).
+PM_WS_REPEAT_SKIP_DEFAULT_MS = 3000
+#: #10090: the Polymarket blend stamp floor (`PM_WS_BLEND_FLOOR_SECONDS` overrides).
+#: 5 s, production's value since 2026-10-31 (docs/live-settings.md); receipt
+#: previews do not wait for it.
+PM_WS_BLEND_FLOOR_DEFAULT_S = 5.0
 REPEAT_SKIP_PRUNE_S = 1.0
 
 
@@ -788,7 +794,7 @@ def _repeat_skip_window_s() -> float:
     msgs/s; on an in-play capture 98.8 % of the quotes reaching `handle_price`
     repeated the last book (43,910 of 44,444), and a 250 ms window skips 93.2 %.
 
-    Missing or blank is the default (250 ms); `0` (or any value <= 0) is off,
+    Missing or blank is the default (3000 ms); `0` (or any value <= 0) is off,
     today's path exactly; anything unparseable is off with one warning.
     """
     raw = os.environ.get("PM_WS_REPEAT_SKIP_MS")
@@ -3345,8 +3351,11 @@ async def _apply_ws_resolution(session, market_id, outcomes, verdict):
 #: three weeks finished. 24 h is the widest margin that still costs nothing.
 SLATE_MAX_AGE_HOURS = 24
 
-#: The scheduled arm's upper bound, and its bounds when the env is set.
-PM_WS_UPCOMING_HOURS_DEFAULT = 6
+#: The scheduled arm's upper bound, and its bounds when the env is set. 1 h,
+#: production's value since 2026-11-01 (docs/live-settings.md): games 1-6 h out
+#: are on the 30-second CLOB poll, and a game a reader opens asks for the socket
+#: (`watch_held_presence`).
+PM_WS_UPCOMING_HOURS_DEFAULT = 1
 PM_WS_UPCOMING_HOURS_MIN = 1
 PM_WS_UPCOMING_HOURS_MAX = 6
 
@@ -3354,10 +3363,9 @@ PM_WS_UPCOMING_HOURS_MAX = 6
 def _upcoming_hours_env() -> int:
     """#10090 — env `PM_WS_UPCOMING_HOURS`, read once at import.
 
-    Missing or blank is the default, 6 (the window as it always was). A whole
-    number is clamped to 1..6 with one warning when it moves; anything else is
-    the default with one warning. The setting can narrow the window, never
-    widen it past where it has always been.
+    Missing or blank is the default, 1. A whole number is clamped to 1..6 with
+    one warning when it moves; anything else is the default with one warning.
+    The setting can never widen the window past the 6 h it always had.
 
     A changed value reaches the socket on RESTART ONLY: it is read at import,
     and every slate read after that (startup, admission, each recycle) uses it.
@@ -3842,7 +3850,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         stable_drop_retry_base_seconds,
     )
     from app.tasks.live_blend_refresh import (
-        DEFAULT_MIN_REFRESH_INTERVAL_S, HeldRowQuotes, LiveBlendRefresher, TailReceipts,
+        HeldRowQuotes, LiveBlendRefresher, TailReceipts,
         OwedChartCustody, adopt_handed_off,
         LOOP_REAP_TIMEOUT_S, event_ids_for_outcomes, hand_off_pending,
         reap_stopped_loops, run_flush_cadence,
@@ -3886,9 +3894,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # task factory, so every site below is unchanged.
     get_task_session = sessions.session
 
-    # #10662: opt in only this consumer. Removing the override restores both
-    # the legacy shared timer and the existing blend floor. A faster healthy
-    # timer must not also shorten the preexisting failed-write retry period.
+    # #10662: opt in only this consumer. Removing the override restores the
+    # legacy shared timer; the blend floor is its own setting below. A faster
+    # healthy timer must not also shorten the preexisting failed-write retry period.
     def cadence_override(name):
         value = os.getenv(name)
         if value is None:
@@ -3904,11 +3912,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         return seconds
 
     flush_period = PRICE_FLUSH_SECONDS
-    blend_floor = DEFAULT_MIN_REFRESH_INTERVAL_S
     override = cadence_override("PM_WS_PRICE_FLUSH_SECONDS")
     if override is not None:
         flush_period = override
-        blend_floor = flush_period
     # #10090: the game flush and its blend floor alone. Linked props stay on
     # `flush_period` and failed writes keep the legacy retry, so a faster
     # game cadence adds no prop work. Unset, the game follows `flush_period`.
@@ -3916,14 +3922,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     game_override = cadence_override("PM_WS_GAME_FLUSH_SECONDS")
     if game_override is not None:
         game_period = game_override
-        blend_floor = game_period
     # #10090: the blend stamp floor alone, without touching the price writes.
     # With previews at receipt the page no longer waits for a stamp, while the
     # stamps' reads (~78k rows/min) starve the one loop the receipt worker runs
-    # on (loop cpu 0.98, 2026-10-31). Unset keeps the floor above.
+    # on (loop cpu 0.98, 2026-10-31). Unset is `PM_WS_BLEND_FLOOR_DEFAULT_S`.
     floor_override = cadence_override("PM_WS_BLEND_FLOOR_SECONDS")
-    if floor_override is not None:
-        blend_floor = floor_override
+    blend_floor = floor_override if floor_override is not None else PM_WS_BLEND_FLOOR_DEFAULT_S
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the

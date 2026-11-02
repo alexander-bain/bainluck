@@ -92,8 +92,9 @@ def _pre_ping_env(name: str, default: bool) -> bool:
 
 
 #: #10090 — the consumer engine's ``pool_pre_ping``. Env
-#: `WS_CONSUMER_POOL_PRE_PING`; default True is today's engine exactly.
-CONSUMER_POOL_PRE_PING = _pre_ping_env("WS_CONSUMER_POOL_PRE_PING", True)
+#: `WS_CONSUMER_POOL_PRE_PING`; default False, production since 2026-10-30
+#: (user-visible max 4-7 s -> 1.7-1.9 s; docs/live-settings.md).
+CONSUMER_POOL_PRE_PING = _pre_ping_env("WS_CONSUMER_POOL_PRE_PING", False)
 _PRE_PING_LOGGED = False
 
 

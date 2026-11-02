@@ -53,6 +53,16 @@ FAKE_NOW = f"local function now_ms() return tonumber(redis.call('GET', '{CLOCK_K
 #: The shipped script, captured before any case patches the module.
 SHIPPED = blend_preview.LEDGER_SCRIPT
 
+
+@pytest.fixture(autouse=True)
+def _v1_reservation_policy(monkeypatch):
+    """These cases were written against the v1 (512-slot) ledger; production's
+    default is the v2 allocation since the settings freeze (docs/live-settings.md)."""
+    from app.utils.preview_reservations import RESERVATIONS_ENV
+
+    monkeypatch.setenv(RESERVATIONS_ENV, "192,64,128,64,48,16")
+
+
 #: G3: (old, new) text replacements in LEDGER_SCRIPT, one at a time.
 MUTANTS = {
     "publish_no_seq_cas": (

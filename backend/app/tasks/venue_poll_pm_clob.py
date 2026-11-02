@@ -6,9 +6,9 @@ about 14 min. The first build read Gamma ``/events``, and that cannot get there:
 30 s rotation over the off-socket population would move roughly 0.5-1 GB of JSON
 every 30 s. A CLOB top-of-book read is about 110 bytes per token.
 
-SHIPPED DARK. ``VENUE_POLL_30S_PM_SOURCE`` = ``gamma`` (default, the first
-build exactly) or ``clob``. It only matters when ``VENUE_POLL_30S_ENABLED``
-already runs the Polymarket venue. Turning it on is Alex's word.
+``VENUE_POLL_30S_PM_SOURCE`` = ``clob`` (default, production since 2026-11-01;
+docs/live-settings.md) or ``gamma`` (the first build exactly). It only matters
+when ``VENUE_POLL_30S_ENABLED`` runs the Polymarket venue.
 
 THE POPULATION HAS NO TOKENS, SO THE PASS LEARNS THEM
 -----------------------------------------------------
@@ -151,9 +151,10 @@ CLOB_BACKOFF_VENUE = "polymarket_clob"
 
 
 def pm_source(environ=None) -> str:
-    """``clob`` only when ``VENUE_POLL_30S_PM_SOURCE`` says so; else ``gamma``."""
+    """``gamma`` only when ``VENUE_POLL_30S_PM_SOURCE`` says so; else ``clob``,
+    production's source since 2026-11-01 (docs/live-settings.md)."""
     raw = (environ if environ is not None else os.environ).get(PM_SOURCE_ENV, "")
-    return "clob" if raw.strip().lower() == "clob" else "gamma"
+    return "gamma" if raw.strip().lower() == "gamma" else "clob"
 
 
 # ── the socket's book rule ─────────────────────────────────────────────────────

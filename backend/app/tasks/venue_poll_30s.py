@@ -10,10 +10,11 @@ game's props more than 6 h before kickoff could therefore be an hour old, and a
 futures chart gained one point an hour. Speed's end state is the sockets
 carrying only live games; this poll is what has to exist first.
 
-SHIPPED DARK. ``VENUE_POLL_30S_ENABLED`` unset (or ``0``) makes the task body
-return before it touches Redis or the database (Celery's own broker publish and
-task-counter signals still run each tick). ``1``/``all`` runs both
-venues; ``kalshi`` or ``polymarket`` runs one. Speed asks Alex before setting it.
+ON FOR POLYMARKET. ``VENUE_POLL_30S_ENABLED`` unset runs ``polymarket``
+(production since 2026-11-01, docs/live-settings.md); set to ``0`` or empty it
+makes the task body return before it touches Redis or the database (Celery's own
+broker publish and task-counter signals still run each tick). ``1``/``all`` runs
+both venues; ``kalshi`` or ``polymarket`` runs one.
 
 WHAT IS POLLED: shown, minus socket
 ----------------------------------
@@ -140,6 +141,7 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 ENABLED_ENV = "VENUE_POLL_30S_ENABLED"
+ENABLED_DEFAULT = "polymarket"
 VENUES = ("kalshi", "polymarket")
 
 
@@ -200,8 +202,11 @@ _BOOK_EPS = 5e-5
 
 
 def enabled_venues(environ=None) -> frozenset[str]:
-    """The venues ``VENUE_POLL_30S_ENABLED`` turns on; empty is OFF."""
-    raw = (environ if environ is not None else os.environ).get(ENABLED_ENV, "")
+    """The venues ``VENUE_POLL_30S_ENABLED`` turns on; set and empty is OFF.
+
+    Unset is ``polymarket``, production's value since 2026-11-01
+    (docs/live-settings.md): Kalshi's 30-second poll drew a 429 at ``all``."""
+    raw = (environ if environ is not None else os.environ).get(ENABLED_ENV, ENABLED_DEFAULT)
     raw = raw.strip().lower()
     if raw in ("", "0", "off", "false", "no"):
         return frozenset()
