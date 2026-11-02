@@ -1218,6 +1218,64 @@ export function movementExplanation(
   return null;
 }
 
+/**
+ * #883 (Alex, 2026-10-06: "sparse charts with no interesting trend, no text
+ * context") — THE CAPTION DESCRIBES THE CHART ON SCREEN, AND SAYS WHEN.
+ *
+ * `movementExplanation` above compares the served opening with the served
+ * current price. Neither is a point on the chart, and the sentence carries no
+ * date, so the landing-page audit (FABLE-LANDING-PAGE-AUDIT-20261006) found it
+ * contradicting the drawn line on 7 of 18 pages: a 1W chart that rose under a
+ * caption reading "down 12.0 pts from opening".
+ *
+ * This caption reads the subject's OWN drawn line — the first and last priced
+ * points of the range the reader picked — and dates the start of the move:
+ *
+ *     "Ravens up 6 pts since Oct 25."
+ *     "Ravens roughly flat since 9:05 AM."      (whole range inside one day)
+ *
+ * Whole points, matching the whole-percentage headline the hero prints. A line
+ * with fewer than two priced points, or two points at one instant, has no
+ * movement to describe, and the page says nothing rather than an undated claim.
+ * Faithful to retained observations only: no interpolation, no opening fallback.
+ */
+export function rangeMovementCaption(
+  subject: (MovementLeader & { id: number }) | null,
+  drawnLines: readonly { outcome_id: number; history: readonly { timestamp: string; probability: number | null }[] }[],
+  marketName?: string | null,
+  timeZone?: string,
+): string | null {
+  if (!subject) return null;
+  const line = drawnLines.find((l) => l.outcome_id === subject.id);
+  if (!line) return null;
+  const priced = line.history
+    .filter((p) => p.probability != null && Number.isFinite(Date.parse(p.timestamp)))
+    .map((p) => ({ ms: Date.parse(p.timestamp), probability: p.probability as number }))
+    .sort((a, b) => a.ms - b.ms);
+  if (priced.length < 2) return null;
+  const first = priced[0];
+  const last = priced[priced.length - 1];
+  if (last.ms <= first.ms) return null;
+
+  const served = leaderLabel(subject);
+  if (served === null) return null;
+  const label = withoutBoardNamePrefix(served, marketName);
+
+  const sameDay = instantDayLabel(new Date(first.ms), timeZone) === instantDayLabel(new Date(last.ms), timeZone);
+  const since = sameDay
+    ? new Date(first.ms).toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        ...(timeZone ? { timeZone } : {}),
+      })
+    : instantDayLabel(new Date(first.ms), timeZone);
+
+  const delta = (last.probability - first.probability) * 100;
+  const whole = Math.round(Math.abs(delta));
+  if (whole < 1) return `${label} roughly flat since ${since}.`;
+  return `${label} ${delta > 0 ? "up" : "down"} ${whole} ${whole === 1 ? "pt" : "pts"} since ${since}.`;
+}
+
 /* ───────────────────────────────────────────────────────────────────────────
  * UX-P233 — EVERY NUMBER ON THIS PAGE STATES ITS BASELINE (board item 11).
  *
