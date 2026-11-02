@@ -31,6 +31,7 @@ const config: Config = {
   			text: {
   				primary: '#111827',
   				secondary: '#6B7280',
+  				'secondary-strong': '#4B5563',
   				muted: '#9CA3AF',
   				inverse: '#F8FAFC'
   			},
