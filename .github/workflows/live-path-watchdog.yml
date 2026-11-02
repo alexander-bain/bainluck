@@ -2239,13 +2239,10 @@ jobs:
       || needs.e2e-contract.result != 'success')
     runs-on: ubuntu-latest
     concurrency:
-      group: ${{ matrix.provider == 'heroku' && 'heroku-deploy' || 'vercel-production' }}
+      group: heroku-deploy
       cancel-in-progress: false
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
-      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       GH_TOKEN: ${{ github.token }}
       NOW_ISSUE: ${{ vars.NOW_ISSUE }}
     steps:
@@ -2253,14 +2250,8 @@ jobs:
     - name: Rollback only the exact failing deployment
       env:
         CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
-        PROVIDER: ${{ matrix.provider }}
+        PROVIDER: heroku
       run: 'python3 tools/release/rollback.py --provider "$PROVIDER" --candidate-sha "$CANDIDATE_SHA" --reason "live-path full-suite watchdog
         failed"
 
         '
-    strategy:
-      fail-fast: false
-      matrix:
-        provider:
-        - heroku
-        - vercel

@@ -38,11 +38,9 @@ class WorkflowTests(unittest.TestCase):
         workflow = yaml.safe_load(path.read_text())
         self.assertEqual(workflow['permissions']['deployments'], 'write')
         rollback = jobs['rollback']
-        self.assertFalse(rollback['strategy']['fail-fast'])
-        self.assertEqual(rollback['strategy']['matrix']['provider'], ['heroku', 'vercel'])
         self.assertIn('heroku-deploy', rollback['concurrency']['group'])
-        self.assertIn('vercel-production', rollback['concurrency']['group'])
-        self.assertEqual(rollback['env']['VERCEL_PROJECT_ID'], '${{ vars.VERCEL_PROJECT_ID }}')
+        self.assertNotIn('VERCEL_TOKEN', rollback['env'])
+        self.assertEqual(rollback['steps'][-1]['env']['PROVIDER'], 'heroku')
         self.assertIn('veto', rollback['needs'])
         self.assertNotIn('concurrency', jobs['veto'])
         self.assertIn('tools/release/veto.py', str(jobs['veto']))
@@ -51,7 +49,7 @@ class WorkflowTests(unittest.TestCase):
         command = str(rollback)
         self.assertIn('tools/release/rollback.py', command)
         self.assertIn('github.event.workflow_run.head_sha', command)
-        self.assertIn('vercel', command)
+        self.assertNotIn('vercel', command)
         self.assertIn('heroku', command)
 
     def test_corrupt_or_missing_gate_record_cannot_skip_the_watchdog(self):
