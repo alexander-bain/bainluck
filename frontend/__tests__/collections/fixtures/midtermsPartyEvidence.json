@@ -1,0 +1,191 @@
+[
+  {
+    "market_id": 109085,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATEKS-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595212,
+        "name": "Adam Hamilton",
+        "party": "D",
+        "ticker": "SENATEKS-26-D",
+        "provider_title": "Will Democratics win the Senate race in Kansas?"
+      },
+      {
+        "outcome_id": 1595211,
+        "name": "Roger Marshall",
+        "party": "R",
+        "ticker": "SENATEKS-26-R",
+        "provider_title": "Will Republicans win the Senate race in Kansas?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 109088,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATEIA-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595218,
+        "name": "Josh Turek",
+        "party": "D",
+        "ticker": "SENATEIA-26-D",
+        "provider_title": "Will Democratics win the Senate race in Iowa?"
+      },
+      {
+        "outcome_id": 1595217,
+        "name": "Ashley Hinson",
+        "party": "R",
+        "ticker": "SENATEIA-26-R",
+        "provider_title": "Will Republicans win the Senate race in Iowa?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 109082,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATEME-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595205,
+        "name": "Troy Jackson",
+        "party": "D",
+        "ticker": "SENATEME-26-D",
+        "provider_title": "Will Democratics win the Senate race in Maine?"
+      },
+      {
+        "outcome_id": 1595206,
+        "name": "Susan Collins",
+        "party": "R",
+        "ticker": "SENATEME-26-R",
+        "provider_title": "Will Republicans win the Senate race in Maine?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 109095,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATEAK-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595232,
+        "name": "Democratic party",
+        "party": "D",
+        "ticker": "SENATEAK-26-D",
+        "provider_title": "Will Democratics win the Senate race in Alaska?"
+      },
+      {
+        "outcome_id": 1595231,
+        "name": "Republican party",
+        "party": "R",
+        "ticker": "SENATEAK-26-R",
+        "provider_title": "Will Republicans win the Senate race in Alaska?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 109065,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATETX-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595170,
+        "name": "James Talarico",
+        "party": "D",
+        "ticker": "SENATETX-26-D",
+        "provider_title": "Will Democratics win the Senate race in Texas?"
+      },
+      {
+        "outcome_id": 1595169,
+        "name": "Ken Paxton",
+        "party": "R",
+        "ticker": "SENATETX-26-R",
+        "provider_title": "Will Republicans win the Senate race in Texas?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 109072,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATEOHS-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595184,
+        "name": "Sherrod Brown",
+        "party": "D",
+        "ticker": "SENATEOHS-26-D",
+        "provider_title": "Will Democratics win the Senate race in Ohio?"
+      },
+      {
+        "outcome_id": 1595183,
+        "name": "Jon Husted",
+        "party": "R",
+        "ticker": "SENATEOHS-26-R",
+        "provider_title": "Will Republicans win the Senate race in Ohio?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 109068,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATESC-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595175,
+        "name": "Darline Graham",
+        "party": "R",
+        "ticker": "SENATESC-26-R",
+        "provider_title": "Will Republicans win the Senate race in South Carolina?"
+      },
+      {
+        "outcome_id": 1595176,
+        "name": "Annie Andrews",
+        "party": "D",
+        "ticker": "SENATESC-26-D",
+        "provider_title": "Will Democratics win the Senate race in South Carolina?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 109081,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/SENATEMI-26",
+    "outcomes": [
+      {
+        "outcome_id": 1595203,
+        "name": "Abdul El-Sayed",
+        "party": "D",
+        "ticker": "SENATEMI-26-D",
+        "provider_title": "Will Democratics win the Senate race in Michigan?"
+      },
+      {
+        "outcome_id": 1595204,
+        "name": "Mike Rogers",
+        "party": "R",
+        "ticker": "SENATEMI-26-R",
+        "provider_title": "Will Republicans win the Senate race in Michigan?"
+      }
+    ],
+    "unmatched": []
+  },
+  {
+    "market_id": 108645,
+    "source": "https://api.elections.kalshi.com/trade-api/v2/events/GOVPARTYGA-26",
+    "outcomes": [
+      {
+        "outcome_id": 1594121,
+        "name": "Keisha Lance Bottoms",
+        "party": "D",
+        "ticker": "GOVPARTYGA-26-D",
+        "provider_title": "Will the Democratic party win the governorship in Georgia"
+      },
+      {
+        "outcome_id": 1594122,
+        "name": "Rick Jackson",
+        "party": "R",
+        "ticker": "GOVPARTYGA-26-R",
+        "provider_title": "Will the Republican party win the governorship in Georgia"
+      }
+    ],
+    "unmatched": []
+  }
+]

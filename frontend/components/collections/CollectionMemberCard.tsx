@@ -8,8 +8,9 @@ import { outcomeRowVerdict, type GradedRow } from "@/components/futures/OutcomeR
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedFuturesData, FeedFuturesOutcome } from "@/lib/types";
 import type { CollectionMember } from "@/lib/collections";
-import MarketCard from "@/components/politics/MarketCard";
+import MidtermsMarketCard from "./MidtermsMarketCard";
 import { SourceBadge } from "@/components/politics/atoms";
+import { MIDTERMS_PARTY_COLOR, midtermsOutcomeParty } from "@/lib/midtermsParty";
 
 // #10089: Polymarket's mixed game listing (totals, spreads and a team-win leg)
 // shown under its own game would print that game's winner a second time with a
@@ -47,10 +48,7 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
   const missingPrices = !!market && (!outcomes?.length || (presentation && outcomes.length < market.outcome_count) || outcomes.some((outcome) => outcome.probability == null));
   const winner = (market as (FeedFuturesData & { settled_winner?: string }) | null)?.settled_winner;
   if (presentation && market && !resolved && !hasVerdict && !missingPrices) {
-    return <MarketCard theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} market={{
-      q: market.name, market_id: market.id, src: market.source ?? "", prob: (outcomes?.[0]?.probability ?? 0) * 100,
-      top_outcomes: (outcomes ?? []).map(o => ({ name: o.name, prob: o.probability! * 100 })), outcome_count: market.outcome_count,
-    }} />;
+    return <MidtermsMarketCard market={market} presentation={presentation} />;
   }
   // The existing sports card owns game lifecycle and probabilities. A missing
   // price or served result uses the existing verdict/format rule, never nil -> 0%.
@@ -61,10 +59,11 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
       {winner ? <p className="font-semibold text-text-primary">Settled - {winner}</p> : <div className="space-y-2 text-sm">
         {shownOutcomes?.map((outcome, index) => {
           const verdict = outcomeRowVerdict(outcome, resolved);
+          const party = presentation && !resolved && !verdict ? midtermsOutcomeParty(market.id, outcome) : null;
           const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability);
           return <div key={`${outcome.id ?? index}:${outcome.name}`} className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 text-text-secondary">{outcome.name}</span>
-            <span className={`shrink-0 font-semibold ${verdict === "won" ? "text-accent-brand" : "text-text-primary"}`}>{label}</span>
+            <span className={`shrink-0 font-semibold ${verdict === "won" ? "text-accent-brand" : "text-text-primary"}`} style={party ? { color: MIDTERMS_PARTY_COLOR[party] } : undefined}>{label}</span>
           </div>;
         })}
         {unpriced.length > 0 && <p data-unpriced-outcomes={unpriced.length} className="text-text-secondary">

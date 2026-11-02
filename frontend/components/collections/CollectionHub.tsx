@@ -224,7 +224,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
         {/* #11040: one plain sentence saying how this section's markets settle. */}
         {section.note && <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>}
       </div>}
-      {section.layout === "party" && control(108620) && control(108621) ? <PartyControlRow senate={control(108620)} house={control(108621)} stacked /> : <div className={midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
+      {section.layout === "party" && control(108620) && control(108621) ? <PartyControlRow senate={control(108620)} house={control(108621)} stacked /> : <div className={midterms && section.cls === "senate_races" ? "divide-y divide-surface-border overflow-hidden rounded-card border border-surface-border bg-surface-card" : midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
         {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
           {card(member, midterms ? section.layout ?? "auto" : undefined)}
           {/* #5342: a short list of the game's attached markets, each to its own page. */}

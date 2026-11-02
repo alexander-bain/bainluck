@@ -1,0 +1,713 @@
+{
+  "state": "published",
+  "slug": "midterms-2026",
+  "revision": 1,
+  "edition": {
+    "kind": "midterms",
+    "league": "politics",
+    "season": 2026
+  },
+  "container": {
+    "id": 14,
+    "slug": "midterms-2026",
+    "name": "Midterms 2026"
+  },
+  "subtitle": "Who controls Congress, the closest Senate races and the governors' mansions - updated live, settled as results come in.",
+  "sections": [
+    {
+      "class": "congress_control",
+      "title": "Congress control",
+      "layout": "party",
+      "count": 2,
+      "members": [
+        {
+          "type": "market",
+          "id": 108620,
+          "destination": {
+            "kind": "market",
+            "id": 108620,
+            "web": "/futures/108620",
+            "api": "/api/futures/108620"
+          },
+          "card": {
+            "id": 108620,
+            "name": "Which party will win the U.S. Senate?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T20:59:59.784427+00:00",
+            "top_outcomes": [
+              {
+                "id": 1593959,
+                "name": "Democratic Party",
+                "probability": 0.745,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1593958,
+                "name": "Republican Party",
+                "probability": 0.255,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 108621,
+          "destination": {
+            "kind": "market",
+            "id": 108621,
+            "web": "/futures/108621",
+            "api": "/api/futures/108621"
+          },
+          "card": {
+            "id": 108621,
+            "name": "Which party will win the U.S. House?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T20:59:59.986820+00:00",
+            "top_outcomes": [
+              {
+                "id": 1593960,
+                "name": "Democratic Party",
+                "probability": 0.9375,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1593961,
+                "name": "Republican Party",
+                "probability": 0.063,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        }
+      ]
+    },
+    {
+      "class": "balance_of_power",
+      "title": "Balance of power",
+      "layout": "field",
+      "count": 1,
+      "members": [
+        {
+          "type": "market",
+          "id": 108619,
+          "destination": {
+            "kind": "market",
+            "id": 108619,
+            "web": "/futures/108619",
+            "api": "/api/futures/108619"
+          },
+          "card": {
+            "id": 108619,
+            "name": "2026 Midterms: Congress Balance of Power?",
+            "status": "open",
+            "source": "both",
+            "source_count": 2,
+            "outcome_count": 4,
+            "market_type": "field",
+            "prices_updated_at": "2026-11-02T20:59:59.539888+00:00",
+            "top_outcomes": [
+              {
+                "id": 1593955,
+                "name": "Democrats sweep",
+                "probability": 0.745,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1593954,
+                "name": "D-House, R-Senate",
+                "probability": 0.195,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1593956,
+                "name": "Republicans sweep",
+                "probability": 0.05175,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1593957,
+                "name": "R-House, D-Senate",
+                "probability": 0.00575,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        }
+      ]
+    },
+    {
+      "class": "senate_races",
+      "title": "The closest Senate races",
+      "layout": "duel",
+      "count": 8,
+      "members": [
+        {
+          "type": "market",
+          "id": 109085,
+          "destination": {
+            "kind": "market",
+            "id": 109085,
+            "web": "/futures/109085",
+            "api": "/api/futures/109085"
+          },
+          "card": {
+            "id": 109085,
+            "name": "Kansas Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T15:00:37.912670+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595212,
+                "name": "Adam Hamilton",
+                "probability": 0.625,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595211,
+                "name": "Roger Marshall",
+                "probability": 0.375,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109088,
+          "destination": {
+            "kind": "market",
+            "id": 109088,
+            "web": "/futures/109088",
+            "api": "/api/futures/109088"
+          },
+          "card": {
+            "id": 109088,
+            "name": "Iowa Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T15:00:32.892067+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595217,
+                "name": "Ashley Hinson",
+                "probability": 0.505,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595218,
+                "name": "Josh Turek",
+                "probability": 0.495,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109082,
+          "destination": {
+            "kind": "market",
+            "id": 109082,
+            "web": "/futures/109082",
+            "api": "/api/futures/109082"
+          },
+          "card": {
+            "id": 109082,
+            "name": "Maine Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T15:00:27.693878+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595205,
+                "name": "Troy Jackson",
+                "probability": 0.725,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595206,
+                "name": "Susan Collins",
+                "probability": 0.275,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109095,
+          "destination": {
+            "kind": "market",
+            "id": 109095,
+            "web": "/futures/109095",
+            "api": "/api/futures/109095"
+          },
+          "card": {
+            "id": 109095,
+            "name": "Alaska Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T15:00:40.914012+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595232,
+                "name": "Democratic party",
+                "probability": 0.715,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595231,
+                "name": "Republican party",
+                "probability": 0.285,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109065,
+          "destination": {
+            "kind": "market",
+            "id": 109065,
+            "web": "/futures/109065",
+            "api": "/api/futures/109065"
+          },
+          "card": {
+            "id": 109065,
+            "name": "Texas Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T21:00:00.640729+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595170,
+                "name": "James Talarico",
+                "probability": 0.735,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595169,
+                "name": "Ken Paxton",
+                "probability": 0.265,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109072,
+          "destination": {
+            "kind": "market",
+            "id": 109072,
+            "web": "/futures/109072",
+            "api": "/api/futures/109072"
+          },
+          "card": {
+            "id": 109072,
+            "name": "Ohio Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T15:00:29.620637+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595184,
+                "name": "Sherrod Brown",
+                "probability": 0.705,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595183,
+                "name": "Jon Husted",
+                "probability": 0.295,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109068,
+          "destination": {
+            "kind": "market",
+            "id": 109068,
+            "web": "/futures/109068",
+            "api": "/api/futures/109068"
+          },
+          "card": {
+            "id": 109068,
+            "name": "South Carolina Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T21:00:00.856077+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595175,
+                "name": "Darline Graham",
+                "probability": 0.675,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595176,
+                "name": "Annie Andrews",
+                "probability": 0.325,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109081,
+          "destination": {
+            "kind": "market",
+            "id": 109081,
+            "web": "/futures/109081",
+            "api": "/api/futures/109081"
+          },
+          "card": {
+            "id": 109081,
+            "name": "Michigan Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T21:00:01.088941+00:00",
+            "top_outcomes": [
+              {
+                "id": 1595203,
+                "name": "Abdul El-Sayed",
+                "probability": 0.785,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1595204,
+                "name": "Mike Rogers",
+                "probability": 0.215,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        }
+      ]
+    },
+    {
+      "class": "governors",
+      "title": "Governors",
+      "layout": "auto",
+      "count": 3,
+      "members": [
+        {
+          "type": "market",
+          "id": 108645,
+          "destination": {
+            "kind": "market",
+            "id": 108645,
+            "web": "/futures/108645",
+            "api": "/api/futures/108645"
+          },
+          "card": {
+            "id": 108645,
+            "name": "Georgia Governor winner?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 2,
+            "market_type": "duel",
+            "prices_updated_at": "2026-11-02T15:00:58.936023+00:00",
+            "top_outcomes": [
+              {
+                "id": 1594121,
+                "name": "Keisha Lance Bottoms",
+                "probability": 0.695,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1594122,
+                "name": "Rick Jackson",
+                "probability": 0.315,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 109918,
+          "destination": {
+            "kind": "market",
+            "id": 109918,
+            "web": "/futures/109918",
+            "api": "/api/futures/109918"
+          },
+          "card": {
+            "id": 109918,
+            "name": "Will Democrats sweep all swing state Governor races?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 1,
+            "market_type": "unshaped",
+            "prices_updated_at": "2026-11-02T19:00:12.042023+00:00",
+            "top_outcomes": [
+              {
+                "id": 1601726,
+                "name": "Yes",
+                "probability": 0.585,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              }
+            ]
+          },
+          "event_id": null
+        },
+        {
+          "type": "market",
+          "id": 108629,
+          "destination": {
+            "kind": "market",
+            "id": 108629,
+            "web": "/futures/108629",
+            "api": "/api/futures/108629"
+          },
+          "card": {
+            "id": 108629,
+            "name": "Closest Governor race in 2026?",
+            "status": "open",
+            "source": "kalshi",
+            "source_count": 1,
+            "outcome_count": 24,
+            "market_type": "field",
+            "prices_updated_at": "2026-11-02T19:00:03.264185+00:00",
+            "top_outcomes": [
+              {
+                "id": 1594077,
+                "name": "Georgia",
+                "probability": 0.195,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1594085,
+                "name": "Kansas",
+                "probability": 0.092,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 235955693,
+                "name": "Texas",
+                "probability": 0.085,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "id": 1594081,
+                "name": "Nevada",
+                "probability": 0.0765,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "id": 1594082,
+                "name": "Ohio",
+                "probability": 0.0665,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "New Hampshire",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "Colorado",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "Iowa",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "New Mexico",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "New York",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "Arizona",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "Michigan",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "Minnesota",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "Oklahoma",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "Maine",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "Pennsylvania",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "Wisconsin",
+                "probability": null,
+                "is_winner": false,
+                "resolution_source": "ungradeable_result"
+              },
+              {
+                "name": "South Carolina",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "Vermont",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "South Dakota",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "Alaska",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "Oregon",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "Florida",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              },
+              {
+                "name": "Nebraska",
+                "probability": null,
+                "is_winner": null,
+                "resolution_source": null
+              }
+            ]
+          },
+          "event_id": null
+        }
+      ]
+    }
+  ],
+  "member_count": 14,
+  "withheld": [],
+  "withheld_count": 0
+}
