@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: CollectionPageProps): Promise
       const hub = await fetchCollection(params.slug, AbortSignal.timeout(2500));
       if (hub.title) title = hub.title;
       description = hub.state === "published"
-        ? `${hub.edition}. ${hub.note ? `${hub.note} ` : ""}Explore games, results and related questions.`
+        ? hub.subtitle ?? `${hub.edition}. ${hub.note ? `${hub.note} ` : ""}Explore games, results and related markets.`
         : hub.note ?? description;
       unavailable = hub.state !== "published";
     } catch { /* metadata must not prevent the client from retrying its fresh read */ }

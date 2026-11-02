@@ -100,6 +100,7 @@ ASSEMBLY_WRITABLE_KINDS: Final[FrozenSet[str]] = frozenset({"contains"})
 #: sections instead of inferring them and ux never classifies (doctrine §C.4).
 EDGE_CLASSES: Final[FrozenSet[str]] = frozenset(
     {
+        "congress_control", "balance_of_power", "senate_races", "governors",
         "match_winner",  # one fixture's winner
         "advancement",  # "reaches R16" ladders
         "title",  # outright winner of a draw

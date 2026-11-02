@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CollectionWeekNavigation } from "./CollectionWeekNavigation";
 import { CollectionMemberCard } from "./CollectionMemberCard";
+import PartyControlRow from "@/components/politics/PartyControlRow";
+import type { FeedFuturesData } from "@/lib/types";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
   relatedMarketLinks, settleCollectionPage, settleCollectionRead,
   type CollectionHub as Hub, type CollectionMember, type CollectionPageRequest, type CollectionReadingContext,
 } from "@/lib/collections";
-import type { FeedFuturesData } from "@/lib/types";
 
 const storageKey = (slug: string) => `collection-reading:${slug}`;
 
@@ -159,10 +160,20 @@ export default function CollectionHub({ slug }: { slug: string }) {
     try { sessionStorage.setItem(storageKey(slug), JSON.stringify(context)); } catch { /* browser Back remains available without storage */ }
   };
 
-  const card = (member: CollectionMember) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
+  const card = (member: CollectionMember, presentation?: string) => <div id={collectionMemberDomId(member.key)} key={member.key} data-collection-member={member.key} onClickCapture={(event) => {
     const anchor = (event.target as Element).closest("a");
     if (anchor?.getAttribute("href") === member.href) remember(member.key);
-  }}><CollectionMemberCard member={member} /></div>;
+  }}><CollectionMemberCard member={member} presentation={presentation} /></div>;
+
+  const control = (id: number) => {
+    const member = shown?.members.find(m => m.id === id);
+    if (!member) return null;
+    const data = member.item.data as FeedFuturesData & { settled_winner?: string };
+    const gop = data.top_outcomes.find(o => /^republican(?:s| party)?$|^gop$/i.test(o.name))?.probability;
+    const dem = data.top_outcomes.find(o => /^democrat(?:s|ic(?: party)?)?$/i.test(o.name))?.probability;
+    if (!data.settled_winner && (gop == null || dem == null)) return null;
+    return { market_id: id, gop: (gop ?? 0) * 100, dem: (dem ?? 0) * 100, source: data.source ?? undefined, winner: data.settled_winner };
+  };
 
   // Back from a market returns to its game, the drawn row it was listed under.
   const relatedLinks = (game: CollectionMember) => {
@@ -182,7 +193,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
     <header className="space-y-2">
       <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Collection</p>
       <h1 id="collection-title" className="text-2xl font-bold text-text-primary">{shown?.title ?? "Collection"}</h1>
-      {shown?.edition && <p className="text-sm text-text-secondary">{shown.edition}</p>}
+      {(shown?.subtitle ?? shown?.edition) && <p className="text-sm text-text-secondary">{shown?.subtitle ?? shown?.edition}</p>}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
     {error && shown && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">
@@ -204,17 +215,18 @@ export default function CollectionHub({ slug }: { slug: string }) {
         section to name, so "More" would follow nothing; the page title names it. */}
     {shown?.sections.map((section) => {
       const lone = shown.sections.length === 1 && section.cls === "unclassified";
+      const midterms = shown.slug === "midterms-2026";
       return <section key={section.key} className="space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
       {!lone && <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+      {section.layout === "party" && control(108620) && control(108621) ? <PartyControlRow senate={control(108620)} house={control(108621)} stacked /> : <div className={midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
         {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
-          {card(member)}
+          {card(member, midterms ? section.layout ?? "auto" : undefined)}
           {/* #5342: a short list of the game's attached markets, each to its own page. */}
           {relatedLinks(member)}
           {/* #10146: a game's questions open deliberately on its own page, never as hundreds of contracts inline. */}
           {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
         </div>)}
-      </div>
+      </div>}
     </section>;
     })}
     {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>

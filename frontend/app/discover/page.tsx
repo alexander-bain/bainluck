@@ -10,6 +10,7 @@ import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConc
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
+import { usePinnedCollection } from "@/hooks/usePinnedCollection";
 import MasonryCell, { MASONRY_GRID_CLASS } from "@/components/discover/MasonryCell";
 import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
@@ -477,6 +478,7 @@ export function ChallengeModal({
 }
 
 export default function DiscoverPage() {
+  const pinnedCollection = usePinnedCollection();
   usePageTracking({ pageType: "discover", pageTitle: "Discover" });
   useScrollDepth({ pageType: "discover" });
   useEngagementTime({ pageType: "discover" });
@@ -2033,6 +2035,7 @@ export default function DiscoverPage() {
           the column ladder is deliberately untouched. */}
       <DiscoverFeedbackAttemptContext.Provider value={handleFeedbackAttempt}>
       <main className="max-w-content mx-auto px-4 py-4">
+        {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
         {(isLoading || authLoading || (editionAwaitingOwnReply && !feedError)) && visibleItems.length === 0 && <DiscoverSkeletonGrid />}
         {savedDeckPreview && visibleItems.length > 0 && (
           <p role="status" className="mb-3 text-xs text-text-secondary">

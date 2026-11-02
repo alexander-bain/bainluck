@@ -1,0 +1,13 @@
+{
+  "slug": "midterms-2026",
+  "title": "Midterms 2026",
+  "subtitle": "Who controls Congress, the closest Senate races and the governors' mansions - updated live, settled as results come in.",
+  "pillar": "DISCOVER",
+  "pin_until": "2026-11-07T08:00:00+00:00",
+  "sections": [
+    {"key": "congress_control", "title": "Congress control", "layout": "party", "market_ids": [108620, 108621]},
+    {"key": "balance_of_power", "title": "Balance of power", "layout": "field", "market_ids": [108619, 112905]},
+    {"key": "senate_races", "title": "The closest Senate races", "layout": "duel", "market_ids": [109085, 109088, 109082, 109095, 109065, 109072, 109068, 109081]},
+    {"key": "governors", "title": "Governors", "layout": "auto", "market_ids": [108645, 109918, 108629]}
+  ]
+}

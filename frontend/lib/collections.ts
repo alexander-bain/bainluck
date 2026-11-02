@@ -11,7 +11,8 @@ export interface CollectionMember {
   questionIds: number[];
   eventId: number | null;
 }
-export interface CollectionSection { key: string; cls: string; title: string; members: CollectionMember[] }
+export interface CollectionSection { key: string; cls: string; title: string; layout?: string; members: CollectionMember[] }
+export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
 export interface CollectionHub {
   slug: string;
   revision: number | null;
@@ -26,6 +27,8 @@ export interface CollectionHub {
   // #9925 — a theme collection (AI, Oscars) is read a page at a time at one
   // revision. Null on every NFL/MLB hub, which arrives whole.
   theme: { totalCount: number; nextCursor: string | null; inventoryComplete: boolean; revisionMoved: boolean } | null;
+  subtitle?: string | null;
+  pin?: CollectionPin | null;
 }
 export interface CollectionReadingContext {
   slug: string;
@@ -100,6 +103,7 @@ function editionLabel(value: unknown, slug: string): string | null {
   if (edition?.kind === "provider_event") return providerEventLabel(edition, slug);
   if (edition && isTheme(edition)) return themeLabel(edition, slug);
   if (!edition || !positive(edition.season)) return null;
+  if (slug === "midterms-2026" && edition.kind === "midterms" && edition.league === "politics" && edition.season === 2026) return "2026 elections";
   if (edition.kind === "mlb_postseason" && edition.league === "mlb" && slug === `mlb-${edition.season}-postseason`) return `MLB · ${edition.season} · Postseason`;
   if (edition.kind === "nfl_season" && edition.league === "nfl" && slug === `nfl-${edition.season}`) return `NFL · ${edition.season}`;
   if (edition.kind !== "nfl_week" || edition.league !== "nfl" || !positive(edition.week) || edition.week > 99) return null;
@@ -146,7 +150,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
       seen.add(card.key); accepted.push(card);
     });
     if (section.count !== section.members.length || accepted.length !== section.members.length) partial = true;
-    if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class, title: titles[section.class] ?? "More", members: accepted });
+    if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class, title: slug === "midterms-2026" && text(section.title) ? section.title : titles[section.class] ?? "More", layout: slug === "midterms-2026" && text(section.layout) ? section.layout : undefined, members: accepted });
   });
   const members = sections.flatMap((section) => section.members);
   if (members.length !== row.member_count) partial = true;
@@ -162,9 +166,11 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     if (!seenChildren.has(href)) children.push({ key: `container:${child.slug}`, name: child.name, href });
     seenChildren.add(href);
   }
-  return { ...base, members, related, children, theme,
+  const pin = object(row.discover_pin);
+  const admittedPin = slug === "midterms-2026" && pin?.slug === slug && pin.href === collectionPath(slug) && text(pin.name) && text(pin.subtitle) && text(pin.pin_until) && Number.isFinite(Date.parse(pin.pin_until)) ? pin as unknown as CollectionPin : null;
+  return { ...base, members, related, children, theme, subtitle: text(row.subtitle) ? row.subtitle : null, pin: admittedPin,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
-    note: partial ? "Some games or questions aren't available right now." : !members.length && !children.length ? "No games or questions are available right now." : null };
+    note: partial ? (slug === "midterms-2026" ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }
 
 function relate(members: CollectionMember[]): Record<string, CollectionMember[]> {
@@ -300,6 +306,7 @@ export function reconcileCollectionContext(context: CollectionReadingContext | n
 
 export function collectionRefreshInterval(hub: CollectionHub | null, now = Date.now()): number {
   if (hub?.state !== "published") return 0;
+  if (hub.slug === "midterms-2026") return hub.members.some(m => !(m.item.data as FeedFuturesData & { settled_winner?: string }).settled_winner) ? 30000 : 0;
   const games = hub.members.filter((m) => m.type === "event").map((m) => m.item.data as FeedEventData);
   if (games.some((e) => e.status === "live")) return 30000;
   return games.some((e) => ["scheduled", "upcoming"].includes(e.status) && Math.abs(Date.parse(e.commence_time) - now) <= 86400000) ? 60000 : 0;
@@ -344,4 +351,8 @@ export async function fetchCollectionWeekNavigation(slug: string, signal?: Abort
   const response = await fetch(`${API_URL}/api/containers/${slug}/week-navigation`, { cache: "no-store", signal });
   if (!response.ok) throw new Error("Week navigation isn't available right now.");
   return parseCollectionWeekNavigation(await response.json(), slug);
+}
+
+export function activeCollectionPin(hub: CollectionHub | null | undefined, now = Date.now()): CollectionPin | null {
+  return hub?.state === "published" && hub.slug === "midterms-2026" && hub.pin && Date.parse(hub.pin.pin_until) > now ? hub.pin : null;
 }

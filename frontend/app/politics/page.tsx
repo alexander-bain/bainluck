@@ -13,19 +13,20 @@ import type {
   PoliticsThemePresidential,
   PoliticsThemeCongressional,
   PoliticsThemeSimple,
-  ChamberControl,
 } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
 import { formatGapSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
 import { eventPath } from "@/lib/eventKey";
-import { twoLegCardPair } from "@/lib/twoLegCardPair";
-import { renderedDuelPercents, renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import s from "./politics.module.css";
-import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
+import { SourceBadge } from "@/components/politics/atoms";
 import { CrossSourceSpotlight } from "@/components/politics/CrossSourceSpotlight";
 import { SideMarketCard } from "@/components/politics/SideMarketCard";
+import PartyControlRow from "@/components/politics/PartyControlRow";
+import MarketCard from "@/components/politics/MarketCard";
+import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
+import { usePinnedCollection } from "@/hooks/usePinnedCollection";
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -506,94 +507,6 @@ function PresEvolution({ candidates, sourceMode }: {
 // Chamber control cards
 // ─────────────────────────────────────────────────────────
 
-function ChamberControlRow({
-  senate,
-  house,
-}: {
-  senate: ChamberControl | null;
-  house: ChamberControl | null;
-}) {
-  if (!senate && !house) return null;
-  return (
-    <div className={s.chamberGrid}>
-      {senate && <ChamberControlCard chamber="Senate" probs={senate} />}
-      {house && <ChamberControlCard chamber="House" probs={house} />}
-    </div>
-  );
-}
-
-function ChamberControlCard({
-  chamber,
-  probs,
-}: {
-  chamber: string;
-  probs: ChamberControl;
-}) {
-  // #6778: the two sides are one question in FIXED positions, so they round once
-  // together through the pair contract (#2831) instead of independently. The
-  // served pair is an exact complement on a half-percent grid — Senate control
-  // is `41.5 / 58.5` — and `Math.round` is half-up, so both sides rounded UP at
-  // once and the card printed `42% R vs 59% D`. `renderedDuelPercents` rounds
-  // the favourite and derives the other, which is the same rule the market cards
-  // a few hundred pixels down this page already use. The BAR stays on the raw
-  // values: it is drawing the split, not printing it.
-  const [gopPct, demPct] = renderedDuelPercents(probs.gop / 100, probs.dem / 100);
-  const gopLeads = probs.gop >= probs.dem;
-  return (
-    <Link href={`/futures/${probs.market_id}`}>
-      <div className={s.chamberCard}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--text-muted)",
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-            }}
-          >
-            {chamber} control
-          </span>
-          <SourceBadge source="both" compact />
-        </div>
-
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span
-              className={s.probNum}
-              style={{
-                fontSize: 28,
-                color: gopLeads ? "#DC2626" : "#9CA3AF",
-              }}
-            >
-              {gopPct ?? Math.round(probs.gop)}%
-            </span>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>R</span>
-          </div>
-          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>vs</span>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span
-              className={s.probNum}
-              style={{
-                fontSize: 28,
-                color: !gopLeads ? "#2563EB" : "#9CA3AF",
-              }}
-            >
-              {demPct ?? Math.round(probs.dem)}%
-            </span>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>D</span>
-          </div>
-        </div>
-
-        <div className={s.binaryBar} style={{ height: 6 }}>
-          <div className={s.binaryR} style={{ width: `${probs.gop}%` }} />
-          <div className={s.binaryD} style={{ width: `${probs.dem}%` }} />
-        </div>
-      </div>
-    </Link>
-  );
-}
-
 // ─────────────────────────────────────────────────────────
 // Senate map
 // ─────────────────────────────────────────────────────────
@@ -678,261 +591,6 @@ function SenateMap({ map }: { map: Record<string, number> | null }) {
 // Market cards — binary and multi-outcome
 // ─────────────────────────────────────────────────────────
 
-function MarketCard({
-  market,
-  theme,
-}: {
-  market: PoliticsMarketRow;
-  theme: string;
-}) {
-  const borderColor = BORDER_COLOR[theme] || "#9CA3AF";
-  // #6766 — TWO LEGS IS NOT THE SAME FACT AS TWO SIDES OF ONE QUESTION.
-  //
-  // `outcome_count <= 2` was the whole test, and `BinaryCard` is built on the two
-  // legs being complements: it prints one number, derives the other, and draws
-  // them as the two ends of one full bar. A two-RUNG market satisfies the arity
-  // and denies the premise — "Before Nov 3, 2026" 2.5% beside "Before Oct 1,
-  // 2026" 1.0% are nested rungs summing to 3.5, and the card printed 98% under
-  // the second name. `twoLegCardPair` decides it on the prices, and a pair that
-  // is not one question is rendered by `MultiCard`, which is this page's own
-  // render for independent rungs — leader, its bar, then each runner-up with its
-  // OWN served price. No new markup, and nothing that draws a partition the
-  // prices deny.
-  const isBinary = market.outcome_count <= 2 && twoLegCardPair(market).oneQuestion;
-
-  if (isBinary) {
-    return <BinaryCard market={market} borderColor={borderColor} />;
-  }
-  return <MultiCard market={market} borderColor={borderColor} />;
-}
-
-function BinaryCard({
-  market,
-  borderColor,
-}: {
-  market: PoliticsMarketRow;
-  borderColor: string;
-}) {
-  // #6766: the second number is the SERVED leg wherever the payload carries one.
-  // `MarketCard` above only routes a complement pair here, so `second` is
-  // non-null and the two round through the pair contract (#2831) rather than
-  // independently — which is also why `94.5 / 5.5` stops printing `95% vs 6%`.
-  const { first, second } = twoLegCardPair(market);
-  const yesProb = first.prob;
-  const noProb = second?.prob ?? 100 - yesProb;
-  const [yesPct, noPct] = renderedOutcomeRowPercents([yesProb / 100, noProb / 100]);
-  const yesLeads = yesProb >= 50;
-
-  return (
-    <Link href={`/futures/${market.market_id}`}>
-      <div className={s.marketCard} style={{ borderTop: `2px solid ${borderColor}` }}>
-        <div className={s.marketCardInner}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 11,
-              color: "var(--text-muted)",
-            }}
-          >
-            <SourceBadge source={market.src} />
-          </div>
-
-          <h3
-            style={{
-              margin: 0,
-              fontSize: 14,
-              fontWeight: 500,
-              lineHeight: 1.35,
-              color: "var(--text-primary)",
-            }}
-          >
-            {market.q}
-          </h3>
-
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span
-              className={s.probNum}
-              style={{ fontSize: 24, color: yesLeads ? "#16A34A" : "#111827" }}
-            >
-              {yesPct ?? Math.round(yesProb)}%
-            </span>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              {first.name}
-            </span>
-            <span
-              style={{
-                marginLeft: "auto",
-                fontSize: 11,
-                color: "var(--text-muted)",
-              }}
-            >
-              vs{" "}
-              <span className={s.probNum}>{noPct ?? Math.round(noProb)}%</span>{" "}
-              {second?.name || "No"}
-            </span>
-          </div>
-
-          <div className={s.binaryBar}>
-            <div style={{ width: `${yesProb}%`, background: "#16A34A" }} />
-            <div style={{ width: `${noProb}%`, background: "#94A3B8" }} />
-          </div>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-function MultiCard({
-  market,
-  borderColor,
-}: {
-  market: PoliticsMarketRow;
-  borderColor: string;
-}) {
-  const leader = market.top_outcomes?.[0];
-  if (!leader) return null;
-  // #9109: the server counts the rungs the page behind this card shows and the
-  // card does not. `outcome_count - 3` counted passed deadlines the page drops
-  // ("+9 more" over two rows); it is only the fallback for an older payload.
-  const moreCount = market.more_count ?? market.outcome_count - 3;
-  // #9474: "Leader" is a claim that the rows compete for one win. On a ladder
-  // ("Before Jan 3, 2027" ⊃ "Before Dec 12, 2026"; "At least 1" ⊃ "At least 2")
-  // the top row is the loosest rung by construction, and on a pick-several
-  // list every row can come true — 57 of 68 cards on 2026-09-28 were one of
-  // those and all 57 said "Leader". The word goes; the row stays.
-  const namesALeader = market.mutually_exclusive !== false;
-
-  return (
-    <Link href={`/futures/${market.market_id}`}>
-      <div className={s.marketCard} style={{ borderTop: `2px solid ${borderColor}` }}>
-        <div className={s.marketCardInner}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 11,
-              color: "var(--text-muted)",
-            }}
-          >
-            <SourceBadge source={market.src} />
-            {moreCount > 0 && (
-              <span
-                style={{
-                  marginLeft: "auto",
-                  fontFamily: "var(--font-mono, monospace)",
-                  fontSize: 10,
-                }}
-              >
-                +{moreCount} more
-              </span>
-            )}
-          </div>
-
-          <h3
-            style={{
-              margin: 0,
-              fontSize: 14,
-              fontWeight: 500,
-              lineHeight: 1.35,
-              color: "var(--text-primary)",
-            }}
-          >
-            {market.q}
-          </h3>
-
-          {/* #9474 follow-up: a pick-several row's name can be a whole case
-              caption ("Bird v. Iowa Migrant Movement for Justice"); with no gap
-              it ran into the number as "…for Justice39%". The name wraps, the
-              number keeps its width. */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              gap: 12,
-            }}
-          >
-            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-              {namesALeader && (
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-muted)",
-                    fontWeight: 600,
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Leader
-                </span>
-              )}
-              <span
-                style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: "var(--text-primary)",
-                  marginTop: namesALeader ? 2 : 0,
-                }}
-              >
-                {leader.name}
-              </span>
-            </div>
-            <span
-              className={s.probNum}
-              style={{ fontSize: 28, color: "var(--text-primary)", flexShrink: 0 }}
-            >
-              {Math.round(leader.prob)}%
-            </span>
-          </div>
-
-          <div
-            style={{
-              height: 4,
-              background: "#E5E7EB",
-              borderRadius: 9999,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${Math.max(leader.prob, 2)}%`,
-                height: "100%",
-                background: "#8B5CF6",
-                opacity: 0.7,
-              }}
-            />
-          </div>
-
-          {/* Runner-up outcomes */}
-          {market.top_outcomes.length > 1 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
-              {market.top_outcomes.slice(1, 3).map((o, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    fontSize: 12,
-                  }}
-                >
-                  <span style={{ color: "var(--text-secondary)" }}>{o.name}</span>
-                  <span className={s.probNum} style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                    {Math.round(o.prob)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </Link>
-  );
-}
-
 // ─────────────────────────────────────────────────────────
 // Section components
 // ─────────────────────────────────────────────────────────
@@ -994,6 +652,7 @@ function ThemeSection({
 // ─────────────────────────────────────────────────────────
 
 export default function PoliticsPage() {
+  const pinnedCollection = usePinnedCollection();
   usePageTracking({ pageType: "politics", pageTitle: "Politics Dashboard" });
   useScrollDepth({ pageType: "politics" });
   useEngagementTime({ pageType: "politics" });
@@ -1006,6 +665,7 @@ export default function PoliticsPage() {
   if (error) {
     return (
       <div className={s.page}>
+        {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
         <ErrorState message="Failed to load politics data" onRetry={() => window.location.reload()} />
       </div>
     );
@@ -1014,6 +674,7 @@ export default function PoliticsPage() {
   if (!data) {
     return (
       <div className={s.page}>
+        {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
         <PoliticsSkeleton />
       </div>
     );
@@ -1049,6 +710,7 @@ export default function PoliticsPage() {
     <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
       {/* Page header */}
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 20px 20px" }}>
+        {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
         <div className={s.pageHead}>
           <div>
             <h1 className={s.pageTitle}>Politics</h1>
@@ -1117,7 +779,7 @@ export default function PoliticsPage() {
               count={t.congressional.count}
               totalLabel={`${t.congressional.markets?.length || 0} shown · ${t.congressional.count} total`}
             />
-            <ChamberControlRow
+            <PartyControlRow
               senate={t.congressional.chamber_control?.senate || null}
               house={t.congressional.chamber_control?.house || null}
             />
