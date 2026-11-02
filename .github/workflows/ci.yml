@@ -169,6 +169,7 @@ jobs:
         id: live
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_LOOP_FAST_ENABLED: ${{ vars.RELEASE_LOOP_FAST_ENABLED }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BASE: ${{ github.event.before }}

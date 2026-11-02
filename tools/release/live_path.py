@@ -152,7 +152,9 @@ def main():
     prs = json.loads(Path(args.prs_json).read_text()) if args.prs_json else []
     live, selected = False, None
     # Do not deploy a fast candidate before item3's shared rollback exists.
-    if (root / 'tools/release/rollback.py').is_file() and is_live_event(args.event_name, event, prs, args.head):
+    if (os.environ.get('RELEASE_LOOP_FAST_ENABLED') == 'true'
+            and (root / 'tools/release/rollback.py').is_file()
+            and is_live_event(args.event_name, event, prs, args.head)):
         try:
             output = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', args.base, args.head], text=True)
             changed = output.splitlines()

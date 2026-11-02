@@ -4,7 +4,7 @@ Pillar: TRUTH. Ship: live delivery fixes reach users without waiting for the ful
 
 ## Activation and timing
 
-Open this PR first, label it `tier-b`, and hold every merge until Alex says `master is current`. Item 3 supplies `tools/release/rollback.py`; until that file is present the classifier retains ordinary full CI. Branch protection remains off until Alex says `branch protection on`. No command here writes master, a runner inbox, YOUR-TURN or artifacts.
+Open this PR first, label it `tier-b`, and hold every merge until Alex says `master is current`. Item 3 supplies `tools/release/rollback.py`; until that file is present and the checked activation tool sets `RELEASE_LOOP_FAST_ENABLED=true`, the classifier retains ordinary full CI. Activation requires known-good baseline receipts and verified provider hooks/promotion. Branch protection remains off until Alex says `branch protection on`. No command here writes master, a runner inbox, YOUR-TURN or artifacts.
 
 ## What runs
 
@@ -19,7 +19,7 @@ The post-deploy watchdog reads the exact CI run's recorded gate mode. Missing/in
 ## Verification here
 
 - 61 pytest cases passed: startup, release-loop guard runner, CI concurrency, required matrix contexts and database grouping contracts.
-- The guard runner executes 11 focused unittest cases, including PEP 701 rejection, merge provenance, tool moves and full-suite command parity.
+- The guard runner executes 12 focused unittest cases, including PEP 701 rejection, merge provenance, tool moves and full-suite command parity.
 - Nine Node CI-trigger/serialization contracts passed.
 - Local Python is 3.12; the hosted 3.11 job has not run here. No production deploy, rollback or PR creation was possible with internet disabled.
 
