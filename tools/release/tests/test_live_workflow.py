@@ -1,5 +1,6 @@
 import unittest
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -92,5 +93,50 @@ class WorkflowTests(unittest.TestCase):
             commands = lambda job: [(step.get('uses'), step.get('run')) for step in job['steps'] if step.get('name') != "Require this run's change-scope attempt"]
             self.assertEqual(commands(ci[name]), commands(watch[name]), name + ' full-suite commands drifted')
         self.assertIn('scope=full', str(watch['change-scope']))
+
+    def test_database_steps_continue_after_failure_but_stop_on_cancellation(self):
+        for workflow in ['ci.yml', 'live-path-watchdog.yml']:
+            job = yaml.safe_load((ROOT / '.github/workflows' / workflow).read_text())['jobs']['database-integration']
+            steps = job['steps']
+            summaries = [step for step in steps if step.get('id') == 'database_integration_summary']
+            self.assertEqual(len(summaries), 1, workflow)
+            self.assertIs(steps[-1], summaries[0])
+            self.assertEqual(summaries[0]['if'], '${{ !cancelled() }}')
+            self.assertTrue(summaries[0]['continue-on-error'], 'summary errors must not change the gate result')
+            self.assertEqual(len({step['id'] for step in steps}), len(steps))
+            self.assertNotIn('continue-on-error', job)
+            for step in steps[:-1]:
+                self.assertIn('!cancelled()', step['if'], step.get('name', step.get('uses')))
+                self.assertNotIn('success()', step['if'])
+                self.assertNotIn('continue-on-error', step, 'original failures must still fail the job')
+                if 'pytest' in step.get('run', ''):
+                    self.assertIn('matrix.group', step['if'])
+                    self.assertIn("needs.change-scope.outputs.reuse != 'true'", step['if'])
+
+    def test_database_summary_lists_both_failed_steps_and_leaves_successes_out(self):
+        for workflow in ['ci.yml', 'live-path-watchdog.yml']:
+            steps = yaml.safe_load((ROOT / '.github/workflows' / workflow).read_text())['jobs']['database-integration']['steps']
+            code = steps[-1]['run'].split("python - <<'SUMMARY'\n", 1)[1].rsplit('\nSUMMARY', 1)[0]
+            fixtures = [
+                ({'first_integration': {'outcome': 'failure'}, 'passing': {'outcome': 'success'},
+                  'second_integration': {'outcome': 'failure'}, 'skipped': {'outcome': 'skipped'}}, True),
+                ({'passing': {'outcome': 'success'}, 'skipped': {'outcome': 'skipped'}}, False),
+            ]
+            with tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / 'summary.md'
+                for results, failed in fixtures:
+                    output.write_text('')
+                    result = subprocess.run([sys.executable, '-c', code], env={**os.environ,
+                        'STEP_RESULTS': json.dumps(results), 'INTEGRATION_GROUP': 'shared',
+                        'GITHUB_STEP_SUMMARY': str(output)}, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    summary = output.read_text()
+                    self.assertEqual(summary.count('## Database integration'), 1)
+                    self.assertIn('shared', summary)
+                    for name in ['first_integration', 'second_integration']:
+                        self.assertEqual(name in summary, failed)
+                    self.assertNotIn('passing', summary)
+                    self.assertNotIn('skipped', summary)
+                    self.assertEqual('No failed steps.' in summary, not failed)
 
 if __name__ == '__main__': unittest.main()
