@@ -1,0 +1,99 @@
+{
+  "scope": "Independent audit of implementer-owned real loopback receipt, not a second wire run. Exact source hashes matched to independent pure-tested frozen candidate.",
+  "receiptHash": "02bc6cabbddfee5610a26e9cbd5bcaad3295f85fe0e2e7b9ac1bf400b0bb020a",
+  "candidateSourceHashes": {
+    "src/bounded-sse-writer.mjs": "198aac3023819b2a67175903f61482a2b15657412ad9fa17d7ca7cd5391ee6d4",
+    "src/stream-server.mjs": "27943f29224832f046d2f0381f18f9c04d210feea4cfc7e0f4c817156825ddf9",
+    "tests/backpressure-wire.mjs": "db35877417eca94c654b47ceea8ee9328d40ef006a9d36ed46ae6b1aa3748722",
+    "src/client.mjs": "4e859c884ef58c2158c04a706ebcbce4be8a52327cace86df3af68eda847e783",
+    "src/protocol.mjs": "42233065b7e45cede6509f933d26744b2d89e2da8ec7e4099dd9a38efe259e20",
+    "src/broker.mjs": "26f3063d6a2813ee72752675a3568ec86c30b27055fffd383009fe67f8eda3ba"
+  },
+  "cases": [
+    {
+      "name": "baseline-real-paused-reader",
+      "confirmedPositiveControl": true,
+      "actualWriteFalseCount": 51,
+      "writesBeforeInterveningDrain": 49,
+      "reportedFirstStallViolations": 49,
+      "peakObservedNodeBytes": 82904
+    },
+    {
+      "name": "candidate-real-paused-reader-and-responsive-reader",
+      "examinedWrites": 971,
+      "falseCount": 1,
+      "drains": 0,
+      "closes": 3,
+      "peakQueuedEncodedBytes": 124875,
+      "peakNodeWritableLength": 71423,
+      "peakCombinedAccountedBytes": 196298,
+      "noWriteBeforeDrain": true,
+      "noWriteAfterClosed": true,
+      "exactNormalPointCount": 491,
+      "exactRecoveredValue": 0.91,
+      "recoveredPoints": [
+        491
+      ]
+    },
+    {
+      "name": "candidate-real-abandon-while-blocked",
+      "examinedWrites": 475,
+      "falseCount": 1,
+      "drains": 0,
+      "closes": 1,
+      "peakQueuedEncodedBytes": 8919,
+      "peakNodeWritableLength": 71416,
+      "peakCombinedAccountedBytes": 71416,
+      "noWriteBeforeDrain": true,
+      "noWriteAfterClosed": true
+    },
+    {
+      "name": "candidate-real-drain-resume",
+      "examinedWrites": 477,
+      "falseCount": 1,
+      "drains": 1,
+      "closes": 1,
+      "peakQueuedEncodedBytes": 17839,
+      "peakNodeWritableLength": 71423,
+      "peakCombinedAccountedBytes": 89262,
+      "noWriteBeforeDrain": true,
+      "noWriteAfterClosed": true
+    },
+    {
+      "name": "candidate-real-no-drain-deadline",
+      "examinedWrites": 475,
+      "falseCount": 1,
+      "drains": 0,
+      "closes": 1,
+      "peakQueuedEncodedBytes": 8920,
+      "peakNodeWritableLength": 71423,
+      "peakCombinedAccountedBytes": 71423,
+      "noWriteBeforeDrain": true,
+      "noWriteAfterClosed": true
+    },
+    {
+      "name": "candidate-real-handover-purges-old-backlog-by-disconnect",
+      "examinedWrites": 475,
+      "falseCount": 1,
+      "drains": 0,
+      "closes": 2,
+      "peakQueuedEncodedBytes": 17840,
+      "peakNodeWritableLength": 71423,
+      "peakCombinedAccountedBytes": 89263,
+      "noWriteBeforeDrain": true,
+      "noWriteAfterClosed": true,
+      "exactNewOwnerRecovery": {
+        "epoch": 2,
+        "seq": 1,
+        "p": 0.2
+      }
+    }
+  ],
+  "shutdownVerified": true,
+  "passed": true,
+  "caveats": [
+    "Encoded queued bytes and Node writableLength are not a bound on process RSS, JavaScript object overhead, broker history, diagnostics, kernel, proxy, or peer buffers.",
+    "Timeouts and observed latencies are cooperative event-loop observations, not hard end-to-end or physical-rendering SLAs.",
+    "Baseline and candidate stress workloads differ in frame padding; results establish safety invariants, not a direct performance ranking."
+  ]
+}

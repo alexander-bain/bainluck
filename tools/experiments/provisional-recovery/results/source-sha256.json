@@ -1,0 +1,13 @@
+{
+  "baseline/client-core.mjs": "1bcad480d08216513dc2f5670e80ab13ace0110523925aad72331ff66b2a1119",
+  "owned-postgres.mjs": "6e29c610bc436fc50ef555405783d5743332c62e6b3b42815dc1d926d3b23329",
+  "package-lock.json": "f81df8295d05bc08cab4655556f8cffd0fc0c9321a79d1291335f479037de61c",
+  "package.json": "b0e8f65065e0cd107bf8fb08d138e91d3668657da342d46347c77ed8e070d21a",
+  "review/test_recovery_adversarial.mjs": "cb9247386b55535774b3bc45fef3989dcf6deefa874449f80143ca8273a85bc8",
+  "run.sh": "e557989b92e3bec733d4525198cb84a806cfa588eac424d886139271dba612d1",
+  "src/benchmark.mjs": "67348a2f00818c1b6ecba9e18bf135ece259c8549c62010b608084cd0d432df0",
+  "src/candidate.mjs": "cbdda7a6b5693248859a87eae0121f4b0a674b4d596e2ec0232e7561bd1ba222",
+  "src/crash-child.mjs": "e57202326ec4b50ad860a9a82b79ff31444b1e5c9edc5bf388658f67e4bb304a",
+  "src/outage.mjs": "44505cb660c5ca5632fef2cbce69350eb59247f2894bf28ab97a77eab40ab8fc",
+  "src/test.mjs": "ccb2f10cf709ac8e72d9266bedae85469ab4720a8dcb2bd45729eae7d3f89130"
+}

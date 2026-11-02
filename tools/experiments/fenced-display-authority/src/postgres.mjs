@@ -1,0 +1,6 @@
+import {ownedPostgresConfig} from '../owned-postgres.mjs';
+import {createRequire} from 'node:module';import {hash} from './protocol.mjs';const require=createRequire(process.env.PG_DEPENDENCY_PACKAGE||import.meta.url);const {Pool}=require('pg');
+export class Sink {constructor(){this.errors=[];this.pool=new Pool({...ownedPostgresConfig(),max:4,connectionTimeoutMillis:5000,query_timeout:10000});this.pool.on('error',e=>this.errors.push(e.message));this.pool.on('connect',c=>c.on('error',e=>this.errors.push(e.message)));}
+ async init(){await this.pool.query('CREATE TABLE publications(stream text NOT NULL, boot text NOT NULL, epoch bigint NOT NULL, seq bigint NOT NULL, hash text NOT NULL, payload jsonb NOT NULL, PRIMARY KEY(stream,boot,epoch,seq))');}
+ async persist(j){await this.pool.query('INSERT INTO publications(stream,boot,epoch,seq,hash,payload) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING',[j.stream,j.boot,j.epoch,j.seq,j.hash,j.payload]);const row=(await this.pool.query('SELECT * FROM publications WHERE stream=$1 AND boot=$2 AND epoch=$3 AND seq=$4',[j.stream,j.boot,j.epoch,j.seq])).rows[0];if(row.hash!==j.hash||hash(row.payload)!==j.hash)throw Error('identity-conflict');return {hash:row.hash};}
+ async rows(){return (await this.pool.query('SELECT * FROM publications ORDER BY epoch,seq')).rows;}async close(){await this.pool.end();}}

@@ -1,0 +1,29 @@
+{
+  "origin": "retained failed candidate wal-normal-2026-10-20T15-34-05.033Z-9e220097",
+  "timingArtifactSha256": "9ce67d0289cc3bc70b7e2b2c857e05c7adec37b705caaf0cb650a09d550c48ce",
+  "cases": [
+    {
+      "sourceRequestTraceN": 299,
+      "remainingAtAcceptMs": 194.30000000074506,
+      "nextLoggedEventGapMs": 403.0
+    },
+    {
+      "sourceRequestTraceN": 310,
+      "remainingAtAcceptMs": 36.80000000074506,
+      "nextLoggedEventGapMs": 1166.199999999255
+    },
+    {
+      "sourceRequestTraceN": 359,
+      "remainingAtAcceptMs": 109.40000000037253,
+      "nextLoggedEventGapMs": 465.1000000014901
+    },
+    {
+      "sourceRequestTraceN": 366,
+      "remainingAtAcceptMs": 462.09999999962747,
+      "nextLoggedEventGapMs": 535.6999999992549
+    }
+  ],
+  "limits": [
+    "Gap is acceptance to next logged client event, not an exclusive observer-cost measurement. Tests simulate that delay; real future challenge cadence is not trace-replayed."
+  ]
+}

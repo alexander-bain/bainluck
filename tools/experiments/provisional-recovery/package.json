@@ -1,0 +1,16 @@
+{
+  "name": "isolated-provisional-recovery-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bash run.sh"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
