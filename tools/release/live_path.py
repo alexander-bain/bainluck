@@ -185,7 +185,8 @@ def main():
             selected = select_tests(root, changed)
             live = selected is not None
         except (OSError, ValueError, subprocess.CalledProcessError):
-            pass
+            # Uncertain eligibility retains the full CI path.
+            live, selected = False, None
     outputs = f'live={str(live).lower()}\ntests={json.dumps(selected or [])}\nrun_attempt={os.environ.get("GITHUB_RUN_ATTEMPT","")}\nhead={args.head}\n'
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a') as destination:
