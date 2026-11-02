@@ -362,6 +362,7 @@ def membership(text):
             "backend-tests",
             "database-integration",
             "change-scope",
+            "fast-gate",
             "shard-completeness",
             "golden-baseline-floor",
             "frontend-build",
@@ -387,17 +388,23 @@ def expected_steps(kind, value, count, block):
     """Only the reviewed condition grammar; unknown conditions refuse reuse."""
     reuse = "needs.change-scope.outputs.reuse != 'true'"
     scope = "needs.change-scope.outputs.scope != 'frontend'"
+    live = "needs.change-scope.outputs.live != 'true'"
     compose = "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')"
     executing = {
         None,
         reuse,
+        live,
         f"{scope} && {reuse}",
+        f"{scope} && {reuse} && {live}",
         compose,
         f"{scope} && {reuse} && {compose}",
+        f"{scope} && {reuse} && {live} && {compose}",
     }
     skipped = {
         "needs.change-scope.outputs.reuse == 'true'",
         "needs.change-scope.outputs.scope == 'frontend'",
+        "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'",
+        "needs.change-scope.outputs.live == 'true'",
         "github.event_name == 'push' && github.ref == 'refs/heads/master'",
     }
     required = []

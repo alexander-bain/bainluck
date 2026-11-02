@@ -56,7 +56,9 @@ function extractDeployScript() {
   if (jobEnd === -1) jobEnd = after.length;
   const job = after.slice(0, jobEnd);
 
-  const runIdx = job.findIndex((l) => /^ {8}run: \|\s*$/.test(l));
+  const deployStep = job.findIndex((l) => l.startsWith("      - name: Deploy to Heroku"));
+  assert.notEqual(deployStep, -1, "the named Deploy to Heroku step is missing");
+  const runIdx = job.findIndex((l, i) => i > deployStep && /^ {8}run: \|\s*$/.test(l));
   assert.notEqual(
     runIdx,
     -1,
@@ -157,6 +159,15 @@ function runGuardIn(shellArgs, script, env) {
     fs.mkdirSync(binDir);
     fs.writeFileSync(path.join(binDir, "git"), FAKE_GIT, { mode: 0o755 });
 
+    const releaseDir = path.join(dir, "tools", "release");
+    fs.mkdirSync(releaseDir, { recursive: true });
+    fs.writeFileSync(path.join(releaseDir, "discover.py"), [
+      "import os",
+      "def receipt_rows(provider): return []",
+      "def failed_sources(rows): return set(os.environ.get('FAKE_FAILED_SOURCES', '').split())",
+      "",
+    ].join("\n"));
+
     const scriptPath = path.join(dir, "guard.sh");
     fs.writeFileSync(scriptPath, script);
     const log = path.join(dir, "git.log");
@@ -234,6 +245,17 @@ describe("deploy guard (#3171): forward progress without ever rewinding", () => 
     );
   });
 
+
+  test("a source rejected by the watchdog cannot be pushed", () => {
+    forEachShell(script, {
+      GITHUB_SHA: NEW, FAKE_LIVE: OLD, FAKE_ORIGIN_TIP: NEW,
+      FAKE_FAILED_SOURCES: NEW,
+    }, (r) => {
+      assert.notEqual(r.status, 0);
+      assert.equal(r.pushes.length, 0);
+      assert.match(r.stdout, /REFUSING to release a source rejected/);
+    });
+  });
 
   test("THE #3171 DEFECT: deploys when production is behind, even mid-merge-storm", () => {
     // The exact shape that starved production: this run's commit is ahead of

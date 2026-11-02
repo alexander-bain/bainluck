@@ -1,0 +1,30 @@
+# Live-path release gate
+
+Pillar: TRUTH. Ship: live delivery fixes reach users without waiting for the full suite, with automated rollback when the full suite finds a regression.
+
+## Activation and timing
+
+Open this PR first, label it `tier-b`, and hold every merge until Alex says `master is current`. Item 3 supplies `tools/release/rollback.py`; until that file is present and the checked activation tool sets `RELEASE_LOOP_FAST_ENABLED=true`, the classifier retains ordinary full CI. Activation requires known-good baseline receipts and verified provider hooks/promotion. Branch protection remains off until Alex says `branch protection on`. No command here writes master, a runner inbox, YOUR-TURN or artifacts.
+
+## What runs
+
+The original change-scope script remains the full/frontend job classifier. The added selector admits the `live-path` label only for backend Python source/tests with direct test coverage and the canonical `tools/speed/` subtree. Requirements, migrations, app bootstrap/models/configuration, fixture hooks, unknown paths and deletions keep full CI. Backend selection follows direct imports, literal source reads and transitive test-helper consumers; it intentionally does not claim complete application impact coverage. The complete application suite runs after deploy. Pure moves/additions of speed tooling get startup plus Python/shell syntax and all `tools/speed/tests/test_*.py` tests that exist.
+
+The `fast-gate` job has `timeout-minutes: 2`, including runner setup, checkout, dependency installation and tests. It pins Python 3.11, compiles Python with that interpreter, and folds in the PEP 701 check read from the existing speed tool. The deadline is a refusal on timeout. The scope and fixture jobs also have two-minute refusal deadlines. Queue time and the serial total have not been measured; this is an execution deadline, not a proven end-to-end hosted duration. A cold dependency install may use the whole allowance; this session could not measure hosted performance because internet is disabled.
+
+A push must be one exact associated merged master PR carrying `live-path`; every associated PR must agree, and the classifier's base must equal the merge commit's first parent. A failed API lookup, a mixed push or a deployed-base gap uses full CI. The label and current PR head are fetched again from the API, including when an old run is rerun after the label changes. Scope outputs carry their producing run attempt. Fast gates, matrix markers, cheap required fixtures and deployment refuse retained outputs from another attempt and ask for a rerun of ALL jobs. Fast-gate and deployment fetch the newest trusted `release-loop-policy` deployment receipt and current PR metadata before proceeding; a stale successful scope cannot admit a label that was removed or a fast lane whose policy was disabled. The arming/disable tool writes the policy receipt (`authority: release-loop-policy-v1`, Boolean `fast_enabled`, full `master_sha`) before changing coarse repository variables. Runtime uses existing `deployments: read`, with no Variables API access or extra credential. The latest receipt wins even if it is disabled or malformed; older enabled receipts cannot revive it. Ordinary unarmed runs skip this verifier and retain full CI. Gate artifacts carry the exact run ID and attempt, and the watchdog validates both before interpreting the mode. Every matrix context remains expanded; successful marker jobs depend on the actual fast gate.
+
+The post-deploy watchdog reads the exact CI run's recorded gate mode. Missing/invalid mode causes a full watchdog run. It checks out the deployed candidate SHA and runs the current eight backend shards, shard completeness, the database integration rails, the recall aggregate, frontend build/Jest/typecheck and browser contract fixtures. A parity guard requires its commands to remain identical to ordinary CI. Before waiting for a provider lock, it persists a failed-SHA veto for both providers. Promotion checks that veto under its writer lock, so a later Vercel promotion cannot undo a quick watchdog failure. The rollback matrix uses `heroku-deploy` or `vercel-production` concurrency for its provider and calls item 3's shared rollback CLI. Stale failures cannot rewind newer releases. Every Heroku push/retry path rechecks the durable source veto under its writer lock; a veto read failure refuses release.
+
+## Verification here
+
+- 67 pytest cases passed: startup, release-loop guard runner, CI concurrency, required matrix contexts and database grouping and golden-floor wiring contracts.
+- The guard runner executes 17 focused unittest cases, including PEP 701 rejection, merge provenance, tool moves and full-suite command parity.
+- Nine Node CI-trigger/serialization contracts passed.
+- Local Python is 3.12; the hosted 3.11 job has not run here. No production deploy, rollback or PR creation was possible with internet disabled.
+
+## Flaky-test retirement still requires current source
+
+The checked-out master is `da9706eccc`, and the requested speed tests are not in it. Read-only evidence identifies #11744's exact node as `tests/test_pm_observation_cohort_chunks_10090.py::test_initial_mixed_chunk_allows_fresh_acknowledged_a_during_b_hold`; the Delivery Speed working copy already waits for the correct fresh frame instead of any frame. Its conftest also contains #11681's collection-time `gc.freeze()` fix. Neither source is copied or changed by this PR. The #11644 failing node was not recoverable from the relevant local logs. Rebase after master is current, read the three issue records, and quarantine or delete the exact remaining flaky timing tests with their behavioral assertions preserved elsewhere. This portion is unfinished, not silently waived.
+
+The stale-attempt refusal applies only when the retained decision is `live=true`. Ordinary full-CI failed-job retries retain their prior scope and can rerun a shard or deployment without rerunning every job. Live retries still require fresh scope and eligibility.

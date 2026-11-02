@@ -39,6 +39,7 @@ DEPLOY_NEEDS = {
     "frontend-build",
     "e2e-contract",
     "release-required",
+    "change-scope", "fast-gate",
 }
 
 
@@ -177,7 +178,7 @@ def test_triggers_jobs_and_release_serialization_are_untouched():
     assert (
         set(on) == {"pull_request", "push"}
         and on["push"] == {"branches": ["master", "integrator/compose-**"]}
-        and not on["pull_request"]
+        and "branches" not in on["pull_request"]
     )
     assert REQUIRED_JOBS <= set(
         wf["jobs"]

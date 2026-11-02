@@ -296,7 +296,7 @@ def test_common_setup_services_and_intentional_scope_skip():
     jobs, _ = _inputs()
     worker = jobs["database-integration"]
     assert worker["needs"] == "change-scope"
-    assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend'"
+    assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'"
     assert worker["strategy"]["fail-fast"] is False
     assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated", "shared-suffix"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
@@ -407,7 +407,7 @@ def test_required_aggregate_runs_after_failure_and_deploy_still_depends_on_it():
     aggregate = jobs["search-recall"]
     assert "strategy" not in aggregate and "name" not in aggregate
     assert aggregate["needs"] == ["change-scope", "database-integration"]
-    assert aggregate["if"] == "always() && needs.change-scope.outputs.scope != 'frontend'"
+    assert aggregate["if"] == "always() && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'"
     assert "search-recall" in jobs["deploy"]["needs"]
     assert "continue-on-error" not in aggregate
     assert "continue-on-error" not in jobs["database-integration"]
@@ -530,7 +530,7 @@ def test_reuse_representation_refuses_lost_or_widened_guards(mutation):
 def test_receipt_values_are_environment_data_never_interpolated_shell():
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
     for name in ("backend-tests", "database-integration", "shard-completeness", "frontend-build"):
-        receipt = jobs[name]["steps"][0]
+        receipt = next(step for step in jobs[name]["steps"] if step.get("name") == RECEIPT)
         assert receipt["name"] == RECEIPT
         assert "${{" not in receipt["run"]
         assert receipt["env"] == {

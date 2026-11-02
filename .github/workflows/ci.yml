@@ -7,80 +7,30 @@ on:
   # Compose pushes serve Integrator; they do not replace lane PR validation.
   # Guard: frontend/e2e/contract/ciTriggerCoverage.contract.test.js.
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
   push:
     branches: [master, 'integrator/compose-**']
 
-# SUPERSEDED PULL-REQUEST SHAS STOP HOLDING RUNNERS. NOTHING ELSE CHANGES.
-#
-# Measured 2026-09-17 14:07-15:15Z: twelve CI runs in 35 minutes against the
-# account's hosted-runner cap. An uncongested run took 15m25s; the phone PR
-# (#6744) took 40m11s, of which ~29 minutes was waiting for a runner. One PR in
-# that burst was pushed three times in ten minutes and all three shas ran the
-# full ~82 runner-minutes, though only the last could ever be merged.
-#
-#   * pull_request: one group per PR NUMBER. A newer sha on the same PR cancels
-#     the older sha's run. The head sha - the only one the integrator may merge
-#     - is always the survivor, and it still runs every job.
-#   * push (master): the group is the RUN ID, which no other run shares, and
-#     `cancel-in-progress` evaluates false. A master run is therefore never
-#     cancelled and never held pending by this block: a concurrency group keeps
-#     at most ONE pending run and drops the rest, so master must never share
-#     one. Release serialization stays where it was, on the `deploy` job.
-#   * re-run: keeps its run id, so a master re-run is still alone in its group.
-#     Re-running an OLD-sha PR run would cancel that PR's head-sha run - re-run
-#     the head sha's run, never an older one.
-#
-# THE ONE ACCEPTED HAZARD, and why it is a rule here instead of a setting.
-# That last line is operational because the obvious fix only half-works. Gating
-# `cancel-in-progress` on `github.run_attempt` would spare an IN-PROGRESS head
-# run, but a group holds exactly ONE pending run and a newly queued run displaces
-# the previously pending one no matter what this flag says - the same asymmetry
-# the `deploy` job's own concurrency comment records further down. On the burst
-# days that motivated this change most of a run's life is spent pending, so the
-# half-fix would drop the very runs it appears to protect while reading as
-# safety. The cost of the hazard is bounded: the desk merges on exact-sha CI
-# (notice 28), so a cancelled head run means the gate finds no successful run and
-# REFUSES. It fails closed - a wasted re-run, never a bad merge.
-#
-# FOR THE DESK: a lane that pushes again after offering sha X cancels X's run, so
-# the offer must move to the new head; re-gate the new sha rather than re-running
-# X. This is the one behaviour change merging this produces.
-#
-# Guarded by backend/tests/test_ci_supersede_concurrency.py.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+  deployments: read
+
 jobs:
-  # #5007 (THRU-H) — does this candidate need the backend jobs at all?
-  #
-  # The four shards plus search-recall are 11.1m and 8.3m of a 12.1m run
-  # (measured, n=25). A candidate confined to `frontend/` that no backend test
-  # can even read is protected by none of them and pays for all of them.
-  #
-  # THIS JOB FAILS TOWARD "full", exactly like release-required fails toward
-  # releasing. Skipping a job that would have caught a defect ships the defect;
-  # running a job that proves nothing costs minutes. Not symmetric.
-  #
-  # The decision is NOT "is every changed file under frontend/". Twelve backend
-  # tests read `frontend/**` off disk as cross-tier parity guards, so that rule
-  # alone is a fail-open — see `.github/ci-cross-tier-paths.txt` and its rot
-  # guard, `backend/tests/test_ci_cross_tier_manifest.py`. The script consults
-  # that manifest; a candidate touching one of those paths runs everything.
-  #
-  # `deploy` is unaffected. Whenever this job says `frontend`, every changed path
-  # is under `frontend/`, so `heroku-release-required.sh` necessarily says
-  # `false` and `deploy` was already skipping — the reduced set is a strict
-  # subset of the no-release set. That invariant is asserted by
-  # `test_a_frontend_scope_always_implies_no_heroku_release`, not left to reading.
-  # #11091 accepts complete compose PUSH evidence for this exact commit only.
-  # Any uncertainty executes the original full path. PR merge-ref credit is forbidden.
   change-scope:
     permissions:
       contents: read
       actions: read
       checks: read
+      pull-requests: read
+      deployments: read
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     outputs:
       scope: ${{ steps.decide.outputs.scope }}
       reuse: ${{ steps.prior.outputs.reuse }}
@@ -88,11 +38,21 @@ jobs:
       reuse_attempt: ${{ steps.prior.outputs.reuse_attempt }}
       reuse_head: ${{ steps.prior.outputs.reuse_head }}
       reuse_base: ${{ steps.prior.outputs.reuse_base }}
+      live: ${{ steps.live.outputs.live }}
+      tests: ${{ steps.live.outputs.tests }}
+      run_attempt: ${{ steps.live.outputs.run_attempt }}
+      head: ${{ steps.live.outputs.head }}
     steps:
       - uses: actions/checkout@v6
         with:
           # The classifier diffs a range; a shallow clone has no base to diff.
           fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            .github
+            backend
+            tools/release
+            tools/speed
 
       - name: Classify the complete candidate
         id: decide
@@ -153,35 +113,111 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/ci-prior-evidence.py
 
-  # Queue 312 — sharded because this job WAS the merge-to-deploy path: 8m23s of a
-  # 9m31s run (measured, run 31436687919), with every other job finishing minutes
-  # earlier. Four legs of ~113s each make frontend-build the long pole instead.
-  #
-  # The split is computed, not configured. `scripts/ci_shard.py` enumerates the
-  # collected test files and assigns each to exactly one shard; there are no path
-  # globs to maintain and no way for a new test file to match none of them. The
-  # `shard-completeness` job below proves that claim on every run against pytest's
-  # own collection — read its header for why that check is not optional.
-  backend-tests:
-    # #5007 — the shards do no work only when change-scope PROVED the candidate
-    # cannot reach anything they test. The comparison is `!= 'frontend'`, not
-    # `== 'full'`, so an empty or unset output still runs the shards.
-    #
-    # THE SKIP IS ON EVERY STEP, NOT ON THE JOB, AND THAT IS LOAD-BEARING.
-    # A matrix job skipped at JOB level never expands: GitHub records one check
-    # named bare `backend-tests` and never creates `backend-tests (1)`..`(4)`.
-    # Those four are REQUIRED contexts in master's branch protection, so every
-    # frontend-only PR read MERGEABLE/BLOCKED with CI green and every notice
-    # passing (ux/1464, 2026-09-23; #8253, #8261). Absent is not failed, so
-    # nothing reddened, and a rebase could not help: the classifier reads the
-    # file set only. Step-level skips let the legs expand, report `success`, and
-    # still do no work (~20s of runner start per leg against #5007's ~11 min).
-    #
-    # `deploy` is unchanged by this: on a frontend scope `shard-completeness`
-    # and `search-recall` still skip at job level (non-matrix, so their skipped
-    # context satisfies protection) and `release-required` reads `false`.
-    # Guarded by backend/tests/test_ci_matrix_required_contexts.py.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Extend change-scope with impacted tests for live-path
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_LOOP_FAST_ENABLED: ${{ vars.RELEASE_LOOP_FAST_ENABLED }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            HEAD="$PR_HEAD"
+            BASE="$(git merge-base "$PR_BASE" "$HEAD")"
+          else
+            HEAD="$GITHUB_SHA"
+            BASE="$(bash .github/scripts/ci-deploy-base.sh "$PUSH_BASE" "$HEAD" || echo "$PUSH_BASE")"
+          fi
+          # A failed API read never admits a label into the fast lane.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '[.]' > /tmp/live-prs.json || echo '[]' > /tmp/live-prs.json
+          else
+            gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD/pulls" > /tmp/live-prs.json || echo '[]' > /tmp/live-prs.json
+          fi
+          python tools/release/live_path.py --base "$BASE" --head "$HEAD" --prs-json /tmp/live-prs.json
+
+      - name: Record the deployed gate for the watchdog
+        env:
+          LIVE_MODE: ${{ steps.live.outputs.live }}
+        run: |
+          python -c 'import json,os; json.dump({"sha":os.environ["GITHUB_SHA"],"run_id":os.environ["GITHUB_RUN_ID"],"run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],"live":os.environ["LIVE_MODE"] == "true"},open("release-loop-mode.json","w"))'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-loop-mode-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-loop-mode.json
+          retention-days: 7
+
+  # The two-minute limit includes checkout, dependency installation, syntax,
+  # startup and all impacted tests. A timeout fails closed; it is never a pass.
+  fast-gate:
     needs: change-scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
+      - name: Ordinary candidate uses the full CI gates
+        if: needs.change-scope.outputs.live != 'true'
+        run: echo "Full CI validates this candidate; no live-path gate is selected."
+
+      - uses: actions/checkout@v6
+        if: needs.change-scope.outputs.live == 'true'
+      - uses: actions/setup-python@v7
+        if: needs.change-scope.outputs.live == 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Recheck current fast eligibility
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
+        run: python3 tools/release/verify_fast.py
+
+      - name: Install dependencies
+        if: needs.change-scope.outputs.live == 'true'
+        run: pip install -r backend/requirements.txt
+      - name: Python 3.11 syntax, smoke test and change-scope selected tests
+        if: needs.change-scope.outputs.live == 'true'
+        env:
+          SELECTED_TESTS: ${{ needs.change-scope.outputs.tests }}
+        run: |
+          python -m compileall -q backend/app backend/tests
+          if [ -d tools/speed ]; then
+            python -m compileall -q tools/speed
+            while IFS= read -r -d '' SCRIPT; do bash -n "$SCRIPT"; done < <(find tools/speed -name '*.sh' -print0)
+          fi
+          python - <<'PYCODE'
+          import json, os, subprocess, sys
+          tests = json.loads(os.environ['SELECTED_TESTS'])
+          if not tests or 'tests/test_startup.py' not in tests:
+              raise SystemExit('No selected tests or missing startup smoke test')
+          subprocess.run([sys.executable, '-m', 'pytest', *tests, '-q'], cwd='backend', check=True)
+          PYCODE
+
+  backend-tests:
+    needs: [change-scope, fast-gate]
     runs-on: ubuntu-latest
     strategy:
       # Every shard runs even when one fails. With fail-fast the first red
@@ -195,6 +231,17 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
       - name: Reused exact-commit test evidence
         if: needs.change-scope.outputs.reuse == 'true'
         working-directory: .
@@ -207,39 +254,24 @@ jobs:
 
       # Says so in the log, so a green leg that did no work never reads as a
       # tested one. Runs from the workspace root: nothing is checked out.
-      - name: Frontend-only candidate — this leg runs no tests (#5007)
-        if: needs.change-scope.outputs.scope == 'frontend'
+      - name: Frontend-only or live-path candidate — the full shard is deferred
+        if: needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'
         working-directory: .
         run: echo "change scope is 'frontend'; shard ${{ matrix.shard }} intentionally ran nothing."
 
-      # THE MUTATION-RESIDUE SCAN NEEDS A MERGE BASE, AND THE DEFAULT CHECKOUT
-      # DOES NOT HAVE ONE.
-      #
-      # `tests/test_mutation_guard.py` runs `scan_mutation_residue.py`, whose
-      # Pass B diffs `origin/master...HEAD`. On a PUSH to master that resolves
-      # and the job is green; on a PULL REQUEST, checkout lands a detached merge
-      # ref at depth 1, `origin/master` does not exist, and git returns 128 —
-      # which the scanner reported as exit 1, the SAME code it uses for "residue
-      # found". Every PR in the repo failed shard 3 identically, with a message
-      # that read like a real finding (2026-08-24: #2145, #2146, #2151).
-      #
-      # `filter: blob:none` is what makes the full graph affordable: the pack is
-      # ~850 MiB, but `git diff --name-only` needs commits and TREES only, so
-      # blobs stay on the server and are fetched lazily if something else asks.
-      # `fetch-depth: 0` alone would pull the whole 850 MiB on all four shards.
       - uses: actions/checkout@v6
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         with:
           fetch-depth: 0
           filter: blob:none
 
       - name: Record compose checkout provenance
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
         working-directory: .
         run: python3 .github/scripts/ci-prior-evidence.py --record "$RUNNER_TEMP/ci-provenance.json" --identity backend-tests-${{ matrix.shard }}
 
       - name: Publish compose checkout provenance
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
         uses: actions/upload-artifact@v4
         with:
           name: compose-source-provenance-${{ github.run_attempt }}-backend-tests-${{ matrix.shard }}
@@ -248,28 +280,18 @@ jobs:
           retention-days: 2
 
       - uses: actions/setup-python@v7
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         run: pip install -r requirements.txt
 
-      # #10090 attempt163 — the real-Redis publication controls (every
-      # `private_redis_socket` case in test_event_frame_batching_10659.py and
-      # the 163 retention files) skipped on these shards: the runner has no
-      # redis-server. A pinned, hash-checked redislite wheel supplies ONLY the
-      # binary: it is not pip-installed and not put on PATH, so nothing listens
-      # on 6379 and `shutil.which("redis-server")` callers are unchanged. Only
-      # EVENT_FRAME_REDIS_SERVER readers see it, and EVENT_FRAME_REDIS_REQUIRED
-      # turns that fixture's skip into a failure, so a broken step reddens the
-      # shard instead of silently testing less. Every shard gets it because
-      # ci_shard.py assigns files by measured duration, not by name.
       - name: Private redis-server binary for the real-Redis publication controls (#10090)
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/redislite"
@@ -283,45 +305,7 @@ jobs:
           echo "EVENT_FRAME_REDIS_REQUIRED=1" >> "$GITHUB_ENV"
 
       - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
-        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
-        # `strategy.job-total` rather than a literal 4: the matrix list is then
-        # the single place the shard count is written, so growing it to 5 cannot
-        # leave a stale divisor here silently running the wrong partition.
-        #
-        # -q against pytest.ini's `addopts = -v`: verbosity is summed, so the
-        # old `tests/ -v` here actually ran at verbosity 2. This lands at 0 —
-        # progress dots, with --tb=short preserved for real failures.
-        #
-        # `--durations=0` is what keeps the BALANCE HINTS honest, and it is not
-        # decoration. `scripts/ci_shard.py` packs the shards LPT-greedy against
-        # measured per-file seconds in `ci_shard_durations.json`; a file with no
-        # measurement is packed at the flat DEFAULT_WEIGHT guess instead. That
-        # file was last recorded by hand on 2026-08-10 and by 2026-09-01 it
-        # covered 599 of 1,061 test files — so 44% of the suite, and roughly
-        # two thirds of the packer's total weight budget, was a constant rather
-        # than a measurement. The packer was balancing a fiction, and the shards
-        # it produced ran 338s / 247s / 244s / 221s at p50 (n=604 runs): the job
-        # waits for the slowest leg, so 79s of every run at p50 and 114s at p90
-        # was pure imbalance — 13.0 hours of CI wall clock over 30 days.
-        #
-        # A hint file that can only be refreshed by remembering to refresh it
-        # goes stale again, and the staleness is silent: the partition stays
-        # total and disjoint, CI stays green, and only the clock knows. So every
-        # run now emits the measurement its own next partition needs, and a
-        # refresh is a log download rather than a local suite run:
-        #
-        #   python scripts/ci_shard.py --record <(cat shard1.log ... shard4.log)
-        #
-        # Recording from the RUNNER's clock rather than a laptop's is not a
-        # convenience either. Local wall clock is ~3.5x the runner's on this
-        # suite and the ratio is not uniform across files — integration tests
-        # stretch far more than unit tests — so weights recorded locally
-        # mis-rank files against each other and pack a worse partition than the
-        # runner's own numbers do.
-        #
-        # Cost: pytest suppresses sub-5ms entries, so this adds a bounded tail
-        # of a few thousand lines to a log that is already ~100 KB. It changes
-        # no test, no selection and no exit code.
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.live != 'true'
         run: |
           set -o pipefail
           FILES="$(python scripts/ci_shard.py --shard ${{ matrix.shard }} --of ${{ strategy.job-total }})"
@@ -333,25 +317,11 @@ jobs:
           echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: $(echo $FILES | wc -w) test files"
           python -m pytest $FILES -q --durations=0
 
-  # Item 1.4 — the assertion that makes sharding safe to trust.
-  #
-  # A sharded suite has one failure mode that no red can announce: a test file
-  # that no shard owns is never run, and CI reports green having tested less
-  # than it did yesterday. The green is indistinguishable from a healthy one,
-  # which is why this cannot be left to code review of a glob list.
-  #
-  # So: ask pytest what it collects, ask ci_shard.py what it assigns, and require
-  # the two sets to be equal — plus pairwise-disjoint shards, so nothing is
-  # double-run either. Fails loudly and blocks deploy.
-  #
-  # Its own job, deliberately: it needs only a collection (~2s) rather than a
-  # test run, so it finishes long before the shards and never joins the critical
-  # path. Cheap enough that there is no argument for sampling it.
   shard-completeness:
     # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
     # only when the shards run. Skipped with them, never independently.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -389,49 +359,8 @@ jobs:
         # report balance for a split nobody runs.
         run: python scripts/ci_shard.py --verify --of 8
 
-  # #3761 — THE GOLDEN FLOOR GUARD, RUN RATHER THAN MERELY AVAILABLE.
-  #
-  # `scripts/check_golden_baseline_floor.py` shipped with CERT-2166/2170 as a
-  # command a merge desk could run by hand, and
-  # `tests/test_golden_baseline_floor_guard_3564.py` proves its LOGIC against
-  # fixtures. Neither of those makes it run against an actual proposal, so the
-  # read integrator/239 did by hand on 2026-09-06 — a branch carrying
-  # `passing_count: 665` over master's 668, with no conflict, no reviewable diff
-  # line and `git merge-tree` exit 0 — stayed a thing somebody had to remember
-  # to do. `matching_golden_baseline.json` is a whole-file generated artifact,
-  # so a silent revert of it is textually indistinguishable from a deliberate
-  # re-derivation. This job is that read, on every PR, without remembering.
-  #
-  # PULL REQUEST ONLY, AND THAT IS A FINDING, NOT AN OVERSIGHT. The script
-  # defends the working tree against `--target origin/master`. On a push to
-  # master those are the SAME COMMIT, so a push run compares the tip against
-  # itself and cannot fail no matter what just landed. A gate that cannot fail
-  # is worse than no gate, because it is a green check somebody will later cite
-  # as proof. Excluded here rather than left to print a meaningless pass;
-  # `test_golden_floor_ci_wiring_3761.py` pins both the exclusion and the
-  # self-comparison fact that forces it.
-  #
-  # Since #3761 the script no longer DRESSES that case up: an identical pairs
-  # map prints "NO CHANGE: the baseline is untouched" instead of "ACCEPT: the
-  # floor is defended", so a log read after the fact says which of the two
-  # happened. It still exits 0, and it must -- most pull requests never touch
-  # the fixture, so this job reaches that branch on nearly every run, and any
-  # non-zero there would redden the whole repo. The opt-in `--require-change`
-  # (exit 2 on an identical map) is a MERGE DESK tool for a proposal already
-  # known to move the fixture; it does NOT unlock a push arm, which would then
-  # fail every single release instead of passing meaninglessly.
-  #
-  # AND THAT IS WHY THIS JOB MUST NEVER JOIN `deploy: needs:`, however much it
-  # looks like it belongs there. `deploy` runs on push only, this job is skipped
-  # on push, and a `needs:` dependency that SKIPS skips its dependents too — so
-  # adding it would silently stop every release rather than gate one.
-  #
-  # `fetch-depth: 0` + `filter: blob:none` for exactly the reason backend-tests
-  # carries them: a default PR checkout is a detached merge ref at depth 1 where
-  # `origin/master` DOES NOT EXIST. Without them the script cannot read its
-  # target and exits 2 — which it announces as "The comparison did NOT run. Do
-  # not read this as a pass." — but only to a log nobody opens on a green run.
   golden-baseline-floor:
+    needs: change-scope
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-'))
     runs-on: ubuntu-latest
     defaults:
@@ -439,6 +368,18 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -462,36 +403,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      # No `pip install` step: the script imports the standard library only, and
-      # that is deliberate — this gate cannot then be taken down by a dependency
-      # resolution failure on an unrelated package.
-      #
-      # NOT piped and NOT `continue-on-error` (gotcha #124). Exit 1 is a result:
-      # the floor fell and the proposal did not name what fell. Exit 2 is a
-      # story about the harness: a ref or blob was unreadable and the comparison
-      # never happened. BOTH must fail this job, which they do only because the
-      # step's exit code is the command's own and nothing swallows it.
       - name: The golden baseline floor may not fall without naming what fell
         run: python3 scripts/check_golden_baseline_floor.py --target origin/master
 
-  # #1494 — the search RECALL gate.
-  #
-  # Separate from backend-tests because it needs a real Postgres. LAT-P002 was
-  # reverted (f98d8104) when 3 of 8 production queries came back with ZERO
-  # futures, and its gold-set recall criterion was listed OWED and never run —
-  # because no rail existed to run it on. Every other search test mocks the DB
-  # session, so the WHERE clause never touches data and this whole defect class
-  # was unguarded on a p1 surface. This job is that rail, and it is
-  # deploy-blocking (see `deploy.needs`).
-  # #9670 / #10703 / #10717: five runners, split only at full schema resets.
-  # #10707 moves the #10024–#11007 suffix to its own runner at a full
-  # schema reset; each contiguous chain keeps its original sequence in
-  # order: some legacy fixtures inherit earlier schema/seed state. Only chains
-  # with their own provisioning, or full schema-reset fixtures, run separately.
-  # Every original command and skip/exit check remains below; the manifest and
-  # offline coverage tests require each unit to execute on exactly one leg.
-  # These matrix contexts are not required contexts. search-recall below is the
-  # stable required aggregate and remains deploy-blocking.
   database-integration:
     strategy:
       fail-fast: false
@@ -500,7 +414,7 @@ jobs:
     # #5007 — the recall rail exercises backend search. A candidate confined to
     # `frontend/` and touching no cross-tier path cannot change what it measures.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -605,14 +519,6 @@ jobs:
           PYPG
 
       - name: Search recall contract (real Postgres)
-        # -s so the "SEARCH RECALL n/n" line reaches the job log: #1494's
-        # acceptance is "RUN, with output quoted", and a gate whose result
-        # nobody can read is the same as a gate nobody ran.
-        #
-        # One run, tee'd, then checked for skips — pytest exits 0 when every
-        # test skips, and a silently-skipped gate reads exactly like a passing
-        # one. That is the failure mode this whole job exists to end, so it is
-        # not allowed to recur in the job's own plumbing.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -628,21 +534,6 @@ jobs:
           }
 
       - name: Proven-duplicate search contract (real Postgres)
-        # CERT-439 / #2263. The registry proves two rows are one game and tags
-        # the loser `provenance:duplicate-of:<id>`. The league, team and feed
-        # rails stopped printing it; search and typeahead did not, so the
-        # product answered "one game" or "two games" according to how the user
-        # navigated to it.
-        #
-        # This cannot be a unit test or a source assertion — both were green
-        # while the twin was still a separate search result. The search route
-        # runs on PostgreSQL and nothing else: `ts_rank_cd(to_tsvector(...))`
-        # ordering, pg_trgm-servable ILIKE recall arms, and a "did you mean"
-        # fallback behind `SET LOCAL pg_trgm.similarity_threshold`.
-        #
-        # Same skip detection as every gate in this job: pytest exits 0 when
-        # each test skips, and a gate that silently did not run reads exactly
-        # like one that passed.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -654,15 +545,6 @@ jobs:
           fi
 
       - name: "#10305 one-row anchor-schedule move: lock, fence and reach (real Postgres)"
-        # The anchor-schedule rail's member mode claims three things only a
-        # server can answer: the row is LOCKED through the rail's own commit
-        # (another writer blocks), a stated-state mismatch writes nothing, and
-        # `apply_only` reaches exactly the named row while a sibling at the
-        # same clock is decided and left alone; and the anchor fence covers
-        # every holder of the row's ids and is re-judged inside the move's own
-        # UPDATE. A fake session never blocks and
-        # returns whatever rowcount it is told, so this cannot be a unit test.
-        # Same skip refusal as every gate in this job, plus the exact count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -678,14 +560,6 @@ jobs:
           fi
 
       - name: "#10305 D2 participant fill: fences, rollback, restore and the code denylist (real Postgres)"
-        # An own-id TBD row takes ESPN's two clubs in ONE fenced UPDATE whose
-        # every fence Postgres re-judges at write time; RETURNING reports a tag a
-        # concurrent writer committed while the UPDATE waited; a failure after
-        # the write rolls back to its SAVEPOINT through the real scheduled-pass
-        # caller; restore puts the exact prior bytes back; and a stale taxonomy
-        # flush that erases every tag still meets the code denylist on the next
-        # pass (with a control that re-fills). A fake session can do none of it.
-        # Same skip refusal as every gate in this job, plus the exact count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -701,34 +575,6 @@ jobs:
           fi
 
       - name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
-        # #5201 rides this step: the or-NEXT arm below is gated on "no pooled row
-        # NAMES the query's participant", and a NAMESAKE satisfies that gate —
-        # measured on production 2026-09-11, `bruins` showed a Boston Bruins card
-        # in slot 0 above *San Diego State Aztecs at UCLA Bruins* and Boston's own
-        # three upcoming fixtures were unreachable. The lead-team arm's clauses
-        # are compiled in `tests/test_typeahead_reaches_the_resolved_teams_fixture_5201.py`;
-        # the four cases that need real rows (an id-only fixture, a name-only
-        # fixture, the horizon, and the same game never offered twice) are in
-        # this file and are graded here.
-        #
-        # T2-2 / #5059. `/typeahead`'s upcoming pool is bounded at now+7d, so
-        # "the live game, else the NEXT, else the last finished" lost its middle
-        # term for whole leagues at once: measured on production 2026-09-11, all
-        # 32 NHL and all 27 NBA teams — 366 teams across all sports — had no
-        # fixture inside the window, and the or-LAST arm filled the dropdown
-        # with finished games.
-        #
-        # The sibling unit file compiles the arm and asserts its clauses. It
-        # cannot prove the clause changes the ANSWER, and it cannot see the two
-        # ways this ship fails in production: the arm running for queries that
-        # already worked (which silently widens the candidate set for every
-        # keystroke on the endpoint), and the finished game staying beside the
-        # next one. Both are properties of which rows the route returns, so they
-        # need the route and a real database.
-        #
-        # Same skip detection as every gate in this job: pytest exits 0 when
-        # each test skips, and a gate that silently did not run reads exactly
-        # like one that passed.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -852,14 +698,6 @@ jobs:
           fi
 
       - name: "mnf / monday night football finds Monday night's NFL game (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: typing mnf, snf or tnf (or the spelled phrase)
-        # in search or the dropdown shows that night's NFL game. Production
-        # 2026-09-28 served nothing for `mnf` with Eagles @ Bears on the schedule.
-        #
-        # The slot is `timezone('America/New_York', ...)` + `extract(isodow)`
-        # inside two route bodies, so only a real database can observe it. Both
-        # screens, a strawman (slot map emptied -> nothing) and two controls.
-        # Three refusals: a skip, a zero count, and a short count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -879,30 +717,6 @@ jobs:
           fi
 
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
-        # #5821 / CERT-3073. The step above proves the tagged twin stops being a
-        # second search result. This proves the reader still reaches the game:
-        # when the suppressed row was the ONLY row their text reached, removing
-        # it leaves NOTHING, and the bridge walks them to the canonical instead.
-        # Measured on production 2026-09-18, `q=Atletico Madrid` returned only
-        # the duplicate while the canonical was reachable only with the accent.
-        #
-        # It needs real Postgres for the same reason its sibling does: the recall
-        # arms compile to trigram and word-boundary SQL that SQLite cannot serve,
-        # and the duplicate predicate is a prefix LIKE over a JSONB array.
-        #
-        # The ship is asserted THROUGH THE ROUTE (`GET /api/events/search`), not
-        # by handing a filter to the helper. The version of these cases that
-        # lived in the unit file built its own arm from the whole query, which is
-        # a predicate the route never builds for a two-word search — it matched
-        # zero rows against a faithful seed, so the walk it claimed to prove was
-        # never executed. Using the house builder is not the same as using the
-        # reader's filter.
-        #
-        # They previously sat as a `skipif` class in
-        # `tests/test_proven_duplicate_search_bridge_5821.py`, where nothing ever
-        # set SEARCH_TEST_DATABASE_URL — so they SKIPPED on every run, and armed
-        # by hand they could not build their own fixture. That is precisely the
-        # failure this job's skip detection exists to end, so they are wired here.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -914,14 +728,6 @@ jobs:
           fi
 
       - name: "playoffs leads with the postseason in progress (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: typing `playoffs` in search or the dropdown the
-        # day before MLB's postseason shows the MLB postseason boards. Production
-        # 2026-09-28 led with a VALORANT novelty and 2027 Stanley Cup / College
-        # Football Playoff boards (#9340).
-        #
-        # The key is an ORDER BY term over a twenty-row LIMIT window (plus the
-        # refill) inside two route bodies, so only a real database cuts it. Three
-        # strawmen and two controls. Three refusals.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -941,16 +747,6 @@ jobs:
           fi
 
       - name: "wild card finds this week's MLB Wild Card games (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: typing `wild card` in search or the dropdown
-        # shows the Wild Card games and series markets. Production 2026-09-28
-        # served no games and led with NCAAB/NCAAF futures (#9333).
-        #
-        # The round is read from Kalshi tickers by a correlated EXISTS with
-        # substr/concat inside two route bodies, so only a real database can
-        # observe it. A strawman (round map emptied -> old answer) and two
-        # controls. Three refusals: a skip, a zero count, and a short count.
-        # 24 = 15 round cases + 9 for #9578 (`playoffs`/`mlb playoffs` show
-        # today's Wild Card games, with its strawman and controls).
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -970,14 +766,6 @@ jobs:
           fi
 
       - name: "division series finds the ALDS/NLDS markets, never Byron Donalds (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: typing `division series` in search or the
-        # dropdown shows the ALDS/NLDS markets. Production 2026-09-28 served
-        # nothing at all with eight open markets about the round (#9340).
-        #
-        # The alias arm is a whole-word `~*` regex beside a trigram ILIKE, wired
-        # as a UNION arm inside two route bodies, so only a real database can
-        # observe it. Two strawmen (aliases removed -> nothing; substring compile
-        # -> Byron Donalds) and one control. Three refusals.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -997,16 +785,6 @@ jobs:
           fi
 
       - name: "championship series leads with the ALCS/NLCS markets, not NFL season-series boards (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: typing `championship series` in search or the
-        # dropdown leads with the ALCS/NLCS markets. Production `fa40adc3`
-        # 2026-09-28 served nine "NFL: … Season Series Winner" boards under a
-        # CHAMPIONSHIP SERIES heading instead (#9340): `championship` carries the
-        # `winner` synonym, so those names out-tier the round's alias arm.
-        #
-        # The lead is a tier in the /search window's ORDER BY, the dropdown
-        # pool's first key and the scorer's private alias, so only a real
-        # database behind the real route can observe it. One strawman (rule
-        # disarmed -> NFL leads) and one control. Three refusals.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1026,15 +804,6 @@ jobs:
           fi
 
       - name: "#9587 a club's World Series card leads search when it is already on the page (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: a Cubs or Padres fan searching their club sees
-        # the World Series card first in Futures & Markets, the way Yankees and
-        # Dodgers fans already do. Production v5274 2026-09-29 served it at row 7
-        # of 10 for `cubs`, behind six game props: the headline lane fired only
-        # when the market was ABSENT from the page.
-        #
-        # The hoist arm restricts the lane's own SQL to the page's ids, so only a
-        # real database behind the real route can observe it. One strawman (arm
-        # disarmed -> props lead) and two controls. Three refusals.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1054,21 +823,6 @@ jobs:
           fi
 
       - name: "#9597 a playoff club's search shows its pennant, not a column of one game's props (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: searching `red sox`, `yankees` or `phillies` on a
-        # playoff game day shows the AL/NL pennant and division-series odds. Production
-        # 2026-09-29 served the World Series and nine props from tonight's game: the
-        # window was all name matches, so the outcome arm was skipped, and the
-        # fixture cap's sunk rows still shipped.
-        #
-        # The fix is a second, outcome-only execution of the window statement, so only
-        # a real database behind the real route can observe it. One strawman (arm
-        # disarmed -> props fill the page), two controls, the World Series pin, and a
-        # seed the drop-the-exclusion mutant bites. Three refusals.
-        #
-        # #10803 rides this step: the arm tests its exclusion on the row instead of
-        # building every name match as a set (~1 s on `rangers`). Its file keeps the
-        # old candidate-set form as the reference and pins the same rows in the same
-        # order, plus the `NOT (...)` NULL mutant. 9 + 3 = 12.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1089,17 +843,6 @@ jobs:
           fi
 
       - name: "#9632 a bye club's search keeps its latest finals, pennant odds up top (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: searching `dodgers` or `brewers` (a first-round
-        # bye) shows the World Series/pennant odds instead of burying them under 23
-        # finished regular-season games (production 2026-09-29). All-finished +
-        # live futures -> page one keeps the latest 3 finals, page two the rest.
-        #
-        # The probe reads the route's own full-text predicate, so only a real
-        # database behind the real route can observe it. One strawman, four
-        # controls (upcoming game, no futures, open game market, sub-1% outcome),
-        # page-two reachability; #9762 adds two not-the-club outcomes (a player,
-        # a city-named prop) that arm nothing and the club under its venue name,
-        # which still arms. Three refusals.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1171,14 +914,6 @@ jobs:
           fi
 
       - name: "#9550 the search dropdown says 'Settled · Pereira wins' (real Postgres)"
-        # PILLAR: TRUTH. SHIP: a settled match in the search dropdown says
-        # "Settled · Pereira wins", as its event page does, not "No result reported".
-        #
-        # The verdict is a read over graded legs gated on the row's own score,
-        # and both degraded stages (outcome-arm shed, futures timeout) expire the
-        # session's rows, so only a real database can observe it. Strawman: the
-        # attach a no-op (production's row). Three refusals: a skip, a zero
-        # count, and a short count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1224,14 +959,6 @@ jobs:
           fi
 
       - name: "#9211 the search dropdown offers today's final beside the next game (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: typing a club on game day offers the result
-        # it just finished right behind its next game.
-        #
-        # The arm is a WHERE clause over the Eastern day plus a placement before
-        # the pool cut, so only a real database can observe it. The strawman
-        # case disables the selector and asserts production's list comes back.
-        # #10581 adds a linked-team latest-final HTTP case (6th test). Three
-        # refusals: a skip, a zero count, and a short count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1319,14 +1046,6 @@ jobs:
           fi
 
       - name: "#9306 typing alds shows the ALDS markets, not Byron Donalds (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: typing a round word (alds/alcs/nlcs/nlds) in
-        # search or the dropdown serves that round's markets, not politics
-        # markets whose outcome carries the letters inside a surname.
-        #
-        # The fix is an outcome predicate (whole word for round words), so only
-        # a real database can observe which rows it admits. Both screens, a
-        # strawman (round-word set emptied -> Donalds back) and two controls.
-        # Three refusals: a skip, a zero count, and a short count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1346,14 +1065,6 @@ jobs:
           fi
 
       - name: "#9609 typing rays or mets shows the club's markets, not Grayson or Kimetsu (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: searching a club's word (rays, mets, suns)
-        # fills Futures & Markets with the club's markets, not Senate races and
-        # anime awards whose options spell the word inside a surname.
-        #
-        # The fix is an outcome predicate (whole word when the page's own teams
-        # read names the club), so only a real database can observe which rows it
-        # admits. A strawman (rule off -> collisions back) and two controls.
-        # Three refusals: a skip, a zero count, and a short count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1389,26 +1100,6 @@ jobs:
           fi
 
       - name: "#6354 the Browse list serves no answer-less row (real Postgres)"
-        # PILLAR: TRUTH. SHIP: the iPhone Browse tab stops opening on rows that
-        # show a name, a category chip and no number.
-        #
-        # The fix is a WHERE clause, so a session double cannot observe it — a
-        # guard built on one is green before the fix and green after it. The
-        # server is the oracle, and this step is what arms it: the file is
-        # `skipif`-gated on SEARCH_TEST_DATABASE_URL, which this job already
-        # provisions, and every real-Postgres file in this repo is selected by
-        # an explicitly named step. A new one that nobody wires is COLLECTED BY
-        # CI AND EXECUTED BY NOTHING, which reads exactly like a passing gate.
-        #
-        # It also cannot be run on a developer's machine: `Base.metadata` now
-        # carries `uq_container_anchor … NULLS NOT DISTINCT`, which is
-        # PostgreSQL 15+, so `create_all` raises a syntax error on the 14.x
-        # Homebrew default. CI's postgres:15 service is the only place this
-        # executes.
-        #
-        # Three refusals, not one: a skip, a zero count, and a short count.
-        # pytest exits 0 when every test skips AND when it collects nothing, so
-        # the exit code alone cannot tell "8 passed" from "0 collected".
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -1435,15 +1126,6 @@ jobs:
           fi
 
       - name: "#5531 a hook's stamps survive the ingest poll's metadata replace (real Postgres)"
-        # PILLAR: DISCOVER. SHIP: a game market's one-line context sentence
-        # stays on its page after the next Kalshi/Polymarket poll, instead of
-        # being withheld as "policy 1" (48 of the first 100 new hooks were).
-        #
-        # The merge is SQL (`jsonb_build_object` over the existing row, `||`,
-        # `NULLIF`), so only a server can say it keeps the keys. The file needs no
-        # tables — it SELECTs the real expression over JSONB literals — and runs
-        # the pre-#5531 expression beside it as a strawman. Same three refusals as
-        # the step above: a skip, nothing collected, and a short count.
         if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -8450,7 +8132,7 @@ jobs:
   # Frontend-only candidates retain the original intentional job-level skip.
   search-recall:
     needs: [change-scope, database-integration]
-    if: always() && needs.change-scope.outputs.scope != 'frontend'
+    if: always() && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Every database integration group passed
@@ -8465,7 +8147,8 @@ jobs:
           echo "All database integration groups passed."
 
   frontend-build:
-    needs: change-scope
+    needs: [change-scope, fast-gate]
+    if: needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -8612,6 +8295,7 @@ jobs:
         run: npm run typecheck
 
   e2e-contract:
+    needs: change-scope
     # L2-229 Item 1 — the browser-audit rail's fixtures, on ordinary push CI.
     #
     # These are the tests that test the tests: they mutate the workflow, the
@@ -8636,6 +8320,18 @@ jobs:
         working-directory: frontend/e2e
 
     steps:
+      - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v7
@@ -8709,14 +8405,14 @@ jobs:
     # release-required (#4456) is a GATE, not a test: it decides whether this
     # push needs a Heroku dyno cycle at all. It shares `deploy`'s exact `if`, so
     # the two are never inconsistently skipped, and it fails toward `true`.
-    needs: [backend-tests, shard-completeness, search-recall, frontend-build, e2e-contract, release-required]
+    needs: [change-scope, fast-gate, backend-tests, shard-completeness, search-recall, frontend-build, e2e-contract, release-required]
     # KEEP THIS CONDITION ON ONE LINE. ciTriggerCoverage's "an any-base PR cannot
     # release" assertion matches `if:.*github.event_name == 'push'` with a
     # single-line regex; folding this into a `>-` block scalar hides the
     # event_name/ref guards from it and the suite goes red. That test is the only
     # thing standing between a pull_request run and a Heroku release, so it must
     # stay able to SEE the guard, not merely have the guard be present.
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.release-required.outputs.required != 'false'
+    if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.release-required.result == 'success' && needs.release-required.outputs.required != 'false' && needs.change-scope.result == 'success' && needs.fast-gate.result == 'success' && needs.backend-tests.result == 'success' && needs.e2e-contract.result == 'success' && (needs.change-scope.outputs.live == 'true' || (needs.shard-completeness.result == 'success' && needs.search-recall.result == 'success' && needs.frontend-build.result == 'success'))
     runs-on: ubuntu-latest
     # THRU-F: the group SERIALIZES releases; it must not KILL one mid-release.
     #
@@ -8756,10 +8452,32 @@ jobs:
       cancel-in-progress: false
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Recheck current fast eligibility
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
+        run: python3 tools/release/verify_fast.py
 
       - name: Deploy to Heroku (never-backwards guarded)
         run: |
@@ -8792,6 +8510,19 @@ jobs:
             echo "HEROKU_API_KEY not set — skipping deploy"
             exit 0
           fi
+          # Receipt reads are trusted master-push code and run while this job
+          # owns heroku-deploy. A failed read refuses release; no catch-and-pass.
+          check_source_veto () {
+            if [ -f tools/release/discover.py ]; then
+              python3 - <<'SOURCE_VETO'
+          import os, sys
+          sys.path.insert(0, 'tools/release')
+          import discover
+          if os.environ['GITHUB_SHA'] in discover.failed_sources(discover.receipt_rows('heroku')):
+              raise SystemExit('REFUSING to release a source rejected by the full-suite watchdog')
+          SOURCE_VETO
+            fi
+          }
           git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck.git 2>/dev/null || true
 
           # `|| true` keeps an unreadable live ref from reddening the job (and
@@ -8819,6 +8550,7 @@ jobs:
           # server rejects us instead of quietly rewinding production. Push the
           # SHA explicitly rather than the local `master` branch, so what gets
           # released is the commit this run actually gated.
+          check_source_veto
           if git push heroku "$GITHUB_SHA:refs/heads/master"; then
             echo "Deployed $GITHUB_SHA."
             exit 0
@@ -8851,6 +8583,7 @@ jobs:
             # a force. A second rejection reddens the job under `-e`, which is
             # the honest outcome: somebody should look.
             echo "Live commit $LIVE_NOW is behind $GITHUB_SHA and a fast-forward exists; retrying."
+            check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master"
             echo "Deployed $GITHUB_SHA."
             exit 0
@@ -8870,6 +8603,7 @@ jobs:
             echo "Push rejected and the live commit (${LIVE_NOW:-<unreadable>}) has no provable"
             echo "ancestry with $GITHUB_SHA — but this commit IS origin/master's tip, so there is"
             echo "no newer commit to rewind past. History diverged; forcing."
+            check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master" --force
             exit 0
           fi

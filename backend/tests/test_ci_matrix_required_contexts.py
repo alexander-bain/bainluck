@@ -32,20 +32,23 @@ CI = Path(
 
 SCOPE_RUNS = "needs.change-scope.outputs.scope != 'frontend'"
 REUSE = "needs.change-scope.outputs.reuse != 'true'"
-RUNS = f"{SCOPE_RUNS} && {REUSE}"
+LIVE = "needs.change-scope.outputs.live != 'true'"
+RUNS = f"{SCOPE_RUNS} && {REUSE} && {LIVE}"
 REUSED = "needs.change-scope.outputs.reuse == 'true'"
 COMPOSE_RECORD = (
     RUNS
     + " && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')"
 )
-MARKER = "needs.change-scope.outputs.scope == 'frontend'"
+GUARD = "Require this run's change-scope attempt"
+LIVE_ONLY = "needs.change-scope.outputs.live == 'true'"
+MARKER = "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'"
 
 
 def _jobs() -> dict:
     return yaml.safe_load(CI.read_text())["jobs"]
 
 
-def _evaluate(cond: str | None, scope, reuse="") -> bool:
+def _evaluate(cond: str | None, scope, reuse="", live=False) -> bool:
     """The two conditions this job uses, evaluated for a change-scope output.
 
     An unset output reads as '' in GitHub expressions. Anything else is refused
@@ -54,14 +57,16 @@ def _evaluate(cond: str | None, scope, reuse="") -> bool:
     value = "" if scope is None else scope
     if cond is None:
         return True
+    if cond.strip() == LIVE_ONLY:
+        return live
     if cond.strip() == RUNS:
-        return value != "frontend" and reuse != "true"
+        return value != "frontend" and reuse != "true" and not live
     if cond.strip() == REUSED:
         return reuse == "true"
     if cond.strip() == COMPOSE_RECORD:
         return False  # These shape cases model a lane PR, not a compose push.
     if cond.strip() == MARKER:
-        return value == "frontend"
+        return value == "frontend" or live
     raise AssertionError(f"unrecognised backend-tests step condition: {cond!r}")
 
 
@@ -133,6 +138,9 @@ def test_every_backend_tests_step_carries_one_of_the_two_scope_conditions():
     steps = _jobs()["backend-tests"]["steps"]
     for step in steps:
         label = step.get("name") or step.get("uses")
+        if label == GUARD:
+            assert step.get("if") == LIVE_ONLY and step.get("working-directory") == "."
+            continue
         assert step.get("if") in (RUNS, MARKER, REUSED, COMPOSE_RECORD), (
             f"backend-tests step {label!r} has condition {step.get('if')!r}. Every step must "
             f"carry `{RUNS}` (real work) or be the frontend marker; an unconditioned step "
@@ -158,7 +166,7 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
     ]
     real = [s.get("name") or s.get("uses") for s in steps if s.get("if") == RUNS]
     if scope == "frontend":
-        assert len(ran) == 1 and ran[0].startswith("Frontend-only candidate"), ran
+        assert len(ran) == 1 and ran[0].startswith("Frontend-only or live-path candidate"), ran
     else:
         assert ran == real, (scope, ran)
         assert any("Run tests" in r for r in ran)
@@ -175,7 +183,7 @@ def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
             "matrix"
         ), f"{name} became a matrix job; a job-level skip would then drop its required contexts"
         expected = (
-            f"always() && {SCOPE_RUNS}" if name == "search-recall" else SCOPE_RUNS
+            f"always() && {SCOPE_RUNS} && {LIVE}" if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE}"
         )
         assert job.get("if") == expected, (name, job.get("if"))
 
@@ -194,6 +202,13 @@ def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reu
             reuse != "true"
         )
         assert bool(any(s.get("if") == REUSED for s in ran)) == (reuse == "true")
-    assert "if" not in jobs["frontend-build"]
-    assert jobs["frontend-build"]["needs"] == "change-scope"
+    assert jobs["frontend-build"]["if"] == LIVE
+    assert jobs["frontend-build"]["needs"] == ["change-scope", "fast-gate"]
     assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 5
+
+@pytest.mark.parametrize("scope", ["frontend", "full", "", None])
+def test_a_live_candidate_defers_all_full_shard_steps_but_keeps_contexts(scope):
+    job = _jobs()["backend-tests"]
+    assert "fast-gate" in job["needs"]
+    ran = [s for s in job["steps"] if _evaluate(s.get("if"), scope, live=True)]
+    assert len(ran) == 2 and ran[0].get("name") == GUARD and ran[1].get("if") == MARKER

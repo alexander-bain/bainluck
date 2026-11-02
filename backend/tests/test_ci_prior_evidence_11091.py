@@ -427,7 +427,7 @@ def test_projection_matches_yaml_all_eight_shards_and_five_db_groups():
     )
     for name, (_, _, _, block) in projection.items():
         assert block
-    assert len(projection) == 19
+    assert len(projection) == 20
 
 
 @pytest.mark.parametrize("mutation", ["short", "changed_total", "duplicate"])
@@ -499,6 +499,9 @@ def test_reuse_conditions_are_an_explicit_addition_to_every_paid_step():
         "frontend-build",
     ):
         for step in JOBS[name]["steps"]:
+            if step.get("name") == "Require this run's change-scope attempt":
+                assert "SCOPE_ATTEMPT" in step["run"]
+                continue
             if step.get(
                 "name"
             ) == "Reused exact-commit test evidence" or "Frontend-only" in step.get(
@@ -513,7 +516,7 @@ def test_reuse_conditions_are_an_explicit_addition_to_every_paid_step():
                     "needs.change-scope.outputs.scope != 'frontend' && " + reuse
                 )
                 continue
-            assert step.get("if", "").endswith(reuse), (name, step)
+            assert reuse in step.get("if", "").split(" && "), (name, step)
     # Contract fixture work itself is never paid by reused credit.
     assert all(
         "reuse" not in step.get("if", "") for step in JOBS["e2e-contract"]["steps"]

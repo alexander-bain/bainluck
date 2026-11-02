@@ -48,6 +48,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / ".github" / "scripts"
@@ -315,15 +316,15 @@ class TestTheWorkflowActuallyUsesIt:
     def _ci(self) -> str:
         return (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
-    def test_both_gates_take_their_base_from_the_resolver(self):
-        """Counted on the INVOCATION, not the filename: the file is also named in
-        the prose beside one of the call sites, and a count that includes a
-        comment passes when a call site is deleted."""
-        ci = self._ci()
-        calls = ci.count("bash .github/scripts/ci-deploy-base.sh")
-        assert calls == 2, (
-            f"expected exactly two call sites — change-scope and release-required — found {calls}"
-        )
+    @pytest.mark.parametrize("job,step_id", [
+        ("change-scope", "decide"),
+        ("change-scope", "live"),
+        ("release-required", "decide"),
+    ])
+    def test_each_classifier_takes_its_base_from_the_resolver(self, job, step_id):
+        jobs = yaml.safe_load(self._ci())["jobs"]
+        step = next(step for step in jobs[job]["steps"] if step.get("id") == step_id)
+        assert step["run"].count("bash .github/scripts/ci-deploy-base.sh") == 1
 
     @pytest.mark.parametrize("gate", ["ci-change-scope.sh", "heroku-release-required.sh"])
     def test_neither_gate_is_still_handed_the_push_event_directly(self, gate):
