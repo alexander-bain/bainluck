@@ -13,6 +13,18 @@ on:
       candidate-sha:
         required: true
         type: string
+      bootstrap:
+        description: One-time setup with full CI and pre-seeded baselines
+        type: boolean
+        default: false
+      master-is-current:
+        description: Alex has written master is current
+        type: boolean
+        default: false
+      bootstrap-provider:
+        type: choice
+        options: [vercel, heroku]
+        default: vercel
 
 permissions:
   contents: read
@@ -26,7 +38,7 @@ concurrency:
 
 jobs:
   gate:
-    if: vars.RELEASE_LOOP_VERCEL_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'push')
+    if: (github.event_name != 'workflow_dispatch' || !inputs.bootstrap) && vars.RELEASE_LOOP_VERCEL_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -109,3 +121,39 @@ jobs:
       candidate-id: ${{ needs.promote.outputs.candidate-id }}
       candidate-sha: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha || github.event.workflow_run.head_sha }}
     secrets: inherit
+
+  bootstrap:
+    if: github.event_name == 'workflow_dispatch' && inputs.bootstrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ${{ inputs.bootstrap-provider == 'heroku' && 'heroku-deploy' || 'vercel-production' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Bootstrap only after the current master passes full CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          RELEASE_LOG_API_ORIGIN: ${{ vars.RELEASE_LOG_API_ORIGIN }}
+          RELEASE_LOG_DRAIN_TOKEN: ${{ secrets.RELEASE_LOG_DRAIN_TOKEN }}
+          NOW_ISSUE: ${{ vars.NOW_ISSUE }}
+          SOURCE_SHA: ${{ inputs.candidate-sha }}
+          CI_RUN: ${{ inputs.ci-run }}
+          PROVIDER: ${{ inputs.bootstrap-provider }}
+          CONFIRMED: ${{ inputs.master-is-current }}
+        run: |
+          ARGS=()
+          if [ "$CONFIRMED" = "true" ]; then ARGS+=(--master-is-current); fi
+          python3 tools/release/bootstrap.py --provider "$PROVIDER" --sha "$SOURCE_SHA" --ci-run "$CI_RUN" "${ARGS[@]}"

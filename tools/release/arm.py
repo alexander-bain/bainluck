@@ -1,6 +1,7 @@
 """Preview the release loop's activation gates; enable it only with reviewed live proof."""
 import argparse
 import base64
+import datetime as dt
 import json
 import pathlib
 import re
@@ -19,13 +20,36 @@ def validate_baseline(proof,live):
         raise ValueError('bootstrap proof is not the current exact provider release')
 
 
-def arm(proof,master_current,control_verified,apply):
+def publish_policy(master,enabled):
+    row=platforms.github('/deployments','POST',{
+        'ref':master,'auto_merge':False,'required_contexts':[],
+        'environment':'release-loop-policy','production_environment':False,
+        'payload':{'authority':'release-loop-policy-v1','fast_enabled':enabled,'master_sha':master},
+    })
+    platforms.github('/deployments/'+str(row['id'])+'/statuses','POST',{'state':'success','auto_inactive':False})
+
+
+def set_flags(enabled):
+    for name in ('RELEASE_LOOP_VERCEL_ENABLED','RELEASE_LOOP_FAST_ENABLED'):
+        value='true' if enabled else 'false'
+        try:platforms.github('/actions/variables/'+name,'PATCH',{'name':name,'value':value})
+        except urllib.error.HTTPError as exc:
+            if exc.code!=404:raise
+            platforms.github('/actions/variables','POST',{'name':name,'value':value})
+
+
+def arm(proof,master_current,control_verified,apply,disable=False):
     if not apply:
         return {'activation':'held','variables':['RELEASE_LOOP_VERCEL_ENABLED','RELEASE_LOOP_FAST_ENABLED'],
                 'requirements':['Alex master is current','known-good exact provider PASS receipts',
                                 'signed Heroku delivery seen in Actions','durable worker startup logs available',
                                 'Vercel Git master auto deployment disabled','production draft does not move domains',
                                 'Actions promotion and rollback APIs verified on the live project']}
+    if disable:
+        master=platforms.github('/branches/master')['commit']['sha']
+        publish_policy(master,False)
+        set_flags(False)
+        return {'activation':'disabled','master_sha':master}
     if not master_current or not control_verified:
         raise ValueError('activation requires master-current confirmation and reviewed provider control proof')
     master=platforms.github('/branches/master')['commit']['sha']
@@ -57,21 +81,20 @@ def arm(proof,master_current,control_verified,apply):
         raise ValueError('Heroku release webhook is not configured')
     runs=platforms.github('/actions/workflows/post-deploy-health.yml/runs?event=repository_dispatch&status=success&per_page=20')['workflow_runs']
     if not runs: raise ValueError('signed Heroku event has not produced a successful health workflow')
-    for name in ('RELEASE_LOOP_VERCEL_ENABLED','RELEASE_LOOP_FAST_ENABLED'):
-        try: platforms.github('/actions/variables/'+name,'PATCH',{'name':name,'value':'true'})
-        except urllib.error.HTTPError as exc:
-            if exc.code!=404: raise
-            platforms.github('/actions/variables','POST',{'name':name,'value':'true'})
+    # Actual read verifies the configured persistent adapter, not only a proof checkbox.
+    health.capture(dt.datetime.now(dt.timezone.utc)-dt.timedelta(minutes=30))
+    publish_policy(master,True)
+    set_flags(True)
     return {'activation':'enabled','master_sha':master}
 
 
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--apply',action='store_true');parser.add_argument('--master-is-current',action='store_true')
-    parser.add_argument('--provider-control-verified',action='store_true');parser.add_argument('--proof',type=pathlib.Path)
+    parser.add_argument('--provider-control-verified',action='store_true');parser.add_argument('--proof',type=pathlib.Path);parser.add_argument('--disable',action='store_true')
     args=parser.parse_args()
     proof=json.loads(args.proof.read_text()) if args.proof else {}
-    print(json.dumps(arm(proof,args.master_is_current,args.provider_control_verified,args.apply),indent=2))
+    print(json.dumps(arm(proof,args.master_is_current,args.provider_control_verified,args.apply,args.disable),indent=2))
 
 if __name__=='__main__':
     try: main()

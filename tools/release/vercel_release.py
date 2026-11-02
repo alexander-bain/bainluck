@@ -9,6 +9,7 @@ import time
 import discover
 import platforms
 import rollback
+import policy
 
 FAST_STEP='Python 3.11 syntax, smoke test and change-scope selected tests'
 
@@ -16,7 +17,8 @@ FAST_STEP='Python 3.11 syntax, smoke test and change-scope selected tests'
 def ci_ready(run,jobs):
     if run.get('status')=='completed': return run.get('conclusion')=='success'
     return any(job.get('name')=='fast-gate' and job.get('conclusion')=='success' and
-               any(step.get('name')==FAST_STEP and step.get('conclusion')=='success' for step in job.get('steps',[]))
+               all(any(step.get('name')==name and step.get('conclusion')=='success' for step in job.get('steps',[]))
+                   for name in (FAST_STEP,'Recheck current fast eligibility',"Require this run's change-scope attempt"))
                for job in jobs)
 
 
@@ -26,7 +28,9 @@ def await_ci(run_id,sha):
         run=platforms.github('/actions/runs/'+str(run_id))
         if run.get('head_branch')!='master' or run.get('event')!='push' or run.get('head_sha')!=sha:
             raise ValueError('only an exact master push CI run may deploy')
-        jobs=platforms.github('/actions/runs/'+str(run_id)+'/jobs?per_page=100')['jobs']
+        attempt=run.get('run_attempt')
+        if not isinstance(attempt,int) or attempt<1: raise ValueError('current CI attempt is unknown')
+        jobs=platforms.github('/actions/runs/'+str(run_id)+'/attempts/'+str(attempt)+'/jobs?per_page=100')['jobs']
         if ci_ready(run,jobs): return
         if run.get('status')=='completed': raise ValueError('CI failed; production promotion refused')
         time.sleep(15)
@@ -37,7 +41,8 @@ def ensure_ancestor(older,newer):
     return subprocess.run(['git','merge-base','--is-ancestor',older,newer],capture_output=True).returncode==0
 
 
-def prepare(sha):
+def prepare(sha,bootstrap=False):
+    if not bootstrap:policy.require_enabled()
     if not re.fullmatch(r'[0-9a-f]{40}',sha): raise ValueError('full master source SHA required')
     live=platforms.current('vercel')
     rows=discover.receipt_rows('vercel')
@@ -59,7 +64,8 @@ def prepare(sha):
     raise TimeoutError('production draft did not complete')
 
 
-def promote(sha,identity):
+def promote(sha,identity,bootstrap=False):
+    if not bootstrap:policy.require_enabled()
     # This function runs under vercel-production. The watchdog writes its SHA
     # veto in a separate job BEFORE waiting for this writer lock, so a failure
     # found during the draft build cannot be promoted later on a stale CI green.
@@ -74,6 +80,7 @@ def promote(sha,identity):
     # Check the durable veto again immediately before the only domain mutation.
     if sha in discover.failed_sources(discover.receipt_rows('vercel')):
         raise ValueError('watchdog veto arrived before promotion')
+    if not bootstrap:policy.require_enabled()
     platforms.vercel('/v10/projects/'+platforms.required('VERCEL_PROJECT_ID')+'/promote/'+identity,'POST')
     rollback.verify_rollback('vercel',sha)
     if platforms.current('vercel')['id']!=identity: raise ValueError('production identity not confirmed')

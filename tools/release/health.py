@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 
 import platforms
 import discover
@@ -87,10 +88,16 @@ def streak_lines(raw):
     return lines
 
 
-def capture():
-    session=platforms.heroku('/log-sessions','POST',{'lines':1500,'tail':False,'dyno':'worker-ws.1'})
-    with urllib.request.urlopen(session['logplex_url'],timeout=20) as response:
-        return response.read().decode('utf-8','replace')
+def capture(since):
+    origin=platforms.required('RELEASE_LOG_API_ORIGIN').rstrip('/')
+    parsed=urllib.parse.urlsplit(origin)
+    if parsed.scheme!='https' or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+        raise ValueError('release log API origin is invalid')
+    url=origin+'/api/admin/release-logs?'+urllib.parse.urlencode({'since':since.isoformat()})
+    window=platforms.request(url,platforms.required('ADMIN_TOKEN'))
+    if not isinstance(window,dict) or window.get('complete') is not True or window.get('live') is not True or not isinstance(window.get('lines'),list) or not window['lines']:
+        raise ValueError('durable release history is missing, truncated, or stale')
+    return '\n'.join(window['lines'])+'\n'
 
 
 def worker_complete(result):
@@ -108,7 +115,7 @@ def watch(provider,candidate,working):
             probe(provider)
         except Exception as exc:
             return 'VERDICT ROLLBACK anonymous public probe failed: '+type(exc).__name__
-        raw=capture()
+        raw=capture(release-dt.timedelta(minutes=30))
         for line in raw.splitlines(): combined[line]=None
         raw='\n'.join(combined)+'\n'
         cap=working/'worker-ws.log'; cap.write_text(raw)
@@ -143,21 +150,32 @@ def main():
     parser.add_argument('--output',default='release-health.json')
     args=parser.parse_args()
     candidate=platforms.candidate(args.provider,args.candidate_id) if args.candidate_id else platforms.current(args.provider)
-    previous=discover.receipts(args.provider).get(candidate['id'])
+    receipt_rows=discover.receipt_rows(args.provider)
+    previous=discover.receipt_index(receipt_rows).get(candidate['id'])
+    rejected=candidate.get('sha') in discover.failed_sources(receipt_rows)
     live=platforms.current(args.provider)
     out={'provider':args.provider,'candidate_id':candidate['id'],'candidate_sha':candidate.get('sha'),'verdict':'UNKNOWN','rollback':False}
-    if previous and previous['verdict'] in ('VERDICT PASS','ROLLED BACK','SUPERSEDED'):
+    if rejected:
+        out['verdict']='VERDICT ROLLBACK failed-source veto overrides cached health'
+        out['rollback']=live['id']==candidate['id']
+        if not out['rollback']: out['verdict']='SUPERSEDED; source remains vetoed'
+    elif previous and previous['verdict'] in ('VERDICT PASS','ROLLED BACK','SUPERSEDED'):
         out['verdict']=previous['verdict']
     elif live['id']!=candidate['id'] or (args.candidate_sha and candidate.get('sha')!=args.candidate_sha):
         out['verdict']='SUPERSEDED'
     else:
-        require_speed_tools()
         try:
-            working=pathlib.Path(os.environ.get('RUNNER_TEMP','/tmp'))/'release-loop'/candidate['id']
-            working.mkdir(parents=True,exist_ok=True)
-            out['verdict']=watch(args.provider,candidate,working)
+            probe(args.provider)
         except Exception as exc:
-            out['verdict']='VERDICT UNKNOWN health observer failed: '+type(exc).__name__
+            out['verdict']='VERDICT ROLLBACK anonymous public probe failed: '+type(exc).__name__
+        else:
+            try:
+                require_speed_tools()
+                working=pathlib.Path(os.environ.get('RUNNER_TEMP','/tmp'))/'release-loop'/candidate['id']
+                working.mkdir(parents=True,exist_ok=True)
+                out['verdict']=watch(args.provider,candidate,working)
+            except Exception as exc:
+                out['verdict']='VERDICT UNKNOWN health observer failed: '+type(exc).__name__
         out['rollback']=out['verdict'].startswith('VERDICT ROLLBACK')
     pathlib.Path(args.output).write_text(json.dumps(out))
     output=os.environ.get('GITHUB_OUTPUT')

@@ -16,7 +16,8 @@ def request(url, token=None, method='GET', body=None, headers=None):
     if data is not None: h['Content-Type'] = 'application/json'
     req = urllib.request.Request(url, headers=h, data=data, method=method)
     with urllib.request.urlopen(req, timeout=20) as response:
-        return json.loads(response.read())
+        raw=response.read()
+        return json.loads(raw) if raw.strip() else {}
 
 
 def required(name):

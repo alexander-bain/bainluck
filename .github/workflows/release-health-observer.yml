@@ -45,6 +45,8 @@ jobs:
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
           NOW_ISSUE: ${{ vars.NOW_ISSUE }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          RELEASE_LOG_API_ORIGIN: ${{ vars.RELEASE_LOG_API_ORIGIN }}
           CANDIDATE_ID: ${{ inputs.candidate-id }}
           CANDIDATE_SHA: ${{ inputs.candidate-sha }}
           PROVIDER: ${{ inputs.provider }}
@@ -84,6 +86,8 @@ jobs:
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
           NOW_ISSUE: ${{ vars.NOW_ISSUE }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          RELEASE_LOG_API_ORIGIN: ${{ vars.RELEASE_LOG_API_ORIGIN }}
           CANDIDATE_ID: ${{ inputs.candidate-id }}
           CANDIDATE_SHA: ${{ inputs.candidate-sha }}
           PROVIDER: ${{ inputs.provider }}

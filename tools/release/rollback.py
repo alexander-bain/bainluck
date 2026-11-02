@@ -47,8 +47,11 @@ def rollback(provider,candidate_sha,candidate_id=None,previous_id=None):
     previous_id,target_sha=targets[0]
     target=platforms.candidate(provider,previous_id)
     if target.get('sha')!=target_sha: raise ValueError('rollback baseline source disagrees with its PASS receipt')
-    if provider=='heroku': write=lambda body:platforms.heroku('/releases','POST',body)
-    else: write=lambda body:platforms.vercel('/v1/projects/'+platforms.required('VERCEL_PROJECT_ID')+'/rollback','POST',body)
+    def write(body):
+        if target_sha in discover.failed_sources(discover.receipt_rows(provider)):
+            raise ValueError('rollback target received a failed-source veto after selection')
+        if provider=='heroku': return platforms.heroku('/releases','POST',body)
+        return platforms.vercel('/v1/projects/'+platforms.required('VERCEL_PROJECT_ID')+'/rollback','POST',body)
     changed=rollback_if_current(provider,candidate_sha,candidate_id,platforms.current(provider),previous_id,write)
     if changed: verify_rollback(provider,target_sha)
     return changed
