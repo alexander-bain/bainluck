@@ -1,0 +1,60 @@
+name: Post-deploy health
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  deployment_status:
+  # Heroku releases created outside GitHub have no deployment_status event.
+  # The durable provider ID receipt reconciles them when the Mac is asleep.
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+  issues: write
+
+jobs:
+  discover:
+    if: >-
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (github.event_name != 'deployment_status' ||
+       (github.event.deployment_status.state == 'success' && github.event.deployment.production_environment == true))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+      any: ${{ steps.discover.outputs.any }}
+    steps:
+      # Always trusted master. workflow_run must never load the PR's scripts.
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Locate production releases not yet checked
+        id: discover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+        run: python3 tools/release/discover.py
+
+  health:
+    needs: discover
+    if: needs.discover.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    uses: ./.github/workflows/release-health-observer.yml
+    with:
+      provider: ${{ matrix.provider }}
+      candidate-id: ${{ matrix.id }}
+      candidate-sha: ${{ matrix.sha }}
+    secrets: inherit

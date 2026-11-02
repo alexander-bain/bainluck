@@ -1,0 +1,90 @@
+name: Release health observer
+
+on:
+  workflow_call:
+    inputs:
+      provider:
+        required: true
+        type: string
+      candidate-id:
+        required: true
+        type: string
+      candidate-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+  issues: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only observers of this same release coalesce; observing never blocks deploy.
+    concurrency:
+      group: health-${{ inputs.provider }}-${{ inputs.candidate-id }}
+      cancel-in-progress: false
+    outputs:
+      rollback: ${{ steps.check.outputs.rollback }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Existing worker checks and anonymous public routes
+        id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          NOW_ISSUE: ${{ vars.NOW_ISSUE }}
+          CANDIDATE_ID: ${{ inputs.candidate-id }}
+          CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+          PROVIDER: ${{ inputs.provider }}
+        run: python3 tools/release/health.py --provider "$PROVIDER" --candidate-id "$CANDIDATE_ID" --candidate-sha "$CANDIDATE_SHA"
+      - name: Publish verdict
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-health-${{ inputs.provider }}-${{ inputs.candidate-id }}
+          path: release-health.json
+          if-no-files-found: error
+      - name: Observer failure stays visible
+        if: steps.check.outcome == 'failure' && steps.check.outputs.rollback != 'true'
+        run: exit 1
+
+  rollback:
+    needs: observe
+    if: always() && needs.observe.outputs.rollback == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Same writer lock as CI deploy. The 25-minute observer does not own it.
+    concurrency:
+      group: ${{ inputs.provider == 'heroku' && 'heroku-deploy' || 'vercel-production' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Roll back only this still-current release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          NOW_ISSUE: ${{ vars.NOW_ISSUE }}
+          CANDIDATE_ID: ${{ inputs.candidate-id }}
+          CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+          PROVIDER: ${{ inputs.provider }}
+        run: python3 tools/release/rollback.py --provider "$PROVIDER" --candidate-id "$CANDIDATE_ID" --candidate-sha "$CANDIDATE_SHA" --reason 'post-deploy health failed'
