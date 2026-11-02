@@ -120,7 +120,7 @@ final class CompactEventPriceStatusTests: XCTestCase {
     /// The disclosure button's body, from its declaration to the next member.
     private func probabilityDetailsBody() throws -> String {
         let page = try code("Views", "EventDetailView.swift")
-        guard let start = page.range(of: "privatefuncprobabilityDetails(confidenceTier:String?,statusInDetails:Bool=false)->someView{") else {
+        guard let start = page.range(of: "privatefuncprobabilityDetails(confidenceTier:String?,statusInDetails:Bool=false,ekgDrawn:Bool=false)->someView{") else {
             XCTFail("probabilityDetails moved; re-aim this scan"); return ""
         }
         let rest = page[start.upperBound...]
@@ -360,8 +360,9 @@ extension CompactEventPriceStatusTests {
             // as "55% - 45" (the crest circle beside it swallows the trailing %).
             // #9483 — this fixture is an NFL game, so the paired headline
             // prints each chance under its own team ("Ravens 55% … Cowboys 45%").
-            XCTAssertTrue(recognized.range(of: #"55%\s*[-–—]?\s*45%?"#, options: .regularExpression) != nil
-                || (recognized.contains("Ravens 55%") && recognized.contains("Cowboys 45%")), recognized)
+            // #10090 (ALEX item 39) — in tenths: "Ravens 55.0% … Cowboys 45.0%".
+            XCTAssertTrue(recognized.range(of: #"55\.0%\s*[-–—,]?\s*45\.0%?"#, options: .regularExpression) != nil
+                || (recognized.contains("Ravens 55.0%") && recognized.contains("Cowboys 45.0%")), recognized)
             XCTAssertNil(recognized.range(of: "No live.*update yet", options: .regularExpression),
                          "the old second receipt row is back: \(recognized)")
             XCTAssertFalse(recognized.contains("Received"), "a receipt time in the hero: \(recognized)")

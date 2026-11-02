@@ -86,7 +86,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let event = try event(p: 0.445)
         let pair = LivePriceActivity.displayedLabels(in: event)
         XCTAssertEqual(LiveEdgeReading.current(in: event)?.homeLabel, pair.home)
-        XCTAssertEqual(pair.home.flatMap { Int($0.dropLast()) }.map { $0 + Int(pair.away!.dropLast())! }, 100)
+        // #10090 — in tenths, the pair still sums to 100.0 (44.5 + 55.5).
+        XCTAssertEqual(pair.home, "44.5%")
+        XCTAssertEqual(pair.away, "55.5%")
     }
 
     func testCurrentQuoteReadingFollowsPriceEligibilityNotSportsLive() throws {
@@ -1088,9 +1090,10 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertEqual(afterCancel, settled, "the glide kept running in a background scene")
     }
 
-    /// Finding 3 for the hero's whole-string change: a slide in flight when
-    /// the scene leaves `.active` is cancelled — the next frame is the settled
-    /// new string, pixel for pixel, not the rest of the slide.
+    /// Finding 3 for the hero's change (a changed-digit roll since Alex
+    /// 2026-10-31): a roll in flight when the scene leaves `.active` is
+    /// cancelled — the next frame is the settled new string, pixel for pixel,
+    /// not the rest of the roll.
     func testLeavingTheActiveSceneMidSlideCancelsTheHeroChange() async throws {
         final class Value: ObservableObject {
             @Published var text = "60%"
@@ -1125,5 +1128,80 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
 
         XCTAssertNotEqual(midSlide, settled, "precondition: the slide was in flight when the scene left")
         XCTAssertEqual(afterCancel, settled, "the slide kept running in a background scene")
+    }
+
+    /// Alex, 2026-10-31: only the digits that changed move. While a decimal
+    /// move is in flight, the characters it did not change ("60." and "%")
+    /// stay exactly where they were, and the changed tenths digit is visibly
+    /// between its two values. The whole-string slide moved every character,
+    /// so it is red here.
+    func testADecimalMoveRollsOnlyTheChangedDigit() async throws {
+        final class Value: ObservableObject {
+            @Published var text = "60.4%"
+        }
+        struct Hero: View {
+            @ObservedObject var value: Value
+            var body: some View {
+                Text(value.text)
+                    .acceptedValueChange(value.text, rising: true)
+                    .font(.system(size: 44, weight: .black, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.black)
+                    .frame(width: 390, height: 360)
+                    .background(Color.white)
+                    .environment(\.scenePhase, .active)
+            }
+        }
+        let value = Value()
+        let hosted = try await Hosted(Hero(value: value))
+        defer { hosted.close() }
+        try await Task.sleep(for: .milliseconds(400))
+        let before = try pixelColumns(hosted.shot(scale: 1))
+
+        value.text = "60.7%"
+        var frames: [[[UInt8]]] = []
+        let begin = CACurrentMediaTime()
+        repeat {
+            try await Task.sleep(for: .milliseconds(30))
+            frames.append(try pixelColumns(hosted.shot(afterScreenUpdates: false, scale: 1)))
+        } while CACurrentMediaTime() - begin < LiveChartEdgeMarkerPlan.glideDuration
+        try await Task.sleep(for: .milliseconds(600))
+        let settled = try pixelColumns(hosted.shot(scale: 1))
+
+        let changed = before.indices.filter { moved(before[$0], settled[$0]) }
+        let first = try XCTUnwrap(changed.first, "precondition: 60.4% and 60.7% must differ on screen")
+        let last = try XCTUnwrap(changed.last)
+        // Everything outside the changed digit's columns (2 px of margin).
+        let still = before.indices.filter { $0 < first - 2 || $0 > last + 2 }
+        let blank = before[0]
+        XCTAssertTrue(still.contains { $0 < first && moved(before[$0], blank) },
+                      "precondition: the unchanged \"60.\" must be drawn left of the changed digit")
+        for (n, frame) in frames.enumerated() {
+            let shifted = still.filter { moved(frame[$0], before[$0]) }
+            XCTAssertTrue(shifted.isEmpty,
+                          "frame \(n): an unchanged character moved (columns \(shifted.prefix(8)))")
+        }
+        XCTAssertTrue(frames.contains { frame in
+            changed.contains { moved(frame[$0], before[$0]) && moved(frame[$0], settled[$0]) }
+        }, "the changed digit never showed in flight: no roll")
+    }
+
+    /// Each pixel column of `image`, top to bottom, as RGBA bytes.
+    private func pixelColumns(_ image: UIImage) throws -> [[UInt8]] {
+        let cg = try XCTUnwrap(image.cgImage)
+        let (w, h) = (cg.width, cg.height)
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = try XCTUnwrap(CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return (0..<w).map { x in
+            (0..<h).flatMap { y in bytes[((y * w + x) * 4)..<((y * w + x) * 4 + 4)] }
+        }
+    }
+
+    /// Two columns differ when a channel of some pixel moved by more than
+    /// antialiasing does.
+    private func moved(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        zip(a, b).contains { abs(Int($0) - Int($1)) > 40 }
     }
 }

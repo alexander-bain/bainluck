@@ -76,3 +76,36 @@ def test_optional_empty_side_accepts_its_later_first_offer():
     assert book.apply(frame)["yes_bid_dollars"] is None
     assert book.take_resnapshot_requests() == {}
     assert book.apply(delta(2, price="0.80", quantity="5"))["yes_bid_dollars"] == "0.80"
+
+
+def test_the_cached_quote_follows_every_book_change_and_callers_get_their_own_dict():
+    """#10090 CPU: `_quote` is computed once per book change, then served from
+    a cache. Every frame that changes the book, an invalidation and a forget
+    must drop it; a caller adding fields (apply's `ts_ms`, the observation
+    marker) must never write them into the cache."""
+    book = KalshiOrderBook()
+    book.apply(snapshot())
+    first = book._quote("GAME-A")
+    first["ts_ms"] = 1
+    first["_observation_only"] = True
+    assert book._quote("GAME-A") == {"market_ticker": "GAME-A", "yes_bid_dollars": "0.84",
+                                     "yes_ask_dollars": "0.85"}
+    # A delta that moves the best bid is read at once, not from the cache.
+    book.apply(delta(2))
+    assert book._quote("GAME-A")["yes_bid_dollars"] == "0.83"
+    # Deep-book churn leaves the best quote, and the overlay reads the same.
+    book.apply(delta(3, price="0.80", quantity="12"))
+    assert book.overlay_ticker({"market_ticker": "GAME-A"})["yes_bid_dollars"] == "0.83"
+    # A fresh snapshot replaces the cached quote.
+    snap = snapshot(4)
+    snap["msg"]["yes_dollars_fp"] = [["0.70", "1"]]
+    book.apply(snap)
+    assert book._quote("GAME-A")["yes_bid_dollars"] == "0.70"
+    # A gap invalidates the book: no cached quote outlives it.
+    assert book.apply(delta(9)) is None
+    assert book.overlay_ticker({"market_ticker": "GAME-A"}) == {"market_ticker": "GAME-A"}
+    # Forget drops it too.
+    book.apply(snapshot(10))
+    assert book._quote("GAME-A")["yes_bid_dollars"] == "0.84"
+    book.forget(["GAME-A"])
+    assert "GAME-A" not in book._quote_cache

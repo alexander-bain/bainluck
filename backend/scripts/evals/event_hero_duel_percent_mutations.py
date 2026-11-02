@@ -216,8 +216,13 @@ RESOLVER_MUTATIONS += [
 VIEW_MUTATIONS: list[dict] = [
     {
         "id": "M8-ios-hero-drops-the-override",
-        "needle": "Text(formatProbability(away, renderedPercent: awayPct))",
-        "replacement": "Text(formatProbability(away))",
+        # RE-TARGETED for #10090 (ALEX item 39). The hero prints tenths through
+        # `EventHeadlineTenths10090.pair(home:away:)`, which derives the away
+        # tenth from the home one. Same mutation in substance: each side is
+        # rounded on its own, which re-opens the 100.1 / 99.9 pair.
+        "needle": "let printed = EventHeadlineTenths10090.pair(home: home, away: away)",
+        "replacement": "let printed = (home: EventHeadlineTenths10090.pair(home: home, away: nil).home, "
+        "away: Optional(EventHeadlineTenths10090.pair(home: away, away: nil).home))",
         "why": "Native's hero goes back to rounding its own side. The Swift "
         "contract test still passes — it tests the HELPER — so only a guard "
         "that reads this view can catch it, and CI cannot run Swift.",

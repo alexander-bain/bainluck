@@ -535,8 +535,8 @@ class LiveFanout:
                 return False
             return await validate_namespace(self._client, authority)
 
-        return AuthorityFanout(AuthorityStore(async_session_maker).read, verify,
-                               self._authority_deliver, self._authority_reconnect)
+        return AuthorityFanout(CachedPrimaryAuthority(AuthorityStore(async_session_maker).read).read,
+                               verify, self._authority_deliver, self._authority_reconnect)
 
     def _authority_deliver(self, receipt):
         payload = _ReceivedText(receipt.payload)
@@ -631,6 +631,52 @@ class LiveFanout:
             await self._release_connection_locked()
         for sub in orphans:
             sub.offer(CLOSED)
+
+
+class CachedPrimaryAuthority:
+    """#10090 (Alex 11/01 ~12:10 PM PT: "We shouldn't be involving a database
+    before serving our app or website"): the primary authority row is read in
+    the BACKGROUND every `REFRESH_S` and each preview batch is validated against
+    that copy (plus the per-batch Redis namespace check), so no database read
+    sits between a venue's price and the reader's screen. A copy older than
+    `MAX_AGE_S` (the refresher is failing) is never used: the batch waits for a
+    fresh read exactly as before. An authority change is seen within `REFRESH_S`.
+    """
+
+    REFRESH_S = 1.0
+    MAX_AGE_S = 3.0
+    #: The refresher stops after this long with no preview to validate (an idle
+    #: hub), so a closed validator leaves no database reads behind.
+    IDLE_STOP_S = 10.0
+
+    def __init__(self, read_primary):
+        self._read_primary = read_primary
+        self._value = None
+        self._at = float("-inf")
+        self._used = float("-inf")
+        self._task = None
+
+    async def _refresh_while_used(self):
+        while monotonic() - self._used <= self.IDLE_STOP_S:
+            try:
+                value = await self._read_primary()
+                self._value, self._at = value, monotonic()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("live_fanout: background authority read failed", exc_info=True)
+            await asyncio.sleep(self.REFRESH_S)
+
+    async def read(self):
+        self._used = monotonic()
+        if self._task is None or self._task.done():
+            self._task = asyncio.get_running_loop().create_task(
+                self._refresh_while_used(), name="dnpl-authority-refresh")
+        if self._value is not None and monotonic() - self._at <= self.MAX_AGE_S:
+            return self._value
+        value = await self._read_primary()
+        self._value, self._at = value, monotonic()
+        return value
 
 
 def _as_text(value: Any) -> str:

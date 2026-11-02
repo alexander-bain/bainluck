@@ -110,16 +110,19 @@ QUOTE_STATUSES = frozenset({"live", "scheduled", "suspended"})
 _open_connections = 0
 
 
-def _heartbeat(confirmed_at: Optional[float]) -> str:
+def _heartbeat(confirmed_at: Optional[float], activity_at: Optional[float] = None) -> str:
     """The named heartbeat. ``confirmed_at`` (#10090 decision J) is the newest
     instant a venue input agreed with what this stream published, or null;
-    a reader that knows nothing of it keeps reading ``t`` alone."""
+    ``activity_at`` the newest venue input whatever it agreed with (the EKG
+    pulse, Alex 2026-11-01; never a price's age). A reader that knows nothing
+    of them keeps reading ``t`` alone."""
     from app.utils.confirmed_at import iso
 
     return sse_encode(
         json.dumps({
             "t": datetime.now(timezone.utc).isoformat(),
             "confirmed_at": iso(confirmed_at),
+            "activity_at": iso(activity_at),
         }),
         event="heartbeat",
     )
@@ -594,6 +597,7 @@ async def _stream(
         # nothing to say yet.
         confirmed_sent = None
         confirmed_beat = started
+        activity_sent = None
         recovery_ids = list(subscription.subscriptions)
         # One owned read may finish after replay or live prices. Reconciliation
         # is an obligation, not permission to hold already committed prices.
@@ -654,12 +658,28 @@ async def _stream(
                 None if confirmations is None or replay or headline_owed()
                 else confirmations.peek(members)
             )
-            if (confirmed_now is not None
-                    and (confirmed_sent is None
-                         or (confirmed_now > confirmed_sent
-                             and loop_now - confirmed_beat >= CONFIRMED_BEAT_MIN_S))):
-                yield _heartbeat(confirmed_now)
-                confirmed_sent, confirmed_beat, last_beat = confirmed_now, loop_now, loop_now
+            # #10090 (Alex 2026-11-01): the EKG pulses on every venue report.
+            # Activity is no claim about the number on screen, so only the
+            # replay gates it; it shares the beat spacing.
+            activity_now = (
+                None if confirmations is None or replay
+                or not callable(getattr(confirmations, "activity", None))
+                else confirmations.activity(members)
+            )
+            confirmed_due = (confirmed_now is not None
+                             and (confirmed_sent is None
+                                  or (confirmed_now > confirmed_sent
+                                      and loop_now - confirmed_beat >= CONFIRMED_BEAT_MIN_S)))
+            activity_due = (activity_now is not None
+                            and (activity_sent is None or activity_now > activity_sent)
+                            and loop_now - confirmed_beat >= CONFIRMED_BEAT_MIN_S)
+            if confirmed_due or activity_due:
+                if confirmed_due:
+                    confirmed_sent = confirmed_now
+                if activity_now is not None:
+                    activity_sent = activity_now
+                yield _heartbeat(confirmed_sent, activity_sent)
+                confirmed_beat, last_beat = loop_now, loop_now
 
             projected_preview = update_preview_session()
             if projected_preview is not None:
@@ -990,7 +1010,7 @@ async def _stream(
                 # down a perfectly healthy stream. This is observable.
                 # The newest value this stream has sent: an advance goes out
                 # only through the guarded beat above.
-                yield _heartbeat(confirmed_sent)
+                yield _heartbeat(confirmed_sent, activity_sent)
                 last_beat = loop_now
     except asyncio.CancelledError:
         raise

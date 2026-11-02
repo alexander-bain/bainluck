@@ -267,7 +267,7 @@ def _skip_cases():
         "returned_to_the_stored_value": dict(last_written=0.48),
         "handover_changing": dict(route=lambda: None),
         "not_live": dict(ev=dict(status="scheduled")),
-        # The received book does not move the whole-percent blend shown.
+        # The received book does not move the blend shown, in tenths of a percent.
         "blend_unchanged": dict(price=0.461),
     }
 
@@ -415,10 +415,17 @@ async def test_a_tick_on_a_market_that_does_not_speak_composes_nothing(r):
     assert r._receipt_speaking[EV] == frozenset({HOME_LEG, AWAY_LEG})
     r.held_quotes.note_input(mark(PROP_OVER, 0.60))
     assert r._receipt_due == {} and PROP_OVER in r._receipt_quotes
-    # A new read graph forgets which market spoke: the next tick re-learns it.
+    # A new read graph with the same speakers keeps them (11/01 Magic-Celtics).
     read(r, event(), _with_a_prop_market())
-    assert EV not in r._receipt_speaking
+    assert r._receipt_speaking[EV] == frozenset({HOME_LEG, AWAY_LEG})
     r.held_quotes.note_input(mark(PROP_OVER, 0.61))
+    assert r._receipt_due == {}
+    # One whose speaker is priced out forgets them: the next tick re-learns it.
+    group = _with_a_prop_market()
+    group[0].outcomes[0].current_probability = None
+    read(r, event(), group)
+    assert EV not in r._receipt_speaking
+    r.held_quotes.note_input(mark(PROP_OVER, 0.62))
     assert EV in r._receipt_due
 
 
@@ -592,3 +599,577 @@ def test_the_switch_is_registered_off_with_both_trial_modes():
 def test_observation_basis_of_an_overlaid_row_is_its_bound():
     at = NOW - timedelta(seconds=1)
     assert observation_basis([Row(id=1, last_updated=at)]) == {"1": pytest.approx(at.timestamp())}
+
+
+# ── an aged graph is re-read, not left to the next stamp ─────────────────────
+
+async def test_an_aged_graph_is_reread_at_once_not_left_to_the_next_stamp(r, monkeypatch):
+    """11/01 13:50Z: a Polymarket input waited 98.7 s as `late:old_graph`. Its
+    live game's graph was past the age limit and nothing re-read it until a
+    stamp did. The refusal now schedules the re-read, as a read_required
+    refusal does (not a lost graph: the event still has one)."""
+    read(r, event(), legs())
+    read_at, ev, group = r._preview_graphs[EV]
+    r._preview_graphs[EV] = (read_at - module._receipt_graph_max_age() - 1.0, ev, group)
+    scheduled = []
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: scheduled.append((tuple(ids), lost)))
+
+    assert r._receipt_preview_plan(EV, module._mono(), blend_preview.registry()) is None
+
+    assert r.receipt_preview_stats["old_graph"] == 1
+    assert scheduled == [((EV,), False)]
+
+
+async def test_a_fresh_graph_schedules_no_reread(r, monkeypatch):
+    read(r, event(), legs())
+    receive(r, 0.48)
+    scheduled = []
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: scheduled.append((tuple(ids), lost)))
+
+    r._receipt_preview_plan(EV, module._mono(), blend_preview.registry())
+
+    assert scheduled == [] and r.receipt_preview_stats["old_graph"] == 0
+
+
+# ── an unproven reading is oriented by the stamp's live verdict ──────────────
+
+VILL, ND = "Villanova Wildcats", "Notre Dame Fighting Irish"
+
+
+def duel_pair():
+    """11/01 16:44Z specimen (event 15334892): a live NCAAB game holding two
+    same-named Polymarket duel markets (the men's and the "(W)" one), so the
+    reading is their two-market composite with no proven home orientation.
+    Every input waited 5-18 s as na_orientation for the stamp, which applied
+    its cached inversion verdict to this same reading."""
+    group = []
+    for base, condition, (home, away) in ((0, CONDITION, ("0.240000", "0.760000")),
+                                          (10, "0x" + "21" * 32, ("0.235000", "0.765000"))):
+        market = Row(id=MARKET + base, source="polymarket", external_id=condition, event_id=EV,
+                     name=f"{ND} vs. {VILL}", status="open", market_metadata={})
+        rows = [
+            Row(id=HOME_LEG + base, market_id=MARKET + base, name=VILL, rank=2,
+                current_probability=Decimal(home), last_updated=SEEN, is_winner=None,
+                external_id=condition, resolution_source=None),
+            Row(id=AWAY_LEG + base, market_id=MARKET + base, name=ND, rank=1,
+                current_probability=Decimal(away), last_updated=SEEN, is_winner=None,
+                external_id=condition + "_side1", resolution_source=None),
+        ]
+        group.append(MarketOutcomes(market, rows, NOW - timedelta(hours=2), False))
+    return group
+
+
+def duel_event():
+    ev = event()
+    ev.sport_key, ev.home_team_name, ev.away_team_name = "basketball_ncaab", VILL, ND
+    return ev
+
+
+@pytest.mark.parametrize("flipped, value", [(False, 0.2175), (True, 0.7825)])
+async def test_an_unproven_reading_shows_what_the_stamps_live_verdict_will_write(
+        r, flipped, value):
+    read(r, duel_event(), duel_pair())
+    r._inversion[EV] = (time.monotonic() + 60.0, flipped)
+
+    receive(r, 0.20)  # the men's market: Villanova 0.24 -> 0.20, beside the women's 0.235
+    await drained(r)
+
+    assert [op["value"] for op in ops(r.sent, "propose")] == [value]
+    assert r.receipt_preview_stats["verdict_oriented"] >= 1
+    assert r.receipt_preview_stats["errors"] == 0
+
+
+@pytest.mark.parametrize("flipped, value", [(False, 0.2175), (True, 0.7825)])
+async def test_a_verdict_just_past_its_ttl_still_orients_the_preview(r, flipped, value):
+    """11/01 17:49-17:57Z: a quiet game's first input after the 150 s TTL waited
+    4.5-24 s for the stamp to re-derive the same verdict (event 15339038)."""
+    read(r, duel_event(), duel_pair())
+    r._inversion[EV] = (time.monotonic() - 300.0, flipped)
+
+    receive(r, 0.20)
+    await drained(r)
+
+    assert [op["value"] for op in ops(r.sent, "propose")] == [value]
+    assert r.receipt_preview_stats["verdict_oriented"] >= 1
+
+
+@pytest.mark.parametrize("verdict", ["none", "expired"])
+async def test_without_a_live_verdict_the_unproven_reading_still_waits_for_the_stamp(
+        r, verdict):
+    read(r, duel_event(), duel_pair())
+    if verdict == "expired":
+        r._inversion[EV] = (time.monotonic() - 0.01 - module.ORIENTATION_PREVIEW_GRACE_S, False)
+
+    receive(r, 0.20)
+    await drained(r)
+
+    assert ops(r.sent, "propose") == []
+    assert r.receipt_preview_stats["verdict_oriented"] == 0
+    assert r._hl_fallback.get("na_orientation", 0) >= 1
+    assert EV in r._urgent_stamp, "the stamp that computes the verdict is made urgent"
+
+
+async def test_a_receipt_with_no_valid_reading_leaves_the_clock_as_no_price(r):
+    """11/01 17:50Z: a Latina-Pianese input waited 94 s as late:na_orientation:
+    the three-way market's home leg had no price, so no reading existed, and
+    the stamp owed nothing, so nothing ever ended the wait. No valid reading
+    from the shown rows plus every received leg is no price (Alex 10/31)."""
+    home, away = "Latina Calcio", "US Pianese"
+    market = Row(id=MARKET, source="polymarket", external_id="917153", event_id=EV,
+                 name=f"{home} vs. {away}", status="open", market_metadata={})
+    rows = [
+        Row(id=HOME_LEG, market_id=MARKET, name=home, rank=3, current_probability=None,
+            last_updated=SEEN, is_winner=None, external_id="0x" + "31" * 32,
+            resolution_source=None),
+        Row(id=AWAY_LEG, market_id=MARKET, name=away, rank=2,
+            current_probability=Decimal("0.200000"), last_updated=SEEN, is_winner=None,
+            external_id="0x" + "32" * 32, resolution_source=None),
+        Row(id=AWAY_LEG + 1, market_id=MARKET, name=f"Draw ({home} vs. {away})", rank=1,
+            current_probability=Decimal("0.290000"), last_updated=SEEN, is_winner=None,
+            external_id="0x" + "33" * 32, resolution_source=None),
+    ]
+    ev = event()
+    ev.sport_key, ev.home_team_name, ev.away_team_name = "soccer_italy_serie_c", home, away
+    read(r, ev, [MarketOutcomes(market, rows, NOW - timedelta(hours=1), False)])
+    r.held_quotes._database_bound = (NOW - timedelta(seconds=1)).timestamp()
+    r.held_quotes.note_input(mark(AWAY_LEG, 0.22))
+    await drained(r)
+
+    assert ops(r.sent, "propose") == []
+    assert r._hl_fallback.get("na_orientation", 0) == 0
+    assert EV not in r._hl_pending, "no price to show is not a wait"
+
+
+async def test_a_waiting_event_is_composed_on_its_reread_graph_even_with_no_quote_left(r):
+    """11/01 18:03Z: a Polymarket input waited 53.8 s as old_graph after its graph
+    was re-read: no received quote was left to queue, so nothing composed it.
+    A waiting event is composed on the fresh graph; with nothing received since,
+    the clock ends there (in_graph)."""
+    from contextlib import asynccontextmanager
+
+    ev, group = event(), legs()
+    read(r, ev, group)
+    receive(r, 0.48)
+    r._hl_pending[EV] = [module._mono() - 50.0, "old_graph", None, 0]
+    r._receipt_quotes.clear()  # the input's quote is gone by the time of the re-read
+    r._receipt_due.clear()
+
+    @asynccontextmanager
+    async def factory():
+        yield None
+
+    async def read_groups(_session, event_ids, overlay_held=False):
+        read(r, event(), legs(home="0.480000", away="0.520000", seen=NOW))
+        return {}
+
+    r._session_factory = factory
+    r._read_groups = read_groups
+    r._schedule_graph_refetch((EV,), lost=False)
+    await asyncio.wait_for(r._graph_refetch_task, 5)
+    await drained(r)
+
+    # Composed on the re-read rows (their committed price), so the publish
+    # that carries it ends the wait (`_hl_published`); the rig records frames.
+    assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
+
+
+PROP_MARKET, PROP_LEG = MARKET + 500, HOME_LEG + 500
+
+
+def with_prop(group):
+    """The headline market plus one prop market that does not speak for it."""
+    market = Row(id=PROP_MARKET, source="polymarket", external_id="0x" + "77" * 32, event_id=EV,
+                 name="Reynolds/Watt: total games over 21.5", status="open",
+                 market_metadata={"venue_type": "totals"})
+    rows = [Row(id=PROP_LEG, market_id=PROP_MARKET, name="Over", rank=1,
+                current_probability=Decimal("0.400000"), last_updated=SEEN, is_winner=None,
+                external_id="0x" + "77" * 32, resolution_source=None)]
+    return group + [MarketOutcomes(market, rows, NOW - timedelta(hours=3), False)]
+
+
+async def test_a_prop_leg_withdrawn_keeps_the_graph_and_the_headline_preview(r):
+    """11/01 18:19-18:24Z: every prop leg a book priced out on a live NFL game
+    dropped its whole graph (~1,800 legs), and the next headline input waited
+    0.5-1.4 s for the re-read."""
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+    r.held_quotes.note_input(mark(PROP_LEG, 0.41))  # the prop's own received quote
+    await drained(r)
+    assert PROP_LEG in r._receipt_quotes
+
+    r.forget_preview_outcomes([PROP_LEG])
+    await drained(r)
+
+    assert PROP_LEG not in r._receipt_quotes
+    assert ops(r.sent, "settle") == [], "the headline preview stands"
+    assert EV in r._preview_graphs and EV not in r._graph_lost_at
+    assert PROP_LEG not in r._preview_graph_outcomes
+    assert r.graph_refetch_stats.get("pruned") == 1
+    assert EV in r._graph_refetch, "a full re-read still follows, off the input's path"
+
+    receive(r, 0.44)
+    await drained(r)
+    assert len(ops(r.sent, "propose")) == 2, "the next input composes at once"
+
+
+async def test_a_read_in_flight_across_the_prune_does_not_drop_the_pruned_graph(r):
+    started = module._mono()
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    r.forget_preview_outcomes([PROP_LEG])
+
+    read(r, event(at=NOW), with_prop(legs()), started=started)  # began before the change
+
+    assert EV in r._preview_graphs
+    assert PROP_LEG not in r._preview_graph_outcomes
+
+
+async def test_a_headline_leg_withdrawn_still_drops_the_graph(r):
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+
+    r.forget_preview_outcomes([HOME_LEG, PROP_LEG])
+    await drained(r)
+
+    assert [op["reason"] for op in ops(r.sent, "settle")] == ["withdrawn"]
+    assert EV not in r._preview_graphs and EV in r._graph_lost_at
+
+
+async def test_a_wide_book_on_a_prop_leg_leaves_the_headline_preview(r):
+    """11/01 18:50Z: the socket calls `note_receipt_withdrawn` on every wide
+    book; on a prop leg that took back the game's headline preview, and the
+    screen showed the stored number until the next stamp (13.9 s on Bills-
+    Ravens while Polymarket held the new price)."""
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+    r.held_quotes.note_input(mark(PROP_LEG, 0.41))
+    await drained(r)
+
+    r.note_receipt_withdrawn([PROP_LEG])
+    await drained(r)
+
+    assert ops(r.sent, "settle") == [], "the headline preview stands"
+    assert PROP_LEG not in r._receipt_quotes, "the prop's own quote is still dropped"
+    assert r.receipt_preview_stats["withdrawn_spared"] == 1
+
+
+async def test_a_wide_book_on_a_headline_leg_still_takes_the_preview_back(r):
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+
+    r.note_receipt_withdrawn([AWAY_LEG])
+    await drained(r)
+
+    [settle] = ops(r.sent, "settle")
+    assert (settle["reason"], settle["through"]) == ("withdrawn", opened["local_seq"])
+
+
+async def test_back_at_the_committed_bag_value_retires_the_preview_after_a_restart(r):
+    """11/01 18:50Z: after a restart (no memory of its own writes) inputs that
+    composed back to the stored number waited 26-29 s as na_basis."""
+    assert not r._last_written_value
+    read(r, event(), legs())  # the committed bag holds polymarket 0.46
+    receive(r, 0.48)
+    await drained(r)
+    [opened] = ops(r.sent, "propose")
+
+    receive(r, 0.46)
+    await drained(r)
+
+    [settle] = ops(r.sent, "settle")
+    assert (settle["reason"], settle["through"]) == ("returned", opened["local_seq"])
+    assert EV not in r._hl_pending
+
+
+async def test_a_move_of_a_tenth_of_a_point_in_the_blend_is_proposed(r):
+    """11/01 19:07Z: Polymarket's Bills 0.78 -> 0.785 moved the blend 0.1 point
+    but not a whole percent, read as unchanged and never reached the screen,
+    which shows tenths (Polymarket held 0.785 for 5.7 s)."""
+    read(r, event(), legs())  # polymarket 0.46 beside kalshi 0.50: blend 48.0%
+    receive(r, 0.465)  # blend 48.2%: the same whole percent
+    await drained(r)
+
+    [opened] = ops(r.sent, "propose")
+    assert opened["value"] == 0.465
+
+
+# ── a stale ticket re-reads the event row, not the graph ────────────────────
+
+
+class _Rows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+def _context_rig(r, monkeypatch, rows, *, ticket=0, fail=False):
+    """`_drain_context_refresh` against canned event rows and a canned ticket."""
+    from contextlib import asynccontextmanager
+
+    calls = {"tickets": 0, "statements": 0}
+
+    class Session:
+        async def execute(self, _statement):
+            calls["statements"] += 1
+            if fail:
+                raise RuntimeError("db down")
+            return _Rows(rows)
+
+    @asynccontextmanager
+    async def factory():
+        yield Session()
+
+    async def admission():
+        calls["tickets"] += 1
+        return ticket
+
+    full = []
+    r._session_factory = factory
+    monkeypatch.setattr(r, "_preview_admission_read", admission)
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: full.append((tuple(ids), lost)))
+    return calls, full
+
+
+def ctx_row(*, eid=EV, status="live", completed_at=None, sources=None, rev=11, at=None):
+    return (eid, status, completed_at, NOW - timedelta(hours=3),
+            bag(kalshi=0.55) if sources is None else sources, rev, NOW if at is None else at)
+
+
+async def test_a_read_required_refusal_rereads_the_event_row_not_the_graph(r, monkeypatch):
+    """11/01 20:5xZ: Polymarket inputs on live NFL games waited 0.6-2 s as
+    `mutate_read_required`: each refusal re-read the whole graph (~370 markets,
+    ~1,800 legs) for a ticket that only the event row needs."""
+    read(r, event(), legs())
+    full, light = [], []
+    monkeypatch.setattr(r, "_schedule_graph_refetch",
+                        lambda ids, lost=True: full.append((tuple(ids), lost)))
+    monkeypatch.setattr(r, "_schedule_context_refresh", lambda ids: light.append(tuple(ids)))
+
+    r._hl_mutate_refused(EV, "read_required")
+    r._hl_mutate_refused(EV, "stale_context")
+
+    assert light == [(EV,), (EV,)]
+    assert full == []
+
+
+async def test_a_read_required_refreshes_every_kept_ticket_refused_event_first(r, monkeypatch):
+    """The barrier is global: one refusal means every kept ticket is stale."""
+    read(r, event(eid=EV2), legs(eid=EV2, base=10))
+    read(r, event(), legs())
+    light = []
+    monkeypatch.setattr(r, "_schedule_context_refresh", lambda ids: light.append(list(ids)))
+
+    r._hl_mutate_refused(EV2, "read_required")
+    r._hl_mutate_refused(EV2, "stale_context")
+
+    assert light == [[EV2, EV], [EV2]], "stale_context is this event's own, not global"
+
+
+async def test_a_retirement_refreshes_every_kept_ticket_without_rereading_rows(r, monkeypatch):
+    read(r, event(), legs())
+    read(r, event(eid=EV2), legs(eid=EV2, base=10))
+    light = []
+    monkeypatch.setattr(r, "_schedule_context_refresh", lambda ids: light.append(sorted(ids)))
+
+    r._refetch_all_graphs()
+
+    assert light == [[EV, EV2]]
+
+
+async def test_the_context_reread_patches_the_event_and_keeps_the_rows(r, monkeypatch):
+    read(r, event(ticket=0), legs())
+    read_at, _old, group = r._preview_graphs[EV]
+    receive(r, 0.48)
+    r._hl_pending[EV] = [module._mono() - 0.3, "mutate_read_required", None, 1]
+    r._receipt_due.clear()
+    r._receipt_now.clear()
+    composed = []
+    monkeypatch.setattr(r, "_wake_receipt", lambda now: composed.append(now))
+    calls, full = _context_rig(r, monkeypatch, [ctx_row()], ticket=0)
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    new_at, ev, kept = r._preview_graphs[EV]
+    assert (calls, full) == ({"tickets": 1, "statements": 1}, [])
+    assert new_at == read_at, "the rows' age still bounds the graph"
+    assert kept is group, "no market or leg was re-read"
+    assert (ev.preview_rev, ev.preview_context_at, ev.preview_read_ticket) == (11, NOW, 0)
+    assert ev.preview_sources["kalshi"]["value"] == 0.55
+    assert ev.win_probability_sources == {"polymarket": ev.preview_sources["polymarket"]}
+    assert ev.rows_context_at == READ_AT
+    assert EV in r._receipt_due and EV in r._receipt_now and composed == [True]
+
+
+async def test_the_context_reread_composes_the_waiting_input_on_the_new_bag(r):
+    from contextlib import asynccontextmanager
+
+    read(r, event(), legs())
+    receive(r, 0.48)
+    r._hl_pending[EV] = [module._mono() - 0.3, "mutate_read_required", None, 1]
+    r._receipt_due.clear()
+
+    class Session:
+        async def execute(self, _statement):
+            return _Rows([ctx_row()])
+
+    @asynccontextmanager
+    async def factory():
+        yield Session()
+
+    async def admission():
+        return 0
+
+    r._session_factory = factory
+    r._preview_admission_read = admission
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+    await drained(r)
+
+    assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
+
+
+@pytest.mark.parametrize("row", [
+    pytest.param(dict(status="completed"), id="no-longer-live"),
+    pytest.param(dict(completed_at=datetime(2026, 11, 1, tzinfo=timezone.utc)), id="finished"),
+    pytest.param(dict(at=READ_AT - timedelta(seconds=5)), id="older-context"),
+    pytest.param(dict(rev=9), id="older-revision"),
+    pytest.param(dict(sources=["malformed"]), id="malformed-bag"),
+])
+async def test_an_event_row_the_patch_may_not_carry_falls_back_to_the_full_reread(
+        r, monkeypatch, row):
+    read(r, event(), legs())
+    before = r._preview_graphs[EV]
+    calls, full = _context_rig(r, monkeypatch, [ctx_row(**row)])
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert r._preview_graphs[EV] is before
+    assert full == [((EV,), False)]
+
+
+async def test_an_absent_event_row_falls_back_to_the_full_reread(r, monkeypatch):
+    read(r, event(), legs())
+    _calls, full = _context_rig(r, monkeypatch, [])
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert full == [((EV,), False)]
+
+
+@pytest.mark.parametrize("ticket,fail", [(None, False), (0, True)], ids=["no-ticket", "read-fails"])
+async def test_a_failed_context_reread_falls_back_to_the_full_reread(r, monkeypatch, ticket, fail):
+    read(r, event(), legs())
+    before = r._preview_graphs[EV]
+    _calls, full = _context_rig(r, monkeypatch, [ctx_row()], ticket=ticket, fail=fail)
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert r._preview_graphs[EV] is before
+    assert full == [((EV,), False)]
+    assert r.graph_refetch_stats["errors"] == 1
+
+
+async def test_an_event_without_a_kept_graph_is_not_reread(r, monkeypatch):
+    calls, full = _context_rig(r, monkeypatch, [ctx_row()])
+
+    r._schedule_context_refresh((EV,))
+
+    assert r._context_refresh == {} and r._context_refresh_task is None
+    assert calls["statements"] == 0 and full == []
+
+
+async def test_a_full_read_newer_than_the_patched_rows_still_replaces_them(r, monkeypatch):
+    """The patch carries a newer event context than its rows: a full read that
+    began after those rows (but before the patch) has fresher markets and must
+    not be refused as older."""
+    read(r, event(at=READ_AT - timedelta(seconds=10)), legs())
+    _calls, _full = _context_rig(r, monkeypatch, [ctx_row(at=NOW)])
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+    assert r._preview_graphs[EV][1].preview_context_at == NOW
+
+    fresher = legs(home="0.470000", away="0.530000")
+    read(r, event(at=READ_AT - timedelta(seconds=5)), fresher)
+
+    assert r._preview_graphs[EV][2][0].outcomes[0].current_probability == Decimal("0.470000")
+
+
+async def test_a_waiting_event_with_no_quote_left_is_queued_after_the_context_reread(
+        r, monkeypatch):
+    read(r, event(), legs())
+    r._hl_pending[EV] = [module._mono() - 0.3, "mutate_read_required", None, 1]
+    r._receipt_quotes.clear()
+    r._receipt_due.clear()
+    r._receipt_now.clear()
+    monkeypatch.setattr(r, "_wake_receipt", lambda now: None)
+    _context_rig(r, monkeypatch, [ctx_row()])
+
+    r._schedule_context_refresh((EV,))
+    await asyncio.wait_for(r._context_refresh_task, 5)
+
+    assert EV in r._receipt_due and EV in r._receipt_now
+
+
+def test_a_drop_noop_is_logged_with_the_ledger_state_and_capped(r, caplog):
+    import logging
+    from types import SimpleNamespace
+
+    state = SimpleNamespace(status="live", pending={}, expired={"polymarket": 0.512},
+                            base_rev=12, base_sources={"polymarket": {"value": 0.5}})
+    preview = SimpleNamespace(_events={EV: state})
+    with caplog.at_level(logging.INFO, logger=module.logger.name):
+        for _ in range(25):
+            r._log_drop_noop(preview, EV, 0.512, event())
+    lines = [m for m in caplog.messages if "drop-noop" in m]
+    assert len(lines) == 20
+    assert "expired=0.512" in lines[0] and "stored=0.5" in lines[0] and "base_rev=12" in lines[0]
+
+
+async def test_a_prop_withdrawn_just_after_a_stamp_read_keeps_the_graph_and_preview(r):
+    """11/01 20:50-22:08Z, Magic-Celtics: every stamp read dropped the legs that
+    speak the headline, so a prop withdrawal right after one took back the
+    preview and dropped the graph (five ~0.65-1.05 s `refetch` waits)."""
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    assert ops(r.sent, "propose")
+    read(r, event(at=NOW), with_prop(legs()))  # the next stamp read, before any composition
+    assert r._receipt_speaking.get(EV) == frozenset({HOME_LEG, AWAY_LEG})
+
+    r.forget_preview_outcomes([PROP_LEG])
+    await drained(r)
+
+    assert ops(r.sent, "settle") == [], "the headline preview stands"
+    assert EV in r._preview_graphs and EV not in r._graph_lost_at
+
+
+@pytest.mark.parametrize("change", ["status", "legs"])
+async def test_a_changed_speaking_market_is_not_carried_across_a_read(r, change):
+    read(r, event(), with_prop(legs()))
+    receive(r, 0.48)
+    await drained(r)
+    group = with_prop(legs())
+    if change == "status":
+        group[0].market.status = "closed"
+    else:
+        group[0].outcomes.pop()
+    read(r, event(at=NOW), group)
+
+    assert EV not in r._receipt_speaking, "the next composition finds the speakers again"
