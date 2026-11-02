@@ -24,6 +24,7 @@ import {
 import { spreadSideLabels } from "@/lib/gamePropCardContext";
 import { relatedGameListingText } from "@/lib/relatedGameListing";
 import { openFieldLegIsOut } from "@/lib/openFieldLegOut";
+import { CollectionEntryLink, admitCollectionRef } from "@/components/discover/shared";
 
 function AnswerRow({
   market,
@@ -224,6 +225,9 @@ export default function SearchFamilyCard({
   const rowTitles = sharedHead
     ? titles.map((t) => ({ head: t.tail, tail: "" }))
     : titles;
+  // #11040: the same link and the same admission check a Discover
+  // theme card uses. Absent unless the backend attached a ref for this family.
+  const collection = admitCollectionRef(family.collection_ref);
   return (
     <div className="bg-surface-card border border-surface-border rounded-lg overflow-hidden">
       <div className="px-3 pt-2 text-xs font-medium text-accent-brand uppercase tracking-wide">
@@ -259,6 +263,7 @@ export default function SearchFamilyCard({
           +{family.more_count} more market{family.more_count !== 1 ? "s" : ""} below
         </div>
       )}
+      {collection && <CollectionEntryLink entry={collection} />}
     </div>
   );
 }

@@ -47,6 +47,24 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Mapping, Optional
 
+from app.utils.departure_story_contract import (
+    ADMITTED_DEPARTURE_ANNOUNCEMENT,
+    ADMITTED_DEPARTURE_SEPARATE_RULE,
+    ADMITTED_DEPARTURE_VACATED,
+    ADMITTED_SUBJECT_RELATION,
+    DEPARTURE_ADMITTED_REASONS,
+    DEPARTURE_EXCLUDED_REASONS,
+    DEPARTURE_ORDER,
+    DEPARTURE_STORY_RULE_VERSION,
+    DEPARTURE_SUBJECTS,
+    KATIE_ZACHARIA_PRESS_SECRETARY,
+    NAME_ONLY_MENTION,
+    NOT_THIS_STORY,
+    OTHER_OFFICE,
+    PETE_HEGSETH_DEFENSE_SECRETARY,
+    UNRELATED_SUBJECT_MENTION,
+    decide_departure_subject,
+)
 from app.utils.event_awards import CEREMONIES, classify_market, edition_year
 from app.utils.futures_liveness import market_reads_settled
 
@@ -89,27 +107,33 @@ MEMBER_ROW_ABSENT = "member_row_absent"
 
 EDITION_UNKNOWN = "edition_unknown"
 
-ADMITTED_REASONS = frozenset(
-    {
-        ADMITTED_TICKER_EDITION,
-        ADMITTED_TITLE_EDITION,
-        ADMITTED_VENUE_EVENT_EDITION,
-        ADMITTED_ENTITY_SIGNAL,
-        ADMITTED_SETTLE_TIME_PENDING,
-    }
+ADMITTED_REASONS = (
+    frozenset(
+        {
+            ADMITTED_TICKER_EDITION,
+            ADMITTED_TITLE_EDITION,
+            ADMITTED_VENUE_EVENT_EDITION,
+            ADMITTED_ENTITY_SIGNAL,
+            ADMITTED_SETTLE_TIME_PENDING,
+        }
+    )
+    | DEPARTURE_ADMITTED_REASONS
 )
-EXCLUDED_REASONS = frozenset(
-    {
-        NOT_THIS_CEREMONY,
-        NOT_THIS_SUBJECT,
-        WRONG_CATEGORY,
-        OTHER_EDITION,
-        LEXICAL_FALSE_FRIEND,
-        RESOLVED_BEYOND_RETENTION,
-        RESOLVED_SETTLE_TIME_UNKNOWN,
-        CONTAINER_MEMBER_WITHDRAWN,
-        MEMBER_ROW_ABSENT,
-    }
+EXCLUDED_REASONS = (
+    frozenset(
+        {
+            NOT_THIS_CEREMONY,
+            NOT_THIS_SUBJECT,
+            WRONG_CATEGORY,
+            OTHER_EDITION,
+            LEXICAL_FALSE_FRIEND,
+            RESOLVED_BEYOND_RETENTION,
+            RESOLVED_SETTLE_TIME_UNKNOWN,
+            CONTAINER_MEMBER_WITHDRAWN,
+            MEMBER_ROW_ABSENT,
+        }
+    )
+    | DEPARTURE_EXCLUDED_REASONS
 )
 WITHHELD_REASONS = frozenset({EDITION_UNKNOWN})
 DECISION_REASONS = ADMITTED_REASONS | EXCLUDED_REASONS | WITHHELD_REASONS
@@ -538,6 +562,29 @@ def _decide_ai(defn: "ThemeDefinition", market: Any, *, now: datetime) -> Decisi
 
 
 # ---------------------------------------------------------------------------
+# departure-story@1 (finite per person+role tenure, #11040). Reused across
+# departure subjects with no member-ID allowlist; classifies settlement
+# predicates into rule-based sections (departure_announced / departure_vacated
+# / departure_rules_unread / departure_left_administration / side_question /
+# after_role).
+# ---------------------------------------------------------------------------
+
+
+def _decide_departure_story(
+    defn: "ThemeDefinition", market: Any, *, now: datetime
+) -> Decision:
+    del now  # finite scope: tenure end is checked against tenure_start, never wall clock
+    subj = DEPARTURE_SUBJECTS[defn.subject]
+    res = decide_departure_subject(subj, market)
+    ev = _Evidence(market)
+    for clause in res.evidence:
+        ev.clauses.append(dict(clause))
+    if res.section:
+        ev.fields["edge_class"] = res.section
+    return _decision(defn, res.outcome, res.reason, ev, res.section)
+
+
+# ---------------------------------------------------------------------------
 # The decision ledger (§2; §10.4 S0). Declared ONCE here, with no ORM model —
 # the ``container_corrections`` precedent (#9651): the D45 migration and the
 # real-Postgres gate both run these exact statements. Nothing here executes
@@ -658,6 +705,23 @@ def _ai_population(defn: "ThemeDefinition", *, container_id: int, now: datetime)
     }
 
 
+def _departure_population(defn: "ThemeDefinition", *, container_id: int, now: datetime) -> dict:
+    """Person-in-title regexp arm (with Postgres ``\\y`` word boundaries) + prior
+    decisions (#11040). Finite scope has no time cutoff."""
+    del now
+    from sqlalchemy import select
+
+    from app.models.models import FuturesMarket as FM
+
+    subj = DEPARTURE_SUBJECTS[defn.subject]
+    return {
+        "person_title": select(FM.id).where(
+            FM.name.regexp_match(subj.person_pg, flags="i")
+        ),
+        "prior_decision": _prior_decision_arm(container_id),
+    }
+
+
 def candidate_population(defn: "ThemeDefinition", *, container_id: int, now: datetime) -> dict:
     """The definition's own gather arms, name -> Core ``select`` of market ids.
     The writer (P2) unions them and pages by id cursor; P1 never executes them."""
@@ -699,6 +763,10 @@ class ThemeDefinition:
     retention_days: Optional[int] = None
     #: ``story_key`` values that map to this subject (§5). Never a group_id.
     feed_keys: tuple[str, ...] = field(default_factory=tuple)
+    #: Optional theme family (e.g. ``"departure"``) and role display (#11040).
+    family: Optional[str] = None
+    role_display: Optional[str] = None
+    class_order: tuple[str, ...] = field(default_factory=tuple)
 
     def slug(self) -> str:
         return build_theme_slug(self.subject, self.scope, self.edition)
@@ -733,6 +801,39 @@ AI = ThemeDefinition(
     feed_keys=("story:ai",),
 )
 
+KATIE_ZACHARIA_PRESS_SECRETARY_2026 = ThemeDefinition(
+    subject=KATIE_ZACHARIA_PRESS_SECRETARY.subject,
+    scope=SCOPE_FINITE,
+    edition=KATIE_ZACHARIA_PRESS_SECRETARY.edition,
+    rule_version=DEPARTURE_STORY_RULE_VERSION,
+    container_kind="theme",
+    category="politics",
+    display_name=KATIE_ZACHARIA_PRESS_SECRETARY.display_name,
+    decider=_decide_departure_story,
+    population=_departure_population,
+    family="departure",
+    role_display=KATIE_ZACHARIA_PRESS_SECRETARY.role_display,
+    class_order=DEPARTURE_ORDER,
+)
+
+PETE_HEGSETH_DEFENSE_SECRETARY_2025 = ThemeDefinition(
+    subject=PETE_HEGSETH_DEFENSE_SECRETARY.subject,
+    scope=SCOPE_FINITE,
+    edition=PETE_HEGSETH_DEFENSE_SECRETARY.edition,
+    rule_version=DEPARTURE_STORY_RULE_VERSION,
+    container_kind="theme",
+    category="politics",
+    display_name=PETE_HEGSETH_DEFENSE_SECRETARY.display_name,
+    decider=_decide_departure_story,
+    population=_departure_population,
+    family="departure",
+    role_display=PETE_HEGSETH_DEFENSE_SECRETARY.role_display,
+    class_order=DEPARTURE_ORDER,
+)
+
+KATIE_ZACHARIA_DEPARTURE = KATIE_ZACHARIA_PRESS_SECRETARY_2026
+PETE_HEGSETH_DEPARTURE = PETE_HEGSETH_DEFENSE_SECRETARY_2025
+
 
 def build_registry(definitions: Iterable[ThemeDefinition]) -> dict[str, ThemeDefinition]:
     """slug -> definition. Refuses duplicate slugs and a scope disagreement
@@ -763,10 +864,24 @@ def build_feed_key_map(registry: Mapping[str, ThemeDefinition]) -> dict[str, str
     return out
 
 
-REGISTRY: dict[str, ThemeDefinition] = build_registry([OSCARS_2027, AI])
+REGISTRY: dict[str, ThemeDefinition] = build_registry(
+    [
+        OSCARS_2027,
+        AI,
+        KATIE_ZACHARIA_PRESS_SECRETARY_2026,
+        PETE_HEGSETH_DEFENSE_SECRETARY_2025,
+    ]
+)
 FEED_KEY_MAP: dict[str, str] = build_feed_key_map(REGISTRY)
 
 _FINITE_SLUG_RE = re.compile(r"^([a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*)-(\d{4})$")
+
+DEFAULT_CLASS_RANK: Mapping[str, int] = {
+    "title": 0,
+    "advancement": 1,
+    "side_question": 2,
+}
+DEFAULT_OTHER_CLASS_RANK = 3
 
 
 def parse_theme_slug(
@@ -783,15 +898,56 @@ def parse_theme_slug(
     if not isinstance(slug, str) or not slug:
         return None
     reg = REGISTRY if registry is None else registry
-    scopes = {d.subject: d.scope for d in reg.values()}
-    if scopes.get(slug) == SCOPE_CONTINUING and build_theme_slug(slug, SCOPE_CONTINUING) == slug:
-        return {"kind": "theme_continuing", "subject": slug}
+    by_subject = {d.subject: d for d in reg.values()}
+    defn = by_subject.get(slug)
+    if defn is not None and defn.scope == SCOPE_CONTINUING and build_theme_slug(slug, SCOPE_CONTINUING) == slug:
+        out: dict[str, Any] = {"kind": "theme_continuing", "subject": slug}
+        if defn.family:
+            out["family"] = defn.family
+        if defn.role_display:
+            out["role"] = defn.role_display
+        return out
     m = _FINITE_SLUG_RE.match(slug)
-    if m and scopes.get(m.group(1)) == SCOPE_FINITE:
-        subject, edition = m.group(1), int(m.group(2))
-        if build_theme_slug(subject, SCOPE_FINITE, edition) == slug:
-            return {"kind": "theme_edition", "subject": subject, "edition": edition}
+    if m:
+        defn = by_subject.get(m.group(1))
+        if defn is not None and defn.scope == SCOPE_FINITE:
+            subject, edition = m.group(1), int(m.group(2))
+            if build_theme_slug(subject, SCOPE_FINITE, edition) == slug:
+                out = {"kind": "theme_edition", "subject": subject, "edition": edition}
+                if defn.family:
+                    out["family"] = defn.family
+                if defn.role_display:
+                    out["role"] = defn.role_display
+                return out
     return None
+
+
+def get_theme_definition(
+    slug: Optional[str], registry: Optional[Mapping[str, ThemeDefinition]] = None
+) -> Optional[ThemeDefinition]:
+    if not isinstance(slug, str) or not slug:
+        return None
+    reg = REGISTRY if registry is None else registry
+    if slug in reg:
+        return reg[slug]
+    parsed = parse_theme_slug(slug, reg)
+    if parsed is None:
+        return None
+    subject = parsed.get("subject")
+    return next((d for d in reg.values() if d.subject == subject), None)
+
+
+def theme_class_rank(
+    defn: Optional[ThemeDefinition], member_class: Optional[str]
+) -> int:
+    if defn is not None and defn.class_order:
+        try:
+            return defn.class_order.index(member_class)  # type: ignore[arg-type]
+        except ValueError:
+            return len(defn.class_order)
+    if defn is None and member_class in DEPARTURE_ORDER:
+        return DEPARTURE_ORDER.index(member_class)
+    return DEFAULT_CLASS_RANK.get(member_class or "", DEFAULT_OTHER_CLASS_RANK)
 
 
 # ---------------------------------------------------------------------------

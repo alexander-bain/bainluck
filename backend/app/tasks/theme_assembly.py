@@ -91,6 +91,8 @@ from app.utils.outcome_display import drop_dominant_field_outcomes
 from app.utils.theme_definitions import (
     ADMITTED_SETTLE_TIME_PENDING,
     CONTAINER_MEMBER_WITHDRAWN,
+    DEFAULT_CLASS_RANK,
+    DEFAULT_OTHER_CLASS_RANK,
     MEMBER_ROW_ABSENT,
     OUTCOME_ADMITTED,
     OUTCOME_EXCLUDED,
@@ -101,7 +103,9 @@ from app.utils.theme_definitions import (
     ThemeDefinition,
     candidate_population,
     decisions_table,
+    get_theme_definition,
     parse_theme_slug,
+    theme_class_rank,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,8 +128,8 @@ def theme_assembly_enabled() -> bool:
 
 EDGE_SOURCE = "theme_rule"
 EDGE_CONFIDENCE = Decimal("1.000")
-CLASS_RANK = {"title": 0, "advancement": 1, "side_question": 2}
-_OTHER_CLASS_RANK = 3
+CLASS_RANK = dict(DEFAULT_CLASS_RANK)
+_OTHER_CLASS_RANK = DEFAULT_OTHER_CLASS_RANK
 SNAPSHOT_KEY = "theme_snapshot:{container_id}:{revision}"
 #: #9936 (silence changes nothing a reader sees): how long a page outlives the
 #: LAST pass that wrote or refreshed it. Every pass that reaches
@@ -193,6 +197,7 @@ class MemberRow:
     settled_at: Optional[datetime] = None
     market_metadata: Optional[dict] = None
     outcomes: tuple[OutcomeRow, ...] = ()
+    description: Optional[str] = None
 
     @property
     def outcome_names(self) -> list[str]:
@@ -225,6 +230,7 @@ def member_row(market: Any) -> MemberRow:
             # three-leg cut must not move the fold between two passes
             for o in sorted(getattr(market, "outcomes", None) or (), key=lambda o: o.id or 0)
         ),
+        description=getattr(market, "description", None),
     )
 
 
@@ -477,10 +483,17 @@ def fold_input(row: MemberRow) -> dict:
     }
 
 
-def _page_order(members: Mapping[int, str]) -> list[int]:
+def _page_order(
+    members: Mapping[int, str], defn: Optional[ThemeDefinition] = None
+) -> list[int]:
     return sorted(
         (int(i) for i in members),
-        key=lambda i: (CLASS_RANK.get(members[i], _OTHER_CLASS_RANK), i),
+        key=lambda i: (
+            theme_class_rank(defn, members[i])
+            if defn is not None
+            else CLASS_RANK.get(members[i], _OTHER_CLASS_RANK),
+            i,
+        ),
     )
 
 
@@ -491,6 +504,7 @@ def build_snapshot(
     rows: Mapping[int, MemberRow],
     *,
     inventory_complete: bool,
+    defn: Optional[ThemeDefinition] = None,
 ) -> ThemeSnapshot:
     """The page one revision serves (semantics 8).
 
@@ -498,12 +512,15 @@ def build_snapshot(
     Membership is not quality: a member the Discover gate withholds keeps its
     edge and decision, and is only left off the page here, through the gate
     Discover owns (imported, never copied — case 16). The rest fold to one row
-    per question through Discover's fold (case 19). An empty membership is an
-    empty snapshot, never a skipped one (case 25).
+    per question through Discover's fold (case 19), except for ``departure``
+    family stories (#11040), whose rule-distinct contracts are never folded by
+    title. An empty membership is an empty snapshot, never a skipped one (case 25).
     """
+    slug_str = str(_field(container, "slug"))
+    resolved_defn = defn if defn is not None else get_theme_definition(slug_str, REGISTRY)
     withheld: dict[str, list[int]] = {k: [] for k in SNAPSHOT_WITHHOLDS}
     eligible: list[dict] = []
-    for child_id in _page_order(members):
+    for child_id in _page_order(members, resolved_defn):
         row = rows.get(child_id)
         if row is None:
             withheld["row_missing"].append(child_id)
@@ -520,11 +537,14 @@ def build_snapshot(
             withheld.setdefault(reason, []).append(child_id)
             continue
         eligible.append({"type": "futures", "data": fold_input(row)})
-    kept, folded = _dedupe_same_question_members(eligible)
+    if resolved_defn is not None and resolved_defn.family == "departure":
+        kept, folded = eligible, []
+    else:
+        kept, folded = _dedupe_same_question_members(eligible)
     shown = tuple(int(item["data"]["id"]) for item in kept)
     return ThemeSnapshot(
         container_id=int(_field(container, "id")),
-        slug=str(_field(container, "slug")),
+        slug=slug_str,
         name=str(_field(container, "name")),
         revision=int(revision),
         inventory_complete=bool(inventory_complete),

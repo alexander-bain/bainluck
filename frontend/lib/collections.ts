@@ -11,7 +11,7 @@ export interface CollectionMember {
   questionIds: number[];
   eventId: number | null;
 }
-export interface CollectionSection { key: string; cls: string; title: string; layout?: string; members: CollectionMember[] }
+export interface CollectionSection { key: string; cls: string; title: string; note: string | null; layout?: string; members: CollectionMember[] }
 export interface CollectionPin { slug: string; name: string; href: string; subtitle: string; pin_until: string }
 export interface CollectionHub {
   slug: string;
@@ -24,6 +24,10 @@ export interface CollectionHub {
   members: CollectionMember[];
   related: Record<string, CollectionMember[]>;
   note: string | null;
+  // #11040: a theme family's one-line page note and the
+  // family itself ("departure"), both from the served edition. Null elsewhere.
+  dek: string | null;
+  family: string | null;
   // #9925 — a theme collection (AI, Oscars) is read a page at a time at one
   // revision. Null on every NFL/MLB hub, which arrives whole.
   theme: { totalCount: number; nextCursor: string | null; inventoryComplete: boolean; revisionMoved: boolean } | null;
@@ -46,7 +50,7 @@ export const safeCollectionSlug = (value: unknown): value is string => typeof va
 export const collectionPath = (slug: string): string | null => safeCollectionSlug(slug) ? `/collections/${slug}` : null;
 export const collectionMemberDomId = (key: string): string => `collection-member-${key}`;
 
-function member(value: unknown): CollectionMember | null {
+function member(value: unknown, quiet = false): CollectionMember | null {
   const row = object(value), card = object(row?.card), destination = object(row?.destination);
   if (!row || !card || !destination || !positive(row.id) || card.id !== row.id) return null;
   const type = row.type;
@@ -66,7 +70,13 @@ function member(value: unknown): CollectionMember | null {
   }
   // The route's hydrated serializers supply the familiar card. This projection
   // does not sort outcomes, infer prices or change the event's served lifecycle.
-  const data = type === "event" ? card as unknown as FeedEventData : card as unknown as FeedFuturesData;
+  // #11040: a story page prints no movement until a dated basis is
+  // served for it. The served card's per-outcome `movement` is the stored
+  // per-write change (reader_change_24h), whose age is unknown, so it is dropped.
+  const shown = quiet && type === "market"
+    ? { ...card, top_outcomes: (card.top_outcomes as unknown[]).map((o) => ({ ...(o as ObjectValue), movement: null })) }
+    : card;
+  const data = type === "event" ? shown as unknown as FeedEventData : shown as unknown as FeedFuturesData;
   const item: FeedItem = { type: type === "event" ? "event" : "futures", score: 0, reason: "", headline: null, data };
   return { key: `${type}:${row.id}`, id: row.id, type, href, item,
     questionIds: Array.isArray(row.question_ids) ? row.question_ids.filter(positive) : [],
@@ -84,6 +94,26 @@ const themeLabel = (edition: ObjectValue, slug: string): string | null =>
   edition.kind === "theme_continuing" && edition.subject === "ai" && slug === "ai" ? "AI · Ongoing"
   : edition.kind === "theme_edition" && edition.subject === "oscars" && positive(edition.edition) && slug === `oscars-${edition.edition}` ? `Oscars · ${edition.edition}`
   : null;
+// #11040: a departure story is a finite theme whose edition carries
+// `family: "departure"`. The reader keys its label, sections and notes on the
+// family, never on the person, so a second story needs no reader change.
+const departureLabel = (edition: ObjectValue, slug: string): string | null =>
+  edition.family === "departure" && edition.kind === "theme_edition" && typeof edition.subject === "string" && safeCollectionSlug(edition.subject)
+  && positive(edition.edition) && slug === `${edition.subject}-${edition.edition}` && text(edition.role) && edition.role.length <= 60
+    ? `${edition.role.trim()} · Story` : null;
+const familySections: Record<string, Record<string, { title: string; note: string }>> = {
+  departure: {
+    departure_announced: { title: "An announced exit counts", note: "An announced resignation or removal counts, even if it takes effect later. Each date covers everything up to that date." },
+    departure_vacated: { title: "Only an actual departure counts", note: "Only actually leaving the job counts. An announcement alone doesn't. Each date covers everything up to that date." },
+    departure_rules_unread: { title: "Leaving the job · rules not checked yet", note: "How each of these settles hasn't been checked, so their numbers may not be comparable." },
+    departure_left_administration: { title: "Leaving the administration", note: "About leaving the administration altogether, not only this job." },
+    after_role: { title: "What comes next", note: "About the next job, not about whether or when this one ends." },
+    side_question: { title: "About the job", note: "Not about leaving it." },
+  },
+};
+const familyDek: Record<string, string> = {
+  departure: "When this job might end, and what comes next. Each market keeps its own number, because their rules can differ.",
+};
 const isTheme = (value: unknown): boolean => { const edition = object(value); return edition?.kind === "theme_continuing" || edition?.kind === "theme_edition"; };
 const themeSectionTitles: Record<string, Record<string, string>> = {
   oscars: { title: "Award winners", advancement: "Nominations", side_question: "More questions" },
@@ -100,6 +130,10 @@ const providerEventLabel = (edition: ObjectValue, slug: string): string | null =
 
 function editionLabel(value: unknown, slug: string): string | null {
   const edition = object(value);
+  // A family the reader doesn't know fails closed; an absent or null family is
+  // an ordinary theme (AI, Oscars), so a server that writes `family: null`
+  // everywhere cannot take those pages down.
+  if (edition && isTheme(edition) && edition.family != null) return typeof edition.family === "string" && familySections[edition.family] ? departureLabel(edition, slug) : null;
   if (edition?.kind === "provider_event") return providerEventLabel(edition, slug);
   if (edition && isTheme(edition)) return themeLabel(edition, slug);
   if (!edition || !positive(edition.season)) return null;
@@ -119,7 +153,8 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   const header = object(row.container);
   const title = (state === "published" || state === "empty") && header?.slug === slug && text(header.name) ? header.name : null;
   const base: CollectionHub = { slug, revision: positive(row.revision) ? row.revision : null, state, title,
-    edition: editionLabel(row.edition, slug), sections: [], children: [], members: [], related: {}, note: null, theme: null };
+    edition: editionLabel(row.edition, slug), sections: [], children: [], members: [], related: {}, note: null, theme: null,
+    dek: null, family: null };
   if (state !== "published") {
     const notes = { unpublished: "This collection isn't available yet.", withdrawn: "This collection is no longer available.",
       empty: "There are no games or questions in this collection right now.", unavailable: "This collection isn't available right now." };
@@ -135,6 +170,8 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
       throw new Error("This collection isn't available right now.");
     theme = { totalCount: counts.shown_count, nextCursor: page.next_cursor as string | null, inventoryComplete: counts.inventory_complete, revisionMoved: row.revision_moved === true };
   }
+  const family = theme && typeof object(row.edition)?.family === "string" ? object(row.edition)!.family as string : null;
+  const familyTitles = family ? familySections[family] ?? null : null;
   const titles = theme ? themeSectionTitles[(object(row.edition)?.subject as string)] ?? {} : sectionTitles;
   const seen = new Set<string>();
   let partial = !count(row.member_count) || !count(row.withheld_count) || (row.withheld_count as number) > 0 || (Array.isArray(row.withheld) && row.withheld.length > 0);
@@ -144,13 +181,17 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     if (!section || !text(section.class) || !Array.isArray(section.members)) { partial = true; return; }
     const accepted: CollectionMember[] = [];
     section.members.forEach((value) => {
-      const card = member(value);
+      const card = member(value, family === "departure");
       if (!card) { partial = true; return; }
       if (seen.has(card.key)) return;
       seen.add(card.key); accepted.push(card);
     });
     if (section.count !== section.members.length || accepted.length !== section.members.length) partial = true;
-    if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class, title: slug === "midterms-2026" && text(section.title) ? section.title : titles[section.class] ?? "More", layout: slug === "midterms-2026" && text(section.layout) ? section.layout : undefined, members: accepted });
+    if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class,
+      title: slug === "midterms-2026" && text(section.title) ? section.title : familyTitles?.[section.class as string]?.title ?? titles[section.class] ?? "More",
+      note: familyTitles?.[section.class as string]?.note ?? null,
+      layout: slug === "midterms-2026" && text(section.layout) ? section.layout : undefined,
+      members: accepted });
   });
   const members = sections.flatMap((section) => section.members);
   if (members.length !== row.member_count) partial = true;
@@ -168,7 +209,8 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   }
   const pin = object(row.discover_pin);
   const admittedPin = slug === "midterms-2026" && pin?.slug === slug && pin.href === collectionPath(slug) && text(pin.name) && text(pin.subtitle) && text(pin.pin_until) && Number.isFinite(Date.parse(pin.pin_until)) ? pin as unknown as CollectionPin : null;
-  return { ...base, members, related, children, theme, subtitle: text(row.subtitle) ? row.subtitle : null, pin: admittedPin,
+  return { ...base, members, related, children, theme, family, dek: family ? familyDek[family] ?? null : null,
+    subtitle: text(row.subtitle) ? row.subtitle : null, pin: admittedPin,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
     note: partial ? (slug === "midterms-2026" ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }

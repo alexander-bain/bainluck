@@ -80,6 +80,42 @@ def _page_event_ids(payload: dict) -> list[int]:
     return ids
 
 
+async def _attach_theme_family_refs(payload: dict) -> dict:
+    """Attach ``collection_ref`` onto Search ``futures_families`` when Search
+    collections and theme collections are enabled (#11040). Uses
+    ``theme_collection_ref``'s own bounded side session and never touches the
+    caller's ``db`` session."""
+    try:
+        if not search_collections_enabled():
+            return payload
+        families = payload.get("futures_families")
+        if not isinstance(families, list) or not families:
+            return payload
+        from app.utils.theme_collection_ref import (
+            attach_search_family_collection_refs,
+            read_published_themes,
+            theme_collections_enabled,
+        )
+
+        if not theme_collections_enabled():
+            return payload
+        published = await read_published_themes(max_age_seconds=5.0)
+        if published is None or not published.themes:
+            return payload
+        updated = await attach_search_family_collection_refs(
+            families, published=published
+        )
+        if updated is families:
+            return payload
+        return {**payload, "futures_families": updated}
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "search family theme collection ref read failed; serving without ref",
+            exc_info=True,
+        )
+        return payload
+
+
 async def attach_search_collections(
     db,
     payload: dict,
@@ -96,6 +132,10 @@ async def attach_search_collections(
     try:
         if not search_collections_enabled():
             return payload
+    except Exception:  # noqa: BLE001
+        return payload
+    payload = await _attach_theme_family_refs(payload)
+    try:
         event_ids = _page_event_ids(payload)
         if not event_ids:
             return payload

@@ -194,6 +194,8 @@ export default function CollectionHub({ slug }: { slug: string }) {
       <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Collection</p>
       <h1 id="collection-title" className="text-2xl font-bold text-text-primary">{shown?.title ?? "Collection"}</h1>
       {(shown?.subtitle ?? shown?.edition) && <p className="text-sm text-text-secondary">{shown?.subtitle ?? shown?.edition}</p>}
+      {/* #11040: the family's one-line page note. */}
+      {shown?.dek && <p data-collection-dek className="text-sm text-text-secondary">{shown.dek}</p>}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
     {error && shown && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">
@@ -217,7 +219,11 @@ export default function CollectionHub({ slug }: { slug: string }) {
       const lone = shown.sections.length === 1 && section.cls === "unclassified";
       const midterms = shown.slug === "midterms-2026";
       return <section key={section.key} className="space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
-      {!lone && <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>}
+      {!lone && <div className="space-y-1">
+        <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>
+        {/* #11040: one plain sentence saying how this section's markets settle. */}
+        {section.note && <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>}
+      </div>}
       {section.layout === "party" && control(108620) && control(108621) ? <PartyControlRow senate={control(108620)} house={control(108621)} stacked /> : <div className={midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
         {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
           {card(member, midterms ? section.layout ?? "auto" : undefined)}

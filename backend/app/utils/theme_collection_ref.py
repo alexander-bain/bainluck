@@ -135,6 +135,13 @@ class PublishedThemes:
         return hashlib.sha256(f"theme-v1|{raw}".encode()).hexdigest()[:16]
 
 
+def theme_collections_enabled() -> bool:
+    """Whether the hub reader is enabled to serve published theme collections."""
+    from app.routes.containers import containers_read_enabled
+
+    return containers_read_enabled()
+
+
 def theme_collection_refs_enabled(*, mode: Optional[str], include_futures: bool) -> bool:
     """A Discover request that carries futures, while the page reader serves.
 
@@ -582,6 +589,74 @@ async def attach_theme_collection_refs(
     if observe is not None:
         observe(report)
     return out
+
+
+async def attach_search_family_collection_refs(
+    families: list,
+    *,
+    published: Optional[PublishedThemes],
+    budget_seconds: float = THEME_REF_READ_BUDGET_SECONDS,
+    read_snapshot: Optional[SnapshotReader] = None,
+    session_factory: Optional[SessionFactory] = None,
+) -> list:
+    """Attach ``collection_ref`` onto eligible Search ``futures_families`` entries
+    using the same §5 resolution and step-4 snapshot checks as Discover (#11040).
+    """
+    if not isinstance(families, list) or not families or published is None or not published.themes:
+        return families
+
+    synthetic_items: list[dict] = []
+    index_map: list[int] = []
+    for idx, fam in enumerate(families):
+        if not isinstance(fam, Mapping):
+            continue
+        headline = fam.get("headline")
+        members = fam.get("members")
+        if isinstance(headline, Mapping) and isinstance(members, list):
+            markets = [headline, *members]
+        else:
+            markets = fam.get("markets")
+        if not isinstance(markets, list) or not markets:
+            continue
+        member_ids = [
+            m.get("id")
+            for m in markets
+            if isinstance(m, Mapping) and type(m.get("id")) is int
+        ]
+        if not member_ids or len(member_ids) != len(markets):
+            continue
+        key = fam.get("family_key") or fam.get("key")
+        synthetic_items.append(
+            {
+                "type": "bundle",
+                "data": {
+                    "id": f"search_family:{key}",
+                    "kind": "theme",
+                    "story_key": str(key) if key is not None else None,
+                    "member_ids": member_ids,
+                },
+            }
+        )
+        index_map.append(idx)
+
+    if not synthetic_items:
+        return families
+
+    resolved_items = await attach_theme_collection_refs(
+        synthetic_items,
+        published=published,
+        budget_seconds=budget_seconds,
+        read_snapshot=read_snapshot,
+        session_factory=session_factory,
+    )
+    changed = False
+    out = list(families)
+    for syn_idx, fam_idx in enumerate(index_map):
+        ref = resolved_items[syn_idx].get("data", {}).get("collection_ref")
+        if ref is not None:
+            out[fam_idx] = {**dict(families[fam_idx]), "collection_ref": ref}
+            changed = True
+    return out if changed else families
 
 
 def _reset_published_cache_for_tests() -> None:

@@ -22,6 +22,11 @@
     },
     "known_classes": [
       "advancement",
+      "after_role",
+      "departure_announced",
+      "departure_left_administration",
+      "departure_rules_unread",
+      "departure_vacated",
       "doubles",
       "match_winner",
       "prop",
