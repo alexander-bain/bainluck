@@ -144,7 +144,8 @@ async def load_sports_markets(
     market/outcome reads; it does not promise an atomic page. Added SQL is in
     a savepoint so a failed fingerprint cannot poison the fallback transaction.
     """
-    if os.getenv("FEED_SPORTS_METADATA_REUSE", "0").strip() != "1":
+    # On by default (production since 2026-10-31, docs/live-settings.md); `0` is off.
+    if os.getenv("FEED_SPORTS_METADATA_REUSE", "1").strip() == "0":
         return None
     if cache.shared_build_ttl_s(NAMESPACE) <= 0:
         return None
