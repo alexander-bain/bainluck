@@ -44,20 +44,13 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
-          NOW_ISSUE: ${{ vars.NOW_ISSUE }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          RELEASE_LOG_API_ORIGIN: ${{ vars.RELEASE_LOG_API_ORIGIN }}
+          NOW_ISSUE: '11852'
+          # Alex's tonight hold: no collector access or new telemetry destination.
+          RELEASE_LOG_API_ORIGIN: ''
           CANDIDATE_ID: ${{ inputs.candidate-id }}
           CANDIDATE_SHA: ${{ inputs.candidate-sha }}
           PROVIDER: ${{ inputs.provider }}
         run: python3 tools/release/health.py --provider "$PROVIDER" --candidate-id "$CANDIDATE_ID" --candidate-sha "$CANDIDATE_SHA"
-      - name: Publish verdict
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-health-${{ inputs.provider }}-${{ inputs.candidate-id }}
-          path: release-health.json
-          if-no-files-found: error
       - name: Observer failure stays visible
         if: steps.check.outcome == 'failure' && steps.check.outputs.rollback != 'true'
         run: exit 1
@@ -85,9 +78,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
-          NOW_ISSUE: ${{ vars.NOW_ISSUE }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          RELEASE_LOG_API_ORIGIN: ${{ vars.RELEASE_LOG_API_ORIGIN }}
+          NOW_ISSUE: '11852'
           CANDIDATE_ID: ${{ inputs.candidate-id }}
           CANDIDATE_SHA: ${{ inputs.candidate-sha }}
           PROVIDER: ${{ inputs.provider }}

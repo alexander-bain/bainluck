@@ -104,10 +104,10 @@ def candidate(provider, candidate_id):
 def report(line,key=None):
     number=required('NOW_ISSUE')
     if not number.isdecimal(): raise ValueError('NOW_ISSUE must be an issue number')
-    body=line.replace('\n',' ')
+    body=' '.join(line.splitlines())
     if key:
         marker='<!-- release-loop:'+key+' -->'
-        body+='\n'+marker
+        body+=' '+marker
         comments=github_pages('/issues/'+number+'/comments')
         previous=next((row for row in comments if marker in row.get('body','')),None)
         if previous:

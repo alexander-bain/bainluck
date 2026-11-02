@@ -4,6 +4,8 @@
 
 ## Tonight's holds
 
+Alex's November 1 instruction holds all new telemetry destinations and collectors tonight. The health Action posts its one-line verdict only to NOW #11852; it uploads no verdict artifact and passes no collector origin or admin read credential. The prepared collector/drain code remains inactive. Worker evidence is UNKNOWN while that hold is in place; no fast-lane arming or collector setup follows from publishing these draft PRs. The collector setup steps below are deferred beyond tonight and require a new explicit instruction.
+
 No master push, merge, provider setting change, or release-loop activation was performed. Alex's “master is current” is required before setup. Collector origin confirmation is separately pending: a developer instruction specifically required confirmation before forwarding logs to the proposed API destination. RELEASE_LOG_API_ORIGIN has **no default**. Nothing forwards logs until an explicitly configured HTTPS origin is present. Network is disabled in this session.
 
 The source tools were read without moving or changing them. artifacts/g4f72-kit.txt points to the original check.py and watch_dnpl.sh; the operational latency scripts are artifacts/speed-tools/latency_guard2.py and latency_guard3.py. Builder A owns their move to tools/speed/. Normal unattended checks require those canonical files. Bootstrap may use reviewed existing watcher evidence; it never invents a PASS from missing startup logs or public HTTP alone.
