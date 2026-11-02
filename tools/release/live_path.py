@@ -23,7 +23,14 @@ GLOBAL_MODULES = {'backend/app/main.py', 'backend/app/database.py', 'backend/app
 
 def is_live_event(event_name, event, associated_prs, sha):
     if event_name == 'pull_request':
-        return any(x.get('name') == 'live-path' for x in event.get('pull_request', {}).get('labels', []))
+        number = event.get('pull_request', {}).get('number')
+        current = [pr for pr in associated_prs if pr.get('number') == number]
+        if len(current) != 1:
+            return False
+        pr = current[0]
+        return (pr.get('state') == 'open' and pr.get('head', {}).get('sha') == sha
+                and pr.get('base', {}).get('ref') == 'master'
+                and any(x.get('name') == 'live-path' for x in pr.get('labels', [])))
     if event_name != 'push' or not associated_prs:
         return False
     return all(p.get('merged_at') and p.get('base', {}).get('ref') == 'master'

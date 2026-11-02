@@ -26,10 +26,15 @@ class LivePathTests(unittest.TestCase):
         self.assertFalse(m.is_live_event('push', {}, [good], 'other'))
         self.assertFalse(m.is_live_event('push', {}, [{**good, 'merged_at': None}], 'abc'))
 
-    def test_pull_request_label_is_recomputed(self):
+    def test_pull_request_label_is_recomputed_from_current_api(self):
         m = self.load()
-        self.assertTrue(m.is_live_event('pull_request', {'pull_request': {'labels': [{'name': 'live-path'}]}}, [], ''))
-        self.assertFalse(m.is_live_event('pull_request', {'pull_request': {'labels': []}}, [], ''))
+        old = {'pull_request': {'number':17, 'labels': [{'name':'live-path'}]}}
+        fresh = {'number':17,'state':'open','base':{'ref':'master'},'head':{'sha':'abc'},'labels':[]}
+        self.assertFalse(m.is_live_event('pull_request', old, [fresh], 'abc'))
+        self.assertFalse(m.is_live_event('pull_request', old, [], 'abc'))
+        fresh['labels']=[{'name':'live-path'}]
+        self.assertTrue(m.is_live_event('pull_request', old, [fresh], 'abc'))
+        self.assertFalse(m.is_live_event('pull_request', old, [fresh], 'old'))
 
     def test_selection_follows_test_helper_imports_and_literal_source_reads(self):
         m = self.load()

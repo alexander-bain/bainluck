@@ -87,6 +87,7 @@ jobs:
       actions: read
       checks: read
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     outputs:
       scope: ${{ steps.decide.outputs.scope }}
       reuse: ${{ steps.prior.outputs.reuse }}
@@ -101,6 +102,12 @@ jobs:
         with:
           # The classifier diffs a range; a shallow clone has no base to diff.
           fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            .github
+            backend
+            tools/release
+            tools/speed
 
       - name: Classify the complete candidate
         id: decide
@@ -170,6 +177,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_LOOP_FAST_ENABLED: ${{ vars.RELEASE_LOOP_FAST_ENABLED }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BASE: ${{ github.event.before }}
@@ -183,18 +191,22 @@ jobs:
             BASE="$(bash .github/scripts/ci-deploy-base.sh "$PUSH_BASE" "$HEAD" || echo "$PUSH_BASE")"
           fi
           # A failed API read never admits a label into the fast lane.
-          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD/pulls" > /tmp/live-prs.json || echo '[]' > /tmp/live-prs.json
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '[.]' > /tmp/live-prs.json || echo '[]' > /tmp/live-prs.json
+          else
+            gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD/pulls" > /tmp/live-prs.json || echo '[]' > /tmp/live-prs.json
+          fi
           python tools/release/live_path.py --base "$BASE" --head "$HEAD" --prs-json /tmp/live-prs.json
 
       - name: Record the deployed gate for the watchdog
         env:
           LIVE_MODE: ${{ steps.live.outputs.live }}
         run: |
-          python -c 'import json,os; json.dump({"sha":os.environ["GITHUB_SHA"],"live":os.environ["LIVE_MODE"] == "true"},open("release-loop-mode.json","w"))'
+          python -c 'import json,os; json.dump({"sha":os.environ["GITHUB_SHA"],"run_id":os.environ["GITHUB_RUN_ID"],"run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],"live":os.environ["LIVE_MODE"] == "true"},open("release-loop-mode.json","w"))'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-loop-mode
+          name: release-loop-mode-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-loop-mode.json
           retention-days: 7
 
@@ -8712,7 +8724,7 @@ jobs:
     # what makes this gate safe to run on everything.
     name: Browser-audit contract fixtures
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     defaults:
       run:
         working-directory: frontend/e2e

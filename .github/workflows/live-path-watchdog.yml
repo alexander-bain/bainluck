@@ -25,11 +25,12 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         RUN_ID: ${{ github.event.workflow_run.id }}
         CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
-      run: "set -eu\nif ! gh run download \"$RUN_ID\" --repo \"$GITHUB_REPOSITORY\" --name release-loop-mode --dir /tmp/release-loop-mode; then\n  echo \"live=true\"\
-        \ >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\npython3 - <<'MODE'\nimport json, os\ntry:\n    with open('/tmp/release-loop-mode/release-loop-mode.json') as source:\n\
-        \        mode = json.load(source)\n    live = mode.get('sha') != os.environ['CANDIDATE_SHA'] or mode.get('live') is not False\nexcept (OSError, ValueError,\
-        \ TypeError, AttributeError):\n    live = True\nwith open(os.environ['GITHUB_OUTPUT'], 'a') as output:\n    output.write('live=' + str(live).lower() + '\\\
-        n')\nMODE\n"
+        RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      run: "set -eu\nif ! gh run download \"$RUN_ID\" --repo \"$GITHUB_REPOSITORY\" --name \"release-loop-mode-$RUN_ID-$RUN_ATTEMPT\" --dir /tmp/release-loop-mode;\
+        \ then\n  echo \"live=true\" >> \"$GITHUB_OUTPUT\"\n  exit 0\nfi\npython3 - <<'MODE'\nimport json, os\ntry:\n    with open('/tmp/release-loop-mode/release-loop-mode.json')\
+        \ as source:\n        mode = json.load(source)\n    live = (mode.get('sha') != os.environ['CANDIDATE_SHA'] or mode.get('run_id') != os.environ['RUN_ID']\n\
+        \            or mode.get('run_attempt') != os.environ['RUN_ATTEMPT'] or mode.get('live') is not False)\nexcept (OSError, ValueError, TypeError, AttributeError):\n\
+        \    live = True\nwith open(os.environ['GITHUB_OUTPUT'], 'a') as output:\n    output.write('live=' + str(live).lower() + '\\n')\nMODE\n"
   change-scope:
     runs-on: ubuntu-latest
     outputs:
@@ -1434,7 +1435,7 @@ jobs:
     needs:
     - change-scope
     - database-integration
-    if: always() && needs.change-scope.outputs.scope != 'frontend'
+    if: always() && needs.change-scope.result == 'success' && needs.change-scope.outputs.scope != 'frontend'
     runs-on: ubuntu-latest
     steps:
     - name: Every database integration group passed
@@ -1500,6 +1501,27 @@ jobs:
     needs:
     - change-scope
     if: needs.change-scope.result == 'success'
+  veto:
+    needs:
+    - select
+    - backend-tests
+    - shard-completeness
+    - database-integration
+    - search-recall
+    - frontend-build
+    - e2e-contract
+    if: always() && needs.select.outputs.live == 'true' && (needs.backend-tests.result != 'success' || needs.shard-completeness.result != 'success' || needs.database-integration.result
+      != 'success' || needs.search-recall.result != 'success' || needs.frontend-build.result != 'success' || needs.e2e-contract.result != 'success')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+    - uses: actions/checkout@v6
+    - name: Persist the failing source before waiting for provider locks
+      run: 'python3 tools/release/veto.py --candidate-sha "$CANDIDATE_SHA" --reason "live-path full-suite watchdog failed"
+
+        '
   rollback:
     needs:
     - select
@@ -1509,6 +1531,7 @@ jobs:
     - search-recall
     - frontend-build
     - e2e-contract
+    - veto
     if: always() && needs.select.outputs.live == 'true' && (needs.backend-tests.result != 'success' || needs.shard-completeness.result != 'success' || needs.database-integration.result
       != 'success' || needs.search-recall.result != 'success' || needs.frontend-build.result != 'success' || needs.e2e-contract.result != 'success')
     runs-on: ubuntu-latest

@@ -43,7 +43,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('heroku-deploy', rollback['concurrency']['group'])
         self.assertIn('vercel-production', rollback['concurrency']['group'])
         self.assertEqual(rollback['env']['VERCEL_PROJECT_ID'], '${{ vars.VERCEL_PROJECT_ID }}')
+        self.assertIn('veto', rollback['needs'])
+        self.assertNotIn('concurrency', jobs['veto'])
+        self.assertIn('tools/release/veto.py', str(jobs['veto']))
         self.assertIn('always()', rollback['if'])
+        self.assertIn("needs.change-scope.result == 'success'", jobs['search-recall']['if'])
         command = str(rollback)
         self.assertIn('tools/release/rollback.py', command)
         self.assertIn('github.event.workflow_run.head_sha', command)
@@ -58,11 +62,11 @@ class WorkflowTests(unittest.TestCase):
             record = Path(tmp) / 'record.json'
             output = Path(tmp) / 'output'
             code = code.replace('/tmp/release-loop-mode/release-loop-mode.json', str(record))
-            for content in ['broken', 'null', '{"sha":"abc","live":true}', '{"sha":"abc","live":false}']:
+            for content, expected_live in [('broken',True), ('null',True), ('{"sha":"abc","run_id":"7","run_attempt":"2","live":true}',True), ('{"sha":"abc","run_id":"7","run_attempt":"2","live":false}',False), ('{"sha":"abc","run_id":"7","run_attempt":"1","live":false}',True)]:
                 record.write_text(content)
                 output.write_text('')
-                subprocess.run([sys.executable, '-c', code], env={**os.environ, 'CANDIDATE_SHA':'abc', 'GITHUB_OUTPUT':str(output)}, check=True)
-                self.assertEqual(output.read_text(), 'live=false\n' if content.endswith('false}') else 'live=true\n')
+                subprocess.run([sys.executable, '-c', code], env={**os.environ, 'CANDIDATE_SHA':'abc', 'RUN_ID':'7', 'RUN_ATTEMPT':'2', 'GITHUB_OUTPUT':str(output)}, check=True)
+                self.assertEqual(output.read_text(), 'live=true\n' if expected_live else 'live=false\n')
 
     def test_watchdog_preserves_every_full_ci_test_command(self):
         ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
