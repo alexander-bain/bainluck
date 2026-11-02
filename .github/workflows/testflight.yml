@@ -1,0 +1,155 @@
+name: TestFlight release
+
+# Classify the complete diff ourselves: GitHub's paths filter stops at 300 files.
+# PRs run only controller contracts; no PR event can load signing credentials or upload.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Exercise the release controller without credentials or signing
+        run: |
+          python3 -m pip install 'pytest==9.0.3' 'PyYAML==6.0.3'
+          python3 -m pytest tools/tests/test_testflight_release_loop.py -q
+
+  scope:
+    needs: contract
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.scope.outputs.eligible }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - id: scope
+        name: Start Tuesday and classify every changed file
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = '0000000000000000000000000000000000000000' ]; then
+            BEFORE="$(git rev-parse HEAD^)"
+          fi
+          python3 tools/testflight/release.py scope --before "$BEFORE" --source "$GITHUB_SHA"
+
+  queue:
+    needs: scope
+    if: needs.scope.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      token: ${{ steps.lease.outputs.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - id: lease
+        name: Wait for release ownership without dropping another merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/testflight/lease.py acquire --source "$GITHUB_SHA"
+
+  release:
+    needs: queue
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      # Matches the existing hosted Watch workflow; the app requires Swift 6.2+.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Install App Store Connect JWT support
+        run: python3 -m pip install 'PyJWT[crypto]==2.10.1'
+      - name: Stage the existing native signing assets outside the checkout
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          IOS_SIGNING_P12_BASE64: ${{ secrets.IOS_SIGNING_P12_BASE64 }}
+          IOS_SIGNING_P12_PASSWORD: ${{ secrets.IOS_SIGNING_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILES_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILES_BASE64 }}
+        run: python3 tools/testflight/prepare_signing.py
+      - id: number
+        name: Allocate the next Apple and master build number
+        run: |
+          git fetch --quiet origin master
+          git show origin/master:'ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj' > "$RUNNER_TEMP/master-project.pbxproj"
+          python3 tools/testflight/release.py reserve --master-project "$RUNNER_TEMP/master-project.pbxproj"
+      - name: Archive, verify, upload and wait for VALID processing
+        env:
+          TESTFLIGHT_BUILD: ${{ steps.number.outputs.build }}
+          TESTFLIGHT_VERSION: ${{ steps.number.outputs.version }}
+        run: bash tools/testflight/build.sh
+      - name: Preserve the binary and build receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/testflight-output/*.ipa
+            ${{ runner.temp }}/testflight-output/*.json
+            ${{ runner.temp }}/testflight-output/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove the temporary signing keychain and private key
+        if: always()
+        run: |
+          if [ -n "${TESTFLIGHT_KEYCHAIN:-}" ]; then
+            security delete-keychain "$TESTFLIGHT_KEYCHAIN"
+          fi
+          rm -rf "$RUNNER_TEMP/testflight-signing"
+          rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+  return-lease:
+    needs: [queue, release]
+    if: always() && needs.queue.outputs.token != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Return this run's release ownership after success or failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEASE_TOKEN: ${{ needs.queue.outputs.token }}
+        run: python3 tools/testflight/lease.py release --token "$LEASE_TOKEN"
