@@ -13,6 +13,7 @@ import urllib.parse
 
 import platforms
 import discover
+import rollback
 
 SPEED = pathlib.Path(__file__).resolve().parents[1] / 'speed'
 ENTRY = re.compile(r'(\d+):(\d+):([A-Za-z_>:]+(?:\([^)]*\))?(?:\[[^\]]*\])?)')
@@ -34,13 +35,19 @@ def validate_feed(body):
 
 
 def probe(provider):
-    # No cookie, Authorization, admin key, or signed-in session on these GETs.
-    validate_health(platforms.request('https://api.bainluck.com/api/health'))
-    validate_feed(platforms.request('https://api.bainluck.com/api/feed?limit=5'))
-    if provider == 'vercel':
-        with urllib.request.urlopen('https://bainluck.com', timeout=20) as response:
-            if response.status != 200 or b'<html' not in response.read(1024*1024).lower():
-                raise ValueError('production frontend is unavailable')
+    if provider != 'heroku':
+        raise ValueError('unsupported health provider')
+    # A transient proxy error cannot decide a rollback. Each retry starts at
+    # least 30 seconds after the preceding failed attempt has finished.
+    for attempt in range(3):
+        try:
+            validate_health(platforms.request('https://api.bainluck.com/api/health'))
+            validate_feed(platforms.request('https://api.bainluck.com/api/feed?limit=5'))
+            return
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(30)
 
 
 def verdict(output):
@@ -89,15 +96,35 @@ def streak_lines(raw):
 
 
 def capture(since):
-    origin=platforms.required('RELEASE_LOG_API_ORIGIN').rstrip('/')
-    parsed=urllib.parse.urlsplit(origin)
-    if parsed.scheme!='https' or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
-        raise ValueError('release log API origin is invalid')
-    url=origin+'/api/admin/release-logs?'+urllib.parse.urlencode({'since':since.isoformat()})
-    window=platforms.request(url,platforms.required('ADMIN_TOKEN'))
-    if not isinstance(window,dict) or window.get('complete') is not True or window.get('live') is not True or not isinstance(window.get('lines'),list) or not window['lines']:
-        raise ValueError('durable release history is missing, truncated, or stale')
-    return '\n'.join(window['lines'])+'\n'
+    # Read existing Heroku retention on demand. No drain, relay or product
+    # endpoint is created, and insufficient retention remains UNKNOWN.
+    session = platforms.heroku('/log-sessions', 'POST', {
+        'dyno': 'worker-ws', 'lines': 1500, 'tail': False,
+    })
+    url = session.get('logplex_url', '')
+    parsed = urllib.parse.urlsplit(url)
+    host = parsed.hostname or ''
+    if (parsed.scheme != 'https' or parsed.username or parsed.password
+            or not (host.endswith('.heroku.com') or host.endswith('.logplex.com'))):
+        raise ValueError('invalid Heroku log session URL')
+    with urllib.request.urlopen(url, timeout=20) as response:
+        raw = response.read(8 * 1024 * 1024 + 1)
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError('worker log response exceeds the bounded capture')
+    text = raw.decode('utf-8')
+    stamps = []
+    for line in text.splitlines():
+        stamp = line.split(' ', 1)[0]
+        try:
+            parsed_stamp = dt.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        if parsed_stamp.tzinfo is not None:
+            stamps.append(parsed_stamp)
+    if (not stamps or min(stamps) > since
+            or max(stamps) < dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=90)):
+        raise ValueError('Heroku retention does not cover the complete current worker window')
+    return text
 
 
 def worker_complete(result):
@@ -106,7 +133,7 @@ def worker_complete(result):
 
 def watch(provider,candidate,working):
     require_speed_tools()
-    release=dt.datetime.fromisoformat(candidate['created_at'].replace('Z','+00:00')) if provider=='heroku' else dt.datetime.now(dt.timezone.utc)
+    release=dt.datetime.fromisoformat(candidate['created_at'].replace('Z','+00:00'))
     started=time.monotonic(); deadline=started+1500
     combined={}; boot=False
     while time.monotonic()<deadline:
@@ -120,16 +147,11 @@ def watch(provider,candidate,working):
         raw='\n'.join(combined)+'\n'
         cap=working/'worker-ws.log'; cap.write_text(raw)
         streak=working/'streak.log'; streak.write_text('\n'.join(streak_lines(raw))+'\n')
-        if provider=='heroku':
-            health=run_tool('check.py',release.isoformat(),cap)
-            if health.startswith('VERDICT ROLLBACK'): return health
-            # Existing check's own explicit "3-min health PASS" precedes A10
-            # completion; PENDING with this suffix must never be called full PASS.
-            boot=worker_complete(health)
-            if '3-min health PASS' in health:
-                print('Three-minute startup health passed; A10 remains pending.',flush=True)
-        else:
-            boot=time.monotonic()-started>=180
+        health=run_tool('check.py',release.isoformat(),cap)
+        if health.startswith('VERDICT ROLLBACK'): return health
+        boot=worker_complete(health)
+        if '3-min health PASS' in health:
+            print('Three-minute startup health passed; A10 remains pending.',flush=True)
         start=(release+dt.timedelta(minutes=2)).strftime('%H:%M')
         latency=run_tool('latency_guard2.py',streak,start,5000,10)
         headline=run_tool('latency_guard3.py',streak,release.strftime('%H:%M'),start,12,20,30)
@@ -144,7 +166,7 @@ def watch(provider,candidate,working):
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--provider',required=True,choices=['heroku','vercel'])
+    parser.add_argument('--provider',required=True,choices=['heroku'])
     parser.add_argument('--candidate-id')
     parser.add_argument('--candidate-sha')
     parser.add_argument('--output',default='release-health.json')
@@ -185,7 +207,8 @@ def main():
                 stream.write('%s=%s\n' % (key,str(out[key]).lower() if isinstance(out[key],bool) else out[key]))
     if out['verdict'] in ('VERDICT PASS','SUPERSEDED') and not previous:
         discover.record(args.provider,candidate,out['verdict'])
-    if not out['rollback']:
+    bootstrapped = bool(rollback.known_good_targets(receipt_rows, None))
+    if not out['rollback'] and (bootstrapped or not out['verdict'].startswith('VERDICT UNKNOWN')):
         platforms.report('%s %s %s: %s' % (args.provider,candidate['id'],str(candidate.get('sha',''))[:8],out['verdict']),key=args.provider+':'+candidate['id'])
     print(out['verdict'])
     return 1 if out['rollback'] else (2 if out['verdict'].startswith('VERDICT UNKNOWN') else 0)

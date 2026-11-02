@@ -41,12 +41,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
           NOW_ISSUE: '11852'
-          # Alex's tonight hold: no collector access or new telemetry destination.
-          RELEASE_LOG_API_ORIGIN: ''
           CANDIDATE_ID: ${{ inputs.candidate-id }}
           CANDIDATE_SHA: ${{ inputs.candidate-sha }}
           PROVIDER: ${{ inputs.provider }}
@@ -62,7 +57,7 @@ jobs:
     timeout-minutes: 5
     # Same writer lock as CI deploy. The 25-minute observer does not own it.
     concurrency:
-      group: ${{ inputs.provider == 'heroku' && 'heroku-deploy' || 'vercel-production' }}
+      group: heroku-deploy
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
@@ -75,9 +70,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
           NOW_ISSUE: '11852'
           CANDIDATE_ID: ${{ inputs.candidate-id }}
           CANDIDATE_SHA: ${{ inputs.candidate-sha }}

@@ -5,9 +5,6 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [master]
-  deployment_status:
-  repository_dispatch:
-    types: [heroku-release]
   # Heroku releases created outside GitHub have no deployment_status event.
   # The durable provider ID receipt reconciles them when the Mac is asleep.
   schedule:
@@ -21,10 +18,7 @@ permissions:
 
 jobs:
   discover:
-    if: >-
-      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
-      (github.event_name != 'deployment_status' ||
-       (github.event.deployment_status.state == 'success' && github.event.deployment.production_environment == true))
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -43,9 +37,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
           NOW_ISSUE: '11852'
         run: python3 tools/release/discover.py
 

@@ -14,7 +14,7 @@ def seed(proof,master_current,reviewed,apply):
     if not apply:return {'activation':'held','flags_changed':False,'requires':'reviewed existing current-provider watcher PASS evidence'}
     if not master_current or not reviewed:raise ValueError('baseline seeding requires master-current and reviewed evidence')
     ready=[]
-    for provider in ('heroku','vercel'):
+    for provider in ('heroku',):
         entry=proof.get(provider,{})
         live=platforms.current(provider)
         arm.validate_baseline(entry,live)
@@ -25,7 +25,7 @@ def seed(proof,master_current,reviewed,apply):
         if live['sha'] in discover.failed_sources(rows):raise ValueError('failed source cannot be seeded')
         health.probe(provider)
         ready.append((provider,live))
-    # Validate both proofs and current public health before writing either.
+    # Validate the proof and current public health before writing a receipt.
     for provider,live in ready:
         if live['id'] not in discover.receipts(provider):discover.record(provider,live,'VERDICT PASS')
     return {'activation':'baselines seeded; fast lane remains off','flags_changed':False}

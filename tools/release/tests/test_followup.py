@@ -15,13 +15,6 @@ def receipt(candidate_id,sha,verdict):
     return {'payload':{'candidate_id':candidate_id,'candidate_sha':sha,'verdict':verdict}}
 
 class ExactEvents(unittest.TestCase):
-    def test_dispatch_keeps_the_exact_release_id(self):
-        self.assertTrue(hasattr(discover,'event_candidate'),'event-specific discovery is missing')
-        with tempfile.TemporaryDirectory() as directory:
-            path=pathlib.Path(directory)/'event.json'
-            path.write_text(json.dumps({'client_payload':{'provider':'heroku','candidate_id':'old-release','event_id':'e1'}}))
-            self.assertEqual(discover.event_candidate('repository_dispatch',path),('heroku','old-release'))
-
     def test_receipts_after_page_100_are_not_lost(self):
         self.assertTrue(hasattr(platforms,'github_pages'),'receipt pagination is missing')
         def read(path):
@@ -44,31 +37,17 @@ class GoodTargets(unittest.TestCase):
         rows=[receipt('restored-a','a'*40,'ROLLED BACK'),receipt('good-a','a'*40,'VERDICT PASS'),receipt('bad-b','b'*40,'ROLLED BACK')]
         self.assertEqual(rollback.known_good_targets(rows,'a'*40),[])
 
+    def test_pass_without_provider_identity_cannot_be_a_baseline(self):
+        for identity in (None, '', 123):
+            with self.subTest(identity=identity):
+                self.assertEqual(rollback.known_good_targets([receipt(identity,'a'*40,'VERDICT PASS')],'b'*40),[])
+
     def test_unverified_previous_provider_release_is_never_a_baseline(self):
         self.assertTrue(hasattr(rollback,'known_good_targets'),'known-good rollback selection is missing')
         self.assertEqual(rollback.known_good_targets([receipt('previous','d'*40,'SUPERSEDED')],'c'*40),[])
 
 if __name__=='__main__': unittest.main()
 
-class VercelPromotion(unittest.TestCase):
-    def test_skipped_fast_gate_does_not_allow_an_unfinished_full_run(self):
-        self.assertTrue((ROOT/'vercel_release.py').exists(),'Actions promotion owner is missing')
-        import vercel_release
-        run={'status':'in_progress','conclusion':None}
-        jobs=[{'name':'fast-gate','conclusion':'success','steps':[{'name':'Python 3.11 syntax, smoke test and change-scope selected tests','conclusion':'skipped'}]}]
-        self.assertFalse(vercel_release.ci_ready(run,jobs))
-
-    def test_executed_fast_gate_allows_the_live_path(self):
-        self.assertTrue((ROOT/'vercel_release.py').exists(),'Actions promotion owner is missing')
-        import vercel_release
-        run={'status':'in_progress','conclusion':None}
-        jobs=[{'name':'fast-gate','conclusion':'success','steps':[{'name':'Python 3.11 syntax, smoke test and change-scope selected tests','conclusion':'success'},{'name':'Recheck current fast eligibility','conclusion':'success'},{'name':"Require this run's change-scope attempt",'conclusion':'success'}]}]
-        self.assertTrue(vercel_release.ci_ready(run,jobs))
-
-    def test_finished_failed_ci_cannot_promote(self):
-        self.assertTrue((ROOT/'vercel_release.py').exists(),'Actions promotion owner is missing')
-        import vercel_release
-        self.assertFalse(vercel_release.ci_ready({'status':'completed','conclusion':'failure'},[]))
 
 class BaselineProof(unittest.TestCase):
     def test_unknown_or_wrong_live_source_cannot_be_bootstrapped(self):
@@ -92,12 +71,12 @@ class WorkerBootstrap(unittest.TestCase):
         self.assertTrue(health.worker_complete('VERDICT PASS A10 0 < 15'))
 
 class FailedSourceVeto(unittest.TestCase):
-    def test_future_vercel_deployment_is_vetoed_before_any_provider_write(self):
+    def test_failed_heroku_source_is_vetoed_before_any_provider_write(self):
         self.assertTrue((ROOT/'veto.py').exists(),'durable source veto is missing')
         import veto
         calls=[]
         veto.mark_failed('a'*40,'watchdog failed',record=lambda provider,candidate,verdict:calls.append((provider,candidate,verdict)))
-        self.assertEqual([call[0] for call in calls],['heroku','vercel'])
+        self.assertEqual([call[0] for call in calls],['heroku'])
         self.assertTrue(all(call[1]['sha']=='a'*40 and call[2]=='VERDICT FAIL' for call in calls))
 
     def test_unrelated_pass_cannot_erase_a_failed_source_veto(self):
@@ -129,19 +108,12 @@ class ReceiptAndCommentReplay(unittest.TestCase):
         def github(path,method='GET',body=None):
             if method=='GET': return [{'id':n,'body':'unrelated'} for n in range(100)] if '&page=1' in path else [saved]
             writes.append((path,method));saved['body']=body['body']
+            return None
         with patch.dict(os.environ,{'NOW_ISSUE':'1'}),patch.object(platforms,'github',side_effect=github):
             platforms.report('old release SUPERSEDED',key='heroku:old')
             platforms.report('old release SUPERSEDED',key='heroku:old')
         self.assertEqual(writes,[('/issues/comments/101','PATCH')])
 
-class PromotionFailureBoundary(unittest.TestCase):
-    def test_a_completed_draft_cannot_promote_after_the_watchdog_veto(self):
-        import vercel_release
-        from unittest.mock import patch
-        rows=[receipt('failed-source:a','a'*40,'VERDICT FAIL')]
-        with patch.object(discover,'receipt_rows',return_value=rows),patch('policy.require_enabled'),patch.object(platforms,'vercel') as writes:
-            with self.assertRaises(ValueError):vercel_release.promote('a'*40,'ready-draft')
-            writes.assert_not_called()
 
 class EmptyProviderResponse(unittest.TestCase):
     def test_successful_204_does_not_break_variable_activation(self):
@@ -177,56 +149,8 @@ class LateBaselineVeto(unittest.TestCase):
             with self.assertRaises(ValueError):rollback.rollback('heroku','b'*40,'bad')
             writes.assert_not_called()
 
-class DurableCaptureAdapter(unittest.TestCase):
-    def test_missing_history_is_unknown_instead_of_recent_snapshot_fallback(self):
-        import health
-        from unittest.mock import patch
-        from datetime import datetime,timezone
-        with patch.object(platforms,'request',return_value={'complete':False,'live':True,'lines':['startup']}),patch.dict(__import__('os').environ,{'ADMIN_TOKEN':'fixture-token','RELEASE_LOG_API_ORIGIN':'https://collector.test'}):
-            with self.assertRaises(ValueError):health.capture(datetime(2026,11,2,tzinfo=timezone.utc))
 
-    def test_complete_persisted_history_is_used_after_a_queued_release(self):
-        import health
-        from unittest.mock import patch
-        from datetime import datetime,timezone
-        calls=[]
-        def request(url,token=None,*args,**kwargs):
-            calls.append((url,token));return {'complete':True,'live':True,'lines':['older startup','later headline']}
-        with patch.object(platforms,'request',side_effect=request),patch.dict(__import__('os').environ,{'ADMIN_TOKEN':'fixture-token','RELEASE_LOG_API_ORIGIN':'https://collector.test'}):
-            self.assertEqual(health.capture(datetime(2026,11,2,tzinfo=timezone.utc)), 'older startup\nlater headline\n')
-        self.assertIn('/api/admin/release-logs?since=',calls[0][0]);self.assertEqual(calls[0][1],'fixture-token')
 
-class CurrentAttemptGate(unittest.TestCase):
-    def test_retained_selected_tests_without_fresh_eligibility_are_not_a_release_gate(self):
-        import vercel_release
-        run={'status':'in_progress','conclusion':None}
-        jobs=[{'name':'fast-gate','conclusion':'success','steps':[{'name':vercel_release.FAST_STEP,'conclusion':'success'},{'name':'Recheck current fast eligibility','conclusion':'skipped'}]}]
-        self.assertFalse(vercel_release.ci_ready(run,jobs))
-
-    def test_jobs_are_read_from_the_current_attempt(self):
-        import vercel_release
-        from unittest.mock import patch
-        calls=[]
-        proof=[{'name':'fast-gate','conclusion':'success','steps':[{'name':vercel_release.FAST_STEP,'conclusion':'success'},{'name':'Recheck current fast eligibility','conclusion':'success'},{'name':"Require this run's change-scope attempt",'conclusion':'success'}]}]
-        def read(path):
-            calls.append(path)
-            if '/jobs' in path:return {'jobs':[] if '/attempts/2/' in path else proof}
-            return {'head_branch':'master','event':'push','head_sha':'a'*40,'run_attempt':2,'status':'in_progress','conclusion':None}
-        with patch.object(platforms,'github',side_effect=read),patch.object(vercel_release.time,'monotonic',side_effect=[0,1,2401]),patch.object(vercel_release.time,'sleep'):
-            with self.assertRaises(TimeoutError):vercel_release.await_ci('1','a'*40)
-        self.assertIn('/actions/runs/1/attempts/2/jobs?per_page=100',calls)
-
-class DrainPreparation(unittest.TestCase):
-    def test_setup_preview_never_creates_a_drain(self):
-        self.assertTrue((ROOT/'prepare_drain.py').exists(),'durable drain setup tool is missing')
-        import prepare_drain
-        self.assertEqual(prepare_drain.prepare(False,False,None)['activation'],'held')
-
-    def test_drain_setup_requires_master_current_and_an_explicit_origin(self):
-        self.assertTrue((ROOT/'prepare_drain.py').exists(),'durable drain setup tool is missing')
-        import prepare_drain
-        with self.assertRaises(ValueError):prepare_drain.prepare(True,False,'https://collector.test')
-        with self.assertRaises(ValueError):prepare_drain.prepare(True,True,None)
 
 class ArmingPolicy(unittest.TestCase):
     def test_disable_publishes_fresh_false_before_touching_coarse_flags(self):
@@ -271,9 +195,19 @@ class BootstrapGate(unittest.TestCase):
         jobs=[{'name':'fast-gate','conclusion':'success','steps':[{'name':'Python 3.11 syntax, smoke test and change-scope selected tests','conclusion':'success'}]}]
         self.assertFalse(bootstrap.full_ci(run,jobs))
 
-    def test_four_executed_full_shards_can_bootstrap(self):
+    def test_eight_executed_full_shards_can_bootstrap(self):
         self.assertTrue((ROOT/'bootstrap.py').exists(),'serialized bootstrap entry is missing')
         import bootstrap
         run={'status':'completed','conclusion':'success'}
-        jobs=[{'name':'backend-tests ('+str(i)+')','conclusion':'success','steps':[{'name':'Run tests (shard '+str(i)+'/4)','conclusion':'success'}]} for i in range(1,5)]
+        jobs=[{'name':'backend-tests ('+str(i)+')','conclusion':'success','steps':[{'name':'Run tests (shard '+str(i)+'/8)','conclusion':'success'}]} for i in range(1,9)]
         self.assertTrue(bootstrap.full_ci(run,jobs))
+
+    def test_incomplete_or_duplicate_shards_cannot_bootstrap(self):
+        import bootstrap
+        run={'status':'completed','conclusion':'success'}
+        for indices in (range(1,5),range(1,8),[1,2,3,4,5,6,7,7]):
+            jobs=[{'name':f'backend-tests ({i})','conclusion':'success',
+                   'steps':[{'name':f'Run tests (shard {i}/8)','conclusion':'success'}]}
+                  for i in indices]
+            with self.subTest(indices=list(indices)):
+                self.assertFalse(bootstrap.full_ci(run,jobs))

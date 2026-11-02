@@ -1,4 +1,3 @@
-import importlib.util
 import pathlib
 import sys
 import tempfile
@@ -29,10 +28,11 @@ class ReleaseSafety(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.rollback.rollback_if_current('heroku', '', 'bad', {'id':'bad', 'sha':''}, 'good', lambda _:None)
 
-    def test_vercel_rollback_pins_previous_deployment(self):
+    def test_vercel_is_outside_this_rollback_path(self):
         writes=[]
-        self.assertTrue(self.rollback.rollback_if_current('vercel','a'*40,'bad',{'id':'bad','sha':'a'*40},'good',writes.append))
-        self.assertEqual(writes,[{'deploymentId':'good'}])
+        with self.assertRaises(ValueError):
+            self.rollback.rollback_if_current('vercel','a'*40,'bad',{'id':'bad','sha':'a'*40},'good',writes.append)
+        self.assertEqual(writes, [])
 
 class AnonymousHealth(unittest.TestCase):
     def test_healthy_status_rejects_partial_database_failure(self):
@@ -100,17 +100,3 @@ class ConfirmedRollback(unittest.TestCase):
         def advance(seconds): clock[0]+=seconds
         rollback.verify_rollback('heroku','b'*40,read=lambda:next(rows),sleep=advance,now=lambda:clock[0])
         self.assertEqual(clock[0],2)
-
-class WebhookActivation(unittest.TestCase):
-    def test_preparation_does_not_mutate_platforms(self):
-        self.assertTrue((ROOT/'prepare_webhook.py').exists(),'webhook provisioner is missing')
-        import prepare_webhook
-        calls=[]
-        result=prepare_webhook.prepare(False,False,send=lambda *args:calls.append(args))
-        self.assertEqual(calls,[])
-        self.assertEqual(result['url'],'https://bainluck.com/api/release-webhook')
-
-    def test_activation_requires_master_current_confirmation(self):
-        self.assertTrue((ROOT/'prepare_webhook.py').exists(),'webhook provisioner is missing')
-        import prepare_webhook
-        with self.assertRaises(ValueError): prepare_webhook.prepare(True,False,send=lambda *_:None)

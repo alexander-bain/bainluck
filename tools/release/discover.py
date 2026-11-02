@@ -2,7 +2,6 @@
 import argparse
 import json
 import os
-import pathlib
 import re
 import sys
 
@@ -32,22 +31,6 @@ def receipts(provider):
     return receipt_index(receipt_rows(provider))
 
 
-def event_candidate(name,path):
-    if not path: return None
-    event=json.loads(pathlib.Path(path).read_text())
-    if name=='repository_dispatch':
-        payload=event.get('client_payload',{})
-        provider,identity=payload.get('provider'),payload.get('candidate_id')
-        if provider!='heroku' or not isinstance(identity,str) or not identity:
-            raise ValueError('release event has no exact provider identity')
-        return provider,identity
-    if name=='deployment_status':
-        payload=event.get('deployment',{}).get('payload')
-        if isinstance(payload,dict) and payload.get('provider')=='vercel' and payload.get('candidate_id'):
-            return 'vercel',payload['candidate_id']
-    return None
-
-
 def record(provider,candidate,verdict):
     row=platforms.github('/deployments','POST',{
         'ref':candidate['sha'],'auto_merge':False,'required_contexts':[],
@@ -60,20 +43,17 @@ def record(provider,candidate,verdict):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--provider',choices=['heroku','vercel','both'],default='both')
+    parser=argparse.ArgumentParser();parser.add_argument('--provider',choices=['heroku'],default='heroku')
     args=parser.parse_args()
     candidates=[]
-    exact=event_candidate(os.environ.get('GITHUB_EVENT_NAME'),os.environ.get('GITHUB_EVENT_PATH'))
-    providers=[exact[0]] if exact else (['heroku','vercel'] if args.provider=='both' else [args.provider])
+    providers=[args.provider]
     for provider in providers:
-        seen=receipts(provider)
-        candidate=platforms.candidate(provider,exact[1]) if exact else platforms.current(provider)
-        # Terminal receipts are replayed through the observer only if its NOW
-        # comment was lost; report() upserts by exact provider ID under its lock.
-        if exact or candidate['id'] not in seen:
-            if not re.fullmatch(r'[0-9a-f]{40}',candidate.get('sha') or ''):
-                raise ValueError('production source SHA unavailable')
-            candidates.append({'provider':provider,'id':candidate['id'],'sha':candidate['sha']})
+        candidate=platforms.current(provider)
+        # Replaying a terminal receipt repairs a lost NOW write. The observer
+        # skips measurement for that receipt and report() upserts its one line.
+        if not re.fullmatch(r'[0-9a-f]{40}',candidate.get('sha') or ''):
+            raise ValueError('production source SHA unavailable')
+        candidates.append({'provider':provider,'id':candidate['id'],'sha':candidate['sha']})
     value=json.dumps({'include':candidates})
     print(value)
     if os.environ.get('GITHUB_OUTPUT'):
