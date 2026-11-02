@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[2]
 class ArchiveTest(unittest.TestCase):
     def test_both_hold_conditions_are_required(self):
@@ -15,4 +16,8 @@ class ArchiveTest(unittest.TestCase):
         self.assertTrue(module.archive_path('YOUR-TURN-20261031.md'))
         self.assertTrue(module.archive_path('.claude/handoff/LANE-authority.lock'))
         self.assertTrue(module.archive_path('artifacts/speed-tools/check.py'))
+        self.assertTrue(hasattr(module,'scan_archive'),'archive requires a pre-publication secret scan')
+        with patch.object(module.shutil,'which',return_value=None):
+            with self.assertRaisesRegex(ValueError,'gitleaks'):
+                module.scan_archive([],ROOT)
 if __name__=='__main__':unittest.main()

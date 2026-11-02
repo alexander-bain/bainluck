@@ -56,6 +56,28 @@ def fingerprint(path):
     return hashlib.sha256(data).hexdigest()
 
 
+
+def scan_archive(candidates,source):
+    scanner=shutil.which('gitleaks')
+    if not scanner:raise ValueError('gitleaks is required before publishing ignored archive bytes')
+    # Inspect a private temporary copy before any archive ref or public push.
+    # The original runner inboxes and artifacts are only read.
+    with tempfile.TemporaryDirectory(prefix='release-archive-scan-') as temp:
+        scan=Path(temp)/'scan';scan.mkdir(mode=0o700)
+        for index,path in enumerate(candidates):
+            if path.is_symlink():
+                (scan/f'{index}.symlink').write_text(os.readlink(path))
+            elif path.is_file():
+                if path.stat().st_size>95*1024*1024:
+                    raise ValueError('archive includes a file requiring Git LFS; no source is removed')
+                shutil.copyfile(path,scan/(str(index)+path.suffix))
+        result=subprocess.run([scanner,'dir',str(scan),'--redact','--no-banner','--exit-code','1',
+                               '--report-format','json','--report-path',str(Path(temp)/'redacted-scan.json')],
+                              text=True,capture_output=True)
+        if result.returncode!=0:
+            raise ValueError('gitleaks did not pass the archive; no ref is published and no source removed')
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply',action='store_true')
@@ -86,6 +108,7 @@ def main():
         raise ValueError('source root must be the paused primary checkout')
     candidates=files(source)
     if not candidates:raise ValueError('archive source is empty')
+    scan_archive(candidates,source)
     receipt=[]
     with tempfile.TemporaryDirectory(prefix='release-process-index-') as temp:
         env={**os.environ,'GIT_INDEX_FILE':str(Path(temp)/'index')}
@@ -120,8 +143,10 @@ def main():
     for target in (source/'.claude/handoff',source/'artifacts'):
         if target.is_dir():
             for parent,dirs,names in os.walk(target,topdown=False):
-                if not dirs and not names:
-                    Path(parent).rmdir()
+                try:Path(parent).rmdir()
+                except OSError:
+                    if any(Path(parent).iterdir()):continue
+                    raise
     # Tracked removals are proposed in this isolated PR branch. They do not
     # mutate the shared master index or branch.
     tracked=git('ls-files','-z').stdout.split('\0')
