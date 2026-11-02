@@ -1,4 +1,8 @@
 import unittest
+import os
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 import yaml
 ROOT = Path(__file__).resolve().parents[3]
@@ -38,6 +42,20 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('github.event.workflow_run.head_sha', command)
         self.assertIn('vercel', command)
         self.assertIn('heroku', command)
+
+    def test_corrupt_or_missing_gate_record_cannot_skip_the_watchdog(self):
+        jobs = yaml.safe_load((ROOT / '.github/workflows/live-path-watchdog.yml').read_text())['jobs']
+        command = jobs['select']['steps'][0]['run']
+        code = command.split("python3 - <<'MODE'\n", 1)[1].rsplit('\nMODE', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / 'record.json'
+            output = Path(tmp) / 'output'
+            code = code.replace('/tmp/release-loop-mode/release-loop-mode.json', str(record))
+            for content in ['broken', 'null', '{"sha":"abc","live":true}', '{"sha":"abc","live":false}']:
+                record.write_text(content)
+                output.write_text('')
+                subprocess.run([sys.executable, '-c', code], env={**os.environ, 'CANDIDATE_SHA':'abc', 'GITHUB_OUTPUT':str(output)}, check=True)
+                self.assertEqual(output.read_text(), 'live=false\n' if content.endswith('false}') else 'live=true\n')
 
     def test_watchdog_preserves_every_full_ci_test_command(self):
         ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
