@@ -68,6 +68,23 @@ class WorkflowTests(unittest.TestCase):
                 subprocess.run([sys.executable, '-c', code], env={**os.environ, 'CANDIDATE_SHA':'abc', 'RUN_ID':'7', 'RUN_ATTEMPT':'2', 'GITHUB_OUTPUT':str(output)}, check=True)
                 self.assertEqual(output.read_text(), 'live=true\n' if expected_live else 'live=false\n')
 
+    def test_heroku_push_refuses_a_durable_failed_source(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+        job = workflow['jobs']['deploy']
+        run = job['steps'][-1]['run']
+        self.assertIn("python3 - <<'SOURCE_VETO'", run, 'Heroku release ignores failed-source receipts')
+        code = run.split("python3 - <<'SOURCE_VETO'\n", 1)[1].split('\nSOURCE_VETO', 1)[0]
+        self.assertLess(run.index("python3 - <<'SOURCE_VETO'"), run.index('if git push heroku'))
+        self.assertGreaterEqual(run.count('check_source_veto'),4)
+        self.assertEqual(workflow['permissions']['deployments'], 'read')
+        self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
+        with tempfile.TemporaryDirectory() as tmp:
+            module = Path(tmp) / 'tools/release/discover.py'
+            module.parent.mkdir(parents=True)
+            module.write_text('def receipt_rows(provider): return []\ndef failed_sources(rows): return {"' + 'a'*40 + '"}\n')
+            result = subprocess.run([sys.executable, '-c', code], cwd=tmp, env={**os.environ, 'GITHUB_SHA':'a'*40}, capture_output=True)
+            self.assertNotEqual(result.returncode, 0, 'failed source was admitted into Heroku')
+
     def test_watchdog_preserves_every_full_ci_test_command(self):
         ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
         watch = yaml.safe_load((ROOT / '.github/workflows/live-path-watchdog.yml').read_text())['jobs']

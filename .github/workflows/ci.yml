@@ -56,6 +56,7 @@ permissions:
   contents: read
   pull-requests: read
   actions: read
+  deployments: read
 
 jobs:
   # #5007 (THRU-H) — does this candidate need the backend jobs at all?
@@ -8850,6 +8851,7 @@ jobs:
       cancel-in-progress: false
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -8886,6 +8888,19 @@ jobs:
             echo "HEROKU_API_KEY not set — skipping deploy"
             exit 0
           fi
+          # Receipt reads are trusted master-push code and run while this job
+          # owns heroku-deploy. A failed read refuses release; no catch-and-pass.
+          check_source_veto () {
+            if [ -f tools/release/discover.py ]; then
+              python3 - <<'SOURCE_VETO'
+          import os, sys
+          sys.path.insert(0, 'tools/release')
+          import discover
+          if os.environ['GITHUB_SHA'] in discover.failed_sources(discover.receipt_rows('heroku')):
+              raise SystemExit('REFUSING to release a source rejected by the full-suite watchdog')
+          SOURCE_VETO
+            fi
+          }
           git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck.git 2>/dev/null || true
 
           # `|| true` keeps an unreadable live ref from reddening the job (and
@@ -8913,6 +8928,7 @@ jobs:
           # server rejects us instead of quietly rewinding production. Push the
           # SHA explicitly rather than the local `master` branch, so what gets
           # released is the commit this run actually gated.
+          check_source_veto
           if git push heroku "$GITHUB_SHA:refs/heads/master"; then
             echo "Deployed $GITHUB_SHA."
             exit 0
@@ -8945,6 +8961,7 @@ jobs:
             # a force. A second rejection reddens the job under `-e`, which is
             # the honest outcome: somebody should look.
             echo "Live commit $LIVE_NOW is behind $GITHUB_SHA and a fast-forward exists; retrying."
+            check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master"
             echo "Deployed $GITHUB_SHA."
             exit 0
@@ -8964,6 +8981,7 @@ jobs:
             echo "Push rejected and the live commit (${LIVE_NOW:-<unreadable>}) has no provable"
             echo "ancestry with $GITHUB_SHA — but this commit IS origin/master's tip, so there is"
             echo "no newer commit to rewind past. History diverged; forcing."
+            check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master" --force
             exit 0
           fi
