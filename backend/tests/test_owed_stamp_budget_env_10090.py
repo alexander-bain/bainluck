@@ -2,8 +2,8 @@
 
 `FRESH_FLUSH_PENDING_ATTEMPTS` and `PENDING_STAMP_BUDGET_S` are read from the
 environment once at import, so each value is tried with one config change.
-Missing keeps today's behaviour (1 and 1.0); invalid keeps the default and
-warns; out of range is clamped. The module names stay, so references and
+Missing is the default (3 and 1.0; 3 attempts is production's value since
+2026-10-28, docs/live-settings.md); invalid keeps the default and warns; out of range is clamped. The module names stay, so references and
 monkeypatches keep working.
 """
 
@@ -25,7 +25,7 @@ NAMES = ("FRESH_FLUSH_PENDING_ATTEMPTS", "PENDING_STAMP_BUDGET_S")
 
 def _attempts(monkeypatch, raw):
     monkeypatch.setenv("FRESH_FLUSH_PENDING_ATTEMPTS", raw)
-    return lbr._owed_budget_env("FRESH_FLUSH_PENDING_ATTEMPTS", 1, int, 1, 32)
+    return lbr._owed_budget_env("FRESH_FLUSH_PENDING_ATTEMPTS", 3, int, 1, 32)
 
 
 def _budget(monkeypatch, raw):
@@ -54,9 +54,9 @@ def _imported_values(env_overrides):
     return tuple(json.loads(out.stdout.strip().splitlines()[-1])), out.stderr
 
 
-def test_missing_env_is_todays_behaviour_at_import():
+def test_missing_env_is_the_default_at_import():
     (attempts, budget), _ = _imported_values({})
-    assert (attempts, budget) == (1, 1.0)
+    assert (attempts, budget) == (3, 1.0)
     assert type(attempts) is int
 
 
@@ -71,7 +71,7 @@ def test_invalid_env_at_import_is_the_default_with_a_warning():
     (attempts, budget), stderr = _imported_values(
         {"FRESH_FLUSH_PENDING_ATTEMPTS": "three", "PENDING_STAMP_BUDGET_S": "nan"}
     )
-    assert (attempts, budget) == (1, 1.0)
+    assert (attempts, budget) == (3, 1.0)
     assert "FRESH_FLUSH_PENDING_ATTEMPTS='three'" in stderr
     assert "PENDING_STAMP_BUDGET_S='nan'" in stderr
 
@@ -79,7 +79,7 @@ def test_invalid_env_at_import_is_the_default_with_a_warning():
 @pytest.mark.parametrize("raw", ["", "   "])
 def test_blank_is_missing(monkeypatch, caplog, raw):
     with caplog.at_level(logging.WARNING, logger=lbr.logger.name):
-        assert _attempts(monkeypatch, raw) == 1
+        assert _attempts(monkeypatch, raw) == 3
         assert _budget(monkeypatch, raw) == 1.0
     assert not caplog.records
 
@@ -87,7 +87,7 @@ def test_blank_is_missing(monkeypatch, caplog, raw):
 @pytest.mark.parametrize("raw", ["three", "3.0", "1e2", "0x3"])
 def test_invalid_attempts_is_default_with_one_warning(monkeypatch, caplog, raw):
     with caplog.at_level(logging.WARNING, logger=lbr.logger.name):
-        assert _attempts(monkeypatch, raw) == 1
+        assert _attempts(monkeypatch, raw) == 3
     assert len(caplog.records) == 1
     assert "not a valid int" in caplog.records[0].getMessage()
 

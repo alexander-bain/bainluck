@@ -3,8 +3,9 @@ arms and the 30-second poll prices them (Alex 2026-11-01 ~9:05 AM PT, CPU item 5
 
 At 17:10Z 5,267 of the game window's 5,538 Polymarket markets (10,090 of ~11,200
 subscribed tokens) carried a venue label other than ``moneyline``: props the
-blend never reads, on a venue process at 0.96 of a core. Off, every arm is
-exactly what it was. On:
+blend never reads, on a venue process at 0.96 of a core. On by default since
+the settings freeze (production since 2026-11-01, docs/live-settings.md);
+``PM_WS_PROPS_TO_POLL=0`` is off, and off every arm is exactly what it was. On:
 
 * the game arm's real loader drops every market ``pm_non_speaking_metadata``
   refutes (no token, no top-up, no event link) and keeps the rest unchanged;
@@ -26,9 +27,9 @@ from app.services.polymarket_api import GAMMA_FULL_CONTEST_WINNER_TYPES
 from tests.test_pm_slate_metadata_projection_10663 import STORED, real_loader
 
 
-@pytest.mark.parametrize("raw, on", [(None, False), ("", False), ("0", False), ("1", True),
-                                     (" 1 ", True), ("yes", False)])
-def test_the_switch_is_off_unless_exactly_one(monkeypatch, raw, on):
+@pytest.mark.parametrize("raw, on", [(None, True), ("", True), ("0", False), (" 0 ", False),
+                                     ("1", True), (" 1 ", True), ("yes", True)])
+def test_the_switch_is_on_unless_exactly_zero(monkeypatch, raw, on):
     if raw is None:
         monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
     else:
@@ -41,7 +42,7 @@ def test_the_switch_is_off_unless_exactly_one(monkeypatch, raw, on):
 async def test_the_game_arm_drops_exactly_the_refuted_markets(monkeypatch, stored_live_only):
     off, _, off_calls = real_loader(STORED)
     on, _, on_calls = real_loader(STORED)
-    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     want = await off(stored_live_only=stored_live_only)
     monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
     got = await on(stored_live_only=stored_live_only)
@@ -65,16 +66,19 @@ def _sql(stmt) -> str:
 
 
 def test_the_open_arms_slate_seed_excludes_them_only_when_on(monkeypatch):
-    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     off = _sql(poc.open_contract_scope_markets_stmt())
     assert "venue_type" not in off
     monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
     on = _sql(poc.open_contract_scope_markets_stmt())
     assert on.startswith(off.split(" WHERE ")[0]) and "venue_type" in on and "NOT" in on
+    # Unset is on.
+    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    assert _sql(poc.open_contract_scope_markets_stmt()) == on
 
 
 def test_the_poll_population_is_unchanged_off_and_gains_the_props_arm_on(monkeypatch):
-    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     off = v.polymarket_population_sql(False)
     assert "props AS" not in off and "FROM props" not in off
     monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
@@ -87,6 +91,9 @@ def test_the_poll_population_is_unchanged_off_and_gains_the_props_arm_on(monkeyp
     # and with it off again, byte-identical
     monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     assert v.polymarket_population_sql(False) == off
+    # unset is on
+    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    assert v.polymarket_population_sql(False) == on
 
 
 def test_the_written_out_refusal_names_the_rules_constants():

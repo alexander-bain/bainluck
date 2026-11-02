@@ -13,8 +13,10 @@ each flush's withdrawal write, so the event stayed excluded flush after flush.
 
 On, a drain stamps such a throttle-deferred event: its price is committed, and
 a withdrawal that does land is ordered after the stamp by the same-event fence
-and owes its own stamp. A fresh cohort and a lock retry wait as before. Off
-(today, and any switch error) is exactly today's behaviour.
+and owes its own stamp. A fresh cohort and a lock retry wait as before. On is
+today's value (`SPECS` today = 1 since the settings freeze; docs/live-settings.md).
+Off (an alternation's off arm, and any switch error) is exactly the behaviour
+before the switch.
 """
 
 import asyncio
@@ -240,7 +242,7 @@ async def test_on_the_door_takes_withdrawing_debt_but_not_the_cohort(monkeypatch
     assert x.r.pending_event_ids() == frozenset({2})
 
 
-async def test_off_and_a_switch_error_are_todays_exclusion(monkeypatch, trial):
+async def test_off_and_a_switch_error_are_the_old_exclusion(monkeypatch, trial):
     for arm in ({"value": 0, "error": None}, {"value": 1, "error": RuntimeError("redis")}):
         trial.update(arm)
         x = rig(monkeypatch, count=2)
@@ -262,7 +264,16 @@ async def test_nothing_withdrawing_reads_no_switch(monkeypatch, trial):
     assert trial["reads"] == 0
 
 
-async def test_the_switch_is_on_the_board_and_off_today():
+async def test_the_switch_is_on_the_board_and_on_today():
     spec = sw.SPECS[NAME]
-    assert spec == {"modes": ("alternate",), "values": (0, 1), "today": 0}
+    assert spec == {"modes": ("alternate",), "values": (0, 1), "today": 1}
     assert blend_mod.OWED_PAST_WITHDRAWAL_SWITCH == NAME
+
+
+async def test_with_no_trial_running_the_drain_arm_is_todays_on(monkeypatch):
+    class _NoTrial:
+        def value(self, name, default, at=None):
+            return default
+
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: _NoTrial())
+    assert blend_mod._owed_past_withdrawal() is True

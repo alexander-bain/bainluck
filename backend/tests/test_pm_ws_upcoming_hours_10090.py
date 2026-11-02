@@ -2,8 +2,9 @@
 
 `_slate_event_window`'s scheduled arm used to end at a literal
 `NOW() + INTERVAL '6 hours'`. It now reads `PM_WS_UPCOMING_HOURS` (env, read
-once at import, default 6, clamped to 1..6). Unset, the predicate is the same
-SQL text as before; set to 3, only the scheduled arm's upper bound moves.
+once at import, clamped to 1..6). The default is 1 since the settings freeze
+(production since 2026-11-01, docs/live-settings.md). At 6 the predicate is the
+same SQL text as before; at 3 (or 1), only the scheduled arm's upper bound moves.
 
 The real-Postgres half (a 4 h game dropped, a 2 h game, a live game and a
 suspended open market kept) is `test_the_upcoming_window_setting_keeps_exactly`
@@ -51,21 +52,21 @@ def _base_window():
     )
 
 
-class TestTheDefaultIsTheOldWindow:
-    def test_the_default_is_six(self):
-        assert polymarket_ws.PM_WS_UPCOMING_HOURS_DEFAULT == 6
+class TestTheDefaultIsOneHourAndSixIsTheOldWindow:
+    def test_the_default_is_one(self):
+        assert polymarket_ws.PM_WS_UPCOMING_HOURS_DEFAULT == 1
 
     def test_at_six_the_predicate_is_byte_identical_to_before(self, monkeypatch):
         monkeypatch.setattr(polymarket_ws, "PM_WS_UPCOMING_HOURS", 6)
         assert _sql(polymarket_ws._slate_event_window()) == _sql(_base_window())
 
-    def test_unset_env_reads_six(self, monkeypatch):
+    def test_unset_env_reads_one(self, monkeypatch):
         monkeypatch.delenv("PM_WS_UPCOMING_HOURS", raising=False)
-        assert polymarket_ws._upcoming_hours_env() == 6
+        assert polymarket_ws._upcoming_hours_env() == 1
 
-    def test_blank_env_reads_six(self, monkeypatch):
+    def test_blank_env_reads_one(self, monkeypatch):
         monkeypatch.setenv("PM_WS_UPCOMING_HOURS", "  ")
-        assert polymarket_ws._upcoming_hours_env() == 6
+        assert polymarket_ws._upcoming_hours_env() == 1
 
 
 class TestThreeMovesOnlyTheUpperBound:
@@ -122,7 +123,7 @@ class TestBadValuesClamp:
     @pytest.mark.parametrize("raw", ["3.5", "abc", "6h", "three", "nan"])
     def test_anything_else_is_the_default(self, monkeypatch, raw):
         monkeypatch.setenv("PM_WS_UPCOMING_HOURS", raw)
-        assert polymarket_ws._upcoming_hours_env() == 6
+        assert polymarket_ws._upcoming_hours_env() == 1
 
     def test_a_clamped_value_warns_once(self, monkeypatch, caplog):
         monkeypatch.setenv("PM_WS_UPCOMING_HOURS", "12")
@@ -135,7 +136,7 @@ class TestBadValuesClamp:
     def test_an_unparseable_value_warns_once(self, monkeypatch, caplog):
         monkeypatch.setenv("PM_WS_UPCOMING_HOURS", "3h")
         with caplog.at_level(logging.WARNING, logger=polymarket_ws.logger.name):
-            assert polymarket_ws._upcoming_hours_env() == 6
+            assert polymarket_ws._upcoming_hours_env() == 1
         assert len(caplog.records) == 1
         assert "not a whole number" in caplog.records[0].getMessage()
 

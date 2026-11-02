@@ -8,8 +8,10 @@ college.
 Contract pinned here:
 
 - every allocation has exactly one fingerprint: totals 1..512 stay ``v1`` (the
-  default's bytes are unchanged, so the ready production authority keeps
-  binding after the release), totals 513..1024 are ``v2``, 1025 is refused;
+  old default's bytes are unchanged, so a v1 authority keeps binding), totals
+  513..1024 are ``v2``, 1025 is refused. Since the settings freeze the default
+  IS the v2 split production ran from the env (decision 36), with the same
+  fingerprint, so the running ledger is unchanged when the env is unset;
 - the Lua cap is the fingerprint's: a v2 ledger admits exactly its total and
   refuses the next, and the producer passes its policy's cap (a v1 512 would
   refuse resident 513 with ``full``);
@@ -45,7 +47,10 @@ from tests.test_blend_preview_ledger_tsp1_10090 import (  # noqa: F401
 
 #: The proposed 1024 split: T1 96/48 and T2 >= 128/64 (Alex item 35), Other the rest.
 V2_SPLIT = (96, 48, 192, 128, 448, 112)
-DEFAULT_FINGERPRINT = "v1-six-hour-ba82e47ee634aba7:192,64,128,64,48,16"
+#: The pre-freeze default (v1, total 512) and its fingerprint.
+V1_LIMITS = (192, 64, 128, 64, 48, 16)
+V1_FINGERPRINT = "v1-six-hour-ba82e47ee634aba7:192,64,128,64,48,16"
+DEFAULT_FINGERPRINT = "v2-six-hour-ba82e47ee634aba7:96,48,192,128,448,112"
 V2_PARSE = "'^(v[12])%-six%-hour%-%x+:(.*)$'"
 
 
@@ -60,11 +65,16 @@ def _policy(limits):
 
 
 class TestVersionedPolicy:
-    def test_the_default_keeps_its_exact_v1_fingerprint(self):
+    def test_the_default_is_the_v2_split_with_productions_fingerprint(self):
         policy = ReservationPolicy()
-        assert policy.limits == DEFAULT_LIMITS
-        assert (policy.version, policy.cap) == ("v1", 512)
+        assert policy.limits == DEFAULT_LIMITS == V2_SPLIT
+        assert (policy.version, policy.cap) == ("v2", 1024)
         assert policy.fingerprint == DEFAULT_FINGERPRINT
+
+    def test_the_old_default_keeps_its_exact_v1_fingerprint(self):
+        policy = _policy(V1_LIMITS)
+        assert (policy.version, policy.cap) == ("v1", 512)
+        assert policy.fingerprint == V1_FINGERPRINT
 
     def test_today_s_512_resize_is_still_v1(self):
         policy = _policy((96, 48, 128, 64, 144, 32))
@@ -93,8 +103,10 @@ class TestVersionedPolicy:
     def test_the_registry_bound_follows_the_policy(self):
         v2 = blend_preview.LedgerRegistry(sources=SOURCES, policy=_policy(V2_SPLIT))
         assert v2.max_events == 1024
-        v1 = blend_preview.LedgerRegistry(sources=SOURCES, policy=ReservationPolicy())
+        v1 = blend_preview.LedgerRegistry(sources=SOURCES, policy=_policy(V1_LIMITS))
         assert v1.max_events == 512
+        default = blend_preview.LedgerRegistry(sources=SOURCES, policy=ReservationPolicy())
+        assert default.max_events == 1024
         small = blend_preview.LedgerRegistry(sources=SOURCES, policy=_policy((3, 1, 2, 1, 1, 1)))
         assert small.max_events == 9
 

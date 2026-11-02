@@ -223,14 +223,11 @@ async def test_each_mode_change_is_logged_once_per_process(caplog):
     assert f"{NAME} mode=off half=- values=- period_s=- expires_at=-" in lines[1]
 
 
-@pytest.mark.parametrize("setting", [None, "", "0", "off"])
+@pytest.mark.parametrize("setting", ["0", "off", "false", "no"])
 async def test_without_the_layer_enabled_nothing_is_read_and_everything_is_off(
     monkeypatch, setting,
 ):
-    if setting is None:
-        monkeypatch.delenv(sw.TRIALS_ENV, raising=False)
-    else:
-        monkeypatch.setenv(sw.TRIALS_ENV, setting)
+    monkeypatch.setenv(sw.TRIALS_ENV, setting)
     s, store, _, _ = _switches([_stored(half=0)])
     s._stored = {NAME: SwitchState("ab", 0, NOW + 600)}
     s._read_at = 0.0
@@ -239,6 +236,22 @@ async def test_without_the_layer_enabled_nothing_is_read_and_everything_is_off(
     assert s.state(NAME) == OFF and s.tags(2) == "" and s._refresh is None
     await asyncio.sleep(0)
     assert store["reads"] == 0
+
+
+@pytest.mark.parametrize("setting", [None, ""])
+async def test_unset_or_blank_the_layer_is_on(monkeypatch, setting):
+    # On by default since the settings freeze (production since 2026-10-29,
+    # docs/live-settings.md): only an off spelling turns it off.
+    if setting is None:
+        monkeypatch.delenv(sw.TRIALS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(sw.TRIALS_ENV, setting)
+    assert sw.trials_enabled() is True
+    s, _, _, _ = _switches([_stored(half=0)])
+    s._stored = {NAME: SwitchState("ab", 0, NOW + 600)}
+    s._read_at = 0.0
+    assert [eid for eid in range(10) if s.arm(NAME, eid)] == [0, 2, 4, 6, 8]
+    assert s.state(NAME).mode == "ab"
 
 
 def test_no_running_loop_reads_off_without_reading():
@@ -941,12 +954,17 @@ def test_a_stored_alternation_that_is_not_whole_pairs_reads_off(period_s, expire
 @pytest.mark.parametrize(
     "layer, abandon, attempts, slots, expected",
     [
+        # admitted_stamp_batch is the module default, 4 since the settings freeze.
         ("1", None, 1, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=1 "
                           "abandon_optional_db=0 admitted_debt_slots=1 "
-                          "admitted_stamp_batch=1"),
-        (None, "1", 3, 2, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 "
-                          "abandon_optional_db=1 admitted_debt_slots=2 "
-                          "admitted_stamp_batch=1"),
+                          "admitted_stamp_batch=4"),
+        ("0", "1", 3, 2, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 "
+                         "abandon_optional_db=1 admitted_debt_slots=2 "
+                         "admitted_stamp_batch=4"),
+        # Unset, the layer is on.
+        (None, None, 3, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=3 "
+                           "abandon_optional_db=0 admitted_debt_slots=1 "
+                           "admitted_stamp_batch=4"),
     ],
 )
 def test_each_process_logs_the_layer_and_todays_values_once(
@@ -1043,6 +1061,10 @@ def slots_trial(monkeypatch):
 
     monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: _Trial())
     monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 1)
+    # The `_Gated` rigs count one owed event per stamp: no batching (both
+    # batches default to 4 since the settings freeze).
+    monkeypatch.setattr(blend_mod, "ADMITTED_STAMP_BATCH", 1)
+    monkeypatch.setattr(blend_mod, "ADMITTED_LIVE_BATCH", 1)
     monkeypatch.setattr(blend_mod, "_mono", lambda: 1000.0)
     return arm
 
@@ -1140,6 +1162,8 @@ async def test_one_read_of_the_arm_sets_both_the_free_slots_and_the_cohort_first
 
     monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: _Trial())
     monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 1)
+    monkeypatch.setattr(blend_mod, "ADMITTED_STAMP_BATCH", 1)
+    monkeypatch.setattr(blend_mod, "ADMITTED_LIVE_BATCH", 1)
     monkeypatch.setattr(blend_mod, "_mono", lambda: 1000.0)
     r = _Slotted(blocked={99, 1, 2, 3})
     task = await _running_call(r)

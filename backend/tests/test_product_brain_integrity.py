@@ -874,7 +874,7 @@ def test_ruling_numbers_are_unique() -> None:
 #: THE event card and the whole card is the target). Raised by COUNTING THIS
 #: TREE — `ls docs/rulings/[0-9][0-9][0-9]-*.md | wc -l` = 147 and 147 index
 #: lines in `docs/PRODUCT-BRAIN.md` — never by adding a delta.
-MINIMUM_BANKED_RULINGS = 147
+MINIMUM_BANKED_RULINGS = 148
 
 
 def test_the_rulings_directory_is_not_empty() -> None:
