@@ -110,12 +110,17 @@ QUOTE_STATUSES = frozenset({"live", "scheduled", "suspended"})
 _open_connections = 0
 
 
-def _heartbeat(confirmed_at: Optional[float], activity_at: Optional[float] = None) -> str:
+def _heartbeat(confirmed_at: Optional[float], activity_at: Optional[float] = None,
+               updates: tuple = ()) -> str:
     """The named heartbeat. ``confirmed_at`` (#10090 decision J) is the newest
     instant a venue input agreed with what this stream published, or null;
     ``activity_at`` the newest venue input whatever it agreed with (the EKG
-    pulse, Alex 2026-11-01; never a price's age). A reader that knows nothing
-    of them keeps reading ``t`` alone."""
+    pulse, Alex 2026-11-01; never a price's age); ``updates`` the venue inputs
+    since the last heartbeat, ``[venue, ISO receipt]`` oldest first (the EKG's
+    update list), with ``update_p`` beside it: each one's venue home
+    probability or null, same order (a separate key so a reader that expects
+    two-item rows keeps working). A reader that knows nothing of them keeps
+    reading ``t``."""
     from app.utils.confirmed_at import iso
 
     return sse_encode(
@@ -123,6 +128,9 @@ def _heartbeat(confirmed_at: Optional[float], activity_at: Optional[float] = Non
             "t": datetime.now(timezone.utc).isoformat(),
             "confirmed_at": iso(confirmed_at),
             "activity_at": iso(activity_at),
+            **({"updates": [[u[0], iso(u[1] / 1000)] for u in updates],
+                "update_p": [u[2] if len(u) > 2 else None for u in updates]}
+               if updates else {}),
         }),
         event="heartbeat",
     )
@@ -598,6 +606,8 @@ async def _stream(
         confirmed_sent = None
         confirmed_beat = started
         activity_sent = None
+        #: Newest input receipt (ms) sent per venue in `updates`.
+        updates_sent: dict = {}
         recovery_ids = list(subscription.subscriptions)
         # One owned read may finish after replay or live prices. Reconciliation
         # is an obligation, not permission to hold already committed prices.
@@ -678,7 +688,13 @@ async def _stream(
                     confirmed_sent = confirmed_now
                 if activity_now is not None:
                     activity_sent = activity_now
-                yield _heartbeat(confirmed_sent, activity_sent)
+                updates = ()
+                read_updates = getattr(confirmations, "updates", None)
+                if activity_due and callable(read_updates):
+                    updates = tuple(read_updates(members, updates_sent))
+                    for source, ms, *_ in updates:
+                        updates_sent[source] = max(updates_sent.get(source, -1), ms)
+                yield _heartbeat(confirmed_sent, activity_sent, updates)
                 confirmed_beat, last_beat = loop_now, loop_now
 
             projected_preview = update_preview_session()

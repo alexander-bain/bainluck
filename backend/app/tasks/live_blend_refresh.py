@@ -642,6 +642,20 @@ def _preview_from_commit(event_id) -> bool:
 
 #: A preview batch larger than this is published in chunks (see `_publish_previews`).
 PREVIEW_PUBLISH_CHUNK = 8
+
+#: #10090: a claim-lock hold longer than this is logged with what it held, at
+#: most `LONG_CLAIM_HOLD_LOGS` times a minute (`_note_claim_hold`).
+LONG_CLAIM_HOLD_S = 0.3
+LONG_CLAIM_HOLD_LOGS = 10
+
+
+def _registry_or_none():
+    try:
+        from app.utils.blend_preview import registry
+
+        return registry()
+    except Exception:
+        return None
 #: #10090: events per claim-lock hold on the observation-only preview path,
 #: and how long that hold may wait for the venue's buffer lock (beyond it the
 #: frozen inputs are retried, never sent unvalidated).
@@ -4052,6 +4066,7 @@ class LiveBlendRefresher:
         #: legs each pending withdrawal named (event id -> outcome ids).
         self._revoke_logged = 0
         self._noop_logged = 0
+        self._long_holds_logged = 0
         self._withdrawn_why: dict[int, tuple] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
@@ -5185,7 +5200,7 @@ class LiveBlendRefresher:
         self._receipt_call(settle)
 
     def _note_confirm_basis(self, event_id: int, contributing, *, stored_row=None,
-                            value=None) -> None:
+                            value=None, home_value=None) -> None:
         """#10090 decision J: the rows an agreeing disposition blended, for
         `ConfirmedAt` to compare later inputs against (`TailReceipts.resolve`
         hands it the disposition after the commit).
@@ -5201,7 +5216,9 @@ class LiveBlendRefresher:
             return
         if stored_row is not None and not self._stored_entry_is(stored_row, value):
             return
-        self._receipt_call(confirmed.note_basis, event_id, contributing)
+        # #10090: the reading's own home value also orients the EKG list.
+        self._receipt_call(confirmed.note_basis, event_id, contributing,
+                           home_value if home_value is not None else value)
 
     def _note_confirm_unpublishable(self, event_id: int) -> None:
         """#10090 decision J (lane1 R2): this attempt's frame failed, so no
@@ -7318,7 +7335,7 @@ class LiveBlendRefresher:
                         # publishes, and whether the game is live.
                         new_rev, event.status,
                     )
-                    self._note_confirm_basis(event_id, contributing)
+                    self._note_confirm_basis(event_id, contributing, home_value=value)
 
                     # The AGGREGATE, computed off the sources JSONB the server
                     # RETURNED — the number the hero renders, not this one
@@ -9480,6 +9497,7 @@ class LiveBlendRefresher:
                 self._na_proof_logged = 0
                 self._revoke_logged = 0
                 self._noop_logged = 0
+                self._long_holds_logged = 0
                 logger.info("live_blend_refresh[%s]: headline-clock %s refetch=%s lock_wait=n%d,sum%dms,max%dms,timeouts%d passes=n%d,max%dms/%d urgent=%s holds=%s",
                             self.source, self._hl_summary(),
                             ",".join("%s:%d" % kv for kv in self.graph_refetch_stats.items()),
@@ -9587,10 +9605,22 @@ class LiveBlendRefresher:
             # anything else (fenced, refused, local_*) is a real miss: name it.
             self._hl_mark(event_id, "ledger_%s" % status[:20])
 
-    def _note_claim_hold(self, label: str, held_from: float) -> None:
-        """#10090: how long one claim-lock holder kept it (minute line `holds=`)."""
+    def _note_claim_hold(self, label: str, held_from: float, items=None) -> None:
+        """#10090: how long one claim-lock holder kept it (minute line `holds=`).
+        A hold over `LONG_CLAIM_HOLD_S` is logged with what it held (at most
+        `LONG_CLAIM_HOLD_LOGS` a minute): 11/01 00:20Z a receipt waited 575 ms
+        behind one 579 ms settle hold, and nothing said what that hold was."""
         try:
             held = _mono() - held_from
+            if held > LONG_CLAIM_HOLD_S and self._long_holds_logged < LONG_CLAIM_HOLD_LOGS:
+                self._long_holds_logged += 1
+                events = ({_frame_event(item) for item in items} if items else set())
+                yielded = getattr(_registry_or_none(), "yielded_claims", 0)
+                logger.info("live_blend_refresh[%s]: long-claim-hold label=%s held_ms=%d items=%s "
+                            "events=%d top=%s yielded_total=%s",
+                            self.source, label, int(held * 1000),
+                            "-" if items is None else len(items), len(events),
+                            sorted(events, key=str)[:5], yielded)
             stat = self._claim_holds.setdefault(label, [0, 0.0, 0.0])
             stat[0] += 1
             stat[1] += held
@@ -11202,7 +11232,7 @@ class LiveBlendRefresher:
                                 first_error = cleanup_error
                         raise first_error
                     finally:
-                        self._note_claim_hold("led_idle" if idle else "led_settle", held_from)
+                        self._note_claim_hold("led_idle" if idle else "led_settle", held_from, items)
                         try:
                             await pool.release(connection)
                         except BaseException as cleanup_error:
@@ -11336,7 +11366,7 @@ class LiveBlendRefresher:
                         await connection.disconnect()
                         raise
                     finally:
-                        self._note_claim_hold(hold_label, held_from)
+                        self._note_claim_hold(hold_label, held_from, frames)
                         await pool.release(connection)
             revokes = sum(1 for f in frames if f["preview"]["kind"] == "revoke")
             self.preview_stats["revoked"] += revokes

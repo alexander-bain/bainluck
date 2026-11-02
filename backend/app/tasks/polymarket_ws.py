@@ -1379,6 +1379,27 @@ def trade_prints_outside_wide_book(prob: float, books: tuple) -> bool:
     return False
 
 
+def trade_is_bid_ask_bounce(prob: float, books: tuple) -> bool:
+    """True for a trade AT (or through) the edge of a tight live book.
+
+    #10090 (Alex 11/01 3:57 PM PT, of the chart's regular spikes: "they happen
+    with such regularity that I doubt they represent accuracy"). On a tight
+    book the trades alternate between the bid and the ask while the book does
+    not move, so pricing each trade swung the leg a tick and back all game.
+    The book's midpoint already prices a tight market; a trade only says more
+    when it prints strictly inside the book. ``books`` is ``(latest,
+    previous)`` as for `trade_prints_outside_wide_book`; with no tight latest
+    book nothing is refused here.
+    """
+    latest = books[0] if books else None
+    if latest is None:
+        return False
+    bid, ask = latest
+    if bid is None or ask is None or _poly_book_is_untradeable(bid, ask):
+        return False
+    return prob <= bid or prob >= ask
+
+
 def with_complements(
     targets: list, prob: float, complement_of: dict
 ) -> list[tuple[int, float]]:
@@ -7321,6 +7342,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # leg keeps the last price a book supported.
         if trade_prints_outside_wide_book(prob, books_by_asset.get(asset_id, ())):
             stats["trades_outside_wide_book"] += 1
+            return
+
+        if trade_is_bid_ask_bounce(prob, books_by_asset.get(asset_id, ())):
+            stats["trades_at_book_edge"] = stats.get("trades_at_book_edge", 0) + 1
             return
 
         async with buffer_lock:

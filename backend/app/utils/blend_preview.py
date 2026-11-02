@@ -2313,11 +2313,27 @@ class LedgerRegistry(PreviewRegistry):
         else:
             self._refusal(stats, status, "publish", source, frame["event_id"])
 
+    async def _yield_claim(self, previous, item) -> None:
+        """#10090: between two events' operations, a queued receipt publication
+        (`PriorityLock.urgent`) takes the claim lock first, so it waits for one
+        event's work, not the holder's whole batch. One event's operations
+        are never split."""
+        if previous is None or not isinstance(item, dict) or previous == item.get("event_id"):
+            return
+        yield_to = getattr(self.claim_lock, "yield_to_urgent", None)
+        if yield_to is not None:
+            if await yield_to():
+                self.yielded_claims = getattr(self, "yielded_claims", 0) + 1
+
     async def prepare(self, items: list, call, stats: dict) -> list[dict]:
         """Run every operation; return composed frames, unpublished, in order."""
         frames: list[dict] = []
         with self._alarm_batch():
+            previous = None
             for item in items:
+                await self._yield_claim(previous, item)
+                if isinstance(item, dict):
+                    previous = item.get("event_id")
                 if "ledger_op" in item:
                     frames.extend(await self._mutate(item, call, stats))
                 elif "_ledger" in item:
@@ -2367,7 +2383,11 @@ class LedgerRegistry(PreviewRegistry):
         only and its failures are swallowed.
         """
         with self._alarm_batch():
+            previous = None
             for item in items:
+                await self._yield_claim(previous, item)
+                if isinstance(item, dict):
+                    previous = item.get("event_id")
                 if (refused is not None and isinstance(item, dict)
                         and item.get("ledger_op") == "propose"):
                     outcome: list = []
