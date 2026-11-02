@@ -1133,7 +1133,10 @@ struct EventDetailView: View {
             .accessibilityHint("Shows the venue updates feeding this number")
             .accessibilityIdentifier("ekg-heartbeat-button")
             .popover(isPresented: $showUpdateStream, arrowEdge: .top) {
-                LiveUpdateStreamView(stream: vm.updateStream, onDetails: {
+                LiveUpdateStreamView(stream: vm.updateStream,
+                                     homeTeam: TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
+                                                                       sportKey: event.sport).home,
+                                     onDetails: {
                     // One popover at a time: the details open once this one is gone.
                     showUpdateStream = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProbabilityDetails = true }

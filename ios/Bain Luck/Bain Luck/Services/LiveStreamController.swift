@@ -601,12 +601,18 @@ final class LiveStreamController {
     /// receipt]]`, every venue input since the last heartbeat. Rows that are
     /// not a venue and a parseable time are skipped; [] for an older server.
     nonisolated static func heartbeatUpdates(_ raw: String) -> [LiveUpdateStream.Update] {
-        struct Beat: Decodable { let updates: [[String]]? }
+        // `update_p` sits beside the two-item rows, same order: each input's
+        // venue home-team probability, or null (Alex 2026-11-01: "not a
+        // probability. that was kinda the whole point").
+        struct Beat: Decodable { let updates: [[String]]?; let update_p: [Double?]? }
         guard let data = raw.data(using: .utf8),
               let beat = try? JSONDecoder().decode(Beat.self, from: data) else { return [] }
-        return (beat.updates ?? []).compactMap { row in
+        let rows = beat.updates ?? []
+        let probs = beat.update_p.flatMap { $0.count == rows.count ? $0 : nil }
+        return rows.enumerated().compactMap { index, row in
             guard row.count == 2, !row[0].isEmpty, let at = row[1].asDate else { return nil }
-            return LiveUpdateStream.Update(source: row[0], at: at)
+            let p = probs?[index].flatMap { (0...1).contains($0) ? $0 : nil }
+            return LiveUpdateStream.Update(source: row[0], at: at, p: p)
         }
     }
 

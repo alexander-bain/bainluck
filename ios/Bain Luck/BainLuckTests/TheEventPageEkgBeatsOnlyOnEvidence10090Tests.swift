@@ -105,6 +105,55 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         XCTAssertEqual(LiveStreamController.heartbeatUpdates("junk"), [])
     }
 
+    // Alex 2026-11-01: "just shows the source and timestamp, but not a
+    // probability. that was kinda the whole point. it's also not a scrolling
+    // stream. it just arrives in batches".
+    func testEachUpdateReadsItsProbabilityBesideTheTwoItemRows() {
+        let got = LiveStreamController.heartbeatUpdates(
+            #"{"updates":[["kalshi","2026-11-01T22:57:03.420+00:00"],["polymarket","2026-11-01T22:57:03.610+00:00"]],"update_p":[0.065,1.7]}"#)
+        XCTAssertEqual(got.map(\.p), [0.065, nil], "a value outside 0-1 is unknown")
+        let misaligned = LiveStreamController.heartbeatUpdates(
+            #"{"updates":[["kalshi","2026-11-01T22:57:03.420+00:00"]],"update_p":[0.4,0.5]}"#)
+        XCTAssertEqual(misaligned.map(\.p), [nil])
+        let nulls = LiveStreamController.heartbeatUpdates(
+            #"{"updates":[["kalshi","2026-11-01T22:57:03.420+00:00"]],"update_p":[null]}"#)
+        XCTAssertEqual(nulls.count, 1)
+        XCTAssertNil(nulls.first?.p)
+        XCTAssertEqual(LiveUpdateStream.probabilityText(0.8125), "81.3%")
+        XCTAssertEqual(LiveUpdateStream.probabilityText(0.065), "6.5%")
+        XCTAssertEqual(LiveUpdateStream.probabilityText(nil), "—")
+    }
+
+    func testABatchStreamsByItsOwnReceiptGapsAndTheListNeverShrinks() {
+        var list = LiveUpdateStream()
+        list.add((0..<120).map { LiveUpdateStream.Update(source: "kalshi", at: at(Double($0) / 100)) })
+        var screen = LiveUpdateScreen(opening: list.updates)
+        XCTAssertEqual(screen.rows.count, LiveUpdateScreen.capacity, "what is listed shows at once")
+        list.add([LiveUpdateStream.Update(source: "kalshi", at: at(5), p: 0.4),
+                  LiveUpdateStream.Update(source: "polymarket", at: at(5.3), p: 0.41)])
+        screen.advance(list.updates, now: 100)
+        XCTAssertEqual(screen.rows.first?.at, at(5), "the batch's first row is due on arrival")
+        XCTAssertEqual(screen.rows.count, LiveUpdateScreen.capacity)
+        screen.advance(list.updates, now: 100.2)
+        XCTAssertEqual(screen.rows.first?.at, at(5), "the second waits for its own 0.3 s gap")
+        screen.advance(list.updates, now: 100.3)
+        XCTAssertEqual(screen.rows.first?.source, "polymarket")
+        XCTAssertEqual(screen.rows.first?.p, 0.41)
+        XCTAssertFalse(screen.waiting)
+    }
+
+    func testANewBatchFirstShowsWhatTheLastHasNot() {
+        var list = LiveUpdateStream()
+        list.add([LiveUpdateStream.Update(source: "kalshi", at: at(0)),
+                  LiveUpdateStream.Update(source: "kalshi", at: at(9))])
+        var screen = LiveUpdateScreen()
+        screen.advance(list.updates, now: 0)
+        XCTAssertEqual(screen.queue.last?.at, LiveUpdateScreen.spread, "a long batch is squeezed into one spread")
+        list.add([LiveUpdateStream.Update(source: "kalshi", at: at(10))])
+        screen.advance(list.updates, now: 0.01)
+        XCTAssertEqual(screen.rows.map(\.at), [at(10), at(9), at(0)])
+    }
+
     func testTheListIsNewestFirstKeepsSameTimeDuplicatesDropsARepeatedBatchAndIsBounded() {
         var list = LiveUpdateStream()
         let a = LiveUpdateStream.Update(source: "kalshi", at: at(1))
@@ -114,9 +163,9 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
         list.add([a, b])                      // a reconnect repeats the last heartbeat
         XCTAssertEqual(list.updates.count, 3)
         XCTAssertEqual(Set(list.updates.map(\.id)).count, 3, "every row has its own identity")
-        list.add((0..<150).map { LiveUpdateStream.Update(source: "kalshi", at: at(10 + Double($0))) })
+        list.add((0..<400).map { LiveUpdateStream.Update(source: "kalshi", at: at(10 + Double($0))) })
         XCTAssertEqual(list.updates.count, LiveUpdateStream.capacity)
-        XCTAssertEqual(list.updates.first?.at, at(159))
+        XCTAssertEqual(list.updates.first?.at, at(409))
         list.clear()
         XCTAssertTrue(list.updates.isEmpty)
         list.add([a])
