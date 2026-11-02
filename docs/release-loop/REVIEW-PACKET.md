@@ -3,6 +3,16 @@
 **Ship:** master merges deliver changes and detect bad releases without an awake model session.
 **Pillars:** TRUTH and FORMATTING (reliability).
 
+## November 1 publication resume
+
+Alex authorized pushing these nine branches and opening their draft PRs with the prepared descriptions and tier-b on items 1, 3, 4 and 8. The session still reports internet disabled: GitHub API calls returned `connect: operation not permitted`, and the attempted named-branch push failed to connect to github.com. No PR, label, remote branch, repository setting or provider configuration was written. Authentication could not be verified through this connection failure.
+
+The health branch now pins Action reporting to NOW #11852, keeps its verdict and replay marker on one line, uploads no verdict artifact, and passes no collector origin or admin credential. New telemetry destinations, collectors, drain setup and fast-lane arming remain held tonight; missing worker evidence remains UNKNOWN. The correction is committed on loop/post-deploy-health at 45b9232240. Fresh verification: 49 release tests and four startup tests passed; the protection policy test passed.
+
+`master-protection-prepared.json` is the local, unapplied policy preview: pull requests required, administrators enforced, empty bypass allowances, and required checks retained. Actual existing GitHub protection could not be read; the activation tool must reread it and preserve existing required contexts and approval count when Alex writes **branch protection on**. Items 2 and 8 must be on current master before their checks become required. No activation or auto-merge was enabled.
+
+Resume publication from a session or terminal with GitHub connectivity using `python3 /tmp/bainluck-wt-loop/tools/release/publish_prs.py --publish`. It starts with item 8 and writes PR URLs to `/tmp/release-loop-published-prs.json`. Merge/rebase and flaky-test cleanup wait for **master is current**. Archive and retirement holds remain in force.
+
 ## Tonight's holds
 
 - No master push or PR merge until Alex writes **master is current**.
