@@ -31,6 +31,10 @@
   --accent-warning: #F59E0B;
   --accent-danger: #EF4444;
 
+  /* Political identity, distinct from live/movement status. */
+  --party-democratic: #2563EB;
+  --party-republican: #DC2626;
+
   /* Contender chart series (UX-P132).
      Identity colours, deliberately NOT the semantic accents: green and red
      already mean "moved up" and "moved down" on this page, so reusing them to

@@ -19,7 +19,7 @@ export default function PartyControlRow({
 }) {
   if (!senate && !house) return null;
   return (
-    <div className={stacked ? "divide-y divide-surface-border rounded-card border border-surface-border bg-surface-card" : s.chamberGrid}>
+    <div className={stacked ? "grid grid-cols-2 gap-3" : s.chamberGrid}>
       {senate && <ChamberControlCard chamber="Senate" probs={senate} compact={stacked} />}
       {house && <ChamberControlCard chamber="House" probs={house} compact={stacked} />}
     </div>
@@ -44,6 +44,16 @@ function ChamberControlCard({
   // a few hundred pixels down this page already use. The BAR stays on the raw
   // values: it is drawing the split, not printing it.
   const [gopPct, demPct] = renderedDuelPercents(probs.gop / 100, probs.dem / 100);
+  if (compact) return <Link href={`/futures/${probs.market_id}`} data-midterms-card="control" className="min-w-0 space-y-3 rounded-card border border-surface-border bg-surface-card p-3 hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-brand">
+    <div className="flex items-center justify-between gap-1"><h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{chamber}</h3><SourceBadge source={probs.source ?? "both"} /></div>
+    {probs.winner ? <p className="text-sm font-semibold text-text-primary">Settled - {probs.winner}</p> : <>
+      <div className="grid grid-cols-2 gap-2">
+        <div style={{ color: "var(--party-democratic)" }}><p className="font-mono text-2xl font-semibold tabular-nums">{demPct ?? Math.round(probs.dem)}%</p><p className="text-[10px] font-medium">Democratic</p></div>
+        <div className="text-right" style={{ color: "var(--party-republican)" }}><p className="font-mono text-2xl font-semibold tabular-nums">{gopPct ?? Math.round(probs.gop)}%</p><p className="text-[10px] font-medium">Republican</p></div>
+      </div>
+      <div aria-hidden className="flex h-1.5 overflow-hidden rounded-full bg-surface-elevated"><span style={{ width: `${probs.dem}%`, backgroundColor: "var(--party-democratic)" }} /><span style={{ width: `${probs.gop}%`, backgroundColor: "var(--party-republican)" }} /></div>
+    </>}
+  </Link>;
   const gopLeads = probs.gop >= probs.dem;
   return (
     <Link href={`/futures/${probs.market_id}`}>
