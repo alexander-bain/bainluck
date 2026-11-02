@@ -36,3 +36,37 @@ test('an unlabeled PR cannot overwrite a failing check on a shared head', async 
   assert.equal(created.length,1);
   assert.equal(created[0].conclusion,'failure');
 });
+
+test('refreshed Tier-B sibling joining a head cannot disappear from the group',async()=>{
+  const {evaluate}=require(file);
+  const old=[{number:1,state:'open',user:{login:'alex'},head:{sha:'old'},labels:[{name:'tier-b'}]},
+    {number:2,state:'open',user:{login:'alex'},head:{sha:'same'},labels:[]}];
+  const current=old.map(pr=>({...pr,head:{sha:'same'}}));const created=[];
+  const github={rest:{pulls:{get:async args=>({data:current.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
+    paginate:async fn=>fn===github.rest.pulls.list?old:[]};
+  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:2}}});
+  assert.equal(created.find(c=>c.head_sha==='same')?.conclusion,'failure');
+});
+
+test('a surviving event reconciles a dismissed review on another head',async()=>{
+  const {evaluate}=require(file);
+  const prs=[{number:1,state:'open',user:{login:'alex'},head:{sha:'a'},labels:[{name:'tier-b'}]},
+    {number:2,state:'open',user:{login:'alex'},head:{sha:'b'},labels:[]}];const created=[];
+  const github={rest:{pulls:{get:async args=>({data:prs.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
+    paginate:async fn=>fn===github.rest.pulls.list?prs:[]};
+  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{client_payload:{pull_number:2}}});
+  assert.equal(created.find(c=>c.head_sha==='a')?.conclusion,'failure');
+});
+
+test('membership changes during the final check lookup force a fresh verdict',async()=>{
+  const {evaluate}=require(file);
+  let pr={number:1,state:'open',user:{login:'alex'},head:{sha:'same'},labels:[]};let changed=false;const created=[];
+  const github={rest:{pulls:{get:async()=>({data:{...pr,labels:[...pr.labels]}}),list:()=>{},listReviews:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
+    paginate:async fn=>{
+      if(fn===github.rest.pulls.list)return[{...pr,labels:[...pr.labels]}];
+      if(fn===github.rest.checks.listForRef && !changed){changed=true;pr={...pr,labels:[{name:'tier-b'}]};}
+      return[];
+    }};
+  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:1}}});
+  assert.equal(created.at(-1)?.conclusion,'failure');
+});
