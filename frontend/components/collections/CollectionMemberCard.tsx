@@ -30,13 +30,19 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
     return <Link href={member.href} data-related-listing-link className="flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand">
       <span className="min-w-0">
         <span className="block font-semibold text-text-primary">{market.name}</span>
-        <span className="block text-sm text-text-secondary">{count ? `${count} ${count === 1 ? "question" : "questions"} on this game` : "More questions on this game"}</span>
+        <span className="block text-sm text-text-secondary">{count ? `${count} ${count === 1 ? "market" : "markets"} on this game` : "More markets on this game"}</span>
       </span>
       <span aria-hidden className="shrink-0 text-text-secondary">›</span>
     </Link>;
   }
   const outcomes = market?.top_outcomes as (FeedFuturesOutcome & GradedRow)[] | undefined;
   const resolved = !!market && ["resolved", "closed", "settled", "finalized", "final"].includes(market.status);
+  // #11872: an unpriced open outcome is absence, not nineteen separate errors.
+  // Keep authoritative results even when they have no price; settled rows keep
+  // their existing result vocabulary and order.
+  const unpriced = resolved ? [] : (outcomes ?? []).filter(outcome => outcome.probability == null && outcomeRowVerdict(outcome, false) === null);
+  const shownOutcomes = unpriced.length ? outcomes?.filter(outcome => outcome.probability != null || outcomeRowVerdict(outcome, false) !== null)
+    .sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1)) : outcomes;
   const hasVerdict = outcomes?.some((outcome) => outcomeRowVerdict(outcome, resolved) !== null) ?? false;
   const missingPrices = !!market && (!outcomes?.length || (presentation && outcomes.length < market.outcome_count) || outcomes.some((outcome) => outcome.probability == null));
   const winner = (market as (FeedFuturesData & { settled_winner?: string }) | null)?.settled_winner;
@@ -53,7 +59,7 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
       {presentation && market.source && <SourceBadge source={market.source} />}
       <h3 className="font-semibold text-text-primary mb-3">{market.name}</h3>
       {winner ? <p className="font-semibold text-text-primary">Settled - {winner}</p> : <div className="space-y-2 text-sm">
-        {outcomes?.map((outcome, index) => {
+        {shownOutcomes?.map((outcome, index) => {
           const verdict = outcomeRowVerdict(outcome, resolved);
           const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability);
           return <div key={`${outcome.id ?? index}:${outcome.name}`} className="flex items-baseline justify-between gap-3">
@@ -61,6 +67,9 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
             <span className={`shrink-0 font-semibold ${verdict === "won" ? "text-accent-brand" : "text-text-primary"}`}>{label}</span>
           </div>;
         })}
+        {unpriced.length > 0 && <p data-unpriced-outcomes={unpriced.length} className="text-text-secondary">
+          {shownOutcomes?.length ? `${unpriced.length} more without a price yet` : `${unpriced.length} ${unpriced.length === 1 ? "outcome" : "outcomes"} without a price yet`}
+        </p>}
         {!outcomes?.length && <p className="text-text-secondary">{resolved ? "Result unavailable" : "Probabilities aren't available right now."}</p>}
       </div>}
     </Link>
@@ -80,5 +89,5 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
   const age = hasDisplayedProbability
     ? <div data-collection-price-age className="flex justify-end px-1 pt-1"><PriceAgeMark observedAt={(market as FeedFuturesData & { prices_updated_at?: string | null }).prices_updated_at} scope="card" cadence={market.status === "live" ? "live" : "futures"} /></div>
     : null;
-  return <ErrorBoundary resetKey={member.item.data} fallback={<p role="status" className="rounded-card border border-surface-border bg-surface-card p-4 text-text-secondary">{presentation ? "This market isn’t available right now." : "This game or question isn’t available right now."}</p>}>{card}{age}</ErrorBoundary>;
+  return <ErrorBoundary resetKey={member.item.data} fallback={<p role="status" className="rounded-card border border-surface-border bg-surface-card p-4 text-text-secondary">{presentation ? "This market isn’t available right now." : "This game or market isn’t available right now."}</p>}>{card}{age}</ErrorBoundary>;
 }

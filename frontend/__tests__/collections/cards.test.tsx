@@ -32,7 +32,7 @@ describe("collection readers see the supplied card facts", () => {
     expect(settled).toContain("Won");
     expect(settled).not.toContain("100%");
     const absent = renderToStaticMarkup(<CollectionMemberCard member={hub.members[2]} />);
-    expect(absent).toContain("Probability unavailable");
+    expect(absent).toContain("1 outcome without a price yet");
     expect(absent).not.toContain("0%");
   });
   test("final without an authoritative grade remains explicitly unavailable", () => {
@@ -68,7 +68,7 @@ describe("a game's related mixed listing is a link, not a second winner number",
     const markup = renderToStaticMarkup(<CollectionMemberCard member={listing} relatedGame={game} />);
     expect(markup).toContain('href="/futures/70"');
     expect(markup).toContain("Bills vs. Chiefs");
-    expect(markup).toContain("3 questions on this game");
+    expect(markup).toContain("3 markets on this game");
     expect(markup).not.toMatch(/\d%/);
   });
   test("on the hub the game keeps its one number; the listing is a plain named link (#10146, #5342)", () => {
