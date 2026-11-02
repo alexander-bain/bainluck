@@ -94,16 +94,16 @@ async def load_midterms_cards(
             .scalars()
             .all()
         )
-        if len(candidates) == 100:
-            raise ValueError(
-                "Midterms twin read reached its bound; do not claim an exhaustive twin report"
-            )
+    twin_read_bounded = len(candidates) == 100
     twins, report = {}, []
     for m in primary:
         matches = [c for c in candidates if is_midterms_twin(m, c)]
         if m.id == 108619:
             matches = [p for p in primary if p.id == 112905]
-        if len(matches) == 1:
+        # Keep the candidates as partial evidence, but an incomplete read cannot
+        # prove a unique twin. The explicitly curated balance pair is separate.
+        twin_unknown = twin_read_bounded and m.id != 108619
+        if len(matches) == 1 and not twin_unknown:
             twins[m.id] = [matches[0].id]
         if m.id != 112905:
             report.append(
@@ -112,9 +112,13 @@ async def load_midterms_cards(
                     "name": m.name,
                     "polymarket_twin_ids": [c.id for c in matches],
                     "twin_state": (
-                        "matched"
-                        if len(matches) == 1
-                        else "ambiguous" if matches else "no_twin_found"
+                        "unknown"
+                        if twin_unknown
+                        else (
+                            "matched"
+                            if len(matches) == 1
+                            else "ambiguous" if matches else "no_twin_found"
+                        )
                     ),
                 }
             )

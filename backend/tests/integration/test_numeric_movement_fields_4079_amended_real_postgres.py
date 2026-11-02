@@ -141,6 +141,11 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+#: A title's date must stay in the future: the feed withholds a market whose title
+#: names a passed date (the stale-title gate), so "by October 31" with no year
+#: turned three of these cases red at 2026-11-01T00:00Z. Next year, always.
+TITLE_YEAR = datetime.now(timezone.utc).year + 1
+
 DB_URL = os.environ.get("MOVEMENT_ACCEPTANCE_DATABASE_URL")
 NONCE = os.environ.get("MOVEMENT_ACCEPTANCE_NONCE")
 SENTINEL_TABLE = "movement_acceptance_disposable"
@@ -813,11 +818,11 @@ def test_0c_meta_training_pause_and_us_bank_failure_stay_priced_with_no_daily_nu
     turn into a 0, a blank card, or a missing caption.
     """
     _arun(_seed([
-        M("meta", "Meta announces a training pause by October 31?", "tech",
+        M("meta", f"Meta announces a training pause by October 31, {TITLE_YEAR}?", "tech",
           [O("Yes", 0.050, None, id=META_YES, opening=0.835, opening_days=4.1),
            O("No", 0.950, None, id=META_NO, opening=0.165, opening_days=4.1)],
           id=META_ID, metadata={"polymarket_event_id": "1025713"}),
-        M("bank", "US bank failure by December 31, 2026?", "economics",
+        M("bank", f"US bank failure by December 31, {TITLE_YEAR}?", "economics",
           [O("Yes", 0.460, None, id=BANKFAIL_YES, opening=0.130, opening_days=25.4)],
           id=BANKFAIL_ID, volume=23.0, exclusive=False, metadata={"polymarket_event_id": "907020"}),
     ]))
@@ -1112,7 +1117,7 @@ _SCALE_RULING = (
 # along with the implementation. A reader that is not served is a FAILURE, not a
 # skipped check — an omitted reader is uncovered evidence.
 
-_INDEPENDENT_QUESTION = "SYNTHETIC — Which studios announce a release delay by October 31?"
+_INDEPENDENT_QUESTION = f"SYNTHETIC — Which studios announce a release delay by October 31, {TITLE_YEAR}?"
 _SPORTS_QUESTION = "SYNTHETIC — Which Harbor League clubs sign a marquee free agent?"
 
 #: independently pinned per-surface values for the 0.60 / 0.50 / 0.30 field

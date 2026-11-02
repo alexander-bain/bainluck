@@ -175,6 +175,8 @@ class TestAnUnrelatedQuoteLandsWhileALegGrades:
         assert (OPEN_ID, pytest.approx(0.41)) in run["accepted"]
         assert run["stats"]["open_contract_settlements"] == 2
 
+    @pytest.mark.skip(reason="QUARANTINED 2026-11-02 (Day 0 rule: a flaky test is quarantined the same day): "
+                      "failed then passed on rerun locally 11/01 and failed in CI shard 6 of master run 41388504276")
     async def test_both_arms_end_in_the_same_place(self, monkeypatch):
         deferred = await _ship_run(monkeypatch, prepared=True)
         monkeypatch.undo()
