@@ -5,10 +5,10 @@ Ship: a live game's Polymarket price stops freezing for 5-7 s each time the
 Polymarket catalog refreshes. Production 2026-10-31 00:46-01:36Z: the
 handover's `stamps` phase (every game flush held by `changing`) was
 1.37-3.96 s of `blocked` 1.49-4.15 s, because it closed the stamp call's door
-and then drained everything still QUEUED in it. With `PM_HANDOVER_SHED_QUEUED`
-on (the default) queued, unstarted attempts go back to debt at once, the way a
-cancelled close leaves an admitted attempt whose worker never ran; `=0` is
-today's join of the whole queue. Source/progress controls, not timing.
+and then drained everything still QUEUED in it. Now queued, unstarted
+attempts go back to debt at once, the way a cancelled close leaves an admitted
+attempt whose worker never ran (its `PM_HANDOVER_SHED_QUEUED` off switch was
+removed in the settings freeze). Source/progress controls, not timing.
 """
 import asyncio
 import logging
@@ -112,7 +112,6 @@ async def _handover_over_queued_call(monkeypatch, caplog):
 async def test_handover_stamps_phase_waits_only_for_running_attempts(
     monkeypatch, caplog,
 ):
-    monkeypatch.delenv("PM_HANDOVER_SHED_QUEUED", raising=False)
     x, holds, run, entered = await _handover_over_queued_call(monkeypatch, caplog)
     try:
         assert x.r.pending_event_ids() == frozenset({5, 6})
@@ -128,33 +127,9 @@ async def test_handover_stamps_phase_waits_only_for_running_attempts(
     )
 
 
-async def test_switch_off_restores_the_join_of_the_whole_queue(monkeypatch, caplog):
-    monkeypatch.setenv("PM_HANDOVER_SHED_QUEUED", "0")
-    x, holds, run, entered = await _handover_over_queued_call(monkeypatch, caplog)
-    try:
-        assert x.r.pending_event_ids() == frozenset()
-        assert not entered.is_set()
-    finally:
-        _release(x, holds)
-    await asyncio.wait_for(run, 2)
-    assert entered.is_set() and sorted(x.published) == [1, 2, 3, 4, 5, 6]
-    assert not any(
-        r.getMessage().startswith("Polymarket WS handover shed:")
-        for r in caplog.records
-    )
-
-
-@pytest.mark.parametrize(
-    "raw, on",
-    [(None, True), ("", True), ("1", True), ("on", True),
-     ("0", False), ("false", False), (" OFF ", False), ("no", False)],
-)
-async def test_switch_reading(monkeypatch, raw, on):
-    if raw is None:
-        monkeypatch.delenv("PM_HANDOVER_SHED_QUEUED", raising=False)
-    else:
-        monkeypatch.setenv("PM_HANDOVER_SHED_QUEUED", raw)
-    assert task._handover_shed_queued_enabled() is on
+def test_the_off_switch_is_gone():
+    # Removed in the settings freeze (docs/live-settings.md): a handover always sheds.
+    assert not hasattr(task, "_handover_shed_queued_enabled")
 
 
 async def test_shed_runs_in_the_stamps_phase_before_the_join_closes_the_door(
@@ -163,7 +138,6 @@ async def test_shed_runs_in_the_stamps_phase_before_the_join_closes_the_door(
     # The fenced boundary's order is unchanged: settle, drain, then (stamps)
     # shed, the join's own door close, the wait. A refresher without the
     # method (older rigs, Kalshi) is joined exactly as before.
-    monkeypatch.delenv("PM_HANDOVER_SHED_QUEUED", raising=False)
     rig = Rig()
     order = []
     rig.owner.refresher.shed_queued = lambda: order.append("shed") or frozenset()

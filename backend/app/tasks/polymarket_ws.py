@@ -307,7 +307,7 @@ class _PMCatalogFlushBoundary:
         try:
             # No maps change beneath a stamp left running by an earlier batch.
             timing.enter("stamps")
-            if self.stamps is not None and _handover_shed_queued_enabled():
+            if self.stamps is not None:
                 # #10090: every game flush is held from here, so wait only for
                 # the attempts already running; queued ones go back to debt.
                 self.stamps.shed_queued()
@@ -327,20 +327,6 @@ class _PMCatalogFlushBoundary:
                     self.condition.notify_all()
             finally:
                 timing.finish(outcome)
-
-
-def _handover_shed_queued_enabled() -> bool:
-    """#10090 — env `PM_HANDOVER_SHED_QUEUED`, read at each catalog handover.
-
-    On (missing, blank, anything but an off word), the handover's `stamps`
-    phase, which holds every game flush, waits only for the stamp attempts
-    already running: queued ones go back to debt (`shed_queued`). Production
-    2026-10-31 00:46-01:36Z: `stamps` was 1.37-3.96 s of `blocked` 1.49-4.15 s,
-    and PM's worst stamps came in same-second clusters across games at the
-    handovers. "0"/"false"/"off"/"no" is today's join of the whole queue.
-    """
-    raw = os.environ.get("PM_HANDOVER_SHED_QUEUED")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
 
 
 def _handover_outcome(exc: BaseException) -> str:
