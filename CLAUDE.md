@@ -1,8 +1,7 @@
 # CLAUDE.md
 
 Read this file before repo work.
-Alex's current session instructions take precedence. The release-loop reset must not merge
-before Alex writes "master is current" or enable protection before "branch protection on".
+Alex's current session instructions take precedence.
 
 Keep this file at **15,000 bytes or less** (`backend/tests/test_claude_md_size.py`).
 The original instructions are preserved unchanged in
@@ -61,7 +60,15 @@ Every frontend page needs 3 GA4 hooks before any conditional return: `usePageTra
 
 ## Development Workflow
 
-- **Releases**: merges to master deploy through GitHub CI. Follow Alex's current release-loop instructions before merging or changing repository settings. Gates prove something about the commit you tested, not the commit you push.
+One branch and one PR per change. CI is the only integrator.
+Nothing reaches master except through a merged PR.
+Tier A merges on green. Tier B (`tier-b`) merges after an independent review.
+Tier C requires Alex's tap.
+`live-path` is the two-minute lane for live delivery fixes.
+NOW #11852 is the only priority list and status line.
+Runner inboxes, YOUR-TURN.md and artifacts/ are retired.
+Gates prove something about the commit you tested, not the commit you push.
+
 - **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
 - **Backend tests**: `cd backend && python3 -m pytest tests/ -v`
 - **Single test**: `cd backend && python3 -m pytest tests/<file>.py::<Class>::<test> -v`
@@ -72,7 +79,7 @@ Every frontend page needs 3 GA4 hooks before any conditional return: `usePageTra
 - **Procfile validates imports**: release phase runs `python3 -c "from app.main import app"` before Alembic — broken imports never reach the web dyno.
 - **CI runs both** and serializes Heroku deploys with deploy-job concurrency.
 
-Key admin URLs: see Quick Reference at the bottom of this file.
+Admin URLs are in the Day 0 reference.
 
 ---
 

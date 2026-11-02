@@ -166,6 +166,15 @@ def test_day0_trim_keeps_product_rules_and_gates_at_the_entrypoint():
         "tests/test_startup.py",
         "npm run build",
         "npm run typecheck",
+        "One branch and one PR per change",
+        "CI is the only integrator",
+        "Nothing reaches master except through a merged PR",
+        "Tier A merges on green",
+        "Tier B (`tier-b`) merges after an independent review",
+        "Tier C requires Alex's tap",
+        "`live-path` is the two-minute lane",
+        "NOW #11852 is the only priority list and status line",
+        "Runner inboxes, YOUR-TURN.md and artifacts/ are retired",
     ):
         assert marker in text, f"entrypoint lost {marker!r}"
 

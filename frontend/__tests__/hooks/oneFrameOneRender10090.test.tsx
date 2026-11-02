@@ -17,6 +17,7 @@
 import "../helpers/minimalDom";
 import React, { useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import useSWR, { SWRConfig } from "swr";
 
 import { useLiveEventStream } from "../../hooks/useLiveEventStream";
@@ -70,9 +71,12 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 
 test("each committed frame renders once, headline and chart in the same commit", async () => {
   const root = createRoot(document.createElement("div") as unknown as Element);
-  root.render(<SWRConfig value={{ provider: () => new Map() }}><Page /></SWRConfig>);
+  // Mount and install the transport before delivering browser callbacks.
+  // The price frames below remain outside flushSync and act.
+  flushSync(() => {
+    root.render(<SWRConfig value={{ provider: () => new Map() }}><Page /></SWRConfig>);
+  });
   try {
-    await settle();
     const stream = HookSource.all.at(-1)!;
     stream.emit("open");
     await settle();
