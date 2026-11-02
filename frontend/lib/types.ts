@@ -1418,6 +1418,15 @@ export interface FuturesHistoryResponse {
     /** Machine-keyed refusals (`overlap_admission` / `live_overlap_unresolved`). Never rendered. */
     refusals?: { scope?: string; reason?: string }[];
   };
+  /** #883 — the server's account of the venue-history reader (`describe()` in
+   *  routes/futures.py). Only `fill` is read: "requested" / "already_claimed"
+   *  mean a background fill is in flight (lib/futuresHistoryFill.ts). */
+  venue_history?: {
+    state?: string;
+    points_served?: number;
+    fill?: string | null;
+    fill_status?: string | null;
+  } | null;
 }
 
 /** DataGolf leaderboard entry stored in FuturesMarket.metadata.leaderboard */

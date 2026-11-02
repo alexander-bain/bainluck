@@ -67,7 +67,7 @@ import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 import {
   asOfLabel,
   gradedWinner,
-  movementExplanation as movementExplanationHelper,
+  rangeMovementCaption,
   readableOpeningProbability,
   boardOutcomeLabel,
   chartHistoryForSelection,
@@ -89,6 +89,8 @@ import {
   editionTitle,
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
+import { historyFillPending } from "@/lib/futuresHistoryFill";
+import { useFuturesHistoryFillRetry } from "@/hooks/useFuturesHistoryFillRetry";
 import { PinButton } from "@/components/PinButton";
 import { resolveShape, SHAPE_DUEL, SHAPE_QUANTITY } from "@/lib/marketShape";
 import {
@@ -291,6 +293,22 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const heldRangeNote = shownHistory.current && !historyIsForeign && heldRangeState
     ? futuresRangeHeldNote(effectiveRange, shownHistory.current.range, heldRangeState, market?.created_at)
     : null;
+
+  // #883 — the first reader stops getting the cold chart. A thin first answer
+  // that says the venue's history is on its way (`venue_history.fill`) is
+  // re-asked on a bounded schedule (lib/futuresHistoryFill.ts) until an answer
+  // says anything else. Bound to the rung on screen: a range tap, a new market
+  // or unmount aborts the in-flight read and cancels the next one, so a late
+  // answer can never land under another rung's chips.
+  useFuturesHistoryFillRetry({
+    inFlight: !historyLoading && !historyError && historyFillPending(historyData),
+    rungKey: `${marketId}:${historyHours}:${historyRange ?? ""}`,
+    refetch: (signal) => fetchFuturesHistory(
+      marketId, historyHours, undefined, undefined, undefined,
+      { fresh: true, signal, ...(historyRange ? { range: historyRange } : {}) },
+    ),
+    apply: (body) => refreshHistory(body, { revalidate: false }),
+  });
 
   // L2-175 Item 3a: a UFC/boxing fight belongs to its CARD. Fetch the card concept
   // (combat only) so the breadcrumb can name it ("← UFC Fight Night · Aug 2") and we
@@ -669,9 +687,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     [market?.outcomes],
   );
 
+  // #883 — the caption describes the drawn line over the range on screen and
+  // dates where that move starts (`rangeMovementCaption`). It replaced an
+  // undated "up N pts from opening" that compared two numbers the chart does
+  // not draw, and contradicted the chart on 7 of 18 audited pages.
   const movementExplanation = useMemo(
-    () => movementExplanationHelper(captionSubject, market?.name),
-    [captionSubject, market?.name]
+    () => rangeMovementCaption(captionSubject, drawnChartOutcomes, market?.name),
+    [captionSubject, drawnChartOutcomes, market?.name]
   );
 
   // #8135 — when did this BOARD last print a number? The cadence promise below
@@ -1387,7 +1409,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               on resolved markets — the present-tense mover reads wrong once final
               (#883 L2-49); the resolved result is shown in the hero + outcomes. */}
           {movementExplanation && !isResolved && (
-            <p className="text-[13px] leading-relaxed text-text-secondary mt-3">
+            <p data-testid="futures-trend-caption" className="text-[13px] leading-relaxed text-text-secondary mt-3">
               {movementExplanation}
             </p>
           )}
