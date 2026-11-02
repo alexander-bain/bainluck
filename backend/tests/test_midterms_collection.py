@@ -264,13 +264,55 @@ def test_a_contributor_only_outcome_at_one_percent_stays_a_row():
     assert blended["outcome_count"] == 5
 
 
+def test_explicit_twin_register_covers_all_fourteen_primary_markets():
+    from app.utils.midterms_collection import (
+        MARKET_IDS,
+        MIDTERMS_TWIN_BY_KALSHI_ID,
+        MIDTERMS_TWIN_REGISTER,
+        REGISTERED_POLYMARKET_TWIN_IDS,
+    )
+
+    primary_kalshi_ids = [mid for mid in MARKET_IDS if mid != 112905]
+    assert len(primary_kalshi_ids) == 14
+    assert [e.kalshi_market_id for e in MIDTERMS_TWIN_REGISTER] == primary_kalshi_ids
+    assert set(MIDTERMS_TWIN_BY_KALSHI_ID) == set(primary_kalshi_ids)
+    assert REGISTERED_POLYMARKET_TWIN_IDS == frozenset(
+        {
+            112902,
+            112903,
+            112905,
+            113056,
+            113092,
+            113093,
+            113095,
+            113097,
+            113106,
+            113109,
+            113116,
+        }
+    )
+    unpaired = [
+        e.kalshi_market_id
+        for e in MIDTERMS_TWIN_REGISTER
+        if e.polymarket_market_id is None
+    ]
+    assert unpaired == [109095, 109918, 108629]
+
+
 @pytest.mark.asyncio
-async def test_bounded_twin_read_keeps_races_visible_with_primary_prices(monkeypatch):
+async def test_registered_polymarket_twins_match_and_blend_across_all_paired_markets(
+    monkeypatch,
+):
     from app.routes import events, futures
     from app.services.midterms_collection import load_midterms_cards
-    from app.utils.midterms_collection import present_midterms_sections
+    from app.utils.cross_source_matching import clean_outcomes
+    from app.utils.midterms_collection import (
+        MARKET_IDS,
+        MIDTERMS_TWIN_REGISTER,
+        present_midterms_sections,
+    )
 
-    def market(mid, name, source, probabilities):
+    def make_market(mid, name, source, outcomes):
         return SimpleNamespace(
             id=mid,
             name=name,
@@ -284,18 +326,94 @@ async def test_bounded_twin_read_keeps_races_visible_with_primary_prices(monkeyp
                     is_winner=False,
                     resolution_source=None,
                 )
-                for n, p in zip(("Susan Collins", "Graham Platner"), probabilities)
+                for n, p in outcomes
             ],
         )
 
+    kalshi_outcomes_by_id = {
+        108620: [("Democratic Party", 0.36), ("Republican Party", 0.64)],
+        108621: [("Democratic Party", 0.81), ("Republican Party", 0.19)],
+        108619: [
+            ("Democrats sweep", 0.74),
+            ("D-House, R-Senate", 0.22),
+            ("Republicans sweep", 0.03),
+            ("R-House, D-Senate", 0.01),
+        ],
+        109085: [("Adam Hamilton", 0.14), ("Roger Marshall", 0.86)],
+        109088: [("Josh Turek", 0.37), ("Ashley Hinson", 0.63)],
+        109082: [("Troy Jackson", 0.44), ("Susan Collins", 0.56)],
+        109095: [("Democratic party", 0.48), ("Republican party", 0.52)],
+        109065: [("James Talarico", 0.36), ("Ken Paxton", 0.64)],
+        109072: [("Sherrod Brown", 0.52), ("Jon Husted", 0.48)],
+        109068: [("Darline Graham", 0.84), ("Annie Andrews", 0.16)],
+        109081: [("Abdul El-Sayed", 0.60), ("Mike Rogers", 0.40)],
+        108645: [("Keisha Lance Bottoms", 0.44), ("Rick Jackson", 0.56)],
+        109918: [("Yes", 0.24), ("No", 0.76)],
+        108629: [("Georgia", 0.28), ("Nevada", 0.14)],
+    }
+    polymarket_outcomes_by_id = {
+        112902: [
+            ("Democratic Party", 0.40),
+            ("Republican Party", 0.60),
+            ("Other", None),
+        ],
+        112903: [
+            ("Democratic Party", 0.85),
+            ("Republican Party", 0.15),
+            ("Other", None),
+        ],
+        112905: [
+            ("Democrats Sweep", 0.72),
+            ("R Senate, D House", 0.20),
+            ("Republicans Sweep", 0.05),
+            ("D Senate, R House", 0.01),
+            ("Other", 0.0005),
+        ],
+        113093: [("Adam Hamilton (D)", 0.18), ("Roger Marshall (R)", 0.82)],
+        113092: [("Josh Turek (D)", 0.41), ("Ashley Hinson (R)", 0.59)],
+        113095: [("Troy Jackson (D)", 0.48), ("Susan Collins (R)", 0.52)],
+        113109: [("James Talarico (D)", 0.40), ("Ken Paxton (R)", 0.60)],
+        113116: [("Sherrod Brown (D)", 0.56), ("Jon Husted (R)", 0.44)],
+        113106: [
+            ("Darline Graham Nordone (R)", 0.88),
+            ("Annie Andrews (D)", 0.12),
+        ],
+        113097: [("Abdul El-Sayed (D)", 0.64), ("Mike Rogers (R)", 0.36)],
+        113056: [
+            ("Keisha Lance Bottoms", 0.48),
+            ("Rick Jackson", 0.52),
+            ("Other", None),
+            ("Option A", None),
+            ("Option B", None),
+        ],
+    }
+
     primary = [
-        market(109085, "Maine Senate winner?", "kalshi", (0.52, 0.48)),
-        market(109088, "Michigan Senate winner?", "kalshi", (0.55, 0.45)),
+        make_market(
+            entry.kalshi_market_id,
+            entry.kalshi_name,
+            "kalshi",
+            kalshi_outcomes_by_id[entry.kalshi_market_id],
+        )
+        for entry in MIDTERMS_TWIN_REGISTER
     ]
-    candidates = [market(200000, "Maine Senate winner?", "polymarket", (0.70, 0.30))]
-    candidates += [
-        market(200001 + i, "Unrelated Senate winner?", "polymarket", (0.60, 0.40))
-        for i in range(99)
+    primary.append(
+        make_market(
+            112905,
+            "Balance of Power: 2026 Midterms",
+            "polymarket",
+            polymarket_outcomes_by_id[112905],
+        )
+    )
+    candidates = [
+        make_market(
+            entry.polymarket_market_id,
+            entry.polymarket_name,
+            "polymarket",
+            polymarket_outcomes_by_id[entry.polymarket_market_id],
+        )
+        for entry in MIDTERMS_TWIN_REGISTER
+        if entry.polymarket_market_id is not None and entry.polymarket_market_id != 112905
     ]
 
     class Result:
@@ -316,13 +434,22 @@ async def test_bounded_twin_read_keeps_races_visible_with_primary_prices(monkeyp
             return Result(next(self.reads))
 
     def serialize(market, withheld):
-        result = card(
-            market.id,
-            market.source,
-            tuple(o.current_probability for o in market.outcomes),
-        )
-        result["name"] = market.name
-        return result
+        surviving = [
+            o
+            for o in clean_outcomes(market.outcomes)
+            if o.current_probability is not None
+        ]
+        return {
+            "id": market.id,
+            "name": market.name,
+            "source": market.source,
+            "status": "open",
+            "outcome_count": len(clean_outcomes(market.outcomes)),
+            "top_outcomes": [
+                {"name": o.name, "probability": o.current_probability}
+                for o in surviving
+            ],
+        }
 
     async def withheld_prices(db, markets):
         return {}
@@ -331,15 +458,36 @@ async def test_bounded_twin_read_keeps_races_visible_with_primary_prices(monkeyp
     monkeypatch.setattr(
         futures, "withheld_price_outcome_ids_for_markets", withheld_prices
     )
-    cards, twins, report = await load_midterms_cards(Database(), [109085, 109088])
-    assert all(row["twin_state"] == "unknown" for row in report)
-    assert report[0]["polymarket_twin_ids"] == [200000]
-    assert twins == {}
+    cards, twins, report = await load_midterms_cards(Database(), MARKET_IDS)
+    report_by_id = {row["market_id"]: row for row in report}
+
+    assert all(row["twin_state"] != "unknown" for row in report)
+    for entry in MIDTERMS_TWIN_REGISTER:
+        row = report_by_id[entry.kalshi_market_id]
+        if entry.polymarket_market_id is not None:
+            assert row["twin_state"] == "matched", entry
+            assert row["polymarket_twin_ids"] == [entry.polymarket_market_id]
+            assert twins[entry.kalshi_market_id] == [entry.polymarket_market_id]
+        else:
+            assert row["twin_state"] == "no_twin_found", entry
+            assert row["polymarket_twin_ids"] == []
+            assert entry.kalshi_market_id not in twins
+
     sections, withheld = present_midterms_sections(members(), cards, twins)
-    races = sections[2]["members"]
-    assert [race["id"] for race in races] == [109085, 109088]
-    assert [race["card"]["top_outcomes"][0]["probability"] for race in races] == [
-        0.52,
-        0.55,
-    ]
-    assert all(race["card"]["sources"] == ["kalshi"] for race in races)
+    assert withheld == []
+    served_by_id = {
+        m["id"]: m["card"] for s in sections for m in s["members"]
+    }
+    for entry in MIDTERMS_TWIN_REGISTER:
+        served = served_by_id[entry.kalshi_market_id]
+        if entry.polymarket_market_id is not None:
+            assert served["sources"] == ["kalshi", "polymarket"]
+            assert served["source"] == "both"
+        else:
+            assert served["sources"] == ["kalshi"]
+            assert served["source"] == "kalshi"
+    # Verify equal-weight (w=0.8 each) blended probabilities on Senate control, SC Senate, and GA Governor:
+    assert served_by_id[108620]["top_outcomes"][0]["probability"] == pytest.approx(0.38)
+    assert served_by_id[109068]["top_outcomes"][0]["probability"] == pytest.approx(0.86)
+    assert served_by_id[108645]["top_outcomes"][0]["probability"] == pytest.approx(0.46)
+    assert served_by_id[108645]["outcome_count"] == 2

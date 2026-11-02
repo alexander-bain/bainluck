@@ -3,15 +3,19 @@
 import re
 import logging
 from typing import Iterable
-from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesMarket
 from app.utils.cross_source_matching import is_same_question, clean_outcomes
-from app.utils.midterms_collection import MARKET_IDS, outcome_key
+from app.utils.midterms_collection import (
+    MARKET_IDS,
+    MIDTERMS_TWIN_BY_KALSHI_ID,
+    is_residual,
+    outcome_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +23,31 @@ logger = logging.getLogger(__name__)
 def is_midterms_twin(a: FuturesMarket, b: FuturesMarket) -> bool:
     if a.source == b.source:
         return False
-    if re.search(
-        r"margin|turnout|county|first.round|combo|lieutenant|primary", b.name, re.I
-    ):
-        return False
-    if not is_same_question(a.name, b.name):
-        return False
-    left = {outcome_key(o.name) for o in a.outcomes}
-    right = {outcome_key(o.name) for o in b.outcomes}
+    registered_entry = MIDTERMS_TWIN_BY_KALSHI_ID.get(a.id)
+    is_registered_pair = (
+        registered_entry is not None
+        and registered_entry.polymarket_market_id is not None
+        and registered_entry.polymarket_market_id == b.id
+    )
+    if not is_registered_pair:
+        if re.search(
+            r"margin|turnout|county|first.round|combo|lieutenant|primary",
+            b.name,
+            re.I,
+        ):
+            return False
+        if not is_same_question(a.name, b.name):
+            return False
+    left = {outcome_key(o.name) for o in clean_outcomes(a.outcomes)}
+    right = {
+        outcome_key(o.name)
+        for o in clean_outcomes(b.outcomes)
+        if not (
+            outcome_key(o.name) not in left
+            and outcome_key(o.name) == "other"
+            and is_residual({"probability": getattr(o, "current_probability", None)})
+        )
+    }
     return len(left - {"yes", "no"}) >= 2 and left == right
 
 
@@ -49,31 +70,18 @@ async def load_midterms_cards(
         .scalars()
         .all()
     )
-    # The query names only the selected race's office and state, or its existing
-    # cross-source group. This is hydration for fourteen cards, never a census.
-    predicates = []
-    for m in primary:
-        if m.group_id:
-            predicates.append(FuturesMarket.group_id == m.group_id)
-        match = re.match(
-            r"^(?:who (?:wins|will win) (?:the )?)?(.+?) (senate|governor)",
-            m.name,
-            re.I,
-        )
-        if match:
-            name, office = match.groups()
-            escaped = name.replace("%", r"\%").replace("_", r"\_")
-            predicates.append(
-                FuturesMarket.name.ilike(f"%{escaped}%{office}%", escape="\\")
-            )
-        elif m.id in {108620, 108621}:
-            predicates.append(
-                FuturesMarket.name.ilike(
-                    "%Senate%control%" if m.id == 108620 else "%House%control%"
-                )
-            )
+    primary_ids = {m.id for m in primary}
+    registered_twin_ids = sorted(
+        {
+            entry.polymarket_market_id
+            for m in primary
+            if (entry := MIDTERMS_TWIN_BY_KALSHI_ID.get(m.id)) is not None
+            and entry.polymarket_market_id is not None
+            and entry.polymarket_market_id not in primary_ids
+        }
+    )
     candidates = []
-    if predicates:
+    if registered_twin_ids:
         candidates = list(
             (
                 await db.execute(
@@ -81,47 +89,46 @@ async def load_midterms_cards(
                     .options(*options)
                     .where(
                         FuturesMarket.source == "polymarket",
-                        or_(*predicates),
-                        FuturesMarket.resolution_date
-                        >= datetime(2026, 11, 1, tzinfo=timezone.utc),
-                        FuturesMarket.resolution_date
-                        < datetime(2027, 2, 1, tzinfo=timezone.utc),
+                        FuturesMarket.id.in_(registered_twin_ids),
                     )
                     .order_by(FuturesMarket.id)
-                    .limit(100)
                 )
             )
             .scalars()
             .all()
         )
-    twin_read_bounded = len(candidates) == 100
+    polymarket_pool = [
+        m
+        for m in [*primary, *candidates]
+        if getattr(m, "source", None) == "polymarket"
+    ]
+    by_polymarket_id = {m.id: m for m in polymarket_pool}
     twins, report = {}, []
     for m in primary:
-        matches = [c for c in candidates if is_midterms_twin(m, c)]
-        if m.id == 108619:
-            matches = [p for p in primary if p.id == 112905]
-        # Keep the candidates as partial evidence, but an incomplete read cannot
-        # prove a unique twin. The explicitly curated balance pair is separate.
-        twin_unknown = twin_read_bounded and m.id != 108619
-        if len(matches) == 1 and not twin_unknown:
+        if m.id == 112905:
+            continue
+        entry = MIDTERMS_TWIN_BY_KALSHI_ID.get(m.id)
+        matches = []
+        if entry is not None and entry.polymarket_market_id is not None:
+            registered = by_polymarket_id.get(entry.polymarket_market_id)
+            if registered is not None and is_midterms_twin(m, registered):
+                matches = [registered]
+        if not matches:
+            matches = [c for c in polymarket_pool if is_midterms_twin(m, c)]
+        if len(matches) == 1:
             twins[m.id] = [matches[0].id]
-        if m.id != 112905:
-            report.append(
-                {
-                    "market_id": m.id,
-                    "name": m.name,
-                    "polymarket_twin_ids": [c.id for c in matches],
-                    "twin_state": (
-                        "unknown"
-                        if twin_unknown
-                        else (
-                            "matched"
-                            if len(matches) == 1
-                            else "ambiguous" if matches else "no_twin_found"
-                        )
-                    ),
-                }
-            )
+        report.append(
+            {
+                "market_id": m.id,
+                "name": m.name,
+                "polymarket_twin_ids": [c.id for c in matches],
+                "twin_state": (
+                    "matched"
+                    if len(matches) == 1
+                    else "ambiguous" if matches else "no_twin_found"
+                ),
+            }
+        )
     all_markets = {m.id: m for m in primary}
     all_markets.update(
         {c.id: c for c in candidates if any(c.id in v for v in twins.values())}
