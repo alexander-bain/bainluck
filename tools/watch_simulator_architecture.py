@@ -138,12 +138,41 @@ def select_runtime_pair(info, pairs, watch_id, phone_id, products):
     }
 
 
+def select_prepared_pair(info, pairs, watch_id, phone_id, watch_sdk, phone_sdk):
+    """Before products exist: the one architecture the journeys' exact-pair check admits."""
+    passed, errors = [], []
+    for architecture in ("arm64", "x86_64"):
+        candidate = {
+            "toolchain": {"watch_sdk": watch_sdk, "phone_sdk": phone_sdk},
+            "architecture": architecture,
+            "runtime_support": [],
+        }
+        try:
+            passed.append(
+                select_runtime_pair(info, pairs, watch_id, phone_id, candidate)
+            )
+        except (ValueError, KeyError, TypeError) as error:
+            errors.append(error)
+    if len(passed) != 1:
+        raise errors[0] if errors else ValueError(
+            "Selected pair must have one unambiguous shared architecture"
+        )
+    result = dict(passed[0])
+    result["scope"] = (
+        "Exact active booted pair before products exist; product binaries verified separately"
+    )
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-pair", action="store_true")
+    parser.add_argument("--prepared-pair", action="store_true")
     parser.add_argument("--simulators", type=Path)
     parser.add_argument("--pairs", type=Path)
     parser.add_argument("--products", type=Path)
+    parser.add_argument("--watch-sdk")
+    parser.add_argument("--phone-sdk")
     parser.add_argument("--watch-destinations", type=Path)
     parser.add_argument("--watch-id", required=True)
     parser.add_argument("--phone-destinations", type=Path)
@@ -151,22 +180,51 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        result = (
-            select_runtime_pair(
+        if args.runtime_pair and args.prepared_pair:
+            raise ValueError("--runtime-pair and --prepared-pair are exclusive")
+        if args.prepared_pair:
+            required = {
+                "--simulators": args.simulators,
+                "--pairs": args.pairs,
+                "--watch-sdk": args.watch_sdk,
+                "--phone-sdk": args.phone_sdk,
+            }
+            refused = {
+                "--products": args.products,
+                "--watch-destinations": args.watch_destinations,
+                "--phone-destinations": args.phone_destinations,
+            }
+            missing = [flag for flag, value in required.items() if not value]
+            extra = [flag for flag, value in refused.items() if value is not None]
+            if missing or extra:
+                raise ValueError(
+                    f"--prepared-pair needs {missing or 'nothing more'}, refuses {extra or 'nothing'}"
+                )
+            result = select_prepared_pair(
                 json.loads(args.simulators.read_text()),
                 json.loads(args.pairs.read_text()),
                 args.watch_id,
                 args.phone_id,
-                json.loads(args.products.read_text()),
+                args.watch_sdk,
+                args.phone_sdk,
             )
-            if args.runtime_pair
-            else select(
-                args.watch_destinations.read_text(),
-                args.watch_id,
-                args.phone_destinations.read_text(),
-                args.phone_id,
+        else:
+            result = (
+                select_runtime_pair(
+                    json.loads(args.simulators.read_text()),
+                    json.loads(args.pairs.read_text()),
+                    args.watch_id,
+                    args.phone_id,
+                    json.loads(args.products.read_text()),
+                )
+                if args.runtime_pair
+                else select(
+                    args.watch_destinations.read_text(),
+                    args.watch_id,
+                    args.phone_destinations.read_text(),
+                    args.phone_id,
+                )
             )
-        )
     except (OSError, ValueError, KeyError, TypeError) as error:
         args.output.write_text(
             json.dumps({"verdict": "UNPAID", "reason": str(error)}, indent=2) + "\n"

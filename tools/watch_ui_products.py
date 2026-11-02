@@ -21,6 +21,16 @@ XCTENTS = {
     "BainLuckComplication": "BainLuckComplication.appex-Simulated.xcent",
 }
 PINS = "ios/Bain Luck/Bain Luck.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+# Xcode's Main Thread Checker insert under a cryptexd-mounted watchOS runtime
+# (#11201). The mount id is build-specific and products move between runners,
+# so the path is admitted only while it exists on the runner reading them.
+MAIN_THREAD_CHECKER = re.compile(
+    r"(?:/private)?/var/run/com\.apple\.security\.cryptexd/mnt/"
+    r"[A-Za-z0-9][A-Za-z0-9._-]*/"
+    r"Library/Developer/CoreSimulator/Profiles/Runtimes/"
+    r"watchOS [0-9]+(?:\.[0-9]+){1,2}\.simruntime/"
+    r"Contents/Resources/RuntimeRoot/usr/lib/libMainThreadChecker\.dylib"
+)
 
 
 def digest(path):
@@ -105,7 +115,13 @@ def check_layout(payload, environment=None, carrier_stubs=None):
                 elif part.startswith("__PLATFORMS__/"):
                     relative(part.removeprefix("__PLATFORMS__/"))
                 elif part.startswith("/") and part != "/usr/lib/libRPAC.dylib":
-                    raise ValueError("External absolute xctestrun path: " + part)
+                    if not MAIN_THREAD_CHECKER.fullmatch(part):
+                        raise ValueError("External absolute xctestrun path: " + part)
+                    if not os.path.isfile(part):
+                        raise ValueError(
+                            "External absolute xctestrun path: Main Thread Checker "
+                            "absent on this runner: " + part
+                        )
 
     walk(target)
     dependencies = target.get("DependentProductPaths", [])
