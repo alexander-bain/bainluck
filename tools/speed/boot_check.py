@@ -18,7 +18,9 @@ seen, L = set(), []
 SRCS = [sys.argv[2]]
 for p in SRCS:
     if not os.path.exists(p) or os.path.getmtime(p) < t0.timestamp() - 400: continue
-    for raw in open(p, "rb").read().replace(b"\0", b"").decode("utf-8", "replace").splitlines():
+    with open(p, "rb") as f:
+        text = f.read().replace(b"\0", b"").decode("utf-8", "replace")
+    for raw in text.splitlines():
         m = TS.match(raw)
         if not m or raw in seen: continue
         seen.add(raw); L.append((dt.datetime.fromisoformat(m.group(1)), m.group(2), m.group(3)))
@@ -52,6 +54,7 @@ def venue(x):
     if not x[1].startswith("app[worker-ws") or not LOCK.search(x[2]): return None
     if "Polymarket WS: flush error" in x[2]: return "polymarket"
     if "Kalshi WS: flush error" in x[2]: return "kalshi"
+    return None
 hits = [x for x in post if w0 <= x[0] <= w1 and venue(x)]
 covered = L[-1][0] >= w1
 print("A10 window", w0, "->", w1, "covered", covered, "A10", len(hits), "threshold 15")

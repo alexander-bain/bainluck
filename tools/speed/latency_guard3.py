@@ -18,7 +18,9 @@ def day_minutes(log, pattern):
     carries HH:MM, so a minute far below the previous one is the next day (11/02 00:00Z: a guard keyed on
     HH:MM read 01:57 from that morning as after a 00:01 release and called a rollback)."""
     out, offset, prev = [], 0, None
-    for line in open(log):
+    with open(log) as f:
+        lines = f.readlines()
+    for line in lines:
         m = re.match(pattern, line)
         if not m: continue
         h, mm = m.group(1).split(":"); t = int(h) * 60 + int(mm)

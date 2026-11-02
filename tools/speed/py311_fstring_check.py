@@ -6,7 +6,9 @@ import sys, tokenize, io
 
 def check(path):
     bad = []
-    toks = list(tokenize.generate_tokens(io.StringIO(open(path).read()).readline))
+    with open(path) as f:
+        source = f.read()
+    toks = list(tokenize.generate_tokens(io.StringIO(source).readline))
     stack = []  # (quote, depth_of_braces)
     for t in toks:
         if t.type == tokenize.FSTRING_START:

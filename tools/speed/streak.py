@@ -9,7 +9,8 @@ SILENT_S = 180
 # Resume the streak from this log's last line when it is recent (a monitor re-arm
 # must not reset a streak in progress): minute HH:MM within 3 minutes of now (UTC).
 try:
-    last = [l for l in open(OUT) if l.strip()][-1]
+    with open(OUT) as f:
+        last = [l for l in f if l.strip()][-1]
     m0 = re.match(r"(\d\d):(\d\d) \S+ .*?streak=(\d+)(?: best=(\d+))?", last)
     if m0:
         now = time.gmtime(); mins = now.tm_hour * 60 + now.tm_min
@@ -17,7 +18,7 @@ try:
         if (mins - then) % 1440 <= 3:
             streak = int(m0.group(3)); best = int(m0.group(4) or 0)
             print("resumed streak=%d best=%d from %s" % (streak, best, last[:5]), flush=True)
-except Exception:
+except Exception:  # no log yet, or an unreadable last line: start a fresh streak
     pass
 # Alex 2026-10-31 11:23 PM PT: "If there's no valid price to show, I won't count that as a
 # miss. It's a miss if we have unnecessary delays." A headline input the stamp resolved with
