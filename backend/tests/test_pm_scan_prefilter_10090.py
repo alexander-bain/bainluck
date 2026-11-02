@@ -4,8 +4,9 @@
 standalone and which legs each event has. The flushes then answer
 `standalone_open_outcome_ids` with one set intersection and the observation
 scan (`price_owned_events`) by reading only the legs of the events it asks
-about. Each case runs both on the same inputs and requires the same set; the
-switch (`PM_SCAN_PREFILTER=0`), a stale map and a foreign map take the walk.
+about. Each case runs both on the same inputs and requires the same set; a
+stale map and a foreign map take the walk. (The `PM_SCAN_PREFILTER` off switch
+was removed in the settings freeze, docs/live-settings.md.)
 """
 
 import ast
@@ -21,11 +22,6 @@ from app.tasks.polymarket_ws import (
     price_owned_events,
     standalone_open_outcome_ids,
 )
-
-
-@pytest.fixture(autouse=True)
-def switch_on(monkeypatch):
-    monkeypatch.setattr(pm, "PM_SCAN_PREFILTER", True)
 
 
 def _world(rng, n):
@@ -136,20 +132,6 @@ def test_equal_maps_of_another_consumer_take_the_walk(foreign):
     assert len(calls) == 1
 
 
-def test_the_switch_off_walks_and_installs_nothing(monkeypatch):
-    open_ids, events, complement = _catalog()
-    scans = PMCatalogScans()
-    scans.rebuild(open_ids, events, complement)
-    walk, calls = _walk_guard()
-    buffer = dict.fromkeys([1, 2, 3], 0.5)
-    monkeypatch.setattr(pm, "PM_SCAN_PREFILTER", False)
-    assert scans.standalone(walk, buffer, open_ids, events, complement) == {2, 3}
-    scans.rebuild(open_ids, events, complement)
-    monkeypatch.setattr(pm, "PM_SCAN_PREFILTER", True)
-    assert scans.standalone(walk, buffer, open_ids, events, complement) == {2, 3}
-    assert len(calls) == 2
-
-
 def _observation_world(rng, n):
     oids, events, _complement, _open = _world(rng, n)
     buffer = {}
@@ -242,14 +224,9 @@ def test_price_owned_reads_only_the_free_events_legs():
     assert scans.price_owned(buffer, {3}, events, set(), continuity, ack) == {3}
 
 
-def test_the_switch_reads_off_words(monkeypatch):
-    for raw, on in ((None, True), ("", True), ("1", True), ("on", True),
-                    ("0", False), (" OFF ", False), ("false", False), ("no", False)):
-        if raw is None:
-            monkeypatch.delenv("PM_SCAN_PREFILTER", raising=False)
-        else:
-            monkeypatch.setenv("PM_SCAN_PREFILTER", raw)
-        assert pm._scan_prefilter_env() is on
+def test_the_off_switch_is_gone():
+    assert not hasattr(pm, "PM_SCAN_PREFILTER")
+    assert not hasattr(pm, "_scan_prefilter_env")
 
 
 CATALOG_MAPS = ("event_id_by_outcome", "open_outcome_ids", "open_complement_of")

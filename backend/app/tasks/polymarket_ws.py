@@ -728,37 +728,6 @@ def _bridged_side_first_env() -> bool:
     return False
 
 
-def _scan_prefilter_env() -> bool:
-    """#10090 — env `PM_SCAN_PREFILTER`, read once at import.
-
-    On (missing, blank, or anything but "0"/"false"/"off"/"no"), the two
-    whole-buffer scans — the flushes' `standalone_open_outcome_ids` and the
-    observation flush's `owners()` — are answered from `PMCatalogScans`. Off is
-    the Python walk over the price buffer they replaced, kept verbatim. Same
-    answers either way; production 2026-10-31 05:22Z had the two at ~17 % of
-    the Polymarket loop, growing with the buffer.
-    """
-    raw = os.environ.get("PM_SCAN_PREFILTER")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
-
-
-PM_SCAN_PREFILTER = _scan_prefilter_env()
-
-
-def _pack_preview_cohorts_env() -> bool:
-    """#10090 — env `PM_PACK_PREVIEW_COHORTS`, read once at import.
-
-    On (the default), adjacent observed preview-cohort transactions share one
-    (`_pm_pack_preview_cohort_chunks`); `0`/`false`/`off`/`no` gives each its
-    own transaction, today's path exactly.
-    """
-    raw = os.environ.get("PM_PACK_PREVIEW_COHORTS")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
-
-
-PM_PACK_PREVIEW_COHORTS = _pack_preview_cohorts_env()
-
-
 #: #10090: how long a repeated top of book stays skippable, and how often the
 #: per-token memo of the last handled book drops entries too old to skip on.
 #: Production's value since 2026-11-01 (docs/live-settings.md): held-page p90
@@ -2817,10 +2786,10 @@ def _pm_pack_preview_cohort_chunks(
     position and no unit is split. A chunk joins only if every leg names a
     ``packable_events`` event and none is open or lock-retried (its NOWAIT
     probe or cooldown skip would refuse the whole joined transaction), so
-    lock retries stay alone exactly as before. ``PM_PACK_PREVIEW_COHORTS=0``
-    keeps the chunks as given.
+    lock retries stay alone exactly as before. (Its ``PM_PACK_PREVIEW_COHORTS``
+    off switch was removed in the settings freeze, docs/live-settings.md.)
     """
-    if not PM_PACK_PREVIEW_COHORTS or not packable_events:
+    if not packable_events:
         return chunks
 
     def packable(chunk):
@@ -2904,7 +2873,8 @@ class PMCatalogScans:
     price-write path (#11832 indexed every write and was not faster).
 
     An answer is used only for the exact maps it was built from, at the sizes
-    they had; anything else (or `PM_SCAN_PREFILTER=0`) takes the walk.
+    they had; anything else takes the walk. (Its `PM_SCAN_PREFILTER` off switch
+    was removed in the settings freeze, docs/live-settings.md.)
     """
 
     __slots__ = ("standalone_ids", "legs_by_event", "_built_from")
@@ -2916,8 +2886,6 @@ class PMCatalogScans:
 
     def rebuild(self, open_outcome_ids, event_id_by_outcome: dict, complement_of: dict):
         self._built_from = None
-        if not PM_SCAN_PREFILTER:
-            return
         self.standalone_ids = standalone_open_outcome_ids(
             open_outcome_ids, open_outcome_ids, event_id_by_outcome, complement_of,
         )
@@ -2946,8 +2914,6 @@ class PMCatalogScans:
         raises.
         """
         self._built_from = None
-        if not PM_SCAN_PREFILTER:
-            return False
         try:
             sizes = (len(open_outcome_ids), len(event_id_by_outcome), len(complement_of))
             standalone: set[int] = set()
@@ -2977,7 +2943,7 @@ class PMCatalogScans:
 
     def _events_current(self, event_id_by_outcome) -> bool:
         built = self._built_from
-        return (PM_SCAN_PREFILTER and built is not None
+        return (built is not None
                 and built[1] is event_id_by_outcome
                 and built[4] == len(event_id_by_outcome))
 
