@@ -180,6 +180,7 @@ final class TheEventPageEkgBeatsOnlyOnEvidence10090Tests: XCTestCase {
                        "12:00:00.05 AM")
         XCTAssertEqual(LiveUpdateStream.venueName("kalshi"), "Kalshi")
         XCTAssertEqual(LiveUpdateStream.venueName("polymarket"), "Polymarket")
+        XCTAssertEqual(LiveUpdateStream.venueName("new_venue"), "Another venue", "#4135: never a title-cased key")
     }
 
     func testARenderThatRepeatsItsInputsNeverBeatsAgain() {

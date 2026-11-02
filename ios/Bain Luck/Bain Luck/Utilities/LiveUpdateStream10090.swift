@@ -56,13 +56,9 @@ nonisolated struct LiveUpdateStream: Equatable {
         return String(format: "%.1f%%", (p * 1000).rounded() / 10)
     }
 
-    /// "Kalshi", "Polymarket", or the venue's own name.
+    /// "Kalshi", "Polymarket": the one resolver's name, never a title-cased key (#4135).
     static func venueName(_ source: String) -> String {
-        switch source {
-        case "kalshi": return "Kalshi"
-        case "polymarket": return "Polymarket"
-        default: return source.capitalized
-        }
+        SourceLabels.label(for: source) ?? "Another venue"
     }
 
     /// The receipt time to the hundredth of a second, local time: 2:57:03.42 PM.
