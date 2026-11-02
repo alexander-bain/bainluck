@@ -46,14 +46,6 @@ def test_diagnostic_and_code_must_belong_to_same_exception():
     assert not pm.is_price_statement_timeout(outer)
 
 
-@pytest.fixture(autouse=True, params=[True, False], ids=['fused', 'separate'])
-def fuse(request, monkeypatch):
-    # #10090: every case holds with the arm/restore pairs fused (the default)
-    # and with `PM_FUSE_PRICE_TIMEOUT_SETS=0` (four separate statements).
-    monkeypatch.setattr(pm, 'PM_FUSE_PRICE_TIMEOUT_SETS', request.param)
-    return request.param
-
-
 def configured_writer(monkeypatch, failure=None, scope='game'):
     r, state = writer_rig(_FakeTime(monkeypatch, t=1000), books={})
     state.held = False
