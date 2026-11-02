@@ -198,27 +198,27 @@ def test_an_invalid_env_value_is_ignored_with_one_warning(monkeypatch, caplog, r
     ("pending_attempts", "SPEED_SWITCH_TODAY_PENDING_ATTEMPTS", "5"),
     ("admitted_debt_slots", "SPEED_SWITCH_TODAY_ADMITTED_DEBT_SLOTS", "3"),
     ("admitted_stamp_batch", "SPEED_SWITCH_TODAY_ADMITTED_STAMP_BATCH", "8"),
-    ("abandon_optional_db", "SPEED_SWITCH_TODAY_ABANDON_OPTIONAL_DB", "1"),
 ])
 def test_a_switch_with_its_own_setting_ignores_the_generic_name(
         monkeypatch, caplog, name, env, value):
     monkeypatch.setenv(env, value)
     with caplog.at_level(logging.WARNING, logger=sw.logger.name):
         assert sw.today_env(name) is None
-        assert sw.today(name) == {"abandon_optional_db": 0}.get(name, 1)
+        assert sw.today(name) == 1
         assert SpeedSwitches(read=list).value(name, 1) == 1
     assert sw.today_env_in_force() == {}
     assert blend_mod._fresh_flush_pending_attempts() == 1
     assert blend_mod._admitted_debt_slots() == 1
     assert blend_mod._admitted_stamp_batch() == 1
-    assert not blend_mod.LiveBlendRefresher._optional_db_on(4)
     assert any(env in r.getMessage() and "ignored" in r.getMessage() for r in caplog.records)
 
 
 def test_own_settings_name_the_real_worker_settings():
     for name, setting in sw._TODAY_SETTINGS.items():
         assert sw._OWN_SETTING[name] == setting and hasattr(blend_mod, setting)
-    assert sw._OWN_SETTING["abandon_optional_db"] == blend_mod.OPTIONAL_DB_ABANDON_ENV
+    # The settings freeze removed the one own setting that was not a
+    # `_TODAY_SETTINGS` constant (`abandon_optional_db`).
+    assert sw._OWN_SETTING == sw._TODAY_SETTINGS
     assert set(sw._OWN_SETTING) <= set(sw.SWITCHES)
 
 
@@ -251,5 +251,5 @@ def test_the_start_line_names_each_override_in_force(monkeypatch, caplog):
         blend_mod.LiveBlendRefresher("kalshi")
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("speed_switch[")]
     assert lines == [f"speed_switch[pid={os.getpid()}]: layer SPEED_SWITCH_TRIALS=off "
-                     "today pending_attempts=1 abandon_optional_db=0 admitted_debt_slots=1 "
+                     "today pending_attempts=1 admitted_debt_slots=1 "
                      "admitted_stamp_batch=1 lock_retry_prompt=1"]

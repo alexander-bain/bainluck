@@ -583,11 +583,10 @@ def is_normal_recovery_owner(refresher) -> bool:
 
     task = getattr(refresher, "_normal_task", None)
     current = asyncio.current_task()
-    # #10090: with LIVE_BLEND_ABANDON_OPTIONAL_DB on, its reads run on a named
-    # child task of the recovery (`_optional_db`).
-    return task is not None and current is not None and (
-        current is task or current.get_name().startswith("optional-db:normal_")
-    )
+    # Its optional reads run inline on the recovery task (`_optional_db`); the
+    # named child task they ran on with `abandon_optional_db` on is gone since
+    # the settings freeze.
+    return task is not None and current is not None and current is task
 
 
 class _RecordingSession:

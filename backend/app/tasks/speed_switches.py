@@ -60,9 +60,6 @@ logger = logging.getLogger(__name__)
 #: ``today`` must be one of them, so an alternation spends at most half the
 #: time away from today's behaviour.
 SPECS = {
-    # `live_blend_refresh.OPTIONAL_DB_ABANDON_ENV`: a pool-level switch, so
-    # `alternate` (off/on by period) is its faithful comparison.
-    "abandon_optional_db": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0},
     # `live_blend_refresh.FRESH_FLUSH_PENDING_ATTEMPTS`, read once per flush.
     # Its "today" is the worker's own setting (an env since #11709), `today()`.
     "pending_attempts": {"modes": ("alternate",), "values": (1, 32), "today": 1},
@@ -166,7 +163,7 @@ _TODAY_SETTINGS = {
 TODAY_ENV_PREFIX = "SPEED_SWITCH_TODAY_"
 #: Switches that already have their own worker setting: that setting is their
 #: only knob and wins; their ``SPEED_SWITCH_TODAY_<NAME>`` is ignored (warned).
-_OWN_SETTING = {**_TODAY_SETTINGS, "abandon_optional_db": "LIVE_BLEND_ABANDON_OPTIONAL_DB"}
+_OWN_SETTING = dict(_TODAY_SETTINGS)
 _WARNED_TODAY_ENV: set = set()
 
 
