@@ -30,7 +30,7 @@ async def recovery(rig, redis_kwargs):  # noqa: F811
     server = await client.info("server")
     repl = await client.info("replication")
 
-    async def prepare():
+    async def prepare(policy=None):
         old = await rig.store.read()
         candidate = preparing_candidate(
             old,
@@ -38,7 +38,7 @@ async def recovery(rig, redis_kwargs):  # noqa: F811
             operation_id=uuid4(),
             redis_run_id=server["run_id"],
             redis_master_replid=repl["master_replid"],
-            policy_fingerprint=ReservationPolicy().fingerprint,
+            policy_fingerprint=(policy or ReservationPolicy()).fingerprint,
         )
         return await rig.store.prepare(old, candidate)
 

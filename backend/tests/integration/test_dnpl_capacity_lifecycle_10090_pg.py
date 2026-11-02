@@ -12,6 +12,7 @@ from app.models.models import Event, Sport
 from app.tasks.live_blend_refresh import LiveBlendRefresher
 from app.utils import blend_preview
 from app.utils.live_push import event_channel
+from app.utils.preview_reservations import RESERVATIONS_ENV
 from tests.integration.test_live_blend_grouped_commit_8129_pg import DB_URL, rig  # noqa: F401
 from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs, _ev, _capacity_event, BASE10  # noqa: F401
 
@@ -22,6 +23,10 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(
 
 @pytest.fixture
 async def capacity(rig, redis_kwargs, monkeypatch):
+    # `_capacity_event` fills the six v1 reservations (192,64,128,64,48,16;
+    # total 512). The default is production's v2 split since the settings
+    # freeze (docs/live-settings.md), so every registry here is v1 explicitly.
+    monkeypatch.setenv(RESERVATIONS_ENV, '192,64,128,64,48,16')
     blend_preview.reset_registry_for_tests()
     # These retained lifecycle/relay controls exercise the legacy key and wire
     # contract explicitly. Default v3 producer coverage uses a ready PG domain.
@@ -385,9 +390,12 @@ async def test_adversarial_k2_dead_metadata_is_reclaimed_by_actual_caller(rig, o
     else:
         # Execute the production Redis-clock check at an exact expired deadline.
         # Only time is virtual; metadata is produced by the actual fixture proposals.
+        # One ms past the registry's own uncommitted bound (180 s since the
+        # settings freeze, blend_preview.DEFAULT_MAX_UNCOMMITTED_S; it was 60 s).
+        past_deadline_ms = int(registry.max_uncommitted_s * 1000) + 1
         script = blend_preview.LEDGER_SCRIPT
         monkeypatch.setattr(blend_preview, 'LEDGER_SCRIPT', script.replace(
-            'local now = now_ms()', 'local now = now_ms() + 60001'))
+            'local now = now_ms()', f'local now = now_ms() + {past_deadline_ms}'))
     await worker._maintain_preview_capacity()
     assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 480, 'K2: dead metadata still blocks idle reclamation'
     assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen') is None

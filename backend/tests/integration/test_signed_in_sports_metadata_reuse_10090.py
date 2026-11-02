@@ -639,12 +639,15 @@ async def test_warm_signed_in_sports_reuses_metadata_with_the_same_reader_page(r
     )
 
 
-async def test_metadata_reuse_is_off_without_the_explicit_switch(rig):
+async def test_metadata_reuse_is_on_without_the_explicit_switch(rig):
+    # On by default since the settings freeze (production since 2026-10-31,
+    # docs/live-settings.md); `FEED_SPORTS_METADATA_REUSE=0` is the off switch.
     await rig.read()
-    control, _ = await rig.read(ACTOR_A, reuse=False, limit=200)
+    control, control_sql = await rig.read(ACTOR_A, reuse=False, limit=200)
+    assert _wide_markets(control_sql), "0 must use the original wide reader"
     default, sql = await rig.read(ACTOR_A, reuse=None, limit=200)
     assert _public(default) == _public(control)
-    assert _wide_markets(sql), "an unset switch must use the original wide reader"
+    assert not _wide_markets(sql), "an unset switch must reuse the shared metadata"
 
 
 async def test_another_worker_reuses_the_same_plain_metadata_from_redis(rig):

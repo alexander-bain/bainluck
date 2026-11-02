@@ -202,17 +202,25 @@ async def _engine_with_tables():
 
 
 @pytest.fixture
-async def selected():
+async def selected(monkeypatch):
     """Run the REAL slate predicate against Postgres; return the cases it keeps.
 
     Function-scoped for the reason `test_search_recall_contract.py` gives:
     `pytest.ini` leaves `asyncio_default_fixture_loop_scope` unset, so a
     module-scoped async fixture outlives the loop that created its engine.
+
+    The cases are drawn for the 6 h upcoming window (the game two hours out is
+    in, tomorrow's is out). Production's `PM_WS_UPCOMING_HOURS` is 1 since the
+    settings freeze (docs/live-settings.md), so the window is pinned;
+    `test_the_upcoming_window_setting_keeps_exactly` covers the setting itself.
     """
     from sqlalchemy import select
 
     from app.models.models import Event, FuturesMarket, FuturesOutcome
+    from app.tasks import polymarket_ws
     from app.tasks.polymarket_ws import _slate_event_window
+
+    monkeypatch.setattr(polymarket_ws, "PM_WS_UPCOMING_HOURS", 6)
 
     engine, maker = await _engine_with_tables()
     async with maker() as session:
@@ -553,11 +561,17 @@ async def _seed_link_cases(session):
     return market_ids, live.id, soon.id
 
 
-async def _link_reads(stored_live_only):
+async def _link_reads(stored_live_only, monkeypatch):
+    from app.tasks import polymarket_ws
     from tests._pm_slate_link_read_10663 import (
         parent_slate_link_stmt,
         shipped_slate_link_stmt,
     )
+
+    # `soon` (two hours out) is in the slate under the 6 h upcoming window these
+    # cases are drawn for; production's `PM_WS_UPCOMING_HOURS` is 1 since the
+    # settings freeze (docs/live-settings.md), so the window is pinned.
+    monkeypatch.setattr(polymarket_ws, "PM_WS_UPCOMING_HOURS", 6)
 
     shipped_stmt = await shipped_slate_link_stmt(stored_live_only=stored_live_only)
     engine, maker = await _engine_with_tables()
@@ -573,16 +587,16 @@ async def _link_reads(stored_live_only):
 
 @needs_postgres
 class TestTheLinkReadKeepsEveryMarketOnce:
-    async def test_the_full_slate_matches_the_parent_read(self):
-        (ids, live, soon), parent, shipped = await _link_reads(False)
+    async def test_the_full_slate_matches_the_parent_read(self, monkeypatch):
+        (ids, live, soon), parent, shipped = await _link_reads(False, monkeypatch)
         expected = {(ids["repeated_outcomes"], live), (ids["blank_outcome_id"], soon)}
         # The parent answers per outcome: 3 + 2 rows for two markets.
         assert len(parent) == 5
         assert {(r.market_id, r.linked_event_id) for r in parent} == expected
         assert sorted(tuple(r) for r in shipped) == sorted(expected)
 
-    async def test_the_stored_live_subset_matches_the_parent_read(self):
-        (ids, live, _soon), parent, shipped = await _link_reads(True)
+    async def test_the_stored_live_subset_matches_the_parent_read(self, monkeypatch):
+        (ids, live, _soon), parent, shipped = await _link_reads(True, monkeypatch)
         expected = {(ids["repeated_outcomes"], live)}
         assert len(parent) == 3
         assert {(r.market_id, r.linked_event_id) for r in parent} == expected
@@ -643,7 +657,9 @@ def test_the_consumer_actually_applies_both_halves_of_the_slate():
 # games 2-6 h away, on a venue process at loop cpu 0.95. Decision L would set
 # the window to 3 h; these two cases prove what that selects, against the
 # shipped predicate, before anyone sets it. At 3 the game four hours out is
-# the one row that leaves; at 6 (the default) nothing moves.
+# the one row that leaves; at 6 (the pre-freeze default) nothing moves.
+# Production's value, and the default since the settings freeze, is 1
+# (docs/live-settings.md).
 # ---------------------------------------------------------------------------
 
 #: case -> (event status, hours from now to commence)

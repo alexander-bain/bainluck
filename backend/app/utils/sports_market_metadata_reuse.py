@@ -135,6 +135,11 @@ def _payload_rows(payload: Any, expected: tuple | None) -> list[list[Any]]:
     return rows
 
 
+def reuse_enabled() -> bool:
+    """On by default (production since 2026-10-31, docs/live-settings.md); `0` is off."""
+    return os.getenv("FEED_SPORTS_METADATA_REUSE", "1").strip() != "0"
+
+
 async def load_sports_markets(
     db: Any, market_ids: list[int]
 ) -> list[SimpleNamespace] | None:
@@ -144,8 +149,7 @@ async def load_sports_markets(
     market/outcome reads; it does not promise an atomic page. Added SQL is in
     a savepoint so a failed fingerprint cannot poison the fallback transaction.
     """
-    # On by default (production since 2026-10-31, docs/live-settings.md); `0` is off.
-    if os.getenv("FEED_SPORTS_METADATA_REUSE", "1").strip() == "0":
+    if not reuse_enabled():
         return None
     if cache.shared_build_ttl_s(NAMESPACE) <= 0:
         return None

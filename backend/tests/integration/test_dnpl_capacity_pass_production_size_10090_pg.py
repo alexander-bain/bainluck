@@ -61,6 +61,10 @@ WAITING = range(501, 504)
 
 #: Release L's 1024 split (v2): "Other active" 448, so nothing above is full.
 V2_SPLIT = '96,48,192,128,448,112'
+#: The v1 split (total 512) this rig's full buckets are drawn for: "Other
+#: active" 48 and "Other upcoming" 16. The default is V2_SPLIT since the
+#: settings freeze (docs/live-settings.md), so it is set explicitly.
+V1_SPLIT = '192,64,128,64,48,16'
 
 
 @pytest.fixture
@@ -102,8 +106,7 @@ def basis(now):
 
 @pytest.fixture
 async def production(rig, redis_kwargs, monkeypatch, request, ticket_kind):
-    if getattr(request, 'param', None):
-        monkeypatch.setenv(RESERVATIONS_ENV, request.param)
+    monkeypatch.setenv(RESERVATIONS_ENV, getattr(request, 'param', None) or V1_SPLIT)
     blend_preview.reset_registry_for_tests()
     client = Redis(**redis_kwargs)
     now = datetime.now(timezone.utc)
