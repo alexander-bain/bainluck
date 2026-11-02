@@ -1,0 +1,76 @@
+{
+  "schema": "clock_marker/1",
+  "issue": 10090,
+  "contract": "speed/RETURN-measurement-20261030T0615Z-10090-CAUSAL-NEXT-BUILD-CONTRACT-DRAFT-LOCAL.md",
+  "producer": "backend/app/utils/clock_bridge.py (_Markers), on the clock bridge's existing dedicated asyncpg connection",
+  "enable": {
+    "dark_unless": "a trace in the pid is ARMED (the bridge is running) AND CLOCK_MARKER_CASE matches case_pattern AND wall_now < CLOCK_MARKER_EXPIRES_AT <= wall_now + arm_max_s",
+    "env": ["CLOCK_MARKER_CASE", "CLOCK_MARKER_EXPIRES_AT"],
+    "case_pattern": "^[a-z0-9]{8,24}$",
+    "arm_max_s": 7200.0
+  },
+  "channels": {
+    "request": "cm_<case>_<tok>",
+    "reply": "cmr_<case>",
+    "tok": "sha256('<case>|<DYNO or None>|<pid>|<boot_id or None>|<run>').hexdigest()[:16]",
+    "addressing": "one request channel per producer incarnation and run; the collector learns it from that run's bind message on the reply channel"
+  },
+  "clock": {
+    "domain": "time.monotonic of the producer pid (CLOCK_MONOTONIC; the same callable the Kalshi/PM/nonvenue/fold traces use for *_mono)",
+    "rounding": "lo and hi are rounded to 6 decimals; q is the quantum to expand each by before claiming strict order",
+    "lo": "read first in the notification callback, which asyncpg schedules with call_soon after the notification left the socket: receipt <= lo",
+    "hi": "read immediately before the reply's pg_notify is sent: hi <= reply send",
+    "use": "a producer stamp P with P > lo + q came after the request was received (so after collector S); P < hi - q came before the reply was sent (so before collector R). Equal or overlapping stamps prove no strict order."
+  },
+  "request": {
+    "max_bytes": 256,
+    "keys": ["case", "nonce", "run", "slot", "tok", "v"],
+    "types": {"v": "int == 1 (not bool)", "case": "str == producer case", "tok": "str == producer tok", "run": "str == producer run", "slot": "int 0 <= slot < 760 (not bool)", "nonce": "str ^[0-9a-f]{32}$ (128-bit)"},
+    "accept_rules": [
+      "size checked before any parse: 0 < bytes <= 256 else fault big",
+      "malformed JSON, missing/extra keys or bad types: fault bad",
+      "case/tok/run not this run's: fault foreign",
+      "slot or nonce already seen this run: fault dup",
+      "slot <= last accepted slot: fault ord",
+      "more than queue requests waiting: fault q",
+      "no retry, no catch-up: a dropped slot is a gap"
+    ],
+    "example": {"v": 1, "case": "case20261030a", "tok": "0123456789abcdef", "run": "a1b2c3d4", "slot": 7, "nonce": "00112233445566778899aabbccddeeff"}
+  },
+  "reply": {
+    "max_bytes": 512,
+    "keys": ["case", "f", "hi", "i", "k", "lo", "nonce", "pid", "q", "run", "rx", "slot", "tok", "v"],
+    "k": "m",
+    "fields": {"i": "accepted-marker ordinal in this run (1-based)", "rx": "notification ordinal in this run, valid or not (1-based)", "f": "fault counters so far", "lo": "see clock.lo", "hi": "see clock.hi", "q": 1e-06}
+  },
+  "bind": {
+    "max_bytes": 512,
+    "keys": ["boot", "case", "ch", "clock", "commit", "dyno", "exp", "k", "listen", "mono", "pid", "rel", "run", "slots", "tok", "v"],
+    "k": "bind",
+    "when": "once per LISTEN, after the run's first P probe on that connection; listen counts LISTENs this run (a P reconnect re-LISTENs while markers are not halted)"
+  },
+  "end": {
+    "max_bytes": 512,
+    "keys": ["case", "f", "i", "k", "pb", "pid", "run", "rx", "tok", "v", "wb", "why"],
+    "k": "end",
+    "why": ["RUN_END", "EXPIRED", "RECEIVED_CAP", "MARKER_CAP"],
+    "not_sent_for": ["BYTE_CAP", "REPLY_TOO_BIG", "REPLY_FAILED", "LISTEN_FAILED"]
+  },
+  "faults": ["big", "bad", "foreign", "dup", "ord", "q", "drop"],
+  "limits": {
+    "markers_per_run": 760,
+    "received_per_run": 1520,
+    "queue": 4,
+    "payload_bytes_per_run": 583680,
+    "wire_bytes_per_run_estimated": 2097152,
+    "frame_in_bytes_estimated": 64,
+    "frame_out_bytes_estimated": 192,
+    "statement_timeout_s": 0.15,
+    "poll_s": 0.05
+  },
+  "not_in_scope": [
+    "no marker log line; P's 256-line cap is untouched",
+    "wire bytes are an ESTIMATE from payload plus fixed framing, not a wire measurement",
+    "no collector side here; one collector PG session is unadmitted"
+  ]
+}
