@@ -8,7 +8,7 @@ import {
   recordDiscoverInteraction,
   sendDiscoverInteraction,
 } from "@/lib/discoverInteractions";
-import type { DeadlineFamilyCardModel } from "@/lib/discover/deadlineFamilyCard";
+import { wholePointFraction, type DeadlineFamilyCardModel } from "@/lib/discover/deadlineFamilyCard";
 import type { FeedItem } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
@@ -289,7 +289,7 @@ export function DeadlineFamilyCard({
                   <>
                     {member.showRowMovementBadge && (
                       <MovementBadge
-                        m={member.rowMovementFraction}
+                        m={wholePointFraction(member.rowMovementFraction)}
                         prob={member.yesProbability}
                         timeframeLabel={member.movementTimeframeLabel}
                       />

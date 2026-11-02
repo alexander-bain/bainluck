@@ -406,7 +406,7 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(html).not.toContain(
       'data-testid="deadline-family-hero-movement"',
     );
-    expect(html).not.toContain("6.5 pts");
+    expect(html).not.toContain("7 pts");
   });
 
   test("Case 2: Explicitly synthetic valid stored claim + dated basis selects Dec 31 with -6.5 pts", () => {
@@ -428,13 +428,13 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(model!.representative.movementStatus).toBe("hero");
     expect(model!.representative.supportedMovePoints).toBe(-6.5);
     expect(model!.representative.showHeroMovementChip).toBe(true);
-    expect(model!.representative.heroMovementChipText).toBe("↓ 6.5 pts");
+    expect(model!.representative.heroMovementChipText).toBe("↓ 7 pts");
     expect(model!.representative.heroTimeframeText).toBe("since yesterday");
     expect(model!.representative.narrativeCaption).toBe(
-      "Down 6.5 points since yesterday — 25% chance by Dec 31",
+      "Down 7 points since yesterday — 25% chance by Dec 31",
     );
     expect(model!.representative.accessibleLabel).toBe(
-      "Will Zacharia be out as Prime Minister of Israel by December 31? — Yes (25%), Down 6.5 points since yesterday",
+      "Will Zacharia be out as Prime Minister of Israel by December 31? — Yes (25%), Down 7 points since yesterday",
     );
 
     // Oct 31 (-1.1 pts) stays sub-threshold (< 2 pts)
@@ -450,10 +450,10 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
       />,
     );
     expect(html).toContain('data-testid="deadline-family-hero-movement"');
-    expect(html).toContain("↓ 6.5 pts");
+    expect(html).toContain("↓ 7 pts");
     expect(html).toContain("since yesterday");
     expect(html).toContain(
-      "Down 6.5 points since yesterday — 25% chance by Dec 31",
+      "Down 7 points since yesterday — 25% chance by Dec 31",
     );
   });
 
@@ -871,10 +871,10 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(model!.representative.showHeroMovementChip).toBe(false);
     expect(model!.representative.showRowMovementBadge).toBe(true);
     expect(model!.representative.narrativeCaption).toBe(
-      "Up 3.2 points since yesterday — 25% chance by Oct 31",
+      "Up 3 points since yesterday — 25% chance by Oct 31",
     );
     expect(model!.representative.accessibleLabel).toBe(
-      "Will Zacharia be out as Prime Minister of Israel by October 31? — Yes (25%), Up 3.2 points since yesterday",
+      "Will Zacharia be out as Prime Minister of Israel by October 31? — Yes (25%), Up 3 points since yesterday",
     );
 
     const decMember = model!.members.find((m) => m.marketId === 65678074)!;
@@ -1200,5 +1200,24 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(modelB6!.members.find((m) => m.marketId === 65678073)!.yesRenderedPercent).toBe(15);
     expect(modelB6!.representative.marketId).toBe(65678073);
     expect(modelB6!.representative.movementTimeframeLabel).toBe("since yesterday");
+  });
+});
+
+describe("Alex's Oct 29 ruling: whole numbers on Discover cards", () => {
+  test("hero chip, sentence and row badge print whole points; the selection still reads the exact move", () => {
+    const oct31 = makeFeedItemFromContract(makeOct31Contract({ stored_movement_claim: -0.011 }));
+    const dec31 = makeFeedItemFromContract(makeDec31Contract({ stored_movement_claim: -0.065 }));
+    const model = buildDeadlineFamilyCardModel(
+      { items: [oct31, dec31] },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    )!;
+    // Logic untouched: the model keeps the exact served move.
+    expect(model.representative.supportedMovePoints).toBe(-6.5);
+    expect(model.representative.heroMovementChipText).toBe("↓ 7 pts");
+    const html = renderToStaticMarkup(
+      <DeadlineFamilyCard model={model} items={[oct31, dec31]} defaultExpanded />,
+    );
+    expect(html).toContain("Down 7 points since yesterday");
+    expect(html).not.toMatch(/\d\.\d\s*(pts|points)/);
   });
 });

@@ -265,20 +265,28 @@ export function formatDeadlineMovementTimeframe(
   };
 }
 
+/**
+ * Alex's Oct 29 ruling: whole numbers on Discover cards. A move prints in
+ * whole percentage points ("↓ 7 pts", "Down 7 points"). Presentation only:
+ * selection, thresholds and the served fractions are unchanged.
+ */
+export function wholeMovePoints(moveFraction: number): number {
+  return Math.round(Math.abs(moveFraction) * 100);
+}
+
+/** The fraction a row badge is handed, rounded to the whole point it prints. */
+export function wholePointFraction(moveFraction: number | null | undefined): number | null {
+  if (moveFraction == null || !Number.isFinite(moveFraction)) return null;
+  return (Math.sign(moveFraction) * wholeMovePoints(moveFraction)) / 100;
+}
+
 export function formatDeadlinePointsText(moveFraction: number): string {
-  const absPts = Math.round(Math.abs(moveFraction) * 1000) / 10;
-  const formatted = Number.isInteger(absPts)
-    ? String(absPts)
-    : absPts.toFixed(1);
-  return formatted;
+  return String(wholeMovePoints(moveFraction));
 }
 
 function formatPointsUnit(moveFraction: number): string {
-  const absPts = Math.round(Math.abs(moveFraction) * 1000) / 10;
-  const formatted = Number.isInteger(absPts)
-    ? String(absPts)
-    : absPts.toFixed(1);
-  return `${formatted} ${absPts === 1 ? "point" : "points"}`;
+  const pts = wholeMovePoints(moveFraction);
+  return `${pts} ${pts === 1 ? "point" : "points"}`;
 }
 
 export interface DeadlineFamilyMemberViewModel {
