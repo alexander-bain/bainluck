@@ -60,17 +60,19 @@ failure, which is how gates get deleted.
 | `ios/Bain Luck/BainLuckTests/CalibrationParityTests.swift` | Swift (xcodebuild) | The real `CalibrationViewModel.parity` reproduces the record on both cohort states |
 | `frontend/e2e/contract/calibrationSurfaceParity.contract.test.js` | Plain JS (`node --test`) | Recomputes the record from the payload with its **own independent arithmetic**, and asserts both clients are still bound to it |
 | `frontend/__tests__/lib/calibrationProdFixture.ts` | TypeScript | Re-exports the payload; web has no second copy |
+| `ios/Bain Luck/BainLuckTests/CalibrationProdFixture.swift` | Swift | Reads the payload from the `BainLuckTests` bundle; native has no second copy |
 
-## The one copy that remains, and why
+## There is one copy
 
-`ios/Bain Luck/BainLuckTests/CalibrationProdFixture.swift` still embeds the payload as a Swift
-string literal rather than reading this JSON off disk. That is deliberate: an XCTest reading a
-`#filePath`-relative file is host-filesystem-dependent, and trading a verifiable duplicate for an
-unverifiable load path is a bad trade.
+Both clients read `prod-2026-08-02.json` itself. Web re-exports it (`calibrationProdFixture.ts`).
+Native builds it into the `BainLuckTests` bundle as a resource — `project.pbxproj` references this
+file in place, so nothing is copied into `ios/` — and `CalibrationProdFixture.swift` reads it with
+`Bundle(for:)`. A missing or empty resource stops the native run by name; there is no embedded
+fallback.
 
-So the duplicate is **checked instead of hoped**: the contract test parses both the Swift embed and
-this JSON and asserts they are deeply equal. A drifted copy fails loudly and by name. If the iOS
-test target ever gains a resource bundle, the embed can be deleted and that check with it.
+Native used to embed the payload as a Swift string literal, guarded by a byte-equality contract
+test. #1778 deleted both in one change. The contract test now asserts that neither client declares
+its own rows and that the native resource still points at this file.
 
 ## Regenerating
 
