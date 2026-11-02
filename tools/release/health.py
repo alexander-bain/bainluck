@@ -111,7 +111,9 @@ def watch(provider,candidate,working):
             if health.startswith('VERDICT ROLLBACK'): return health
             # Existing check's own explicit "3-min health PASS" precedes A10
             # completion; PENDING with this suffix must never be called full PASS.
-            boot=boot or health.startswith('VERDICT PASS') or '3-min health PASS' in health
+            boot=health.startswith('VERDICT PASS')
+            if '3-min health PASS' in health:
+                print('Three-minute startup health passed; A10 remains pending.',flush=True)
         else:
             boot=time.monotonic()-started>=180
         start=(release+dt.timedelta(minutes=2)).strftime('%H:%M')
@@ -123,7 +125,7 @@ def watch(provider,candidate,working):
             return 'VERDICT PASS'
         print('Waiting: boot=%s; %s; %s' % (boot,latency,headline),flush=True)
         time.sleep(30)
-    return 'VERDICT ROLLBACK no conclusive health within the existing 25-minute observation deadline'
+    return 'VERDICT UNKNOWN no conclusive health within the existing 25-minute observation deadline'
 
 
 def main():
@@ -159,7 +161,7 @@ def main():
     if not out['rollback'] and out['verdict'] != 'ALREADY CHECKED':
         platforms.report('%s %s %s: %s' % (args.provider,candidate['id'],str(candidate.get('sha',''))[:8],out['verdict']))
     print(out['verdict'])
-    return 1 if out['rollback'] else 0
+    return 1 if out['rollback'] else (2 if out['verdict'].startswith('VERDICT UNKNOWN') else 0)
 
 if __name__=='__main__':
     try: sys.exit(main())
