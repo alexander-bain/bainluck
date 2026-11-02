@@ -1,0 +1,42 @@
+name: Tier-B review policy
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited]
+  # GitHub has no pull_request_target review event. Reviewed default-branch
+  # code observes submitted/dismissed reviews without running privileged PR code.
+  schedule:
+    - cron: '*/5 * * * *'
+  repository_dispatch:
+    types: [tier-b-review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+  issues: write
+
+concurrency:
+  group: tier-b-review-policy
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.getLabel({...context.repo, name: 'tier-b'});
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({...context.repo, name: 'tier-b', color: 'B60205', description: 'Requires approval from someone other than the PR author'});
+            }
+            await require('./tools/release/tier_b.cjs').evaluate(github, context);
