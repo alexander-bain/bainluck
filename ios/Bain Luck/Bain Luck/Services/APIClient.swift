@@ -444,6 +444,9 @@ actor APIClient {
     /// #10090 — shared reads on the wire, by `responseCache` key.
     private var inFlightReads: [String: Task<Transfer, any Error>] = [:]
 
+    /// #10090 — numbers the detail reads' clock exchanges (`ClockExchange`).
+    private var clockExchangeSeq = 0
+
     /// A departed reader's refusal, in the shape a cancelled `URLSession`
     /// request has always reached callers.
     private static func refuseIfCancelled() throws {
@@ -486,15 +489,36 @@ actor APIClient {
         }
         let authReadyMs = Date().timeIntervalSince(authStart) * 1000
 
+        // #10090 — a detail read brackets itself on the trace clock, after the
+        // token read so its time never widens the bracket (`ClockExchange`).
+        var exchange: (seq: Int, eventId: Int)?
+        if let eventId = ClockExchange.eventId(path: path) {
+            clockExchangeSeq += 1
+            exchange = (clockExchangeSeq, eventId)
+        }
+
         let netStart = Date()
         let data: Data
         let response: URLResponse
+        if let exchange {
+            ClockExchange.emit(ClockExchange.sentLine(seq: exchange.seq, eventId: exchange.eventId,
+                                                      freshAsk: requestQuery["fresh"] == "true"))
+        }
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            if let exchange {
+                ClockExchange.emit(ClockExchange.receivedLine(seq: exchange.seq, eventId: exchange.eventId,
+                                                              status: nil, body: nil))
+            }
             throw APIError.networkError(underlying: error)
         }
         let networkMs = Date().timeIntervalSince(netStart) * 1000
+        if let exchange {
+            ClockExchange.emit(ClockExchange.receivedLine(seq: exchange.seq, eventId: exchange.eventId,
+                                                          status: (response as? HTTPURLResponse)?.statusCode,
+                                                          body: data))
+        }
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8)

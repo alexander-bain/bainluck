@@ -450,7 +450,8 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         XCTAssertTrue(value.contains("displayedLabels(in: vm.headline(event))"),
                       "the slide reads the string the hero prints")
         let rising = try Self.slice(page, from: "private func heroRising(away: Bool) -> Bool? {", to: "\n    }\n")
-        XCTAssertTrue(rising.contains("guard vm.blendPreview == nil else { return nil }"))
+        // #10090 C2: unknown while a preview is DISPLAYED, not merely held.
+        XCTAssertTrue(rising.contains("guard let event = vm.event, !vm.displaysPreview(event) else { return nil }"))
         let chart = try Self.slice(page, from: "OddsChartView(eventId:",
                                   to: "vm.publicationJourney, key: publicationTaskKey))")
         // No raw preview state: only the admitted projections reach the chart.

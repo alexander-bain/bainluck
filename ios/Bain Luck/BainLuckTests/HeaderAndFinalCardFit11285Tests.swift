@@ -57,7 +57,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Views/EventDetailView.swift")
         let page = try String(contentsOf: url, encoding: .utf8)
-        let start = try XCTUnwrap(page.range(of: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {"))
+        let start = try XCTUnwrap(page.range(of: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false, ekgDrawn: Bool = false) -> some View {"))
         let end = try XCTUnwrap(page.range(of: "// MARK: - Chart Header Bar", range: start.upperBound..<page.endIndex))
         let body = String(page[start.upperBound..<end.lowerBound]).filter { !$0.isWhitespace }
         XCTAssertTrue(body.contains(".frame(maxWidth:Self.probabilityDetailsMaxWidth(at:dynamicTypeSize,statusInDetails:statusInDetails),minHeight:44)"))

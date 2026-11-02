@@ -211,7 +211,7 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         let text = try page()
         let start = try XCTUnwrap(text.range(of: "private func nflPairedDetails(_ event: EventDetail) -> some View {"))
         let body = String(text[start.upperBound...].prefix(600))
-        XCTAssertTrue(body.contains("statusInDetails: true)"),
+        XCTAssertTrue(body.contains("statusInDetails: true,"),
                       "the adopted header's control prints status words beside the headline again")
     }
 
@@ -353,12 +353,13 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
 
     func testTheHeroMountsTheDisclosureModeAndNoRoutineLabel() throws {
         let text = try page()
-        // #11285 — the signature gained `statusInDetails` (default false).
-        let start = try XCTUnwrap(text.range(of: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {"))
+        // #11285 — the signature gained `statusInDetails` (default false);
+        // #10090 (Alex 69) `ekgDrawn` (default false).
+        let start = try XCTUnwrap(text.range(of: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false, ekgDrawn: Bool = false) -> some View {"))
         let end = try XCTUnwrap(text.range(of: "// MARK: - Chart Header Bar", range: start.upperBound..<text.endIndex))
         let body = String(text[start.upperBound..<end.lowerBound])
         XCTAssertTrue(body.contains("isDisclosure: true"))
-        XCTAssertTrue(body.contains("statusInDetails: statusInDetails)"),
+        XCTAssertTrue(body.contains("statusInDetails: statusInDetails,"),
                       "the control drops the caller's choice")
         XCTAssertFalse(body.contains("Text(\"Win Probability\")"), "the routine label is back in the hero")
         XCTAssertFalse(body.contains("SignalBarsView("), "confidence bars belong in the popover")
@@ -376,8 +377,9 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         let text = try page()
         let call = try XCTUnwrap(text.range(of: "EventHeadlinePhase9483.resolve("))
         let args = String(text[call.upperBound...].prefix(500))
-        // #10090 — the displayed number's clock: committed, or a shown preview's own.
-        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityObservedAt(event)"),
+        // #10090 — the displayed number's clock: committed, or a shown preview's own;
+        // decision J: aged by a confirmation of it (`displayedProbabilityAgeClock`).
+        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityAgeClock(event)"),
                       "the phase must read the hero quote's own clock")
         // #9483 — on the page's display clock, which is the tick in production.
         XCTAssertTrue(args.contains("now: displayNow(tick.date)"), "the phase must age on the minute tick")
