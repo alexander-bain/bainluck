@@ -160,3 +160,37 @@ async def test_curated_publish_refuses_non_market_members_or_nested_children(
     receipt, code = await operator.run(operator.parse_args(args()), lambda: session)
     assert code == 1, receipt
     assert session.commits == 0
+
+
+#: Production 2026-11-02: Kalshi 108619 and Polymarket 112905 as the venues name them.
+KALSHI_BALANCE = ["Democrats sweep", "D-House, R-Senate", "Republicans sweep", "R-House, D-Senate"]
+POLYMARKET_BALANCE = ["Democrats Sweep", "R Senate, D House", "Republicans Sweep",
+                      "D Senate, R House", "Other"]
+
+
+def _balance(hydration_cards, kalshi, polymarket):
+    hydration_cards[108619]["top_outcomes"] = [{"name": n, "probability": 0.2} for n in kalshi]
+    hydration_cards[112905]["top_outcomes"] = [{"name": n, "probability": 0.2} for n in polymarket]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("polymarket,accepted", [
+    (POLYMARKET_BALANCE, True),
+    # A real misalignment still refuses: Polymarket missing a split.
+    ([n for n in POLYMARKET_BALANCE if n != "D Senate, R House"], False),
+])
+async def test_the_venues_real_balance_outcomes_align(hydration, monkeypatch, polymarket, accepted):
+    real_load = operator.load_midterms_cards
+
+    async def load(db, ids):
+        cards, twins, report = await real_load(db, ids)
+        _balance(cards, KALSHI_BALANCE, polymarket)
+        return cards, twins, report
+
+    monkeypatch.setattr(operator, "load_midterms_cards", load, raising=False)
+    session = CuratedSession()
+    receipt, code = await operator.run(operator.parse_args(args()), lambda: session)
+    if accepted:
+        assert code == 0, receipt
+    else:
+        assert code == 1 and "cannot align" in receipt["error"], receipt

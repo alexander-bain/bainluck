@@ -214,6 +214,11 @@ def test_missing_candidate_price_does_not_turn_a_two_candidate_race_into_yes_no(
         ("Democratic House and Republican Senate", "R Senate / D House"),
         ("Republican House and Senate", "R House / R Senate"),
         ("Democratic House and Senate", "D Senate / D House"),
+        # The venues' own spellings, read from production 2026-11-02.
+        ("D-House, R-Senate", "R Senate, D House"),
+        ("R-House, D-Senate", "D Senate, R House"),
+        ("Democrats sweep", "Democrats Sweep"),
+        ("Republicans sweep", "Republicans Sweep"),
     ],
 )
 def test_balance_outcomes_align_by_chamber_and_party(left, right):

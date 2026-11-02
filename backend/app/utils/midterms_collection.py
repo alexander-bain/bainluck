@@ -32,7 +32,8 @@ def outcome_key(name: str) -> str:
     parties = r"democrat(?:ic|s)?|republicans?|[dr]"
     chambers = {}
     for party, chamber in re.findall(
-        rf"\b({parties})\b(?:\s+controls?)?\s+(house|senate)\b", value
+        # Kalshi spells a split "D-House, R-Senate"; Polymarket "R Senate, D House".
+        rf"\b({parties})\b(?:\s+controls?)?[\s-]+(house|senate)\b", value
     ):
         chambers[chamber] = "democratic" if party.startswith("d") else "republican"
     if (

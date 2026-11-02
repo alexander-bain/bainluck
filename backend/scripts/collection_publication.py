@@ -660,8 +660,12 @@ async def prepare_curated(session, options: Options) -> dict:
         )
     if cards[112905]["source"] != "polymarket":
         raise OperatorRefused("reviewed balance-of-power twin is not Polymarket")
-    left = {outcome_key(o["name"]) for o in cards[108619]["top_outcomes"]}
-    right = {outcome_key(o["name"]) for o in cards[112905]["top_outcomes"]}
+    # A residual "Other" bucket one venue lists (Polymarket's, 0.05% on
+    # 2026-11-02) aligns with nothing; the card shows it as that venue's row
+    # (`blend_card`), so it does not decide whether the two venues align.
+    residual = {"other"}
+    left = {outcome_key(o["name"]) for o in cards[108619]["top_outcomes"]} - residual
+    right = {outcome_key(o["name"]) for o in cards[112905]["top_outcomes"]} - residual
     if left != right or len(left) < 2:
         raise OperatorRefused(
             "reviewed balance-of-power venues cannot align their outcomes"
