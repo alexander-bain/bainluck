@@ -214,12 +214,54 @@ def test_missing_candidate_price_does_not_turn_a_two_candidate_race_into_yes_no(
         ("Democratic House and Republican Senate", "R Senate / D House"),
         ("Republican House and Senate", "R House / R Senate"),
         ("Democratic House and Senate", "D Senate / D House"),
+        # The venues' own spellings, read from production 2026-11-02.
+        ("D-House, R-Senate", "R Senate, D House"),
+        ("R-House, D-Senate", "D Senate, R House"),
+        ("Democrats sweep", "Democrats Sweep"),
+        ("Republicans sweep", "Republicans Sweep"),
     ],
 )
 def test_balance_outcomes_align_by_chamber_and_party(left, right):
     from app.utils.midterms_collection import outcome_key
 
     assert outcome_key(left) == outcome_key(right)
+
+
+def _balance_cards(other):
+    kalshi, polymarket = card(108619), card(112905, "polymarket")
+    kalshi["outcome_count"], polymarket["outcome_count"] = 4, 5
+    kalshi["top_outcomes"] = [
+        {"name": n, "probability": p}
+        for n, p in (("Democrats sweep", 0.735), ("D-House, R-Senate", 0.225),
+                     ("Republicans sweep", 0.058), ("R-House, D-Senate", 0.007))
+    ]
+    polymarket["top_outcomes"] = [
+        {"name": n, "probability": p}
+        for n, p in (("Democrats Sweep", 0.725), ("R Senate, D House", 0.215),
+                     ("Republicans Sweep", 0.045), ("D Senate, R House", 0.0065),
+                     ("Other", other))
+    ]
+    return kalshi, polymarket
+
+
+@pytest.mark.parametrize("other", [0.0005, None])
+def test_a_contributor_only_outcome_under_one_percent_is_not_a_row(other):
+    from app.utils.midterms_collection import blend_card
+
+    kalshi, polymarket = _balance_cards(other)
+    blended = blend_card(kalshi, [kalshi, polymarket])
+    assert [o["name"] for o in blended["top_outcomes"]] == [
+        "Democrats sweep", "D-House, R-Senate", "Republicans sweep", "R-House, D-Senate"]
+    assert blended["outcome_count"] == 4
+
+
+def test_a_contributor_only_outcome_at_one_percent_stays_a_row():
+    from app.utils.midterms_collection import blend_card
+
+    kalshi, polymarket = _balance_cards(0.01)
+    blended = blend_card(kalshi, [kalshi, polymarket])
+    assert blended["top_outcomes"][-1]["name"] == "Other"
+    assert blended["outcome_count"] == 5
 
 
 @pytest.mark.asyncio

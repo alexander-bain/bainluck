@@ -160,3 +160,57 @@ async def test_curated_publish_refuses_non_market_members_or_nested_children(
     receipt, code = await operator.run(operator.parse_args(args()), lambda: session)
     assert code == 1, receipt
     assert session.commits == 0
+
+
+#: Production 2026-11-02: Kalshi 108619 and Polymarket 112905 as the venues name and price them.
+KALSHI_BALANCE = {"Democrats sweep": 0.735, "D-House, R-Senate": 0.225, "Republicans sweep": 0.058,
+                  "R-House, D-Senate": 0.007}
+POLYMARKET_BALANCE = {"Democrats Sweep": 0.725, "R Senate, D House": 0.215, "Republicans Sweep": 0.045,
+                      "D Senate, R House": 0.0065, "Other": 0.0005}
+
+
+def _balance(hydration_cards, kalshi, polymarket):
+    hydration_cards[108619]["top_outcomes"] = [{"name": n, "probability": p} for n, p in kalshi.items()]
+    hydration_cards[112905]["top_outcomes"] = [{"name": n, "probability": p} for n, p in polymarket.items()]
+
+
+def _members():
+    return [
+        {"id": mid, "type": "market", "class": s["key"], "source": "human"}
+        for s in MANIFEST["sections"]
+        for mid in s["market_ids"]
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("polymarket,refusal", [
+    # Production: the 0.05% "Other" only Polymarket lists is dropped; the venues align.
+    (POLYMARKET_BALANCE, None),
+    # A 1% "Other" would be a visible number the card hides: refused on its own terms.
+    ({**POLYMARKET_BALANCE, "Other": 0.01}, "at 1% or more that the primary does not: ['Other']"),
+    # A real misalignment still refuses: Polymarket missing a split.
+    ({n: p for n, p in POLYMARKET_BALANCE.items() if n != "D Senate, R House"}, "cannot align"),
+])
+async def test_the_venues_real_balance_outcomes_align(hydration, monkeypatch, polymarket, refusal):
+    from app.utils.midterms_collection import present_midterms_sections
+
+    real_load = operator.load_midterms_cards
+    loaded = {}
+
+    async def load(db, ids):
+        cards, twins, report = await real_load(db, ids)
+        _balance(cards, KALSHI_BALANCE, polymarket)
+        loaded.update(cards)
+        return cards, twins, report
+
+    monkeypatch.setattr(operator, "load_midterms_cards", load, raising=False)
+    session = CuratedSession()
+    receipt, code = await operator.run(operator.parse_args(args()), lambda: session)
+    if refusal is not None:
+        assert code == 1 and refusal in receipt["error"], receipt
+        return
+    assert code == 0, receipt
+    sections, _ = present_midterms_sections(_members(), loaded)
+    (served,) = [m["card"] for s in sections for m in s["members"] if m["id"] == 108619]
+    assert sorted(o["name"] for o in served["top_outcomes"]) == sorted(KALSHI_BALANCE)
+    assert served["outcome_count"] == 4

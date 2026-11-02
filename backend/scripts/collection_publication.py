@@ -58,6 +58,7 @@ from app.utils.midterms_collection import (
     MANIFEST,
     MARKET_IDS,
     SLUG as MIDTERMS_SLUG,
+    is_residual,
     outcome_key,
 )  # noqa: E402
 
@@ -660,8 +661,21 @@ async def prepare_curated(session, options: Options) -> dict:
         )
     if cards[112905]["source"] != "polymarket":
         raise OperatorRefused("reviewed balance-of-power twin is not Polymarket")
+    # An outcome only the twin lists under 1% (Polymarket's "Other", 0.05% on
+    # 2026-11-02) is dropped from the card by `blend_card`. At 1% or more it is a
+    # visible number the card would hide, so the publisher refuses, not decides.
     left = {outcome_key(o["name"]) for o in cards[108619]["top_outcomes"]}
-    right = {outcome_key(o["name"]) for o in cards[112905]["top_outcomes"]}
+    twin_only = [
+        o for o in cards[112905]["top_outcomes"] if outcome_key(o["name"]) not in left
+    ]
+    visible = [o["name"] for o in twin_only if not is_residual(o)]
+    if visible:
+        raise OperatorRefused(
+            "reviewed balance-of-power twin lists outcomes at 1% or more that "
+            f"the primary does not: {visible}"
+        )
+    residual = {outcome_key(o["name"]) for o in twin_only}
+    right = {outcome_key(o["name"]) for o in cards[112905]["top_outcomes"]} - residual
     if left != right or len(left) < 2:
         raise OperatorRefused(
             "reviewed balance-of-power venues cannot align their outcomes"

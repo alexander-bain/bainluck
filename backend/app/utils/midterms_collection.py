@@ -32,7 +32,8 @@ def outcome_key(name: str) -> str:
     parties = r"democrat(?:ic|s)?|republicans?|[dr]"
     chambers = {}
     for party, chamber in re.findall(
-        rf"\b({parties})\b(?:\s+controls?)?\s+(house|senate)\b", value
+        # Kalshi spells a split "D-House, R-Senate"; Polymarket "R Senate, D House".
+        rf"\b({parties})\b(?:\s+controls?)?[\s-]+(house|senate)\b", value
     ):
         chambers[chamber] = "democratic" if party.startswith("d") else "republican"
     if (
@@ -50,6 +51,16 @@ def outcome_key(name: str) -> str:
     if value in {"republican", "republicans", "republican party", "gop"}:
         return "republican"
     return value
+
+
+#: A contributor-only outcome under this prints as 0% and is no blend, so the card
+#: drops it; at or above it the publisher refuses (`prepare_curated`).
+RESIDUAL_BELOW = 0.01
+
+
+def is_residual(outcome: dict) -> bool:
+    probability = outcome.get("probability")
+    return probability is None or probability < RESIDUAL_BELOW
 
 
 def _official_result(card: dict) -> tuple[str, str] | None:
@@ -70,15 +81,23 @@ def _official_result(card: dict) -> tuple[str, str] | None:
 def blend_card(primary: dict, contributors: list[dict]) -> dict:
     card = copy.deepcopy(primary)
     outcomes = {outcome_key(o["name"]): o for o in card.get("top_outcomes", [])}
+    primary_keys = set(outcomes)
+    counts = []
     for contributor in contributors:
+        dropped = 0
         for outcome in contributor.get("top_outcomes", []):
             key = outcome_key(outcome["name"])
-            if key not in outcomes:
+            if key in primary_keys:
+                continue
+            # A contributor-only outcome under 1% (Polymarket's balance-of-power
+            # "Other", 0.05% on 2026-11-02) would be one venue's 0% row.
+            if is_residual(outcome):
+                dropped += 1
+            elif key not in outcomes:
                 outcomes[key] = copy.deepcopy(outcome)
+        counts.append(contributor.get("outcome_count", 0) - dropped)
     card["top_outcomes"] = list(outcomes.values())
-    card["outcome_count"] = max(
-        len(outcomes), *(c.get("outcome_count", 0) for c in contributors)
-    )
+    card["outcome_count"] = max([len(outcomes), *counts])
     sources = sorted({c["source"] for c in contributors})
     card.update(
         sources=sources,
