@@ -220,3 +220,84 @@ def test_balance_outcomes_align_by_chamber_and_party(left, right):
     from app.utils.midterms_collection import outcome_key
 
     assert outcome_key(left) == outcome_key(right)
+
+
+@pytest.mark.asyncio
+async def test_bounded_twin_read_keeps_races_visible_with_primary_prices(monkeypatch):
+    from app.routes import events, futures
+    from app.services.midterms_collection import load_midterms_cards
+    from app.utils.midterms_collection import present_midterms_sections
+
+    def market(mid, name, source, probabilities):
+        return SimpleNamespace(
+            id=mid,
+            name=name,
+            source=source,
+            group_id=None,
+            settled_at=None,
+            outcomes=[
+                SimpleNamespace(
+                    name=n,
+                    current_probability=p,
+                    is_winner=False,
+                    resolution_source=None,
+                )
+                for n, p in zip(("Susan Collins", "Graham Platner"), probabilities)
+            ],
+        )
+
+    primary = [
+        market(109085, "Maine Senate winner?", "kalshi", (0.52, 0.48)),
+        market(109088, "Michigan Senate winner?", "kalshi", (0.55, 0.45)),
+    ]
+    candidates = [market(200000, "Maine Senate winner?", "polymarket", (0.70, 0.30))]
+    candidates += [
+        market(200001 + i, "Unrelated Senate winner?", "polymarket", (0.60, 0.40))
+        for i in range(99)
+    ]
+
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self.rows
+
+    class Database:
+        def __init__(self):
+            self.reads = iter((primary, candidates))
+
+        async def execute(self, statement):
+            return Result(next(self.reads))
+
+    def serialize(market, withheld):
+        result = card(
+            market.id,
+            market.source,
+            tuple(o.current_probability for o in market.outcomes),
+        )
+        result["name"] = market.name
+        return result
+
+    async def withheld_prices(db, markets):
+        return {}
+
+    monkeypatch.setattr(events, "_format_futures_for_search", serialize)
+    monkeypatch.setattr(
+        futures, "withheld_price_outcome_ids_for_markets", withheld_prices
+    )
+    cards, twins, report = await load_midterms_cards(Database(), [109085, 109088])
+    assert all(row["twin_state"] == "unknown" for row in report)
+    assert report[0]["polymarket_twin_ids"] == [200000]
+    assert twins == {}
+    sections, withheld = present_midterms_sections(members(), cards, twins)
+    races = sections[2]["members"]
+    assert [race["id"] for race in races] == [109085, 109088]
+    assert [race["card"]["top_outcomes"][0]["probability"] for race in races] == [
+        0.52,
+        0.55,
+    ]
+    assert all(race["card"]["sources"] == ["kalshi"] for race in races)
