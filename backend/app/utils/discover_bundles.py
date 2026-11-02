@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from app.utils.congress_control_story import (
     US_CONGRESS_CONTROL_QUESTION,
@@ -2336,3 +2336,85 @@ def assemble_swings_theme_bundles(
             continue
         output.append(item)
     return output
+
+
+# ── Round-up: "NFL division front-runners" (#10354 producer, #10357 card) ─────
+
+#: Alex, 2026-10-06 (Fable R4): the footer wording, accepted for now. "of 8" is
+#: always true when the card exists, because the card exists only when all
+#: eight registered divisions blend.
+NFL_DIVISION_ROUNDUP_TITLE = "NFL division front-runners"
+NFL_DIVISION_ROUNDUP_FOOTER = "Bain Luck blend · the 4 closest of 8 divisions"
+NFL_DIVISION_ROUNDUP_ROWS = 4
+NFL_DIVISION_ROUNDUP_ID = "roundup:nfl-division-front-runners"
+
+
+def assemble_nfl_division_roundup(
+    blends: list[Any],
+    refusals: list[Any],
+    *,
+    collection_ref: Optional[dict[str, Any]] = None,
+    score: float = 0.0,
+) -> Optional[dict[str, Any]]:
+    """The round-up feed item, or None.
+
+    MEMBERSHIP (Alex's rulings, R4 "Rulings so far"; selection per #10354):
+    every one of the eight registered divisions must have a verified blend from
+    both venues (`nfl_division_register.compose_register`). One refusal and
+    there is no card; the refusal is a matching defect for the caller to
+    report, never a card state. Then the four divisions with the LOWEST leader
+    probability are chosen (the closest races; a tie keeps register order) and
+    listed HIGHEST first.
+
+    Every number is the blend `compose_register` produced; nothing here blends,
+    rounds or re-weights. A row is as old as its leader's oldest contributing
+    price. `collection_ref` is the container this card opens; without one the
+    web card refuses to draw (it must open what it shows), so a missing ref is
+    passed through as None rather than invented.
+    """
+    from app.utils.nfl_division_register import NFL_DIVISION_REGISTER
+
+    if refusals or len(blends) != len(NFL_DIVISION_REGISTER):
+        return None
+    order = {p.division: i for i, p in enumerate(NFL_DIVISION_REGISTER)}
+    if {b.division for b in blends} != set(order):
+        return None
+
+    closest = sorted(blends, key=lambda b: (b.leader.probability, order[b.division]))[:NFL_DIVISION_ROUNDUP_ROWS]
+    shown = sorted(closest, key=lambda b: (-b.leader.probability, order[b.division]))
+
+    rows = []
+    for b in shown:
+        lead = b.leader
+        rows.append({
+            "market_id": int(b.kalshi_market_id),
+            "label": f"{b.division}: {lead.club}",
+            "probability": float(lead.probability),
+            "observed_at": lead.observed_at.isoformat() if lead.observed_at else None,
+            "pair": {"kalshi_market_id": int(b.kalshi_market_id), "polymarket_market_id": int(b.polymarket_market_id)},
+        })
+    member_ids = [r["market_id"] for r in rows]
+    return {
+        "type": "bundle",
+        "score": float(score),
+        "reason": NFL_DIVISION_ROUNDUP_TITLE,
+        "headline": NFL_DIVISION_ROUNDUP_TITLE,
+        "context_summary": None,
+        "data": {
+            "id": NFL_DIVISION_ROUNDUP_ID,
+            "title": NFL_DIVISION_ROUNDUP_TITLE,
+            "kind": "roundup",
+            "story_key": NFL_DIVISION_ROUNDUP_ID,
+            "shared_question": None,
+            "item_count": len(rows),
+            "member_ids": member_ids,
+            "items": [],
+            "collection_ref": collection_ref,
+            "roundup": {
+                "kicker": "Round-up",
+                "tag": "NFL",
+                "footer": NFL_DIVISION_ROUNDUP_FOOTER,
+                "rows": rows,
+            },
+        },
+    }
