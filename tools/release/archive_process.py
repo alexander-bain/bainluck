@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -24,7 +25,7 @@ def archive_path(path):
     pieces=Path(path).parts
     if path.startswith(('.claude/handoff/','artifacts/')):
         return True
-    if any(piece.startswith('YOUR-TURN') and piece!='YOUR-TURN.md' for piece in pieces):
+    if any(re.fullmatch(r'YOUR-TURN(?:-REPAIR-STEPS)?-ARCHIVE-[0-9][A-Za-z0-9_.-]*|YOUR-TURN-[0-9]{8}\.md|YOUR-TURN\.md\.(?:bak|backup)(?:[-.].*)?',piece) for piece in pieces):
         return True
     return any(piece.startswith('LANE-') and piece.endswith('.lock') for piece in pieces)
 
@@ -37,7 +38,7 @@ def git(*args, input=None, env=None, check=True):
 def files(source):
     found=[]
     targets=[source/'.claude/handoff',source/'artifacts']
-    targets.extend(p for p in source.iterdir() if p.name.startswith('YOUR-TURN') and p.name!='YOUR-TURN.md')
+    targets.extend(p for p in source.iterdir() if p.name.startswith('YOUR-TURN') and archive_path(p.name))
     targets.extend(source.glob('LANE-*.lock'))
     for target in targets:
         if target.is_file() or target.is_symlink():
@@ -57,25 +58,44 @@ def fingerprint(path):
 
 
 
-def scan_archive(candidates,source):
+def snapshot_rows(candidates,source,scan):
+    rows=[]
+    for index,path in enumerate(candidates):
+        relative=path.relative_to(source).as_posix()
+        if not archive_path(relative):continue
+        if path.stat(follow_symlinks=False).st_size>95*1024*1024:
+            raise ValueError('archive includes a file requiring Git LFS; no source is removed')
+        snapshot=scan/(str(index)+path.suffix)
+        if path.is_symlink():
+            snapshot.write_bytes(os.readlink(path).encode())
+            mode='120000'
+        else:
+            shutil.copyfile(path,snapshot)
+            mode='100755' if path.stat().st_mode & stat.S_IXUSR else '100644'
+        rows.append({'path':relative,'snapshot':snapshot,'sha256':fingerprint(snapshot),'mode':mode})
+    return rows
+
+
+def verify_sources(rows,source):
+    for row in rows:
+        if fingerprint(source/row['path'])!=row['sha256']:
+            raise RuntimeError('archive source changed after snapshot; no source removed')
+
+
+def scan_archive(candidates,source,scan=None):
     scanner=shutil.which('gitleaks')
     if not scanner:raise ValueError('gitleaks is required before publishing ignored archive bytes')
-    # Inspect a private temporary copy before any archive ref or public push.
-    # The original runner inboxes and artifacts are only read.
-    with tempfile.TemporaryDirectory(prefix='release-archive-scan-') as temp:
-        scan=Path(temp)/'scan';scan.mkdir(mode=0o700)
-        for index,path in enumerate(candidates):
-            if path.is_symlink():
-                (scan/f'{index}.symlink').write_text(os.readlink(path))
-            elif path.is_file():
-                if path.stat().st_size>95*1024*1024:
-                    raise ValueError('archive includes a file requiring Git LFS; no source is removed')
-                shutil.copyfile(path,scan/(str(index)+path.suffix))
-        result=subprocess.run([scanner,'dir',str(scan),'--redact','--no-banner','--exit-code','1',
-                               '--report-format','json','--report-path',str(Path(temp)/'redacted-scan.json')],
-                              text=True,capture_output=True)
-        if result.returncode!=0:
-            raise ValueError('gitleaks did not pass the archive; no ref is published and no source removed')
+    if scan is None:
+        with tempfile.TemporaryDirectory(prefix='release-archive-scan-') as temp:
+            return scan_archive(candidates,source,Path(temp))
+    scan.mkdir(mode=0o700,exist_ok=True)
+    rows=snapshot_rows(candidates,source,scan)
+    result=subprocess.run([scanner,'dir',str(scan),'--redact','--no-banner','--exit-code','1',
+                           '--report-format','json','--report-path',str(scan.parent/'redacted-scan.json')],
+                          text=True,capture_output=True)
+    if result.returncode!=0:
+        raise ValueError('gitleaks did not pass the archive; no ref is published and no source removed')
+    return rows
 
 
 def main():
@@ -108,25 +128,18 @@ def main():
         raise ValueError('source root must be the paused primary checkout')
     candidates=files(source)
     if not candidates:raise ValueError('archive source is empty')
-    scan_archive(candidates,source)
     receipt=[]
     with tempfile.TemporaryDirectory(prefix='release-process-index-') as temp:
         env={**os.environ,'GIT_INDEX_FILE':str(Path(temp)/'index')}
         git('read-tree','origin/master',env=env)
-        for path in candidates:
-            relative=path.relative_to(source).as_posix()
-            if not archive_path(relative):continue
-            if path.stat(follow_symlinks=False).st_size>95*1024*1024:
-                raise ValueError('archive includes a file requiring Git LFS; no source is removed')
-            digest=fingerprint(path)
-            if path.is_symlink():
-                oid=git('hash-object','-w','--stdin',input=os.readlink(path)).stdout.strip()
-                mode='120000'
-            else:
-                oid=git('hash-object','-w','--',str(path)).stdout.strip()
-                mode='100755' if path.stat().st_mode & stat.S_IXUSR else '100644'
-            git('update-index','--add','--cacheinfo',mode,oid,relative,env=env)
-            receipt.append({'path':relative,'sha256':digest,'oid':oid})
+        rows=scan_archive(candidates,source,Path(temp)/'scan')
+        for row in rows:
+            # Hash the exact private bytes Gitleaks scanned, never a fresh read
+            # of an original process file that could have changed meanwhile.
+            oid=git('hash-object','-w','--',str(row['snapshot'])).stdout.strip()
+            git('update-index','--add','--cacheinfo',row['mode'],oid,row['path'],env=env)
+            receipt.append({'path':row['path'],'sha256':row['sha256'],'oid':oid})
+        verify_sources(receipt,source)
         tree=git('write-tree',env=env).stdout.strip()
         commit=git('commit-tree',tree,'-p','origin/master',input='Archive retired Day 0 process files\n').stdout.strip()
         git('update-ref','refs/heads/process-archive',commit,'0'*40)
@@ -135,9 +148,7 @@ def main():
     if remote!=commit:raise RuntimeError('archive push was not verified; no source removed')
     # Revalidate the complete snapshot before any removal, then only remove
     # retired process paths. Current YOUR-TURN.md and source code never qualify.
-    for row in receipt:
-        if fingerprint(source/row['path'])!=row['sha256']:
-            raise RuntimeError('archive source changed after snapshot; no source removed')
+    verify_sources(receipt,source)
     for row in receipt:
         (source/row['path']).unlink()
     for target in (source/'.claude/handoff',source/'artifacts'):
@@ -150,7 +161,8 @@ def main():
     # Tracked removals are proposed in this isolated PR branch. They do not
     # mutate the shared master index or branch.
     tracked=git('ls-files','-z').stdout.split('\0')
-    to_remove=[path for path in tracked if path and archive_path(path)]
+    archived={row['path'] for row in receipt}
+    to_remove=[path for path in tracked if path in archived]
     if to_remove:git('rm','-r','--',*to_remove)
     ignore=REPO/'.gitignore'
     with ignore.open('a') as stream:
