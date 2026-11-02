@@ -32,6 +32,7 @@ import yaml
 
 from tests.test_ci_matrix_required_contexts import (
     RUNS,
+    LIVE,
     REUSE,
     SCOPE_RUNS,
     _validate_backend_partition,
@@ -41,9 +42,14 @@ from tests.test_ci_supersede_concurrency import DEPLOY_NEEDS
 ROOT = Path(__file__).resolve().parents[2]
 CI = Path(os.environ.get("CI_WORKFLOW_PATH") or ROOT / ".github/workflows/ci.yml")
 DEPLOY_IF = (
-    "github.ref == 'refs/heads/master' && github.event_name == 'push' && "
-    "needs.release-required.outputs.required != 'false'"
+    "always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && "
+    "needs.release-required.result == 'success' && needs.release-required.outputs.required != 'false' && "
+    "needs.change-scope.result == 'success' && needs.fast-gate.result == 'success' && "
+    "needs.backend-tests.result == 'success' && needs.e2e-contract.result == 'success' && "
+    "(needs.change-scope.outputs.live == 'true' || (needs.shard-completeness.result == 'success' && "
+    "needs.search-recall.result == 'success' && needs.frontend-build.result == 'success'))"
 )
+
 # Exact approved shell grammar prevents overwriting FILES, component-only tests
 # or swallowing assertions while leaving the expected command as a substring.
 BACKEND_COMMAND = """set -o pipefail
@@ -62,7 +68,7 @@ python -m pytest $FILES -q --durations=0
 # installed-package, test and production environments are equivalent.
 JOB_ENV_KEYS = {
     "database-integration": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
-    "deploy": {"HEROKU_API_KEY"},
+    "deploy": {"HEROKU_API_KEY", "GH_TOKEN"},
 }
 STEP_ENV_KEYS = {
     ("change-scope", "Validate prior exact-commit evidence"): {"GH_TOKEN"},
@@ -112,6 +118,23 @@ STEP_ENV_KEYS = {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
     },
+}
+
+# Live eligibility and attempt guards carry only these reviewed inputs.
+for _guard_job in ("fast-gate", "backend-tests", "e2e-contract", "golden-baseline-floor", "deploy"):
+    STEP_ENV_KEYS[(_guard_job, "Require this run's change-scope attempt")] = {
+        "SCOPE_ATTEMPT", "CURRENT_ATTEMPT",
+    }
+for _fast_job in ("fast-gate", "deploy"):
+    STEP_ENV_KEYS[(_fast_job, "Recheck current fast eligibility")] = {
+        "GH_TOKEN", "SCOPE_ATTEMPT", "SCOPE_HEAD",
+    }
+STEP_ENV_KEYS[("change-scope", "Extend change-scope with impacted tests for live-path")] = {
+    "GH_TOKEN", "RELEASE_LOOP_FAST_ENABLED", "PR_NUMBER", "PR_BASE", "PR_HEAD", "PUSH_BASE",
+}
+STEP_ENV_KEYS[("change-scope", "Record the deployed gate for the watchdog")] = {"LIVE_MODE"}
+STEP_ENV_KEYS[("fast-gate", "Python 3.11 syntax, smoke test and change-scope selected tests")] = {
+    "SELECTED_TESTS",
 }
 
 # Receipt values are data, never workflow-expression interpolation in shell.
@@ -205,7 +228,7 @@ def _validate_current_composed_promotion(
     _validate_backend_partition(jobs)
     deploy = jobs["deploy"]
     assert set(deploy["needs"]) == DEPLOY_NEEDS, "all broad gates precede promotion"
-    assert deploy.get("if") == DEPLOY_IF, "no always/failure/cancelled bypass"
+    assert deploy.get("if") == DEPLOY_IF, "only the guarded full or live promotion paths"
     assert "if" not in jobs["backend-tests"], "backend matrix must expand"
     for name in DEPLOY_NEEDS | {"change-scope", "database-integration", "deploy"}:
         job = jobs[name]
@@ -217,7 +240,9 @@ def _validate_current_composed_promotion(
             assert "artifact" not in str(step.get("uses", "")).lower() or (
                 name in ("change-scope", "backend-tests")
                 and step.get("uses") == "actions/upload-artifact@v4"
-                and step.get("name") == "Publish compose checkout provenance"
+                and (step.get("name") == "Publish compose checkout provenance"
+                     or (name == "change-scope" and step.get("with", {}).get("name")
+                         == "release-loop-mode-${{ github.run_id }}-${{ github.run_attempt }}"))
             ), "only explicit compose test-provenance upload; no build artifact credit"
     for name in ("backend-tests", "shard-completeness", "database-integration"):
         job = jobs[name]
@@ -240,7 +265,7 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 9, "new source preparation needs review"
+    assert len(backend["steps"]) == 10, "new source preparation needs review"
     # #10090 attempt163, the one reviewed addition: a test binary supplied
     # outside the checkout. It runs no git and installs nothing, so it cannot
     # change the source, the dependencies or the test selection under test.
@@ -261,17 +286,17 @@ def _validate_current_composed_promotion(
         "EVENT_FRAME_REDIS_SERVER",
     ], exported
     verifier = jobs["shard-completeness"]
-    assert verifier.get("if") == SCOPE_RUNS
+    assert verifier.get("if") == f"{SCOPE_RUNS} && {LIVE}"
     assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
     assert set(aggregate["needs"]) == {"change-scope", "database-integration"}
-    assert aggregate["if"] == f"always() && {SCOPE_RUNS}"
+    assert aggregate["if"] == f"always() && {SCOPE_RUNS} && {LIVE}"
     for name in ("frontend-build", "e2e-contract", "release-required", "deploy"):
         _current_checkout(jobs[name])
-    assert jobs["frontend-build"].get("if") is None
+    assert jobs["frontend-build"].get("if") == LIVE
     assert jobs["e2e-contract"].get("if") is None
-    assert len(deploy["steps"]) == 2, "no artifact substitution step"
-    assert _current_checkout(deploy) is deploy["steps"][0]
+    assert len(deploy["steps"]) == 4, "no artifact substitution step"
+    assert _current_checkout(deploy) is deploy["steps"][1]
     program = _step(deploy, "Deploy to Heroku")["run"]
     lines = [
         s.strip()

@@ -530,7 +530,7 @@ def test_reuse_representation_refuses_lost_or_widened_guards(mutation):
 def test_receipt_values_are_environment_data_never_interpolated_shell():
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
     for name in ("backend-tests", "database-integration", "shard-completeness", "frontend-build"):
-        receipt = jobs[name]["steps"][0]
+        receipt = next(step for step in jobs[name]["steps"] if step.get("name") == RECEIPT)
         assert receipt["name"] == RECEIPT
         assert "${{" not in receipt["run"]
         assert receipt["env"] == {

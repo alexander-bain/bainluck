@@ -20,11 +20,13 @@ class LivePathTests(unittest.TestCase):
     def test_push_requires_all_associated_prs_to_be_labeled_and_merged(self):
         m = self.load()
         good = {'merged_at': '2026-11-02T10:00:00Z', 'base': {'ref': 'master'}, 'labels': [{'name': 'live-path'}], 'merge_commit_sha': 'abc'}
-        self.assertTrue(m.is_live_event('push', {}, [good], 'abc'))
-        self.assertFalse(m.is_live_event('push', {}, [], 'abc'))
-        self.assertFalse(m.is_live_event('push', {}, [good, {**good, 'labels': []}], 'abc'))
-        self.assertFalse(m.is_live_event('push', {}, [good], 'other'))
-        self.assertFalse(m.is_live_event('push', {}, [{**good, 'merged_at': None}], 'abc'))
+        self.assertTrue(m.is_live_event('push', {'ref': 'refs/heads/master'}, [good], 'abc'))
+        self.assertFalse(m.is_live_event('push', {'ref': 'refs/heads/integrator/compose-test'}, [good], 'abc'))
+        self.assertFalse(m.is_live_event('push', {}, [good], 'abc'))
+        self.assertFalse(m.is_live_event('push', {'ref': 'refs/heads/master'}, [], 'abc'))
+        self.assertFalse(m.is_live_event('push', {'ref': 'refs/heads/master'}, [good, {**good, 'labels': []}], 'abc'))
+        self.assertFalse(m.is_live_event('push', {'ref': 'refs/heads/master'}, [good], 'other'))
+        self.assertFalse(m.is_live_event('push', {'ref': 'refs/heads/master'}, [{**good, 'merged_at': None}], 'abc'))
 
     def test_pull_request_label_is_recomputed_from_current_api(self):
         m = self.load()

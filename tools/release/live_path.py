@@ -31,7 +31,7 @@ def is_live_event(event_name, event, associated_prs, sha):
         return (pr.get('state') == 'open' and pr.get('head', {}).get('sha') == sha
                 and pr.get('base', {}).get('ref') == 'master'
                 and any(x.get('name') == 'live-path' for x in pr.get('labels', [])))
-    if event_name != 'push' or not associated_prs:
+    if event_name != 'push' or event.get('ref') != 'refs/heads/master' or not associated_prs:
         return False
     return all(p.get('merged_at') and p.get('base', {}).get('ref') == 'master'
                and p.get('merge_commit_sha') == sha
