@@ -68,9 +68,17 @@ The operation owner's v2 interface is implemented in separate local components:
 - `dnpl_writer_verifier`: a pinned standalone child reads releases, slug source,
   formation and dynos for both apps. It receives a fresh nonce and exact binding
   from its parent; raw files are evidence, not permission. Its eight logical
-  observations include four Heroku CLI invocations: the eventual operation's
-  request budget must account for CLI internal requests, not assume eight HTTP
-  requests. This code has not been invoked against production.
+  observations now use at most eight direct TLS GET attempts, debited before
+  connect/send. There are no CLI calls, proxies, redirects, retries or pagination.
+  Formation/dyno lists require HTTP 200 with no nonempty Next-Range; Content-Range
+  alone is not truncation. Releases request only the newest five (descending),
+  permit 206/Next-Range without following it, and still require the first row to
+  be the current succeeded bound release. Each response is at most 1 MiB with
+  a 64 KiB header bound and a ten-second asynchronous request deadline; the
+  existing parent 100-second child timeout remains. The child receives only
+  the explicit Heroku token and optional TLS trust-file/directory settings,
+  never PostgreSQL/Redis credentials. Raw files and all identity/freshness checks
+  are unchanged. This code has not been invoked against production.
 - `dnpl_writer_observations`: owns child execution and independently parses raw
   reads. It requires converged commits, exact releases/slugs, no writer or
   unknown active process, and unchanged dyno releases. The entire collection
@@ -170,8 +178,11 @@ Specific readback requires a separately prepared explicit plan and renewed
 operation qualification; a new directory is not proof of safety or continuity.
 
 The maximum plan has sixteen verifier invocations (pre/post for eight steps).
-The operation owner must budget the verifier's actual CLI/API requests, including
-CLI internal calls, rather than call this an eight-request operation. Each
+Each verifier has a hard maximum of eight HTTP attempts, so the maximum plan
+has at most 128 verifier GET attempts (64 for four steps). These counts exclude
+launcher credential retrieval and any other separately scoped provider reads.
+A failed attempt still counts; neither status, redirect nor pagination causes
+another send. Each
 collection keeps the existing timeout/freshness checks; elapsed time is not a
 late-command drain proof. Invocation wiring requires its own focused review and
 release gates before any attended use.
