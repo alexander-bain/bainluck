@@ -5,6 +5,7 @@ import json, netrc, os, re, sys, time, urllib.request
 OUT = sys.argv[1]
 tok = netrc.netrc(os.path.expanduser("~/.netrc")).authenticators("api.heroku.com")[2]
 cur = {}; streak = 0; best = 0
+SILENT_S = 180
 # Resume the streak from this log's last line when it is recent (a monitor re-arm
 # must not reset a streak in progress): minute HH:MM within 3 minutes of now (UTC).
 try:
@@ -57,9 +58,16 @@ while True:
             headers={"Accept": "application/vnd.heroku+json; version=3", "Authorization": "Bearer " + tok, "Content-Type": "application/json"})
         url = json.loads(urllib.request.urlopen(req, timeout=30).read())["logplex_url"]
         with urllib.request.urlopen(url, timeout=150) as r:
+            # A stream that keeps delivering other lines never times out; 11/01 one went
+            # 2.5 h with no headline-clock line and no error. Reconnect after SILENT_S.
+            last_clock = time.time()
             for raw in r:
                 s = raw.decode("utf-8", "replace")
-                if "headline-clock" not in s: continue
+                if "headline-clock" not in s:
+                    if time.time() - last_clock > SILENT_S:
+                        print("stream silent %ds: reconnecting" % SILENT_S, flush=True); break
+                    continue
+                last_clock = time.time()
                 m = re.search(r"\]: (\{.*\})\s*$", s)
                 try: msg = json.loads(m.group(1))["message"] if m else s
                 except Exception: msg = s
