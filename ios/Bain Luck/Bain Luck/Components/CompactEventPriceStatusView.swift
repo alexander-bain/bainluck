@@ -19,8 +19,21 @@ nonisolated struct CompactEventPriceStatus: Equatable {
     /// warning glyph and tint, so a failure is still seen without the words;
     /// the headline's own phase line already reads "last recorded" (#9483).
     var statusInDetails: Bool = false
+    /// #10090 (Alex 69, build 95) — the EKG under the price is the live signal
+    /// and its tap opens these same details, so beside it the disclosure draws
+    /// no info mark and no receipt check. A state worth seeing (waiting,
+    /// fallback refresh, interruption) keeps its words and glyph; routine
+    /// delivery draws nothing at all.
+    var ekgDrawn: Bool = false
 
-    var isVisible: Bool { isDisclosure || status != .hidden }
+    var isVisible: Bool {
+        if isDisclosure && ekgDrawn { return !glyph.isEmpty }
+        return isDisclosure || status != .hidden
+    }
+
+    /// The control has nothing to draw beside the EKG: it keeps no room, tap
+    /// or VoiceOver stop, and stays only as the details' popover anchor.
+    var collapsesBesideEkg: Bool { isDisclosure && ekgDrawn && !isVisible }
 
     /// Routine status lives in details; uncertainty remains beside the price,
     /// except where the whole status lives in details (#11285).
@@ -29,14 +42,14 @@ nonisolated struct CompactEventPriceStatus: Equatable {
         return !isDisclosure || (status != .live && status != .hidden)
     }
 
-    var showsTrailingInfo: Bool { isDisclosure && showsTitle }
+    var showsTrailingInfo: Bool { isDisclosure && showsTitle && !ekgDrawn }
 
     var title: String { status.title }
 
     /// Only proven delivery is green; every other state is neutral or a warning.
     var glyph: String {
         if isDisclosure && statusInDetails && status == .interrupted { return "exclamationmark.triangle.fill" }
-        if isDisclosure && !showsTitle { return "info.circle" }
+        if isDisclosure && !showsTitle { return ekgDrawn ? "" : "info.circle" }
         switch status {
         case .hidden: return ""
         case .live: return "circle.fill"
@@ -51,8 +64,10 @@ nonisolated struct CompactEventPriceStatus: Equatable {
 
     /// A receipt can be acknowledged only while the reader can see it and the
     /// status is not claiming a failure. Same gate as `VisibleLivePriceStatusView`.
-    static func acknowledgesReceipts(status: LiveUpdateStatus, sceneActive: Bool) -> Bool {
-        sceneActive && status != .hidden && status != .interrupted
+    /// Beside a drawn EKG the heartbeat is the acknowledgement (Alex 69).
+    static func acknowledgesReceipts(status: LiveUpdateStatus, sceneActive: Bool,
+                                     ekgDrawn: Bool = false) -> Bool {
+        !ekgDrawn && sceneActive && status != .hidden && status != .interrupted
     }
 }
 
@@ -67,6 +82,8 @@ struct CompactEventPriceStatusView: View {
     var isDisclosure: Bool = false
     /// #11285 — every state behind the control (`CompactEventPriceStatus`).
     var statusInDetails: Bool = false
+    /// #10090 (Alex 69) — the EKG is drawn beside it (`CompactEventPriceStatus`).
+    var ekgDrawn: Bool = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cue = LivePriceReceiptCue()
@@ -79,7 +96,7 @@ struct CompactEventPriceStatusView: View {
         let reduceMotion: Bool
     }
 
-    private var presentation: CompactEventPriceStatus { CompactEventPriceStatus(status: status, isDisclosure: isDisclosure, statusInDetails: statusInDetails) }
+    private var presentation: CompactEventPriceStatus { CompactEventPriceStatus(status: status, isDisclosure: isDisclosure, statusInDetails: statusInDetails, ekgDrawn: ekgDrawn) }
 
     private var tint: Color {
         if acknowledged || (!isDisclosure && status == .live) { return DS.emerald }
@@ -124,7 +141,7 @@ struct CompactEventPriceStatusView: View {
                 withTransaction(reset) { acknowledged = false }
                 let show = cue.consume(sequence: sequence, receivedAt: receivedAt,
                     enabled: CompactEventPriceStatus.acknowledgesReceipts(status: status,
-                        sceneActive: scenePhase == .active))
+                        sceneActive: scenePhase == .active, ekgDrawn: ekgDrawn))
                 guard show else { return }
                 // A static glyph/tint swap reads with Reduce Motion too; only the
                 // fade back is optional. Finite, once per accepted receipt.
