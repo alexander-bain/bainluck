@@ -40,7 +40,7 @@ from tests.test_blend_preview_display_before_persist_195 import (
 from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs  # noqa: F401
 from tests.test_dnpl_redis_authority_10090 import initial, rig  # noqa: F401
 from tests.test_fresh_observation_preview_10090 import acknowledged_rig
-from tests.test_live_blend_refresh import _one_event_refresher
+from tests.test_live_blend_refresh import _one_event_refresher, _switchboard_without_a_socket
 from tests.test_preview_state_join_10090 import (
     EVENT, K_OUTCOME, base_bag, kalshi_input, kalshi_trace, propose, registry, stage, wire,
 )
@@ -66,7 +66,12 @@ def _no_hostname_lookup(monkeypatch, request):
     A CI runner's ``getaddrinfo`` can stall past the 250 ms observation budget
     while a laptop is refused at once, so a rig that opens a socket passes here
     and fails there. Fail any lookup fast, and name it.
+
+    The speed-switch trial layer (on by default since the settings freeze) is
+    not under test here: its background read refuses without a socket and
+    every switch reads OFF, as with no trial running.
     """
+    _switchboard_without_a_socket(monkeypatch)
     if "redis_kwargs" in request.fixturenames:
         yield
         return

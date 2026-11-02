@@ -41,9 +41,9 @@ final drain has returned.
 PRE-PING (#10090). On asyncpg the pool's pre-ping is three round trips per
 checkout (BEGIN, ``;``, ROLLBACK), and a Kalshi price phase checks out once, so
 three of the five round trips its first statement waits on are the ping.
-``WS_CONSUMER_POOL_PRE_PING`` (read once at import; default on, today's
-behaviour) turns it off for this engine only, never the web or Celery engines.
-Off, a connection the server closed is found by the operation's first
+It is off for this engine only, never the web or Celery engines: production since
+2026-10-30, the default since the settings freeze (``WS_CONSUMER_POOL_PRE_PING=1``,
+read once at import, turns it back on). Off, a connection the server closed is found by the operation's first
 statement: SQLAlchemy invalidates it on the disconnect error, the session rolls
 back through the task factory (nothing commits or publishes), and the next
 checkout connects afresh. ``pool_recycle`` is unchanged.

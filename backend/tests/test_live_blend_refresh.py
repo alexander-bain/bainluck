@@ -14,6 +14,8 @@ that would silently un-ship it, each with a test below:
   streaming that is the dyno's actual job (gotcha #42, containment).
 """
 
+import os
+
 import pytest
 
 from app.tasks.live_blend_refresh import (
@@ -1400,6 +1402,22 @@ def _refuse_redis_without_a_socket(monkeypatch):
         return aioredis.Redis(connection_pool=pool, retry=Retry(NoBackoff(), 0))
 
     monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", client)
+    _switchboard_without_a_socket(monkeypatch)
+
+
+def _switchboard_without_a_socket(monkeypatch):
+    """The speed-switch trial layer is on by default since the settings freeze
+    (SPEED_SWITCH_TRIALS, production since 2026-10-29), so a refresh's first
+    switch read schedules a background Redis read. This rig has no Redis: the
+    switchboard's read refuses at once, with no lookup or socket, and every
+    switch reads OFF exactly as it does when no trial is running."""
+    from app.tasks import speed_switches as sw
+
+    def refused():
+        raise ConnectionRefusedError(61, "no Redis in the unit rig")
+
+    monkeypatch.setattr(sw, "_SWITCHES", sw.SpeedSwitches(read=refused))
+    monkeypatch.setattr(sw, "_SWITCHES_PID", os.getpid())
 
 
 def _one_event_refresher(monkeypatch, session, **kwargs):

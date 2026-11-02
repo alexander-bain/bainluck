@@ -123,7 +123,9 @@ async def test_new_events_publish_before_locked_persistence_without_enrollment(
             assert seen[-1]["event_id"] == eid
             assert seen[-1]["preview"]["kind"] == "blend"
             assert seen[-1]["preview"]["pending"] == {source: .9}
-            assert 0 < seen[-1]["preview"]["ttl_ms"] <= 60000
+            # The default max-uncommitted window is 180 s since the settings freeze
+            # (decision D, production since v6091; blend_preview.DEFAULT_MAX_UNCOMMITTED_S).
+            assert 0 < seen[-1]["preview"]["ttl_ms"] <= 180000
         assert len(seen) == 2
         assert not committed
         assert worker._lock_retry == {15333395, 15333999}

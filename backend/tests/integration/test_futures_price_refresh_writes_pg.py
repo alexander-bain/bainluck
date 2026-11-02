@@ -2603,10 +2603,16 @@ async def _tail_population(db, tail, *, exclude_shown=False):
 
 
 async def test_tail_population_is_the_tokened_markets_the_game_socket_window_does_not_hold(
-    poll_db, tail_wired
+    poll_db, tail_wired, monkeypatch
 ):
     import json
 
+    from app.tasks import polymarket_ws
+
+    # This geometry is the 6 h game-socket window (WIN inside it, BAND in its
+    # hand-off band, FAR past it); production's `PM_WS_UPCOMING_HOURS` is 1 h
+    # since the settings freeze, so pin the window this test is drawn for.
+    monkeypatch.setattr(polymarket_ws, "PM_WS_UPCOMING_HOURS", 6)
     db, tail = poll_db, tail_wired
     t4 = {"tier": 4}
     await _vp_market(db, source="polymarket", ext="T-U1", legs=[("0xu1_yes", False, None), ("0xu1_no", False, None)],
@@ -2807,9 +2813,13 @@ async def test_polymarket_population_takes_the_socket_games_props_only_when_swit
                      legs=[("0xf01", False, None)], metadata=label("total", v=999))
     await db.commit()
 
-    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
+    # Off is an explicit "0": the switch is on by default since the settings
+    # freeze (production since 2026-11-01, docs/live-settings.md).
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     assert await _vp_population(db, "polymarket", open_arm=False) == set()
     monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    assert await _vp_population(db, "polymarket", open_arm=False) == {"0xp01"}
+    monkeypatch.delenv("PM_WS_PROPS_TO_POLL", raising=False)
     assert await _vp_population(db, "polymarket", open_arm=False) == {"0xp01"}
 
 
