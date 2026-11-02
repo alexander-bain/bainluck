@@ -92,6 +92,7 @@ def _playoff_market_row():
     return SimpleNamespace(
         id=9001,
         name="Patriots to Make the Playoffs",
+        status="open",
         external_id="kxnflplayoff-ne-2026",
         market_tier=2,
         market_type="playoffs",
@@ -526,7 +527,6 @@ class TestTheIntentTravels:
         assert "New England Patriots" in [
             s.get("text") for s in body["suggestions"]
         ]
-
 
 
 class TestTheSameDayAnchorSurvivesEveryClock:

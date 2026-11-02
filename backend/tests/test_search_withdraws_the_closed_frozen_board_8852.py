@@ -120,9 +120,22 @@ def test_every_search_surface_asks_the_predicate():
     src = Path(events_route.__file__).read_text()
     union = src[src.index("def _futures_card_has_no_answer("):]
     union = union[: union.index("\ndef ")]
-    assert "or _search_market_is_past_and_frozen(market)" in union
-    assert "and not _search_market_is_past_and_frozen(m)\n" in src
+    # #11616 O2: each site also hands over the division labels it holds, so a
+    # result the grid put out cannot keep a frozen board (judged like the card).
+    assert (
+        "or _search_market_is_past_and_frozen(market, out_division_labels=out_division_labels)"
+        in union
+    )
+    # #11616 O1: the headline asks the result-blind form — a closed board never
+    # headlines, even one kept elsewhere for its result.
+    assert "and not _search_market_is_closed_and_frozen(m)\n" in src
     typeahead = src[src.index("for market in ta_futures_ranked:"):]
     head = typeahead[: typeahead.index("if not _admit_search_future(")]  # #9404
-    assert "if _search_market_is_past_and_frozen(market):\n            continue" in head
-    assert src.count("_search_market_is_past_and_frozen(") == 4  # def + 3 call sites
+    assert (
+        "if _search_market_is_past_and_frozen(\n"
+        "            market, out_division_labels=_ta_out_divisions.get(market.id)\n"
+        "        ):\n            continue"
+    ) in head
+    assert src.count("_search_market_is_past_and_frozen(") == 3  # def + 2 call sites
+    # def + the headline + the builder's results-only draw + the result-aware form
+    assert src.count("_search_market_is_closed_and_frozen(") == 4

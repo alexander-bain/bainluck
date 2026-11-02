@@ -452,9 +452,19 @@ class TestTheSurfacesPassTheStamp:
     """A helper that is never handed the stamp is a fix nobody can see."""
 
     def test_the_detail_page_sends_last_updated(self):
+        from app.utils import futures_outcome_representation as representation
+
+        detail = ast.parse(inspect.getsource(futures_routes._format_market_detail))
+        assert any(
+            isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "represent_futures_outcomes"
+            for node in ast.walk(detail)
+        )
         calls = [
             node
-            for node in ast.walk(ast.parse(inspect.getsource(futures_routes)))
+            for node in ast.walk(
+                ast.parse(inspect.getsource(representation.represent_futures_outcomes))
+            )
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "expired_ladder_rungs"

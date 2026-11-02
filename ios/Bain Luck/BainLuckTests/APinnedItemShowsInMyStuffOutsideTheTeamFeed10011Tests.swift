@@ -25,13 +25,17 @@ final class APinnedItemShowsInMyStuffOutsideTheTeamFeed10011Tests: XCTestCase {
         """#)
     }
 
+    /// #11616: a graded winner carries a supported source — `is_winner` alone
+    /// (no source) is not a result on the market page, so the card cannot crown it.
     private func marketDetail(winner: Bool = false) throws -> FuturesMarketDetail {
-        try decode(FuturesMarketDetail.self, #"""
+        let source = winner ? "\"api_settlement\"" : "null"
+        return try decode(FuturesMarketDetail.self, #"""
         {"id": 902, "name": "Who will win the 2026 World Series?", "status": "open",
          "llm_sport_category": "baseball", "outcome_count": 5,
          "outcomes": [
            {"id": 1, "name": "Dodgers", "probability": 0.31},
-           {"id": 2, "name": "Yankees", "probability": 0.22, "is_winner": \#(winner)},
+           {"id": 2, "name": "Yankees", "probability": 0.22, "is_winner": \#(winner),
+            "resolution_source": \#(source)},
            {"id": 3, "name": "Phillies", "probability": 0.18},
            {"id": 4, "name": "Mets", "probability": null},
            {"id": 5, "name": "Brewers", "probability": 0.12}

@@ -269,7 +269,13 @@ describe("#10453 partly priced and settled boards", () => {
 
   it("CONTROL: a resolved board still opens on its winner and runner-up", () => {
     MARKET = market(ALL_WITHHELD, { status: "resolved" });
-    (MARKET.outcomes as Record<string, unknown>[])[2].is_winner = true;
+    // #11616: a SUPPORTED grade. A raw `true` beside a null source is crowned by
+    // no row, card or hero any more (`outcomeRowVerdict`), so it cannot seed the
+    // chart as the winner either; the grade this control means carries a source.
+    Object.assign((MARKET.outcomes as Record<string, unknown>[])[2], {
+      is_winner: true,
+      resolution_source: "api_settlement",
+    });
     mount();
     expect(chartDrawn()).toBe(true);
     expect(legendNames()).toContain("Carlos Alcaraz");

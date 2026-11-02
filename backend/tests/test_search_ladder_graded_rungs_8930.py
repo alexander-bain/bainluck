@@ -19,20 +19,23 @@ leg, read via ``db-query`` 2026-09-26 ~21:10Z), so the builder's own pre-sort
 refusals run on the real bids and asks.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from app.routes.events import _build_search_top_outcomes
 
-#: The specimens' read date. Pinned, never the real clock (gotcha #44): every
-#: `Before 2027` rung here expires on Jan 1 2027.
-SPECIMEN_DAY = 20260926.0
+#: The specimens' read instant. Pinned, never the real clock (gotcha #44): every
+#: `Before 2027` rung here expires on Jan 1 2027. Search has ONE clock since
+#: #11616 F1 (`_search_now`); the ladder window's day derives from it. 18:00Z,
+#: the afternoon half where a midnight clock and the real instant disagreed.
+SPECIMEN_NOW = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture(autouse=True)
 def _pin_today(monkeypatch):
-    monkeypatch.setattr("app.routes.events._search_today_ymd", lambda: SPECIMEN_DAY)
+    monkeypatch.setattr("app.routes.events._search_now", lambda: SPECIMEN_NOW)
 
 
 #: ``(id, name, external_id, prob, bid, ask, is_winner, resolution_source)`` verbatim.
@@ -102,7 +105,7 @@ def _first_priced(out):
 
 
 def _spent_names(legs):
-    """Graded, or a `Before` deadline earlier than SPECIMEN_DAY (all 2026 rungs
+    """Graded, or a `Before` deadline earlier than SPECIMEN_NOW (all 2026 rungs
     in these fixtures)."""
     return {
         row[1] for row in legs
@@ -140,7 +143,10 @@ def test_an_ungraded_past_deadline_is_spent_too():
 def test_control_the_same_rung_is_drawn_before_its_deadline(monkeypatch):
     # The clock is the only input that changed: on Dec 1 2025 the Jan 1 2026
     # deadline is still ahead, so the rung is live and heads the card.
-    monkeypatch.setattr("app.routes.events._search_today_ymd", lambda: 20251201.0)
+    monkeypatch.setattr(
+        "app.routes.events._search_now",
+        lambda: datetime(2025, 12, 1, 18, 0, tzinfo=timezone.utc),
+    )
     out = _build_search_top_outcomes(_market(*SPECIMENS[2][:3]))
     assert _first_priced(out) == "Before Jan 1, 2026"
 

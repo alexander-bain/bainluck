@@ -79,12 +79,13 @@ enum SearchGrouping {
         }
     }
 
-    /// The outcome a row leads with — the first with a probability.
+    /// The first supported answer, including an unpriced result or an explicit
+    /// unknown result. A missing quote alone is still not an answer.
     ///
     /// The server has already applied leader-pick and independent-binary
     /// normalisation, so this takes `topOutcomes` as given rather than re-ranking.
     static func leaderOutcome(_ market: SearchFuturesMarket) -> SearchFuturesOutcome? {
-        market.topOutcomes?.first { $0.probability != nil }
+        market.topOutcomes?.first { $0.rowValue(in: market) != .none }
     }
 
     /// "+4 more markets below" — nil when the family promises nothing further.

@@ -363,7 +363,8 @@ D5_SITES = [
     ("app.utils.related_futures", "build_futures_entry", 1, 0),
     # One raw read stays: `compute_relevance_score`'s input SELECTS, it prints nothing.
     ("app.routes.events", "_build_related_futures", 2, 1),
-    ("app.routes.events", "_build_search_top_outcomes", 2, 0),
+    # #11616 search now consumes the full-field representation, whose
+    # dated_movement_points handles DataGolf directly. Exercise that path below.
     ("app.routes.events", "_mover_chips", 1, 0),
     ("app.routes.market_moves", "get_market_was_wrong", 1, 0),
     ("app.tasks.daily_digest", "build_digest_content", 1, 0),
@@ -385,6 +386,25 @@ def test_d5d_each_serves_site_reads_through_the_dated_reader(module, function, c
     assert len(_RAW_PRINT.findall(source)) == raw, (
         f"{module}.{function} prints the raw per-write column: {_RAW_PRINT.findall(source)}"
     )
+
+
+@pytest.mark.parametrize("lean", [False, True])
+@pytest.mark.parametrize("has_basis", [False, True])
+def test_search_shared_representation_keeps_the_dated_datagolf_move(lean, has_basis):
+    from app.routes.events import _build_search_top_outcomes
+    from tests.test_search_detail_parity_11616 import market
+
+    row = market([0.15, 0.30], exclusive=False)
+    row.source = "datagolf"
+    row.market_metadata = _market(now=None).market_metadata if has_basis else {}
+    row.outcomes[0].id = 7
+    row.outcomes[0].probability_change_24h = Decimal("0")
+    served = _build_search_top_outcomes(row, lean=lean)
+    leg = next(item for item in served if item["name"] == row.outcomes[0].name)
+    if has_basis:
+        assert leg["movement"] == pytest.approx(0.13)
+    else:
+        assert leg["movement"] is None
 
 
 def test_d5d_the_push_loop_uses_the_served_change() -> None:

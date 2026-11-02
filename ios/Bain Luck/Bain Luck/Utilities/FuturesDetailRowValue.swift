@@ -32,7 +32,7 @@ enum FuturesDetailRowValue: Equatable, Sendable {
     /// `marketSource` lets the #698 fallback run for a resolved Polymarket
     /// market whose server predates `settlement_display`; a served contract
     /// applies without it.
-    static func of(_ outcome: FuturesOutcome, marketStatus: String?, marketSource: String? = nil) -> Self {
+    static func of(_ outcome: some FuturesResultRow698, marketStatus: String?, marketSource: String? = nil) -> Self {
         switch SettledResultDisplay698.certainty(outcome, marketSource: marketSource, marketStatus: marketStatus) {
         case .won: return .verdict(.won)
         case .lost: return .verdict(.lost)

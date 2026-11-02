@@ -299,6 +299,10 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     /// `polymarket`). Metadata only — the hero names its OWN outcome's sources.
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var representationFallback: String? = nil
+    /// `market_type` (#194 shape field; #7906): read only by
+    /// `futuresDetailHeroOutcome`, where `participation` affirms that several
+    /// winners are peers. Absent on older payloads and decodes to nil.
+    @TolerantNumeric var marketType: String? = nil
 }
 
 /// #9387 — the provider-backed question a verified response answers. Every field
@@ -316,6 +320,8 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?
+    /// #11616: server integer from the full represented field, before selection.
+    @LenientDecode var renderedPercent: Int? = nil
     let americanOdds: Int?
     let rank: Int?
     /// `rank_change_24h` / `probability_change_24h`. See `TolerantNumeric`.
@@ -341,7 +347,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, probability, americanOdds, rank
+        case id, name, probability, renderedPercent, americanOdds, rank
         case rankChange24h = "rankChange24H"
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated

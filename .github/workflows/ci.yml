@@ -617,6 +617,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_recall_contract.py \
+            tests/integration/test_search_person_alias_11617.py \
             -v -s -rs 2>&1 | tee /tmp/recall.txt
           if grep -qiE "[0-9]+ skipped" /tmp/recall.txt; then
             echo "::error::search recall contract SKIPPED — the gate did not run"

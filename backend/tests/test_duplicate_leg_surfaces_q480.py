@@ -154,7 +154,7 @@ _AST_GUARDED = [
     # extraction from being orphaned — a chain nobody calls would satisfy this
     # row on its own.
     ("app.routes.events", "_search_surviving_legs"),
-    ("app.routes.futures", "_format_market_detail"),
+    ("app.utils.futures_outcome_representation", "eligible_futures_outcomes"),
 ]
 
 
@@ -202,6 +202,15 @@ def test_the_search_builder_still_reaches_that_filter():
     """
     assert "_search_surviving_legs" in _calls_in(
         "app.routes.events", "_build_search_top_outcomes"
+    )
+
+
+def test_the_detail_builder_still_reaches_the_duplicate_filter():
+    assert "represent_futures_outcomes" in _calls_in(
+        "app.routes.futures", "_format_market_detail"
+    )
+    assert "eligible_futures_outcomes" in _calls_in(
+        "app.utils.futures_outcome_representation", "represent_futures_outcomes"
     )
 
 

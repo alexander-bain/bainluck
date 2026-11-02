@@ -84,9 +84,13 @@ final class FuturesHeroLeadsWithTheMatchWinner8892Tests: XCTestCase {
         XCTAssertEqual(futuresDetailHeroOutcome(try cloud9(lead: "null"))?.id, Self.overId)
     }
 
-    /// A settled hero is decided by the grade, not by a pre-game pointer.
+    /// A settled hero is decided by the grade, not by a pre-game pointer. This
+    /// board carries no grade at all, so — #11616 R1, web `heroNamesNobody` —
+    /// it names nobody: neither the lead nor the 71% price leader.
     func test_aResolvedMarketIgnoresTheLead() throws {
-        XCTAssertEqual(futuresDetailHeroOutcome(try cloud9(status: "resolved"))?.id, Self.overId)
+        let market = try cloud9(status: "resolved")
+        XCTAssertNil(futuresDetailHeroOutcome(market))
+        XCTAssertEqual(futuresDetailShareMessage(market), "\(market.name) on Bain Luck")
     }
 
     /// A lead with no price would put an empty hero above a priced table.

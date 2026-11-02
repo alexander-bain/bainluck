@@ -952,10 +952,29 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let priceObservedAt: String?
     let rank: Int?
     let movement: Double?
+    /// #11616 — the market page's own row decision and full-field integer,
+    /// set only by the saved-pin adapter (`init(savedPinDetail:)`). Never
+    /// decoded, so every feed card keeps reading exactly what it read before.
+    private(set) var detailValue: FuturesDetailRowValue? = nil
+    private(set) var detailRenderedPercent: Int? = nil
 
-    init(id: Int, name: String, probability: Double?, rank: Int?, movement: Double?, priceObservedAt: String? = nil) {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, probability, priceObservedAt, rank, movement
+    }
+
+    init(id: Int, name: String, probability: Double?, rank: Int?, movement: Double?, priceObservedAt: String? = nil,
+         detailValue: FuturesDetailRowValue? = nil, detailRenderedPercent: Int? = nil) {
         self.id = id; self.name = name; self.probability = probability
         self.rank = rank; self.movement = movement; self.priceObservedAt = priceObservedAt
+        self.detailValue = detailValue; self.detailRenderedPercent = detailRenderedPercent
+    }
+
+    /// The card's bar draws a live price only: a saved row whose page prints a
+    /// result draws none, as the page's own rows do.
+    var barProbability: Double? {
+        guard let detailValue else { return probability }
+        if case .price(let prob) = detailValue { return prob }
+        return nil
     }
 
 }

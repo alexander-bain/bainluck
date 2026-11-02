@@ -1,3 +1,4 @@
+import CoreText
 import SwiftUI
 import Vision
 import XCTest
@@ -30,6 +31,7 @@ import XCTest
 /// - let Details show a newer row than the held card → `testDetailsRowsAreHeldWithTheCardsUntilRefresh`
 /// - plot an actual outside the stat axis → `testTheStatAxisAdmitsActualsBelowWithinAndAboveTheLadder`
 /// - rebuild the large-text chrome → `testTheReaderRendersTheMatchLineCountAndBack`
+/// - read the selected line from the axis label, or from a missing, changed, clipped or neighbouring percent (#11667 reader53) → `testTheReaderRendersTheMatchLineCountAndBack`
 ///
 /// Native runtime review of 0a69b708 (10/14), PR #11038:
 /// - hang a stat label off its tick (iOS 27 `AxisValueLabel`, "40+" under the 50+ stem) → `testADenseLadderCentresEveryLabelOnItsOwnTick`, `testADenseLadderRendersEachLabelUnderItsOwnStem`
@@ -427,7 +429,8 @@ final class NFLEventCards9483Tests: XCTestCase {
                 liveHeader: .init(match: "Eagles 7–27 Bears · Final", chances: ""),
                 awayName: "Eagles", homeName: "Bears", awayColor: .teal, homeColor: .indigo,
                 state: state, liveRows: [:])
-            let text = try render(reader, size: size, name: name, scrolled: scrolled)
+            let image = try renderImage(reader, size: size, name: name, scrolled: scrolled)
+            let text = try recognisedText(image)
             XCTAssertTrue(text.contains("2 of 2"), "\(name): opened on the card it was asked for: \(text)")
             XCTAssertFalse(text.contains("beat the forecast"), "\(name): the rail is still on card 1: \(text)")
             // Design return finding 4: no repeated chrome.
@@ -437,10 +440,16 @@ final class NFLEventCards9483Tests: XCTestCase {
             XCTAssertFalse(text.contains("Final 84"), "\(name): no second, clipped final label: \(text)")
             if scrolled {
                 // Scrolled to the card's end, the selected line, its percent and
-                // its Details control are reachable at AX3.
-                XCTAssertTrue(text.contains("53%"), "\(name): the selected line's chance: \(text)")
+                // its Details control are reachable at AX3. The line and its
+                // percent are read on the selected line itself (#11667 reader53):
+                // the whole frame's "59.5+" can be the axis label alone.
+                let row = try Self.selectedLineText9483(in: image)
+                print("NFL reader53 selected line: [\(row.text)] words \(row.words) | whole: \(text)")
+                XCTAssertTrue(row.text.contains("53%"), "\(name): the selected line's chance: \(row.text) | \(text)")
+                XCTAssertTrue(row.text.contains("59.5+"), "\(name): the selected line: \(row.text) | \(text)")
                 XCTAssertTrue(text.contains("59.5+"), "\(name): the selected line: \(text)")
                 XCTAssertTrue(text.contains("details"), "\(name): the Details control: \(text)")
+                try assertTheSelectedLineReaderRefusesWhatIsNotThere(image, words: row.words)
             } else {
                 XCTAssertTrue(text.contains("Back"), "\(name): \(text)")
                 XCTAssertTrue(text.contains("Eagles 7–27 Bears") || text.contains("Eagles 7-27 Bears"),
@@ -450,6 +459,21 @@ final class NFLEventCards9483Tests: XCTestCase {
                 XCTAssertTrue(text.contains("kickoff"), "\(name): the rail shows the opened card: \(text)")
             }
         }
+        // Control (#11667 reader53): the same reader on the NEIGHBOURING line.
+        // Its readout is found, and it does not read as 59.5+ at 53%.
+        let state = NFLCardDeckState9483()
+        state.open(cards[1].id)
+        state.move(in: milestone, by: -1)
+        let other = try renderImage(NFLCardReader9483(
+            liveCards: cards,
+            liveHeader: .init(match: "Eagles 7–27 Bears · Final", chances: ""),
+            awayName: "Eagles", homeName: "Bears", awayColor: .teal, homeColor: .indigo,
+            state: state, liveRows: [:]), size: .accessibility3, name: "reader-ax3-scrolled-other-line", scrolled: true)
+        let otherRow = try Self.selectedLineText9483(in: other)
+        print("NFL reader53 control other-line: [\(otherRow.text)] words \(otherRow.words)")
+        XCTAssertFalse(otherRow.words.isEmpty, "other line: its readout is found: \(otherRow.text)")
+        XCTAssertFalse(otherRow.text.contains("59.5+") && otherRow.text.contains("53%"),
+                       "other line: a different selected line is not read as 59.5+ at 53%: \(otherRow.text)")
     }
 
     /// A pregame specimen with one line no longer observed, at both sizes:
@@ -705,6 +729,18 @@ final class NFLEventCards9483Tests: XCTestCase {
 
     @MainActor
     private func render<V: View>(_ view: V, size: DynamicTypeSize, name: String, scrolled: Bool) throws -> String {
+        try recognisedText(renderImage(view, size: size, name: name, scrolled: scrolled))
+    }
+
+    private func recognisedText(_ image: CGImage) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    }
+
+    @MainActor
+    private func renderImage<V: View>(_ view: V, size: DynamicTypeSize, name: String, scrolled: Bool) throws -> CGImage {
         let host = hostForMeasurement(view, at: size)
         host.view.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
         let window = UIWindow(frame: host.view.frame)
@@ -729,10 +765,209 @@ final class NFLEventCards9483Tests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("nfl-cards-9483-\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
         print("NFL card reader rendered evidence: \(url.path)")
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        return try XCTUnwrap(image.cgImage)
+    }
+
+    // MARK: - The selected line, read on its own (#11667 reader53)
+
+    /// iOS 26.5 read the whole AX3 frame's "59.5+ · 53%" as "595+5%,", and
+    /// the old "59.5+" check passed on the axis label. The selected line is
+    /// read here from its own ink instead: the card-accent rows directly above
+    /// its "details" line, split into words at gaps wider than a third of the
+    /// line's height, each word recognised alone from accent ink only.
+
+    /// The card's accent ink (indigo, (95, 85, 237) on the frame), not the
+    /// system-blue chevrons ((59, 134, 247)), grey or black text.
+    nonisolated static func isAccent9483(_ r: Int, _ g: Int, _ b: Int) -> Bool {
+        b > 150 && b - g > 60 && g - r < 30
+    }
+
+    /// The selected line's word boxes, left to right, in pixels from the top
+    /// left. Scanning up from `detailsTop`, the line is the first run of rows
+    /// holding accent ink, ended by the first row without it, and no more than
+    /// two and a half `lineHeight`s up (the plot's accent stems sit further
+    /// up). No accent rows in reach: no words.
+    nonisolated static func selectedLineWords9483(rgba pixels: [UInt8], width: Int, height: Int,
+                                                  detailsTop: Int, lineHeight: Int) -> [CGRect] {
+        func accentColumns(_ y: Int) -> [Int] {
+            (0..<width).filter { x in
+                let i = (y * width + x) * 4
+                return isAccent9483(Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2]))
+            }
+        }
+        var rows: [Int] = []
+        var columns = Set<Int>()
+        let start = min(detailsTop, height) - 1, end = max(detailsTop - 5 * lineHeight / 2, 0)
+        if start >= end {
+            for y in stride(from: start, through: end, by: -1) {
+                let found = accentColumns(y)
+                if found.isEmpty {
+                    if !rows.isEmpty { break }
+                } else {
+                    rows.append(y)
+                    columns.formUnion(found)
+                }
+            }
+        }
+        guard let top = rows.last, let bottom = rows.first else { return [] }
+        let gap = max((bottom - top + 1) / 3, 1)
+        var words: [(first: Int, last: Int)] = []
+        for x in columns.sorted() {
+            if let last = words.last, x - last.last <= gap { words[words.count - 1].last = x } else { words.append((x, x)) }
+        }
+        return words.map { CGRect(x: $0.first, y: top, width: $0.last - $0.first + 1, height: bottom - top + 1) }
+    }
+
+    /// RGBA bytes of `image`, rows from the top.
+    nonisolated static func rgba9483(_ image: CGImage) -> [UInt8]? {
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        guard let context = CGContext(
+            data: &pixels, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return pixels
+    }
+
+    /// `word` with a quarter-line margin, every pixel that is not accent ink
+    /// whitened.
+    nonisolated static func accentInk9483(rgba pixels: [UInt8], width: Int, height: Int, around word: CGRect) -> CGImage? {
+        let pad = Int(word.height) / 4 + 1
+        let crop = word.insetBy(dx: CGFloat(-pad), dy: CGFloat(-pad))
+            .intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        let (x0, y0, w, h) = (Int(crop.minX), Int(crop.minY), Int(crop.width), Int(crop.height))
+        guard w > 0, h > 0 else { return nil }
+        var ink = [UInt8](repeating: 255, count: w * h * 4)
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = ((y0 + y) * width + x0 + x) * 4, o = (y * w + x) * 4
+                if isAccent9483(Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) {
+                    for c in 0..<4 { ink[o + c] = pixels[i + c] }
+                }
+            }
+        }
+        return CGContext(
+            data: &ink, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
+    }
+
+    /// The selected line's text, its words joined left to right, and the word
+    /// boxes it was read from. Each word is read from `accentInk9483` alone,
+    /// so a neighbouring control or line inside the crop never reads as the
+    /// line.
+    /// No "details" line, or no accent line above it: "" and no words.
+    nonisolated static func selectedLineText9483(in image: CGImage) throws -> (text: String, words: [CGRect]) {
+        func recognise(_ image: CGImage, correcting: Bool) throws -> [VNRecognizedTextObservation] {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = correcting
+            try VNImageRequestHandler(cgImage: image).perform([request])
+            return request.results ?? []
+        }
+        let (width, height) = (image.width, image.height)
+        guard let details = try recognise(image, correcting: true)
+                .first(where: { $0.topCandidates(1).first?.string.contains("details") == true }),
+              let pixels = rgba9483(image) else { return ("", []) }
+        let words = selectedLineWords9483(
+            rgba: pixels, width: width, height: height,
+            detailsTop: Int((1 - details.boundingBox.maxY) * CGFloat(height)),
+            lineHeight: max(Int(details.boundingBox.height * CGFloat(height)), 1))
+        let read = try words.map { word -> String in
+            guard let masked = accentInk9483(rgba: pixels, width: width, height: height, around: word) else { return "" }
+            return try recognise(masked, correcting: false)
+                .sorted { $0.boundingBox.minX < $1.boundingBox.minX }
+                .compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: " ")
+        }
+        return (read.filter { !$0.isEmpty }.joined(separator: " "), words)
+    }
+
+    /// `image` with `edit` applied in pixel coordinates from the top left.
+    nonisolated static func edited9483(_ image: CGImage, _ edit: (CGContext) -> Void) -> CGImage? {
+        let (width, height) = (image.width, image.height)
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        edit(context)
+        return context.makeImage()
+    }
+
+    /// Draws `text` with its baseline on the bottom of `box`, digits about
+    /// `box.height` tall, in a top-left-origin context.
+    nonisolated static func draw9483(_ text: String, in box: CGRect, red: CGFloat, green: CGFloat, blue: CGFloat,
+                                     _ context: CGContext) {
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, box.height / 0.72, nil)
+        let color = CGColor(srgbRed: red / 255, green: green / 255, blue: blue / 255, alpha: 1)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color]))
+        context.saveGState()
+        context.translateBy(x: box.minX, y: box.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.textPosition = .zero
+        CTLineDraw(line, context)
+        context.restoreGState()
+    }
+
+    /// The selected-line reader refuses each frame that does not show
+    /// "59.5+ · 53%" on the selected line, built from the real frame: the
+    /// percent missing, changed, clipped at the bottom or the right, the
+    /// whole line gone (only the axis "59.5+" left), and a "53%" from a
+    /// neighbouring control (system blue) or line (grey) where the percent
+    /// was. Wherever accent ink remains, the line must still be found, so no
+    /// refusal is vacuous.
+    @MainActor
+    private func assertTheSelectedLineReaderRefusesWhatIsNotThere(_ image: CGImage, words: [CGRect]) throws {
+        let first = try XCTUnwrap(words.first, "the selected line was found")
+        let line = words.dropFirst().reduce(first) { $0.union($1) }
+        let percent = try XCTUnwrap(words.last, "the selected line has a percent word")
+        XCTAssertGreaterThanOrEqual(words.count, 2, "line and percent are separate words: \(words)")
+        let pad = percent.height / 4
+        let blank = percent.insetBy(dx: -pad, dy: -pad)
+        let white = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        let negatives: [(name: String, keepsInk: Bool, edit: (CGContext) -> Void)] = [
+            ("missing", true, { $0.setFillColor(white); $0.fill(blank) }),
+            ("changed", true, { c in
+                c.setFillColor(white); c.fill(blank)
+                Self.draw9483("58%", in: percent, red: 95, green: 85, blue: 237, c)
+            }),
+            ("clipped-bottom", true, { c in
+                c.setFillColor(white)
+                c.fill(CGRect(x: line.minX - pad, y: line.minY + line.height * 0.55,
+                              width: line.width + 2 * pad, height: line.height * 0.45 + pad))
+            }),
+            ("clipped-right", true, { c in
+                c.setFillColor(white)
+                c.fill(CGRect(x: percent.maxX - percent.width * 0.4, y: line.minY - pad,
+                              width: percent.width * 0.4 + pad, height: line.height + 2 * pad))
+            }),
+            ("axis-only", false, { c in c.setFillColor(white); c.fill(line.insetBy(dx: -pad, dy: -pad)) }),
+            ("neighbour-control", true, { c in
+                c.setFillColor(white); c.fill(blank)
+                Self.draw9483("53%", in: percent, red: 59, green: 134, blue: 247, c)
+            }),
+            ("neighbour-line", true, { c in
+                c.setFillColor(white); c.fill(blank)
+                Self.draw9483("53%", in: percent, red: 128, green: 128, blue: 133, c)
+            }),
+        ]
+        for negative in negatives {
+            let frame = try XCTUnwrap(Self.edited9483(image, negative.edit), negative.name)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("nfl-cards-9483-reader53-control-\(negative.name).png")
+            try XCTUnwrap(UIImage(cgImage: frame).pngData()).write(to: url)
+            let read = try Self.selectedLineText9483(in: frame)
+            print("NFL reader53 control \(negative.name): [\(read.text)] words \(read.words) evidence \(url.path)")
+            XCTAssertFalse(read.text.contains("59.5+") && read.text.contains("53%"),
+                           "\(negative.name): refused as the selected line 59.5+ at 53%: \(read.text)")
+            if negative.keepsInk {
+                XCTAssertFalse(read.words.isEmpty, "\(negative.name): the remaining line is still found")
+            } else {
+                XCTAssertTrue(read.words.isEmpty, "\(negative.name): no line is invented: \(read.words)")
+            }
+        }
     }
 
     /// Scrolls every vertically scrolling card in the reader to its end, the

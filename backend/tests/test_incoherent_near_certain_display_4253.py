@@ -188,6 +188,10 @@ def test_the_input_is_not_mutated():
     [
         ("app/routes/events.py", "_drop_incoherent_near_certain("),
         ("app/routes/futures.py", "drop_incoherent_near_certain("),
+        (
+            "app/utils/futures_outcome_representation.py",
+            "drop_incoherent_near_certain(",
+        ),
     ],
 )
 def test_the_serializers_call_the_shared_rule(path, needle):
@@ -198,16 +202,46 @@ def test_the_serializers_call_the_shared_rule(path, needle):
 
 
 def test_futures_has_both_call_sites_detail_and_browse():
+    import ast
     import pathlib
 
-    src = (
-        pathlib.Path(__file__).resolve().parents[1] / "app/routes/futures.py"
-    ).read_text()
-    # Two CALL sites (detail serializer + browse). The imports carry no paren, so
-    # counting `name(` counts calls and not the `from ... import` lines.
-    assert src.count("drop_incoherent_near_certain(") == 2, (
-        "expected exactly two call sites in futures.py (detail serializer and "
-        "browse); one of them has been dropped or a third added unreviewed"
+    root = pathlib.Path(__file__).resolve().parents[1]
+    tree = ast.parse((root / "app/routes/futures.py").read_text())
+    detail = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_format_market_detail"
+    )
+    assert any(
+        isinstance(n, ast.Call)
+        and getattr(n.func, "id", None) == "represent_futures_outcomes"
+        for n in ast.walk(detail)
+    ), "detail no longer reaches the shared representation"
+    # #11616 moved detail's call into the full-field representation. Keep both
+    # paths pinned, including the intermediate edge, rather than counting only
+    # direct calls in the old file and silently losing detail coverage.
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and getattr(n.func, "id", None) == "drop_incoherent_near_certain"
+    ]
+    assert len(calls) == 1, "browse must retain its direct coherence call"
+    shared = ast.parse(
+        (root / "app/utils/futures_outcome_representation.py").read_text()
+    )
+    represent = next(
+        n
+        for n in shared.body
+        if isinstance(n, ast.FunctionDef) and n.name == "represent_futures_outcomes"
+    )
+    assert (
+        sum(
+            isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "drop_incoherent_near_certain"
+            for n in ast.walk(represent)
+        )
+        == 1
     )
 
 
@@ -218,7 +252,11 @@ def test_every_call_site_passes_the_winner_exemption():
     import re
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    for path in ("app/routes/events.py", "app/routes/futures.py"):
+    for path in (
+        "app/routes/events.py",
+        "app/routes/futures.py",
+        "app/utils/futures_outcome_representation.py",
+    ):
         src = (root / path).read_text()
         for call in re.finditer(
             r"drop_incoherent_near_certain\((.*?)\n    \)", src, re.S

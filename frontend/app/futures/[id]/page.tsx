@@ -43,7 +43,7 @@ import {
   type FuturesRangeKey,
 } from "@/lib/futuresHistoryRange";
 import { archiveWidenedRange, historyRangeDataAttributes, historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
-import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { renderedOutcomeRowPercents, representedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -78,10 +78,12 @@ import {
   NO_CURRENT_PRICES_CHART_NOTE,
   movementWindowLabel,
   noPricedOutcomesNote,
+  openHeroCrownWithheld,
   partitionOutcomesByPrice,
   pickCaptionSubject,
   pickChartSeedOutcomes,
   pickHeroOutcome,
+  servedLeadHeroOutcome,
   servedLeadOutcome,
   sortFuturesOutcomes,
   visibleChartOutcomes,
@@ -527,7 +529,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // sides of one question, exactly as `EventCard` treats its `opened` pair.
   const renderedById = useMemo(() => {
     const outs = market?.outcomes ?? [];
-    const current = renderedOutcomeRowPercents(outs.map((o) => o.probability));
+    const current = representedOutcomeRowPercents(outs);
     // #8313: a side-swapped opening is withheld from the pair, not paired with its sibling.
     const opening = renderedOutcomeRowPercents(outs.map((o) => readableOpeningProbability(o)));
     return new Map(
@@ -929,9 +931,29 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // literal `true` and is unaffected.
   // #8892 — a named lead leg outranks `pickLiveLeader`: a game container is
   // `mutually_exclusive: false`, so without this the hero kept its O/U leg.
+  // #11616 L3(c) — the hero also admits a named lead whose row prints a
+  // supported `Won` without a price; `leader` and the row badge do not move.
   const heroOutcome =
-    leadOutcome ??
+    servedLeadHeroOutcome(market.outcomes, market.lead_outcome_id, market.status) ??
     pickHeroOutcome(market.outcomes, leader, isResolved, market.mutually_exclusive);
+  // #11616 B2 — on an open #7906 board with several supported winners (Make the
+  // Cut after the cut), the hero row is one of many peers: it names nobody, as
+  // the resolved twin does, and its last price is not a forecast either.
+  const heroCrownWithheld = openHeroCrownWithheld(
+    market.outcomes,
+    heroOutcome,
+    market.status,
+    market.lead_outcome_id,
+    market.market_type,
+    market.mutually_exclusive,
+  );
+  // #11616 L3(d) — an open board whose hero row prints `Won` shows the result,
+  // as the row, iOS and search do, never that row's last price as a forecast.
+  const heroWonOpen =
+    !isResolved &&
+    !heroCrownWithheld &&
+    heroOutcome != null &&
+    outcomeRowVerdict(heroOutcome, false) === "won";
   // #6301 — the GRADE, asked for BY NAME through the one helper that owns the test.
   // `gradedWinner` returns the featured row only when `is_winner === true`, and null
   // on every settled field that never graded one. `layout.tsx` adopted it under #6079
@@ -980,7 +1002,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // Declined SILENTLY (notice 34): `FuturesHero` already guards its name on
   // `outcomeName &&`, so withholding it leaves the title and the grey chip and
   // no hole. The "Final Results" table below is honest and carries the page.
-  const heroNamesNobody = isResolved && gradedChampion === null;
+  const heroNamesNobody = (isResolved && gradedChampion === null) || heroCrownWithheld;
   // #698 — how much of this settled board has no result to state. `all` puts
   // "Result unknown" beside the RESOLVED chip and in the chart caption; `some`
   // keeps every definite row and says so in the caption. A field whose rows all
@@ -1098,13 +1120,16 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             ? undefined
             : boardOutcomeLabel(heroOutcome.name, market.name)
         }
-        movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
+        // #11616 HM — the pill and its date are the HERO row's, the outcome named
+        // beside them. They read `leader`, so a live row promoted past a settled
+        // 1.0 printed "42% Tommy Fleetwood ↑ 12.0 pts" — Aberg's move.
+        movement={!isResolved && !heroCrownWithheld && heroOutcome?.probability_change_24h != null ? heroOutcome.probability_change_24h * 100 : null}
         // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
         // with no window at all, directly above a caption reading "Amazon up 13.5
         // pts from opening" — two true numbers about one outcome, reading as a
         // contradiction. It now says which window it covers. NOT "24h": see
         // `movementWindowLabel` for why the payload disproves that word.
-        movementLabel={movementWindowLabel(leader?.last_updated)}
+        movementLabel={movementWindowLabel(heroOutcome?.last_updated)}
         sourceCount={market.source_count ?? undefined}
         // #10224 — on a verified title page, the shown outcome's own contributors
         // (never the market's union; bookmakers stay provenance). Undefined in
@@ -1133,6 +1158,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         isMultiOutcome={(market.outcome_count ?? 0) > 2}
         sparklinePoints={ambientPoints}
         resolved={isResolved}
+        wonOpen={heroWonOpen}
         resolvedWon={gradedChampion !== null}
         resultUnknown={resultCertainty === "all"}
       />

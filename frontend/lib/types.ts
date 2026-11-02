@@ -947,6 +947,8 @@ export interface SettlementDisplay {
 }
 
 export interface FuturesOutcome {
+  /** #11616: whole-field decision made before search selection; absent on legacy payloads. */
+  rendered_percent?: number | null;
   id: number;
   name: string;
   probability: number | null;

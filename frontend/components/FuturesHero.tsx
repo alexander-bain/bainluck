@@ -51,6 +51,11 @@ interface FuturesHeroProps {
    *  price on both legs). The lifecycle chip stays RESOLVED and one neutral
    *  "Result unknown" sits beside it; nobody is crowned and no live % returns. */
   resultUnknown?: boolean;
+  /** #11616 L3(d) — an OPEN board whose featured row prints a supported `Won`
+   *  (an authoritative settlement, #6082). The hero states the result — name
+   *  and a `Won` chip, as the row does — and never its last price, movement or
+   *  bar. The lifecycle stays open: no RESOLVED chip, the resolve date stays. */
+  wonOpen?: boolean;
 }
 
 export function FuturesHero({
@@ -70,6 +75,7 @@ export function FuturesHero({
   resolved = false,
   resolvedWon,
   resultUnknown = false,
+  wonOpen = false,
 }: FuturesHeroProps) {
   // #8482 — `Math.round(p * 100)` here printed 57 over a row printing 58 for a
   // wire 0.575 (`/futures/61318328`): the #3867 half-point case. The number is
@@ -90,7 +96,7 @@ export function FuturesHero({
   const movementUp = movement != null && movement > 0;
   // Resolved markets show the final result, not a live movement pill.
   const movementStr =
-    !resolved && movement != null && Math.abs(movement) >= 0.1
+    !resolved && !wonOpen && movement != null && Math.abs(movement) >= 0.1
       ? `${movementUp ? "↑" : "↓"} ${Math.abs(movement).toFixed(1)} pts`
       : null;
 
@@ -155,6 +161,26 @@ export function FuturesHero({
         </div>
       )}
 
+      {/* #11616 L3(d): an open board's supported winner is a result, not a price. */}
+      {!resolved && wonOpen && (
+        <div className="mb-3 flex items-center gap-2 flex-wrap">
+          {outcomeName && (
+            <span
+              data-testid="hero-open-won-name"
+              className="text-2xl font-semibold text-text-primary tracking-tight"
+            >
+              {outcomeName}
+            </span>
+          )}
+          <span
+            data-testid="hero-open-won-chip"
+            className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live"
+          >
+            Won
+          </span>
+        </div>
+      )}
+
       {/* Live probability hero (big blended number) — unresolved markets only.
           Hero C (L2-161, the design's declared ships variant): when the hero
           outcome's recent history is available, the 7-day curve sits *behind*
@@ -163,7 +189,7 @@ export function FuturesHero({
           the loudest thing on the page. Falls back cleanly to a plain numeral
           when there's no usable series. Ambient uses accent-brand — the single
           blended line, never a per-source overlay (blend-only ruling). */}
-      {!resolved && pct != null && (
+      {!resolved && pct != null && !wonOpen && (
         <>
           {sparklinePoints && sparklinePoints.length >= 3 ? (
             /* #6760 — THE NUMERAL AND THE OUTCOME NAME USED TO BE DRAWN ON TOP OF
@@ -287,7 +313,7 @@ export function FuturesHero({
       )}
 
       {/* Yes/No probability bar — live only (a settled market shows no live bar) */}
-      {!resolved && pct != null && !isMultiOutcome && (
+      {!resolved && pct != null && !isMultiOutcome && !wonOpen && (
         <div className="flex h-[9px] gap-0.5 mb-2">
           <div
             className="rounded-full bg-accent-brand shadow-inner"

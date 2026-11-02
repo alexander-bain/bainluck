@@ -311,6 +311,7 @@ class TestThePayloadAndWhatMustNotChange:
             "outcome_count",
             "updated_at",
             "prices_updated_at",
+            "representation_policy",  # #11616: cache attestation stamp, additive
         }
         assert set(payload) == expected
 

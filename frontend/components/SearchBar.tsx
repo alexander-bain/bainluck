@@ -495,7 +495,7 @@ export default function SearchBar({
                     return (
                       <div className="text-xs text-text-secondary truncate" data-testid="search-answer">
                         <span className="text-text-primary font-medium">
-                          {leader.name} {toPercent(leader.probability)}%
+                          {leader.name} {leader.displayValue}
                         </span>
                         {isMovementWorthShowing(movement) && (
                           <span className={movement > 0 ? "text-accent-live" : "text-accent-danger"}>
@@ -504,7 +504,7 @@ export default function SearchBar({
                         )}
                         {second && (
                           <span className="text-text-muted">
-                            {" · "}{second.name} {toPercent(second.probability)}%
+                            {" · "}{second.name} {second.displayValue}
                           </span>
                         )}
                       </div>

@@ -18,6 +18,7 @@ THE CONTROLS: an exclusive field and a mixed ``↑``/``↓`` board are not one
 ladder and must keep the probability order they had.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.routes.events import _build_search_top_outcomes
@@ -104,7 +105,10 @@ def test_a_ladder_wholly_on_one_side_of_even_clamps_to_the_nearest_end(monkeypat
     # rises with the deadline. The nearest rung to even is the earliest.
     # #8930: a `before` deadline earlier than today is spent and not drawn, so
     # the clock is pinned to before this fixture's first deadline (July 2026).
-    monkeypatch.setattr("app.routes.events._search_today_ymd", lambda: 20260601.0)
+    monkeypatch.setattr(
+        "app.routes.events._search_now",
+        lambda: datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc),
+    )
     legs = [
         (1, "Before 2029", "KXFEDHIKE-29", 0.98, 0.97, 0.99),
         (2, "Before July 2028", "KXFEDHIKE-28JUL", 0.98, 0.97, 0.99),

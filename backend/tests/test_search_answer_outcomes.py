@@ -393,9 +393,12 @@ class TestBuildTopOutcomes:
         out = _build_search_top_outcomes(self._market(), limit=2, lean=True)
         assert [o["name"] for o in out] == ["Lakers", "Cavaliers"]  # placeholder gone, sorted desc
 
-    def test_lean_shape_is_minimal(self):
+    def test_lean_shape_carries_result_and_observation_without_odds_rank(self):
         out = _build_search_top_outcomes(self._market(), limit=3, lean=True)
-        assert set(out[0].keys()) == {"name", "probability", "movement"}
+        assert set(out[0].keys()) == {
+            "name", "probability", "movement", "is_winner", "resolution_source",
+            "last_updated", "price_changed_at", "rendered_percent",
+        }
 
     def test_full_shape_has_odds_rank(self):
         out = _build_search_top_outcomes(self._market(), limit=3, lean=False)

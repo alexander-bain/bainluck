@@ -18,7 +18,7 @@ import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { answerRung, inThresholdOrder, ladderSlice, leaderFirstSlice } from "@/lib/discover/leaderOrder";
-import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { representedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 // #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
 // than restated. Its docstring records that restating `isResolved && is_winner === X`
@@ -50,6 +50,12 @@ interface FuturesCardProps {
   /** #11493: an open field's venue-graded loser prints Out instead of its last
    *  price (`lib/openFieldLegOut`). Search opts in; absent ⇒ unchanged. */
   readsOpenFieldOuts?: boolean;
+  /** #11616: `/api/events/search` serves `top_outcomes` already in the shared
+   *  lead order (`_build_search_top_outcomes`: a supported result leads an
+   *  exclusive board, live rows lead an independent one), and each priced row's
+   *  `rank` is the detail page's own badge. Search opts in; absent ⇒ the
+   *  leader-first sort every other surface needs (#2789). */
+  keepsServedOrder?: boolean;
 }
 
 function formatSportName(sportKey: string | null, sportName: string | null): string {
@@ -117,6 +123,7 @@ export default function FuturesCard({
   personalizationReasons,
   games,
   readsOpenFieldOuts = false,
+  keepsServedOrder = false,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
   // #6018: the footer pip's subject. Derived off the same row pick as `outcomes`
@@ -149,7 +156,7 @@ export default function FuturesCard({
   // the pair once. Keyed over the WHOLE shipped set rather than the sliced five,
   // for the same reason `outcomeLabels` is: two rows out of a longer field are
   // not a duel, and `slice` must not be able to manufacture one.
-  const rowPercents = renderedOutcomeRowPercents(outcomes.map((o) => o.probability));
+  const rowPercents = representedOutcomeRowPercents(outcomes);
   const renderedById = new Map(outcomes.map((o, i) => [o.id, rowPercents[i] ?? null]));
   // #4416: the rank badge below is swapped for a Wikipedia avatar on the eight
   // non-sports categories, on the premise that a non-sports outcome names an
@@ -167,7 +174,20 @@ export default function FuturesCard({
   // rather than whichever rung happens to be served first. Anything that is not
   // visibly a ladder in order is sorted leader-first exactly as before (#2789).
   const servedLadder = inThresholdOrder(outcomes.map((o) => o.name));
-  const topOutcomes = servedLadder ? ladderSlice(labelled, 5) : leaderFirstSlice(labelled, 5);
+  // #11616: a probability re-sort put a priceless supported winner LAST and
+  // highlighted a 28% row on a board whose suggestion, iOS card and detail hero
+  // all lead with the result — "a verified result is not replaced by a
+  // prediction". Search keeps the order it was served in.
+  const servedLead = keepsServedOrder && !servedLadder;
+  const topOutcomes = servedLadder
+    ? ladderSlice(labelled, 5)
+    : servedLead
+      ? servedLeadSlice(labelled, 5)
+      : leaderFirstSlice(labelled, 5);
+  // Badges read the served price rank (detail's own number) only when the
+  // payload carries one; a legacy cached card (ranks stripped) keeps positions.
+  const servedRanks =
+    servedLead && topOutcomes.some((row) => typeof row.outcome.rank === "number");
   const highlighted = servedLadder ? answerRung(topOutcomes) : topOutcomes[0];
   const isResolved = market.status === "resolved";
   // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
@@ -295,7 +315,7 @@ export default function FuturesCard({
               <motion.div key={row.outcome.id} variants={staggerItem}>
                 <OutcomeRow
                   outcome={row.outcome}
-                  rank={boardRank(row.outcome, index)}
+                  rank={boardRank(row.outcome, index, servedRanks)}
                   isLeader={row === highlighted}
                   isResolved={isResolved}
                   marketCategory={market.llm_sport_category}
@@ -354,11 +374,47 @@ export default function FuturesCard({
  *  server counts his real place and serves it as `matched_rank`; the row stays
  *  last (it is below the cut by construction, so the leader-first sort cannot
  *  lift it), only the digit changes. */
-function boardRank(outcome: FuturesOutcome, index: number): number {
+function boardRank(outcome: FuturesOutcome, index: number, servedRanks = false): number | null {
+  // #11616 O-P1a: a card that prints served ranks prints the pin's too. The
+  // producer now serves `matched_rank` as that rank. Defensive: a ranked row
+  // whose `matched_rank` differs still prints `rank`. No deployed producer
+  // serves that pair (master serves no `rank`); an earlier build of this PR
+  // served the count of legs priced STRICTLY above the pin, which gave a tie a
+  // neighbour's number (1, 2, 2 beside detail's 1, 2, 3).
+  if (servedRanks && typeof outcome.rank === "number" && outcome.rank >= 1) {
+    return outcome.rank;
+  }
   if (outcome.query_match && typeof outcome.matched_rank === "number" && outcome.matched_rank >= 1) {
     return outcome.matched_rank;
   }
+  // #11616 P1: the served rank is the price rank detail prints beside the same
+  // row. A priceless result has none (search refuses a rank it has no price
+  // for), so it prints no number rather than its position — the card's `5`
+  // beside detail's `6` for one leg was two different invented places.
+  if (servedRanks) {
+    return typeof outcome.rank === "number" && outcome.rank >= 1 ? outcome.rank : null;
+  }
   return index + 1;
+}
+
+/** #11616 — search's served order, sliced. The query pin, which the server
+ *  puts first for the one- and two-row surfaces (#10279), keeps the place its
+ *  price gives it among this card's five rows, as under the leader-first sort
+ *  (#8863): in front of the first row priced below it. A priceless result
+ *  served ahead of that row stays above the pin; a PRICED result below the
+ *  pin's price sits under it, as it did under the leader-first sort. */
+function servedLeadSlice<T extends { outcome: FuturesOutcome; probability: number | null }>(
+  rows: readonly T[],
+  count: number,
+): T[] {
+  const pin = rows.find((row) => row.outcome.query_match === true);
+  const rest = rows.filter((row) => row !== pin);
+  if (pin) {
+    const p = pin.probability ?? -1;
+    const at = rest.findIndex((row) => row.probability != null && row.probability < p);
+    rest.splice(at < 0 ? rest.length : at, 0, pin);
+  }
+  return rest.slice(0, count);
 }
 
 function OutcomeRow({
@@ -373,7 +429,7 @@ function OutcomeRow({
   out,
 }: {
   outcome: FuturesOutcome;
-  rank: number;
+  rank: number | null;
   isLeader: boolean;
   isResolved: boolean;
   marketCategory?: string | null;
@@ -424,12 +480,17 @@ function OutcomeRow({
   //     means "this payload cannot say" ⇒ unchanged behaviour, not a blackout.
   // That asymmetry is the intended outcome, not a gap.
   //
-  // The `✓` chip below is deliberately NOT routed through this: it reads the TRUE
-  // arm, and `(is_winner true, resolution_source null)` is **0 rows** site-wide
-  // (measured same session), so it tells no lie. Gating it would instead delete the
-  // chip from the 3,885 graded legs sitting on markets still `open` — a different
-  // question ("may an open market show a winner tick?") that is not this ship's.
+  // #11616 W1-b: the `✓` chip IS routed through this now. It used to read the raw
+  // TRUE arm on the premise that `(is_winner true, resolution_source null)` was 0
+  // rows; the search payload serves that shape (Shopper R10: a tick beside "First
+  // Contender 55%" on an open board whose detail and suggestion name no result).
+  // The verdict already keeps every authoritative open winner (#6082's tier-3
+  // arm), so those legs keep their chip. A payload that omits the field entirely
+  // keeps today's chip: absent is "cannot say", the verdict's own rule.
   const graded = outcomeRowVerdict(outcome, isResolved);
+  const winnerTick = outcome.resolution_source === undefined
+    ? Boolean(outcome.is_winner)
+    : graded === "won";
   // #11493: an open field's knocked-out leg draws like a loss and reads "Out",
   // the championship grid's word for the same club. A verdict always wins.
   const verdict = graded ?? (out ? "out" : null);
@@ -476,7 +537,7 @@ function OutcomeRow({
           >
             {displayName}
           </span>
-          {outcome.is_winner && (
+          {winnerTick && (
             <span className="text-[10px] bg-accent-live/15 text-accent-live px-1 py-0.5 rounded flex-shrink-0">
               ✓
             </span>

@@ -23,7 +23,13 @@ import wire from "../fixtures/searchAge9819.json";
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 
-type Board = (typeof wire)[keyof typeof wire];
+type FixtureBoard = (typeof wire)[keyof typeof wire];
+type FixtureOutcome = FixtureBoard["top_outcomes"][number];
+// The zero-price control changes a nullable fixture quote into a real number.
+// Keep every other wire field while admitting both supported quote states.
+type Board = Omit<FixtureBoard, "top_outcomes"> & {
+  top_outcomes: (Omit<FixtureOutcome, "probability"> & { probability: number | null })[];
+};
 
 function card(board: Board): FuturesMarket {
   return {
@@ -89,10 +95,25 @@ describe("#9819 the footer covers the printed prices and no printed result", () 
     expect(pip(wire.nlds)).toBe("2d ago");
   });
 
-  it("ALCS (open): Toronto prints a numeric 0%, so its Sep 23 age stays on the card", () => {
-    expect(rowText(wire.alcs, "Toronto Blue Jays")).toMatch(/^\s*0%/);
+  it("ALCS (open): the withheld Toronto quote neither prints nor dates the supported prices", () => {
+    expect(rowText(wire.alcs, "Toronto Blue Jays")).toMatch(/^\s*[-—]/);
+    expect(rowText(wire.alcs, "Toronto Blue Jays")).not.toMatch(/\d+%/);
+    // Retain the established open-board verdict rule; a source plus default
+    // false is not promoted to a proven loss by the parity repair.
     expect(rowText(wire.alcs, "Toronto Blue Jays")).not.toMatch(/Won|Lost/);
-    expect(pip(wire.alcs)).toBe("Sep 23");
+    expect(pip(wire.alcs)).toBe("45m ago");
+  });
+
+  it("a genuinely served zero still prints 0% and retains its price age", () => {
+    const pricedZero = {
+      ...wire.alcs,
+      prices_updated_at: "2026-09-23T10:31:12+00:00",
+      top_outcomes: wire.alcs.top_outcomes.map((o) =>
+        o.name === "Toronto Blue Jays" ? { ...o, probability: 0 } : o,
+      ),
+    };
+    expect(rowText(pricedZero, "Toronto Blue Jays")).toMatch(/^\s*0%/);
+    expect(pip(pricedZero)).toBe("Sep 23");
   });
 
   it("a resolved board of results prints Won/Lost and no age at all", () => {

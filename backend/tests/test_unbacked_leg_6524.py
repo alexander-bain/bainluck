@@ -56,13 +56,16 @@ def _while_the_rungs_are_live(instant=datetime(2026, 5, 1, 12, 0, tzinfo=timezon
     is #7274's own gate, and that is worth leaving unwrapped as the control.
     """
     import app.routes.futures as futures_routes
+    import app.routes.events as events_routes
 
     class _Frozen(datetime):
         @classmethod
         def now(cls, tz=None):
             return instant if tz is None else instant.astimezone(tz)
 
-    with patch.object(futures_routes, "datetime", _Frozen):
+    with patch.object(futures_routes, "datetime", _Frozen), patch.object(
+        events_routes, "datetime", _Frozen
+    ):
         yield
 
 
@@ -343,7 +346,10 @@ def test_the_search_card_stops_headlining_the_unbacked_row_6524():
         ],
     )
 
-    top = _build_search_top_outcomes(board)
+    # The shared #11616 representation now also applies date expiry here.
+    # Keep this provenance case before its deadlines, as its detail twin does.
+    with _while_the_rungs_are_live():
+        top = _build_search_top_outcomes(board)
 
     assert top, "the card must still carry an answer"
     # Threshold order since #8834: "released by...?" is a date ladder, so its

@@ -34,6 +34,7 @@ frontend/e2e/helpers/sweepFiling.js
 frontend/e2e/scripts/file-sweep-findings.js
 frontend/lib/discover/feedFreshness.ts
 frontend/components/futures/OutcomeRow.tsx
+frontend/lib/futuresOutcomeVerdict.ts
 frontend/components/weather/data.ts
 
 # Named as WHOLE-PATH literals rather than component chains (CERT-2566). The
