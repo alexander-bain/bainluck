@@ -1,6 +1,7 @@
 """Bounded provider calls. Credentials and response bodies never enter error messages."""
 import json
 import os
+import time
 import urllib.parse
 import urllib.request
 
@@ -65,18 +66,51 @@ def current(provider):
         row = next(row for row in rows if row.get('status') == 'succeeded')
         row['sha'] = release_sha(row)
         return row
-    row = vercel('/v9/projects/' + required('VERCEL_PROJECT_ID'))['targets']['production']
-    row['id'] = row.get('id') or row['deploymentId']
-    row['sha'] = row.get('meta',{}).get('githubCommitSha') or row.get('gitSource',{}).get('sha')
-    if not row['sha']:
-        deployment = vercel('/v13/deployments/' + row['id'])
-        row['sha'] = deployment.get('meta',{}).get('githubCommitSha') or deployment.get('gitSource',{}).get('sha')
+    alias=vercel('/v4/aliases/bainluck.com')
+    identity=alias.get('deploymentId') or (alias.get('deployment') or {}).get('id')
+    if not identity: raise ValueError('live production domain has no deployment identity')
+    return candidate('vercel',identity)
+
+
+def github_pages(path, read=None):
+    read=read or github
+    rows=[]; page=1; deadline=time.monotonic()+240
+    while time.monotonic()<deadline:
+        batch=read(path+('&' if '?' in path else '?')+'per_page=100&page='+str(page))
+        if not isinstance(batch,list): raise ValueError('GitHub pagination shape is invalid')
+        rows.extend(batch)
+        if len(batch)<100: return rows
+        page+=1
+    raise TimeoutError('GitHub pagination did not finish')
+
+
+def candidate(provider, candidate_id):
+    if not isinstance(candidate_id,str) or not candidate_id or len(candidate_id)>128:
+        raise ValueError('invalid provider candidate identity')
+    quoted=urllib.parse.quote(candidate_id,safe='')
+    if provider=='heroku':
+        row=heroku('/releases/'+quoted)
+        if row.get('status')!='succeeded': raise ValueError('release did not succeed')
+        row['sha']=release_sha(row)
+    else:
+        row=vercel('/v13/deployments/'+quoted)
+        if row.get('projectId')!=required('VERCEL_PROJECT_ID') or row.get('readyState')!='READY':
+            raise ValueError('deployment is not ready in this project')
+        row['sha']=row.get('meta',{}).get('githubCommitSha') or row.get('gitSource',{}).get('sha')
     return row
 
 
-def report(line):
-    # The NOW issue number is intentionally a repository variable: the issue is
-    # created for Day 0 and was not in master when this loop was prepared.
-    number = required('NOW_ISSUE')
+def report(line,key=None):
+    number=required('NOW_ISSUE')
     if not number.isdecimal(): raise ValueError('NOW_ISSUE must be an issue number')
-    github('/issues/' + number + '/comments', 'POST', {'body':line.replace('\n',' ')})
+    body=line.replace('\n',' ')
+    if key:
+        marker='<!-- release-loop:'+key+' -->'
+        body+='\n'+marker
+        comments=github_pages('/issues/'+number+'/comments')
+        previous=next((row for row in comments if marker in row.get('body','')),None)
+        if previous:
+            if previous['body']!=body:
+                github('/issues/comments/'+str(previous['id']),'PATCH',{'body':body})
+            return
+    github('/issues/'+number+'/comments','POST',{'body':body})

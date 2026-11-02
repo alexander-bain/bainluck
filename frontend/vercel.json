@@ -1,5 +1,10 @@
 {
   "installCommand": "npm install",
   "buildCommand": "npm run build",
-  "ignoreCommand": "bash scripts/vercel-ignore-build.sh"
+  "ignoreCommand": "bash scripts/vercel-ignore-build.sh",
+  "git": {
+    "deploymentEnabled": {
+      "master": false
+    }
+  }
 }

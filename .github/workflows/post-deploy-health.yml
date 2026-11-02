@@ -46,6 +46,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          NOW_ISSUE: ${{ vars.NOW_ISSUE }}
         run: python3 tools/release/discover.py
 
   health:

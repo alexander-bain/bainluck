@@ -1,0 +1,111 @@
+name: Vercel release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [in_progress, completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ci-run:
+        required: true
+        type: string
+      candidate-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+  issues: write
+
+concurrency:
+  group: vercel-ci-${{ github.event_name == 'workflow_dispatch' && inputs.ci-run || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: vars.RELEASE_LOOP_VERCEL_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Wait for an executed fast gate or successful full CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha || github.event.workflow_run.head_sha }}
+          CI_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.ci-run || github.event.workflow_run.id }}
+        run: python3 tools/release/vercel_release.py --mode gate --sha "$CANDIDATE_SHA" --ci-run "$CI_RUN"
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      candidate-id: ${{ steps.build.outputs.candidate_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Build production env without assigning live domains
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          CANDIDATE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha || github.event.workflow_run.head_sha }}
+        run: python3 tools/release/vercel_release.py --mode build --sha "$CANDIDATE_SHA"
+
+  promote:
+    needs: build
+    if: needs.build.outputs.candidate-id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # This is the only Vercel production-domain writer, together with rollback.
+    # Waiting for CI and building a draft cannot delay an urgent rollback.
+    concurrency:
+      group: vercel-production
+      cancel-in-progress: false
+    outputs:
+      deployed: ${{ steps.promote.outputs.deployed }}
+      candidate-id: ${{ steps.promote.outputs.candidate_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Recheck the durable failed-source veto, then promote
+        id: promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          CANDIDATE_ID: ${{ needs.build.outputs.candidate-id }}
+          CANDIDATE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha || github.event.workflow_run.head_sha }}
+        run: python3 tools/release/vercel_release.py --mode promote --sha "$CANDIDATE_SHA" --candidate-id "$CANDIDATE_ID"
+
+  health:
+    needs: promote
+    if: needs.promote.outputs.deployed == 'true'
+    uses: ./.github/workflows/release-health-observer.yml
+    with:
+      provider: vercel
+      candidate-id: ${{ needs.promote.outputs.candidate-id }}
+      candidate-sha: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha || github.event.workflow_run.head_sha }}
+    secrets: inherit

@@ -93,6 +93,10 @@ def capture():
         return response.read().decode('utf-8','replace')
 
 
+def worker_complete(result):
+    return result.startswith('VERDICT PASS')
+
+
 def watch(provider,candidate,working):
     require_speed_tools()
     release=dt.datetime.fromisoformat(candidate['created_at'].replace('Z','+00:00')) if provider=='heroku' else dt.datetime.now(dt.timezone.utc)
@@ -100,7 +104,10 @@ def watch(provider,candidate,working):
     combined={}; boot=False
     while time.monotonic()<deadline:
         if platforms.current(provider)['id'] != candidate['id']: return 'SUPERSEDED'
-        probe(provider)
+        try:
+            probe(provider)
+        except Exception as exc:
+            return 'VERDICT ROLLBACK anonymous public probe failed: '+type(exc).__name__
         raw=capture()
         for line in raw.splitlines(): combined[line]=None
         raw='\n'.join(combined)+'\n'
@@ -111,7 +118,7 @@ def watch(provider,candidate,working):
             if health.startswith('VERDICT ROLLBACK'): return health
             # Existing check's own explicit "3-min health PASS" precedes A10
             # completion; PENDING with this suffix must never be called full PASS.
-            boot=health.startswith('VERDICT PASS')
+            boot=worker_complete(health)
             if '3-min health PASS' in health:
                 print('Three-minute startup health passed; A10 remains pending.',flush=True)
         else:
@@ -135,20 +142,22 @@ def main():
     parser.add_argument('--candidate-sha')
     parser.add_argument('--output',default='release-health.json')
     args=parser.parse_args()
-    require_speed_tools()
-    candidate=platforms.current(args.provider)
+    candidate=platforms.candidate(args.provider,args.candidate_id) if args.candidate_id else platforms.current(args.provider)
+    previous=discover.receipts(args.provider).get(candidate['id'])
+    live=platforms.current(args.provider)
     out={'provider':args.provider,'candidate_id':candidate['id'],'candidate_sha':candidate.get('sha'),'verdict':'UNKNOWN','rollback':False}
-    if candidate['id'] in discover.receipts(args.provider):
-        out['verdict']='ALREADY CHECKED'
-    elif (args.candidate_id and candidate['id']!=args.candidate_id) or (args.candidate_sha and candidate.get('sha')!=args.candidate_sha):
+    if previous and previous['verdict'] in ('VERDICT PASS','ROLLED BACK','SUPERSEDED'):
+        out['verdict']=previous['verdict']
+    elif live['id']!=candidate['id'] or (args.candidate_sha and candidate.get('sha')!=args.candidate_sha):
         out['verdict']='SUPERSEDED'
     else:
+        require_speed_tools()
         try:
             working=pathlib.Path(os.environ.get('RUNNER_TEMP','/tmp'))/'release-loop'/candidate['id']
             working.mkdir(parents=True,exist_ok=True)
             out['verdict']=watch(args.provider,candidate,working)
         except Exception as exc:
-            out['verdict']='VERDICT ROLLBACK health observer failed: '+type(exc).__name__
+            out['verdict']='VERDICT UNKNOWN health observer failed: '+type(exc).__name__
         out['rollback']=out['verdict'].startswith('VERDICT ROLLBACK')
     pathlib.Path(args.output).write_text(json.dumps(out))
     output=os.environ.get('GITHUB_OUTPUT')
@@ -156,10 +165,10 @@ def main():
         with open(output,'a') as stream:
             for key in ('candidate_id','candidate_sha','rollback'):
                 stream.write('%s=%s\n' % (key,str(out[key]).lower() if isinstance(out[key],bool) else out[key]))
-    if out['verdict']=='VERDICT PASS':
+    if out['verdict'] in ('VERDICT PASS','SUPERSEDED') and not previous:
         discover.record(args.provider,candidate,out['verdict'])
-    if not out['rollback'] and out['verdict'] != 'ALREADY CHECKED':
-        platforms.report('%s %s %s: %s' % (args.provider,candidate['id'],str(candidate.get('sha',''))[:8],out['verdict']))
+    if not out['rollback']:
+        platforms.report('%s %s %s: %s' % (args.provider,candidate['id'],str(candidate.get('sha',''))[:8],out['verdict']),key=args.provider+':'+candidate['id'])
     print(out['verdict'])
     return 1 if out['rollback'] else (2 if out['verdict'].startswith('VERDICT UNKNOWN') else 0)
 
