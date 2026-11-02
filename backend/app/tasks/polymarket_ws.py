@@ -101,19 +101,6 @@ RESTORE_DNPL_PRICE_TIMEOUTS_SQL = text(
 )
 
 
-def _fuse_price_timeout_sets_env() -> bool:
-    """#10090 — env `PM_FUSE_PRICE_TIMEOUT_SETS`, read once at import.
-
-    On (the default), a DNPL-bound game chunk arms and restores its lock and
-    statement budgets in one statement each; `0`/`false`/`off`/`no` sends the
-    four separate statements, today's path exactly.
-    """
-    raw = os.environ.get("PM_FUSE_PRICE_TIMEOUT_SETS")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
-
-
-PM_FUSE_PRICE_TIMEOUT_SETS = _fuse_price_timeout_sets_env()
-
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
 #: burst — a game's other leg, sent right behind the first — joins the same
@@ -4688,9 +4675,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.live_blend_refresh import _mono, _wall, price_commit_ack_log_on
         from app.tasks.polymarket_ws import (
             _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
-            DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            DNPL_PRICE_STATEMENT_TIMEOUT_MS,
             ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL, RESTORE_DNPL_PRICE_TIMEOUTS_SQL,
-            PM_FUSE_PRICE_TIMEOUT_SETS, is_price_statement_timeout, _pm_game_flush_span,
+            is_price_statement_timeout, _pm_game_flush_span,
         )
         from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
@@ -4734,8 +4721,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
         # Includes unrelated game B: bounding B is what lets a later DNPL A
         # reach the same serial writer. Side loops and disabled/final stay as-is.
-        # A bound chunk is never final, so it always sends both pairs.
-        fuse_timeout_sets = bound_price_statement and PM_FUSE_PRICE_TIMEOUT_SETS
+        # A bound chunk is never final, so it always sends both pairs, fused
+        # into one statement each way (#10090; its off switch was removed in
+        # the settings freeze, docs/live-settings.md).
+        fuse_timeout_sets = bound_price_statement
         previous_statement_timeout = None
         rolled_back_statement_timeout = None
         price_statement_timeout_seen = False
@@ -4784,11 +4773,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             "lock_ms": lock_timeout_value(price_lock_timeout_ms),
                             "ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS),
                         },
-                    )).scalar_one()
-                elif bound_price_statement:
-                    previous_statement_timeout = (await session.execute(
-                        ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS)},
                     )).scalar_one()
                 clock_ticket = (
                     held_price_quotes.begin_write_clock()

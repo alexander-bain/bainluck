@@ -2,9 +2,9 @@
 
 The bound price transaction sent SET lock_timeout, then the statement-timeout
 arm; after the UPDATE, the statement-timeout restore, then SET lock_timeout.
-Fused (the default) each pair is one statement — same transaction, order and
-values — and every other chunk is unchanged. `PM_FUSE_PRICE_TIMEOUT_SETS=0`
-restores the four statements.
+Fused, each pair is one statement — same transaction, order and values — and
+every other chunk is unchanged. The `PM_FUSE_PRICE_TIMEOUT_SETS` off switch was
+removed in the settings freeze (docs/live-settings.md): fused is the only path.
 """
 
 from contextlib import asynccontextmanager
@@ -63,14 +63,6 @@ def recording_writer(monkeypatch, *, scope):
     return r, state, sent
 
 
-SEPARATE = [
-    ("set_lock", {"ms": "50ms"}),
-    ("arm", {"ms": "250ms"}),
-    ("price", None),
-    ("set_statement", {"ms": "2s"}),
-    ("set_lock", {"ms": "500ms"}),
-    ("rank", None),
-]
 FUSED = [
     ("arm_lock_and_statement", {"lock_ms": "50ms", "ms": "250ms"}),
     ("price", None),
@@ -79,30 +71,22 @@ FUSED = [
 ]
 
 
-@pytest.mark.parametrize("fuse,expected", [(True, FUSED), (False, SEPARATE)],
-                         ids=["fused", "separate"])
-async def test_a_bound_game_chunk_sends_each_pair_as_one_statement(monkeypatch, fuse, expected):
-    monkeypatch.setattr(pm, "PM_FUSE_PRICE_TIMEOUT_SETS", fuse)
+async def test_a_bound_game_chunk_sends_each_pair_as_one_statement(monkeypatch):
     r, state, sent = recording_writer(monkeypatch, scope="game")
     assert (await r.ns["write_chunk"]({1: .6, 2: .4})).written_ids == (1, 2)
-    assert sent == expected
+    assert sent == FUSED
     assert state.commits == [1, 2]
-    # Both modes: the UPDATE waits 50 ms for a lock, the rerank 500 ms.
+    # The UPDATE waits 50 ms for a lock, the rerank 500 ms.
     assert state.statement_budgets == [("price", 0.05), ("rank", 0.5)]
-    assert len(sent) == (4 if fuse else 6)
+    assert len(sent) == 4
 
 
 @pytest.mark.parametrize("scope,final", [("off", False), ("prop", False), ("game", True)],
                          ids=["preview-off", "prop-chunk", "final-drain"])
-async def test_an_unbound_chunk_is_unchanged_by_the_switch(monkeypatch, scope, final):
-    seen = {}
-    for fuse in (True, False):
-        monkeypatch.setattr(pm, "PM_FUSE_PRICE_TIMEOUT_SETS", fuse)
-        r, state, sent = recording_writer(monkeypatch, scope=scope)
-        assert (await r.ns["write_chunk"]({1: .6, 2: .4}, final=final)).written_ids == (1, 2)
-        seen[fuse] = sent
-    assert seen[True] == seen[False]
-    assert not any(name.startswith(("arm", "restore")) for name, _ in seen[True])
+async def test_an_unbound_chunk_arms_no_statement_budget(monkeypatch, scope, final):
+    r, state, sent = recording_writer(monkeypatch, scope=scope)
+    assert (await r.ns["write_chunk"]({1: .6, 2: .4}, final=final)).written_ids == (1, 2)
+    assert not any(name.startswith(("arm", "restore")) for name, _ in sent)
 
 
 def test_the_fused_arm_keeps_the_existing_cap_rule_verbatim():
@@ -118,13 +102,6 @@ def test_the_fused_arm_keeps_the_existing_cap_rule_verbatim():
     assert restore.index("'statement_timeout'") < restore.index("'lock_timeout'")
 
 
-@pytest.mark.parametrize("raw,on", [
-    (None, True), ("1", True), ("", True), ("0", False), ("false", False),
-    (" OFF ", False), ("no", False),
-])
-def test_the_switch_reads_like_its_siblings(monkeypatch, raw, on):
-    if raw is None:
-        monkeypatch.delenv("PM_FUSE_PRICE_TIMEOUT_SETS", raising=False)
-    else:
-        monkeypatch.setenv("PM_FUSE_PRICE_TIMEOUT_SETS", raw)
-    assert pm._fuse_price_timeout_sets_env() is on
+def test_the_off_switch_is_gone():
+    assert not hasattr(pm, "PM_FUSE_PRICE_TIMEOUT_SETS")
+    assert not hasattr(pm, "_fuse_price_timeout_sets_env")
