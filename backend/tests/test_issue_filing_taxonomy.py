@@ -15,6 +15,7 @@ Python (the browser-audit sweep filer is a Node script), the test reads the file
 cross-language rail is exactly the one nobody remembers to check.
 """
 
+import ast
 import importlib.util
 import pathlib
 import re
@@ -382,17 +383,16 @@ class TestAlertIntakeRail:
 
 
 class TestBrowserAuditRail:
-    """The sweep filer is Node, so its label list is read from source. #2249 and
-    #2250 (2026-08-28) were both filed unprioritized by this rail."""
+    """The weekly summary keeps the browser family's priority and issue taxonomy."""
 
-    HELPER = REPO_ROOT / "frontend" / "e2e" / "helpers" / "sweepFiling.js"
+    HELPER = REPO_ROOT / "frontend" / "e2e" / "helpers" / "weeklySummary.js"
     SCRIPT = REPO_ROOT / "frontend" / "e2e" / "scripts" / "file-sweep-findings.js"
 
     def _filing_labels(self) -> list[str]:
         source = self.HELPER.read_text()
-        match = re.search(r"const FILING_LABELS = \[(.*?)\];", source, re.S)
-        assert match, "FILING_LABELS not found in sweepFiling.js"
-        return re.findall(r'"([^"]+)"', match.group(1))
+        match = re.search(r"const SUMMARY_LABELS = (\[.*?\]);", source, re.S)
+        assert match, "SUMMARY_LABELS not found in weeklySummary.js"
+        return ast.literal_eval(match.group(1))
 
     def test_browser_audit_files_at_the_family_default(self):
         assert "priority:p3" in self._filing_labels()
@@ -400,19 +400,14 @@ class TestBrowserAuditRail:
     def test_exactly_one_priority(self):
         assert len(_priority_of(self._filing_labels())) == 1
 
-    def test_area_type_and_source_labels_survive(self):
-        assert {"type:bug", "area:frontend", "alert-intake", "program:ux"} <= set(
-            self._filing_labels()
-        )
+    def test_summary_area_type_and_program_are_present(self):
+        assert {"type:ops", "area:frontend", "program:ux"} <= set(self._filing_labels())
 
     def test_the_script_consumes_the_shared_constant(self):
-        """The list moved into the pure, contract-tested helper precisely so it stops
-        being a literal in the side-effecting shell no test loads."""
         source = self.SCRIPT.read_text()
-        assert "FILING_LABELS" in source
-        assert not re.search(
-            r"const LABELS = \[", source
-        ), "file-sweep-findings.js re-declared its own LABELS literal"
+        assert "require('../helpers/weeklySummary')" in source
+        assert "labels:SUMMARY_LABELS" in source
+        assert not re.search(r"const (?:SUMMARY_)?LABELS = \[", source)
 
 
 class TestFeatureRequestDigestRail:

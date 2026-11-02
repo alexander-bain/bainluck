@@ -40,24 +40,13 @@ test("every label is a non-empty string with no stray whitespace", () => {
   }
 });
 
-test("the filing script consumes the shared constant, not its own literal", () => {
-  const source = fs.readFileSync(SCRIPT, "utf8");
-  assert.ok(
-    source.includes("FILING_LABELS"),
-    "file-sweep-findings.js no longer imports FILING_LABELS"
-  );
-  assert.ok(
-    !/const LABELS = \[/.test(source),
-    "file-sweep-findings.js re-declared its own LABELS literal — the drift this test exists to stop"
-  );
-});
-
-test("the shared constant is what reaches `gh issue create`", () => {
-  // The shell flatMaps LABELS into `--label` pairs. Pin that wiring, so moving the
-  // constant into the helper cannot be undone by a rename at the call site.
-  const source = fs.readFileSync(SCRIPT, "utf8");
-  assert.ok(
-    /LABELS\.flatMap\(\(l\) => \["--label", l\]\)/.test(source),
-    "the --label expansion no longer reads LABELS"
-  );
+test("the weekly summary preserves the browser family's shared priority and area", () => {
+  const {SUMMARY_LABELS} = require('../helpers/weeklySummary');
+  assert.deepEqual(SUMMARY_LABELS.filter(label=>label.startsWith('priority:')),['priority:p3']);
+  assert.ok(SUMMARY_LABELS.includes('type:ops'));
+  assert.ok(SUMMARY_LABELS.includes('area:frontend'));
+  assert.ok(SUMMARY_LABELS.includes('program:ux'));
+  const source = fs.readFileSync(SCRIPT,'utf8');
+  assert.match(source,/labels:SUMMARY_LABELS/);
+  assert.ok(!source.includes('Still failing on'), 'per-issue comments must stay retired');
 });

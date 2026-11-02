@@ -29,10 +29,9 @@ name: Browser audit
 # the retired provider.
 
 on:
-  # UX-P029: 07:40 UTC daily — after the nightly sentinels (07:10 flow, 07:25
-  # grid) so a red morning has one story rather than three racing ones.
+  # Day 0: one Monday sweep and one weekly summary; manual checks stay available.
   schedule:
-    - cron: "40 7 * * *"
+    - cron: "40 7 * * 1"
   workflow_dispatch:
     inputs:
       frontend_sha:

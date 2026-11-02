@@ -31,6 +31,7 @@ frontend/lib/tournamentHubs.ts
 frontend/components/discover/utils.ts
 frontend/app/playoffs/[sport]/page.tsx
 frontend/e2e/helpers/sweepFiling.js
+frontend/e2e/helpers/weeklySummary.js
 frontend/e2e/scripts/file-sweep-findings.js
 frontend/lib/discover/feedFreshness.ts
 frontend/components/futures/OutcomeRow.tsx
