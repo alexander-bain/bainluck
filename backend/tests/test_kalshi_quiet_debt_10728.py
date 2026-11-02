@@ -41,6 +41,15 @@ def fake_clock(monkeypatch):
     monkeypatch.setattr(lbr, "_mono", lambda: holder["rig"].clock["now"])
     return holder
 
+@pytest.fixture
+def one_old_attempt(monkeypatch):
+    """The quiet slate's contract is the fresh-bearing flush's ONE old attempt
+    with its own read (FRESH_FLUSH_PENDING_ATTEMPTS=1). The default is 3 since
+    the 2026-11-02 settings freeze (docs/live-settings.md); with more than one
+    attempt left the lone quiet event is ordered by a shared population read,
+    which this rig's refresher does not fake, so the slate pins the one."""
+    monkeypatch.setattr(lbr, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
+
 # ------------------------------------------------------------ the planner ----
 
 MARKETS = {1: 10, 2: 10, 3: 20, 4: 30, 9: 90}
@@ -184,7 +193,9 @@ async def _quiet_slate(*, quiet_after_row3, mutate=None):
 
 @pytest.mark.parametrize("quiet_after_row3", [False, True],
                          ids=["quiet-paid-while-held", "quiet-paid-after-row3"])
-async def test_quiet_debt_is_paid_after_the_first_game_commits_not_joined(quiet_after_row3):
+async def test_quiet_debt_is_paid_after_the_first_game_commits_not_joined(
+    quiet_after_row3, one_old_attempt,
+):
     """Game 100 commits and is stamped while game 200's write is still held;
     game 200 then gets its own unthrottled stamp, and the quiet debt is paid.
 
@@ -232,7 +243,7 @@ def _joins_quiet_debt_to_game_100(cls):
     (_joins_quiet_debt_to_game_100, r"stamp \(100, 500\) joined unrelated games"),
 ], ids=["drops-quiet-debt", "stamps-200-precommit", "joins-quiet-to-100"])
 async def test_strawman_the_quiet_contract_rejects_lost_debt_early_and_joined_stamps(
-    mutate, finding, quiet_after_row3,
+    mutate, finding, quiet_after_row3, one_old_attempt,
 ):
     """The same slate through refreshers that drop the quiet debt, stamp game
     200 before its row commits, or pay the debt inside game 100's stamp: each

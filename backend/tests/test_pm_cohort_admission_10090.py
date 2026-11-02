@@ -128,7 +128,11 @@ async def test_capped_out_tail_preserves_the_existing_planned_chunk_boundary():
     assert not r.pending_event_ids()
 
 
-async def test_quiet_failed_withdrawal_keeps_debt_then_stamps_after_success():
+async def test_quiet_failed_withdrawal_keeps_debt_then_stamps_after_success(monkeypatch):
+    # The exclusion before `owed_past_withdrawal` (its off arm): that switch is
+    # on since the 2026-11-02 settings freeze (docs/live-settings.md); the
+    # production twin is the next test.
+    monkeypatch.setenv("SPEED_SWITCH_TODAY_OWED_PAST_WITHDRAWAL", "0")
     x = rig(batch={}, books={44: (0.2, 0.8)}, mapping={44: 90}, fail=True)
     r = Recording(x.trace)
     r.adopt_pending([90, 20])
@@ -138,5 +142,24 @@ async def test_quiet_failed_withdrawal_keeps_debt_then_stamps_after_success():
     assert r.pending_event_ids() == frozenset({90})
     x.control["fail"] = False
     assert await x.ns["flush_prices"](flush_started=102)
+    assert x.trace[-1] == ("admit", [90])
+    assert not r.pending_event_ids()
+
+
+async def test_quiet_failed_withdrawal_does_not_hold_committed_debt_by_default():
+    # `owed_past_withdrawal` on (today since the settings freeze): the committed
+    # price owed to 90 is stamped past its failed withdrawal, and the withdrawal
+    # that later lands owes 90 its own stamp (test_owed_past_withdrawal_10090).
+    x = rig(batch={}, books={44: (0.2, 0.8)}, mapping={44: 90}, fail=True)
+    r = Recording(x.trace)
+    r.adopt_pending([90, 20])
+    x.ns["blend_refresher"] = r
+    assert not await x.ns["flush_prices"](flush_started=100)
+    assert ("failure", None) in x.trace
+    assert ("admit", [20]) in x.trace and ("admit", [90]) in x.trace
+    assert not r.pending_event_ids()
+    x.control["fail"] = False
+    assert await x.ns["flush_prices"](flush_started=102)
+    assert ("commit", None) in x.trace
     assert x.trace[-1] == ("admit", [90])
     assert not r.pending_event_ids()

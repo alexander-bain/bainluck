@@ -26,6 +26,11 @@ from this refresher's own reads: a never-read or newly live game queues as
 non-live until its read says live. Cancellation with both queues occupied
 keeps every unstamped event owed. Queue-order and recovery controls on the
 existing rig; no subsecond timing claim.
+
+These tests order one event per stamp, so they pin both stamp batches to 1
+(the defaults are 4 since the 2026-11-02 settings freeze, docs/live-settings.md;
+the batches have their own tests in test_admitted_stamp_batch_10090 and
+test_fable_admitted_live_batch_10090).
 """
 import asyncio
 
@@ -35,6 +40,12 @@ from app.tasks import live_blend_refresh as module
 from tests.test_single_event_commit_10090 import rig, settle_until
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _one_event_per_stamp(monkeypatch):
+    monkeypatch.setattr(module, "ADMITTED_STAMP_BATCH", 1)
+    monkeypatch.setattr(module, "ADMITTED_LIVE_BATCH", 1)
 
 
 def _gated(x):

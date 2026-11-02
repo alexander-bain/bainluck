@@ -1,7 +1,7 @@
 """Stream main `bainluck` logs (Platform API tail sessions, reconnecting) and track the #10090 headline clock:
 per minute, both venues' `headline-clock` max_ms; PASS when both < 500; streak of consecutive PASS minutes
 (minutes with n=0 on a venue are skipped: no samples). One line per completed minute. Token from ~/.netrc."""
-import json, netrc, os, re, sys, time, urllib.request
+import json, netrc, os, re, signal, sys, time, urllib.request
 OUT = sys.argv[1]
 tok = netrc.netrc(os.path.expanduser("~/.netrc")).authenticators("api.heroku.com")[2]
 cur = {}; streak = 0; best = 0
@@ -51,8 +51,20 @@ def done_minute(minute, rows):
             minute, "PASS" if ok else "FAIL", ke, pe, streak, best, nr, k[2][:160], p[2][:160])
     print(line, flush=True)
     with open(OUT, "a") as f: f.write(line + "\n")
+class Silent(Exception):
+    pass
+
+
+def _silent(signum, frame):
+    raise Silent()
+
+
+# A stream can also go quiet without closing (11/02: 70 min, no lines and no timeout), so the read
+# itself never returns; an alarm reset on every headline-clock line breaks it.
+signal.signal(signal.SIGALRM, _silent)
 while True:
     try:
+        signal.alarm(SILENT_S)
         req = urllib.request.Request("https://api.heroku.com/apps/bainluck/log-sessions", method="POST",
             data=json.dumps({"lines": 10, "tail": True, "source": "app", "dyno": "worker-ws.1"}).encode(),
             headers={"Accept": "application/vnd.heroku+json; version=3", "Authorization": "Bearer " + tok, "Content-Type": "application/json"})
@@ -68,6 +80,7 @@ while True:
                         print("stream silent %ds: reconnecting" % SILENT_S, flush=True); break
                     continue
                 last_clock = time.time()
+                signal.alarm(SILENT_S)
                 m = re.search(r"\]: (\{.*\})\s*$", s)
                 try: msg = json.loads(m.group(1))["message"] if m else s
                 except Exception: msg = s
@@ -84,4 +97,5 @@ while True:
                 if len(rows) == 2:
                     done_minute(minute, cur.pop(minute))
     except Exception as e:
+        signal.alarm(0)
         print("stream reconnect: %s" % type(e).__name__, flush=True); time.sleep(3)

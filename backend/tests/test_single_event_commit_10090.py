@@ -115,13 +115,23 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
     return SimpleNamespace(**locals())
 
 
+@pytest.fixture
+def one_old_attempt(monkeypatch):
+    """A fresh-bearing flush attempts ONE old stamp: FRESH_FLUSH_PENDING_ATTEMPTS
+    =1. The default is 3 since the 2026-11-02 settings freeze
+    (docs/live-settings.md); the tests that count that one attempt pin it."""
+    from app.tasks import live_blend_refresh as module
+
+    monkeypatch.setattr(module, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
+
+
 async def settle_until(predicate):
     async with asyncio.timeout(1):
         while not predicate():
             await asyncio.sleep(0)
 
 
-async def test_pending_budget_frees_next_fresh_flush_and_fairly_resumes_old_debt(monkeypatch):
+async def test_pending_budget_frees_next_fresh_flush_and_fairly_resumes_old_debt(monkeypatch, one_old_attempt):
     from app.tasks import live_blend_refresh as module
 
     clock = [1000.0]
@@ -192,7 +202,7 @@ async def test_final_drain_attempts_all_pending_after_periodic_budget_exhausted(
     assert not x.r.pending_event_ids() and not x.r._pending_continuation
 
 
-async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monkeypatch):
+async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monkeypatch, one_old_attempt):
     from app.tasks import live_blend_refresh as module
 
     clock = [1000.0]
@@ -229,7 +239,7 @@ async def test_fresh_work_spending_residual_budget_skips_later_pending_read(monk
     assert not x.r._failed_hold_until
 
 
-async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(monkeypatch):
+async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(monkeypatch, one_old_attempt):
     x = rig(monkeypatch, count=4, statuses={
         1: "scheduled", 2: "scheduled", 3: "live", 4: "live",
     })
@@ -248,7 +258,7 @@ async def test_live_stamps_lead_within_fresh_and_pending_but_fresh_stays_first(m
 
 
 @pytest.mark.parametrize("outcome", ["release", "failure", "cancel"])
-async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, outcome):
+async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, outcome, one_old_attempt):
     x = rig(monkeypatch)
     x.r._lock_retry = {1, 2}
     prepare = x.r._prepare_groups
@@ -298,7 +308,7 @@ async def test_fresh_stamp_publishes_before_pending_preparation(monkeypatch, out
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_fresh_preparation_failure_keeps_fresh_owed_and_attempts_pending(monkeypatch):
+async def test_fresh_preparation_failure_keeps_fresh_owed_and_attempts_pending(monkeypatch, one_old_attempt):
     x = rig(monkeypatch)
     x.r._lock_retry = {1, 2}
     read = x.r._read_groups

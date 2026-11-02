@@ -4,9 +4,21 @@ Old debt used to run serially behind a busy flush's fresh work for up to the
 whole 1 s pending budget. Now the flush (all of its refresh calls together)
 attempts one old event and leaves the rest owed in continuation order; quiet
 flushes keep the full time budget, and untimed calls are unchanged.
+
+"At most one" is FRESH_FLUSH_PENDING_ATTEMPTS=1, so this file pins it (the
+default is 3 since the 2026-11-02 settings freeze, docs/live-settings.md; the
+setting itself is tested in test_owed_stamp_budget_env_10090).
 """
 
+import pytest
+
+from app.tasks import live_blend_refresh as module
 from tests.test_single_event_commit_10090 import rig
+
+
+@pytest.fixture(autouse=True)
+def _one_old_attempt_per_fresh_flush(monkeypatch):
+    monkeypatch.setattr(module, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
 
 
 async def test_fresh_bearing_flush_attempts_one_old_event_and_keeps_the_rest_owed(monkeypatch):

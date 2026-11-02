@@ -17,12 +17,16 @@ from tests.test_ws_flush_cadence_10090 import _FakeTime
 @pytest.mark.parametrize(
     "override,legacy,expected_period,expected_floor",
     [
-        (None, 2, 2, 2),
-        (None, 3.5, 3.5, 2),
-        (None, 0.5, 0.5, 2),
-        ("1", 2, 1, 1),
-        ("1", 4, 1, 1),
-        ("2.5", 2, 2.5, 2.5),
+        # Since the settings freeze (docs/live-settings.md) the blend floor is
+        # its own setting, 5 s unless `PM_WS_BLEND_FLOOR_SECONDS` says
+        # otherwise; the flush timers no longer move it
+        # (test_pm_game_flush_cadence_10090).
+        (None, 2, 2, 5.0),
+        (None, 3.5, 3.5, 5.0),
+        (None, 0.5, 0.5, 5.0),
+        ("1", 2, 1, 5.0),
+        ("1", 4, 1, 5.0),
+        ("2.5", 2, 2.5, 5.0),
     ],
 )
 async def test_real_pm_consumer_binds_timer_floor_and_legacy_retry(
@@ -33,6 +37,7 @@ async def test_real_pm_consumer_binds_timer_floor_and_legacy_retry(
     expected_floor,
 ):
     module, consumer, slate = _arm(monkeypatch, "polymarket")
+    monkeypatch.delenv("PM_WS_BLEND_FLOOR_SECONDS", raising=False)
     if override is None:
         monkeypatch.delenv("PM_WS_PRICE_FLUSH_SECONDS", raising=False)
     else:

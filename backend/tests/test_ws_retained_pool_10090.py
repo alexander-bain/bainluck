@@ -66,7 +66,10 @@ async def test_consecutive_overlapping_batches_reuse_every_connection(
         with pytest.raises(TimeoutError):
             engine.sync_engine.connect()
         assert len(opened) == 5
-        assert captured["pool_pre_ping"] is True
+        # The consumer engine's pre-ping is off by default since the settings
+        # freeze (`WS_CONSUMER_POOL_PRE_PING`, production since 2026-10-30;
+        # docs/live-settings.md, test_ws_consumer_preping_switch_10090).
+        assert captured["pool_pre_ping"] is False
         assert captured["pool_recycle"] == 1800
     finally:
         for connection in checked_out:
