@@ -419,6 +419,7 @@ describe("every writer call site sits under the page that registers the gate", (
       "app/discover/page.tsx",
       "components/DiscoverCard.tsx",
       "components/discover/BundleActionBar.tsx",
+      "components/discover/DeadlineFamilyCard.tsx",
       "components/discover/GroupCard.tsx",
       "components/discover/ThemeBundleCard.tsx",
     ]);
@@ -435,7 +436,9 @@ describe("every writer call site sits under the page that registers the gate", (
     // #10357 — the round-up card carries the bundle actions too; it mounts only
     // under DiscoverCard, so the gate above still covers every write it makes.
     expect(importers(/from "[^"]*\/RoundupCard"/)).toEqual(["components/DiscoverCard.tsx"]);
+    expect(importers(/from "[^"]*\/DeadlineFamilyCard"/)).toEqual(["components/discover/ThemeBundleCard.tsx"]);
     expect(importers(/from "[^"]*\/BundleActionBar"/)).toEqual([
+      "components/discover/DeadlineFamilyCard.tsx",
       "components/discover/GroupCard.tsx",
       "components/discover/ThemeBundleCard.tsx",
       "components/discover/roundup/RoundupCard.tsx",

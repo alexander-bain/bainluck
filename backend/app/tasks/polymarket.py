@@ -47,6 +47,10 @@ from app.utils.polymarket_no_winner_cutoff import (  # #10407 A1
     REFUSAL_REASONS as CUTOFF_REFUSAL_REASONS,
     parse_no_winner_cutoff,
 )
+from app.utils.deadline_family_story import (  # #9878 / #11040
+    DEADLINE_RULE_CONTRACT_KEY,
+    build_polymarket_submarket_deadline_contract,
+)
 from app.utils.event_taxonomy import NON_SPORT_CATEGORIES  # #7814 — see below
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
@@ -587,6 +591,7 @@ def sub_market_metadata(
     content_understanding: Optional[dict] = None,
     venue_game_start=None,
     event_slug: Optional[str] = None,
+    deadline_rule_contract: Optional[dict] = None,
 ) -> Optional[dict]:
     """``market_metadata`` for a decomposed Polymarket sub-market, at mint time.
 
@@ -701,6 +706,8 @@ def sub_market_metadata(
         # the next poll and a re-ingest refreshes one that has gone stale
         # because the venue relabelled the market.
         meta[CONTENT_UNDERSTANDING_KEY] = content_understanding
+    if deadline_rule_contract is not None:
+        meta[DEADLINE_RULE_CONTRACT_KEY] = deadline_rule_contract
     return meta or None
 
 
@@ -3232,6 +3239,13 @@ async def _process_event_batch(
                             venue_game_start=event.game_start_time,
                             # #8636: the venue's league code, for placement.
                             event_slug=event.slug,
+                            # #9878 / #11040: deterministic rule-equivalence and
+                            # contractual cutoff proof for cumulative deadline
+                            # sub-markets, parsed from `market.description`,
+                            # `market.group_item_title`, and `market.end_date`.
+                            deadline_rule_contract=build_polymarket_submarket_deadline_contract(
+                                event, market
+                            ),
                         )
                         # ── ITS OWN 24h VOLUME (UX-P157, #2256).
                         #
@@ -3376,10 +3390,15 @@ async def _process_event_batch(
                                         _sa_literal(_json.dumps(_v)), _PG_JSONB,
                                     )
                                 _sub_meta_pairs.extend([_k, _v])
-                            sub_set["market_metadata"] = func.coalesce(
+                            _base_sub_meta = func.coalesce(
                                 FuturesMarket.market_metadata,
                                 _sa_cast(_sa_literal("{}"), _PG_JSONB),
-                            ).op("||")(
+                            )
+                            if DEADLINE_RULE_CONTRACT_KEY not in sub_meta_insert:
+                                _base_sub_meta = _base_sub_meta.op("-")(
+                                    DEADLINE_RULE_CONTRACT_KEY
+                                )
+                            sub_set["market_metadata"] = _base_sub_meta.op("||")(
                                 func.jsonb_build_object(*_sub_meta_pairs)
                             )
 

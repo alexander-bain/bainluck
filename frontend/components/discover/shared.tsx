@@ -86,7 +86,17 @@ const BADGE_MIN_MOVEMENT_POINTS = 2;
  */
 const MOVEMENT_BADGE_ON_DARK = { up: "bg-black/40 text-green-300", down: "bg-black/40 text-red-300" };
 
-export function MovementBadge({ m, prob, onDark = false }: { m: number | null | undefined; prob?: number | null; onDark?: boolean }) {
+export function MovementBadge({
+  m,
+  prob,
+  onDark = false,
+  timeframeLabel,
+}: {
+  m: number | null | undefined;
+  prob?: number | null;
+  onDark?: boolean;
+  timeframeLabel?: string | null;
+}) {
   // UX-P048 (#1695): the fraction -> points conversion lives in exactly one
   // place. This badge was already correct; it delegates so that it and the hero
   // cannot drift apart again, which is how the hero came to print a 64-point
@@ -116,7 +126,11 @@ export function MovementBadge({ m, prob, onDark = false }: { m: number | null | 
   const pts = formatMovementPointsLikeSentence(m) as string;
   // L2-156 Item 3 — the arrow is a 24h PROBABILITY move, not a rank change. Casual
   // fans can't tell without a label, so spell it out on hover / for screen readers.
-  const label = `${up ? "Up" : "Down"} ${pts} point${pts === "1" ? "" : "s"} in the last 24h`;
+  const suffix =
+    timeframeLabel && timeframeLabel.trim()
+      ? timeframeLabel.trim()
+      : "in the last 24h";
+  const label = `${up ? "Up" : "Down"} ${pts} point${pts === "1" ? "" : "s"} ${suffix}`;
   // #6579 — `shrink-0 whitespace-nowrap`, because this badge is the SHORT,
   // FIXED-length item in its row and the thing beside it is the variable one.
   // `TrendBadge` below carries the `shrink-0` half for the same reason; the

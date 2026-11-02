@@ -1927,6 +1927,138 @@ export interface FeedFuturesData {
     movement: number | null;
   }[];
   market_tags?: string[];
+  /** Provider condition/contract external ID when served by the producer (#9878 / #11040). */
+  external_id?: string | null;
+  /** Producer-verified cumulative deadline-family member evidence (#9878 / #11040). */
+  deadline_member?: FeedDeadlineMemberContract | null;
+}
+
+export interface FeedDeadlineMovementBasis {
+  outcome_id: number;
+  basis_price: number;
+  observed_at: string;
+  age_hours?: number | null;
+  in_window?: boolean;
+  admits_zero?: boolean;
+}
+
+export type FeedDeadlineSettlementState =
+  | "open"
+  | "deadline_passed"
+  | "trading_closed"
+  | "resolved"
+  | "void"
+  | "unknown";
+
+export interface FeedDeadlineSettlementEvidence {
+  state?: FeedDeadlineSettlementState;
+  is_settled: boolean;
+  is_trading_closed?: boolean;
+  is_deadline_passed?: boolean;
+  venue_closure_evidence?: boolean;
+  conflicting_settlement_evidence?: boolean;
+  status: string;
+  winner?: "Yes" | "No" | string | null;
+  result?: "Yes" | "No" | string | null;
+  authoritative_source?: string | null;
+  lagging_local_status?: boolean;
+  untrusted_local_grade?: boolean;
+  stale_observation?: boolean;
+}
+
+export interface FeedDeadlineRuleVerification {
+  verified: boolean;
+  evidence_source: string | null;
+  rule_template_hash: string | null;
+  cutoff_timezone: string | null;
+  cutoff_local_time: string | null;
+  reason?: string | null;
+}
+
+export interface FeedDeadlineMemberContract {
+  market_id: number;
+  name: string;
+  source: string;
+  external_id: string;
+  group_id: string;
+  group_type?: string | null;
+  market_type?: string | null;
+  stem_key: string;
+  display_stem: string;
+  shared_question: string;
+  preposition: string;
+  deadline_text: string;
+  short_deadline: string;
+  deadline_label: string;
+  calendar_date: string;
+  deadline_instant: string;
+  deadline_epoch: number;
+  cutoff_timezone?: string | null;
+  cutoff_local_time?: string | null;
+  rule_verification?: FeedDeadlineRuleVerification | null;
+  rule_template_hash?: string | null;
+  yes_outcome_id: number;
+  yes_outcome_name: "Yes";
+  yes_external_id?: string | null;
+  no_outcome_id: number;
+  no_external_id?: string | null;
+  yes_probability: number | null;
+  yes_rendered_percent?: number | null;
+  no_probability?: number | null;
+  price_observed_at?: string | null;
+  stored_movement_claim: number | null;
+  movement_basis: FeedDeadlineMovementBasis | null;
+  movement_status:
+    | "hero"
+    | "moderate"
+    | "sub_threshold"
+    | "measured_zero"
+    | "no_stored_claim"
+    | "zero_stored_claim_refused"
+    | "missing_or_invalid_basis"
+    | "basis_out_of_window"
+    | "settled_suppressed"
+    | "trading_closed_suppressed"
+    | "deadline_passed_suppressed"
+    | "unobserved_current_price"
+    | "unpriced";
+  supported_move: number | null;
+  supported_move_points: number | null;
+  show_hero_movement_chip: boolean;
+  show_row_movement_badge: boolean;
+  settlement: FeedDeadlineSettlementEvidence;
+  is_near_certain?: boolean;
+  near_certain_open_eligible?: boolean;
+  provider_market_count?: number | null;
+  verified_family_count?: number | null;
+  detail_href: string;
+}
+
+export interface FeedDeadlineFamilyContract {
+  story_key: string;
+  source: string;
+  group_id: string;
+  title: string;
+  shared_question: string;
+  family_state: "open" | "settled";
+  rule_template_hash?: string | null;
+  cutoff_timezone?: string | null;
+  cutoff_local_time?: string | null;
+  representative_market_id: number;
+  representative_outcome_id: number;
+  representative_deadline_label: string;
+  selection_reason:
+    | "largest_supported_dated_move"
+    | "nearest_50_pct_fallback"
+    | "settled_family";
+  tie_break_rule: string;
+  hero_min_movement_points: number;
+  moderate_min_movement_points: number;
+  represented_count: number;
+  verified_family_count?: number | null;
+  provider_market_count: number | null;
+  inventory_complete: boolean | null;
+  members: FeedDeadlineMemberContract[];
 }
 
 export interface FeedTournamentData {
@@ -2079,6 +2211,8 @@ export interface FeedBundleData {
   // #10357: `kind: "roundup"` only — the served round-up contract. The card is
   // drawn from this and nothing else; a round-up without it is not drawn.
   roundup?: FeedRoundupContract | null;
+  /** Producer-verified cumulative deadline-family payload (#9878 / #11040). */
+  deadline_family?: FeedDeadlineFamilyContract | null;
 }
 
 // #10357 — a round-up card ("NFL division front-runners"). Every number is the
