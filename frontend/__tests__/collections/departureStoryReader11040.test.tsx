@@ -199,7 +199,7 @@ describe("AC-R5 an old number says how old it is", () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T08:38:28Z") });
     const missing = market(65678074, "Katie Zacharia out as Press Secretary by December 31?", [{ name: "Yes", probability: null }]);
     const html = card(departurePage([{ class: "departure_announced", members: [missing] }]));
-    expect(html).toContain("Probability unavailable");
+    expect(html).toContain("1 outcome without a price yet");
     expect(html).not.toMatch(/>0%</);
     expect(html).not.toContain("price-age-mark");
   });
@@ -208,7 +208,7 @@ describe("AC-R5 an old number says how old it is", () => {
     const partialStale = market(65678073, "Katie Zacharia out as Press Secretary by October 31?", [{ name: "Yes", probability: 0.55 }, { name: "No", probability: null }], { pricesAt: "2026-10-14T23:38:28Z" });
     const html = card(departurePage([{ class: "departure_announced", members: [partialStale] }]));
     expect(html).toContain("55%");
-    expect(html).toContain("Probability unavailable");
+    expect(html).toContain("1 more without a price yet");
     expect(html).toContain('data-testid="price-age-mark"');
     expect(html).toContain('data-cadence="futures"');
   });

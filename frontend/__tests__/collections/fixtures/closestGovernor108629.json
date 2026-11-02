@@ -1,0 +1,199 @@
+{
+  "type": "market",
+  "id": 108629,
+  "destination": {
+    "kind": "market",
+    "id": 108629,
+    "web": "/futures/108629",
+    "api": "/api/futures/108629"
+  },
+  "card": {
+    "id": 108629,
+    "name": "Closest Governor race in 2026?",
+    "sport": null,
+    "sport_name": null,
+    "category": "politics",
+    "llm_sport_category": "politics",
+    "market_tier": 2,
+    "market_type_label": "Politics",
+    "market_type": "field",
+    "status": "open",
+    "source": "kalshi",
+    "resolution_date": "2027-01-20T04:59:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 1594077,
+        "name": "Georgia",
+        "probability": 0.195,
+        "american_odds": 413,
+        "rank": 1,
+        "movement": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "id": 1594085,
+        "name": "Kansas",
+        "probability": 0.092,
+        "american_odds": 987,
+        "rank": 2,
+        "movement": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "id": 235955693,
+        "name": "Texas",
+        "probability": 0.085,
+        "american_odds": 1076,
+        "rank": 3,
+        "movement": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "id": 1594081,
+        "name": "Nevada",
+        "probability": 0.0765,
+        "american_odds": 1207,
+        "rank": 4,
+        "movement": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "id": 1594082,
+        "name": "Ohio",
+        "probability": 0.0665,
+        "american_odds": 1404,
+        "rank": 5,
+        "movement": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "New Hampshire",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "Colorado",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "Iowa",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "New Mexico",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "New York",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "Arizona",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "Michigan",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "Minnesota",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "Oklahoma",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "Maine",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "Pennsylvania",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "Wisconsin",
+        "probability": null,
+        "is_winner": false,
+        "resolution_source": "ungradeable_result"
+      },
+      {
+        "name": "South Carolina",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "Vermont",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "South Dakota",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "Alaska",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "Oregon",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "Florida",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      },
+      {
+        "name": "Nebraska",
+        "probability": null,
+        "is_winner": null,
+        "resolution_source": null
+      }
+    ],
+    "outcome_count": 24,
+    "updated_at": "2026-10-27T06:53:06.691705+00:00",
+    "prices_updated_at": "2026-11-02T19:00:03.264185+00:00",
+    "settled_at": null,
+    "sources": [
+      "kalshi"
+    ],
+    "source_count": 1
+  },
+  "event_id": null
+}
