@@ -96,6 +96,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_database_steps_continue_after_failure_but_stop_on_cancellation(self):
         for workflow in ['ci.yml', 'live-path-watchdog.yml']:
+            self.assertLess((ROOT / '.github/workflows' / workflow).stat().st_size, 500 * 1024,
+                            'GitHub rejects workflow files above 500 KiB')
             job = yaml.safe_load((ROOT / '.github/workflows' / workflow).read_text())['jobs']['database-integration']
             steps = job['steps']
             summaries = [step for step in steps if step.get('id') == 'database_integration_summary']
