@@ -12,6 +12,11 @@ order among themselves, and urgent ones among theirs.
 Any order between two waiters was already possible (it was decided by which
 asked first), so the ledger's own checks, not the lock order, keep every
 publication correct.
+
+``yield_to_urgent()`` (#10090, 11/01 00:20Z: a receipt waited 575 ms behind
+one 579 ms settle hold) lets a long holder hand the lock to a queued urgent
+waiter between its own units of work and take it back next, ahead of every
+ordinary waiter. A holder that never calls it is unchanged.
 """
 
 from __future__ import annotations
@@ -61,6 +66,30 @@ class PriorityLock:
                     waiter.set_result(True)  # ownership moves; still locked
                     return
         self._locked = False
+
+    def urgent_waiting(self) -> bool:
+        return any(not waiter.done() for waiter in self._urgent)
+
+    async def yield_to_urgent(self) -> bool:
+        """Holder only: when an urgent waiter is queued, hand it the lock and
+        wait to get it back, first among ordinary waiters. True if it yielded."""
+        if not self._locked or not self.urgent_waiting():
+            return False
+        waiter = asyncio.get_running_loop().create_future()
+        self._waiters.appendleft(waiter)
+        self.release()
+        try:
+            # Shielded: a cancellation must not cancel the hand-back itself.
+            await asyncio.shield(waiter)
+        except asyncio.CancelledError:
+            # The caller's `async with` will release the lock as it unwinds, so
+            # it must own it again first: wait (the urgent holder's work is
+            # short) without letting a second cancellation strand the wait.
+            while not waiter.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(waiter)
+            raise
+        return True
 
     async def __aenter__(self) -> None:
         await self.acquire()
