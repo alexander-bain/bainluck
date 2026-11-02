@@ -25,6 +25,54 @@ def eligible(files, now):
     return now >= START and any(path.startswith("ios/") for path in files)
 
 
+def git_output(repo, *arguments):
+    return (
+        subprocess.check_output(["git", "-C", str(repo), *arguments]).decode().strip()
+    )
+
+
+def first_parent_commits(repo, head):
+    return git_output(repo, "rev-list", "--first-parent", head).splitlines()
+
+
+def new_ios_commits(repo, before, head):
+    """Each first-parent commit is checked against its own parent, including reverts."""
+    for value in (before, head):
+        if not re.fullmatch(r"[0-9a-f]{40}", value or ""):
+            raise ValueError("TestFlight push requires complete before and head SHAs")
+    chain = first_parent_commits(repo, head)
+    if before not in chain:
+        raise ValueError(
+            "Push base is not on the master first-parent chain; refusing to omit commits"
+        )
+    new = list(reversed(chain[: chain.index(before)]))
+    selected = []
+    for source in new:
+        parent = git_output(repo, "rev-parse", source + "^1")
+        changed = git_output(
+            repo, "diff", "--name-only", "--no-renames", parent, source, "--", "ios/"
+        )
+        if changed:
+            selected.append(source)
+    return selected
+
+
+def requested_source(repo, source, master):
+    if not re.fullmatch(r"[0-9a-f]{40}", source or ""):
+        raise ValueError("TestFlight source must be a full SHA")
+    if source not in first_parent_commits(repo, master):
+        raise ValueError("TestFlight source is not a first-parent master commit")
+    parent = git_output(repo, "rev-parse", source + "^1")
+    return new_ios_commits(repo, parent, source)
+
+
+def dispatch_sources(sources, send):
+    for source in sources:
+        if not re.fullmatch(r"[0-9a-f]{40}", source or ""):
+            raise ValueError("Dispatch source is not a full SHA")
+        send({"ref": "master", "inputs": {"source_sha": source}})
+
+
 def master_floor(project):
     values = re.findall(r"CURRENT_PROJECT_VERSION\s*=\s*([0-9]+)\s*;", project)
     assignments = re.findall(r"CURRENT_PROJECT_VERSION\s*=\s*([^;]+);", project)
@@ -174,9 +222,13 @@ def confirm(build, version, source, receipt):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", choices=["scope", "reserve", "bundles", "delivery", "confirm"]
+        "command",
+        choices=["scope", "dispatch", "reserve", "bundles", "delivery", "confirm"],
     )
     parser.add_argument("--before")
+    parser.add_argument("--event-name", default=os.environ.get("GITHUB_EVENT_NAME"))
+    parser.add_argument("--source-project")
+    parser.add_argument("--sources")
     parser.add_argument("--source", default=os.environ.get("GITHUB_SHA"))
     parser.add_argument("--master-project")
     parser.add_argument("--root")
@@ -186,30 +238,49 @@ def main():
     parser.add_argument("--receipt")
     args = parser.parse_args()
     if args.command == "scope":
-        files = (
-            subprocess.check_output(
-                [
-                    "git",
-                    "-C",
-                    str(ROOT),
-                    "diff",
-                    "--name-only",
-                    "-z",
-                    args.before,
-                    args.source,
-                ]
-            )
-            .decode()
-            .split("\0")
+        if datetime.now(timezone.utc) < START:
+            sources = []
+        elif args.event_name == "push":
+            sources = new_ios_commits(ROOT, args.before, args.source)
+        elif args.event_name == "workflow_dispatch":
+            sources = requested_source(ROOT, args.source, "origin/master")
+        else:
+            sources = []
+        source = (
+            sources[0] if args.event_name == "workflow_dispatch" and sources else ""
         )
-        result = eligible(files, datetime.now(timezone.utc))
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            output.write("eligible=" + str(result).lower() + "\n")
-        print("TestFlight eligible: " + str(result).lower())
+            output.write("eligible=" + str(bool(sources)).lower() + "\n")
+            output.write("sources=" + json.dumps(sources) + "\n")
+            output.write("source=" + source + "\n")
+        print(f"TestFlight selected {len(sources)} source commit(s)")
+    elif args.command == "dispatch":
+        sources = json.loads(args.sources)
+        if not isinstance(sources, list):
+            raise ValueError("Dispatch sources must be a list")
+
+        def send(body):
+            subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    "--method",
+                    "POST",
+                    "repos/"
+                    + os.environ["GITHUB_REPOSITORY"]
+                    + "/actions/workflows/testflight.yml/dispatches",
+                    "--input",
+                    "-",
+                ],
+                input=json.dumps(body),
+                text=True,
+                check=True,
+            )
+
+        dispatch_sources(sources, send)
+        print(f"Dispatched {len(sources)} separate source release(s)")
     elif args.command == "reserve":
-        source_project = (
-            ROOT / "ios" / "Bain Luck" / "Bain Luck.xcodeproj" / "project.pbxproj"
-        ).read_text()
+        source_project = Path(args.source_project).read_text()
         args.version = release_version(source_project)
         get, app_id = apple_client()
         numbers = [

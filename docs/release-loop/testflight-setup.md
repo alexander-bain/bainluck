@@ -1,8 +1,8 @@
 # TestFlight release setup
 
 The action starts at **00:00 Pacific on Tuesday, November 3, 2026**. Before that,
-master pushes run controller tests and classify the diff, but cannot load signing
-secrets, take release ownership, archive or upload. Merging remains held until
+master pushes run controller tests and classify their commits, but cannot dispatch
+a release, load signing secrets, take ownership, archive or upload. Merging remains held until
 Alex writes "master is current".
 
 ## Existing native assets required in Actions
@@ -47,18 +47,33 @@ missing or mismatched bundles, upload errors or failed Apple processing.
 
 ## What runs for each merge
 
-The action reads the complete push diff, rather than relying on GitHub's first
-300 changed paths. Each push touching `ios/**` after the start time builds its
-exact pushed SHA. PRs run only controller contracts and receive no signing secrets.
-The hosted toolchain matches the existing Watch action: macOS 15 / Xcode 26.3.
+The intake action walks every new first-parent commit in a master push, checks
+that commit against its own first parent, and dispatches a separate source release
+for each one touching `ios/**`. This preserves intermediate merges in a batch and
+changes later reverted within the same push; it does not rely on GitHub's first
+300 changed paths or a matrix-size limit. Feature commits inside a merge are not
+separate master releases. Each dispatched run has a `source_sha` input, which must
+be a full SHA on the current master first-parent chain and must itself change iOS.
+PRs run only controller contracts and receive no signing secrets. A manually
+dispatched run with a blank source uses current master if that commit changes iOS.
+
+The release controller is checked out from trusted master, and the app is checked
+out separately at the exact selected source. Earlier commits in a batch therefore
+do not need to contain the newly introduced controller scripts. The hosted
+toolchain matches the existing Watch action: macOS 15 / Xcode 26.3.
 
 The separate `testflight-release-lock` ref coordinates release ownership. It is
 never master and does not trigger a master deploy. Its commits carry only lease
 state and keep a constant source tree; a fast-forward update lets exactly one
-waiter own the next build. No Actions concurrency group drops intermediate
-pending merges. A controller that waits five hours fails visibly and can be retried.
+waiter own the next build. Initial ownership waiting runs on Ubuntu. No Actions
+concurrency group drops intermediate pending merges. A controller that waits five hours fails visibly and can be retried.
 A waiting controller recovers ownership only after the owner's
-**specific workflow attempt** is completed. The gitleaks push trigger excludes only this internal state branch; master,
+**specific workflow attempt** is completed. The macOS release independently
+acquires ownership with its actual `run_attempt` before allocating a number and
+validates again before upload. GitHub's "re-run failed jobs" can retain a successful
+Ubuntu queue job's old output; that old token never authorizes a retry. Cleanup
+uses the fresh attempt token and cannot unlock another run. Retried releases can
+wait on the hosted Mac up to four hours; archive/upload keeps its 90-minute limit. The gitleaks push trigger excludes only this internal state branch; master,
 other source pushes, PRs and the weekly source scan retain their existing scans.
 Do not force or delete this ref:
 fast-forward updates are what keep an old waiter from unlocking a new owner.
@@ -91,7 +106,8 @@ bash -n tools/testflight/build.sh
 ```
 
 The controller contracts run under Python 3.11 on PRs and master. They exercise
-Tuesday timing, the complete version/build-number floors, Apple pagination,
-artifact version mismatches, missing upload success, invalid signing profiles,
-lease recovery and competing owners. Signed archive and Apple delivery remain
+Tuesday timing, real multi-commit and net-revert git histories, first-parent source
+validation, separate dispatches, version/build-number floors, Apple pagination,
+artifact version mismatches, upload success, signing profiles, failed-job-only
+retry ownership, lease recovery and competing owners. Signed archive and Apple delivery remain
 live gates in the hosted release job, not claims made by the offline tests.

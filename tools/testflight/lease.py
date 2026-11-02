@@ -135,20 +135,57 @@ def release(api, token, run_id, attempt):
         )
 
 
+def validate(api, token, source, run_id, attempt):
+    current, _, owner = read_state(api)
+    wanted = {"run_id": int(run_id), "attempt": int(attempt), "source": source}
+    if current != token or owner != wanted:
+        raise ValueError(
+            "This source and workflow attempt do not own the TestFlight lease"
+        )
+
+
+def release_if_owned(api, token, run_id, attempt):
+    _, _, owner = read_state(api)
+    if (
+        owner is None
+        or owner["run_id"] != int(run_id)
+        or owner["attempt"] != int(attempt)
+    ):
+        return False
+    release(api, token, run_id, attempt)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["acquire", "release"])
+    parser.add_argument("command", choices=["acquire", "validate", "release"])
     parser.add_argument("--source", default=os.environ.get("GITHUB_SHA"))
     parser.add_argument("--token")
+    parser.add_argument("--allow-unowned", action="store_true")
+    parser.add_argument("--wait-seconds", type=int, default=5 * 60 * 60)
     args = parser.parse_args()
     api = GitHub()
     run_id = int(os.environ["GITHUB_RUN_ID"])
     attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
-    if args.command == "release":
-        release(api, args.token, run_id, attempt)
-        print("TestFlight release lease returned")
+    if args.command == "validate":
+        validate(api, args.token, args.source, run_id, attempt)
+        print("Current workflow attempt owns this source release")
         return
-    deadline = time.monotonic() + 5 * 60 * 60
+    if args.command == "release":
+        if args.allow_unowned:
+            changed = release_if_owned(api, args.token, run_id, attempt)
+        else:
+            release(api, args.token, run_id, attempt)
+            changed = True
+        print(
+            "TestFlight release lease returned"
+            if changed
+            else "No lease owned by this workflow attempt"
+        )
+        return
+    if not 0 < args.wait_seconds <= 5 * 60 * 60:
+        parser.error("wait-seconds must be positive and no greater than five hours")
+    deadline = time.monotonic() + args.wait_seconds
     next_notice = 0
     while time.monotonic() < deadline:
         token = try_acquire(api, args.source, run_id, attempt)
@@ -161,7 +198,7 @@ def main():
             print("Waiting for the active TestFlight release", flush=True)
             next_notice = time.monotonic() + 60
         time.sleep(15)
-    raise RuntimeError("TestFlight queue waited five hours; retry this failed run")
+    raise RuntimeError("TestFlight ownership wait timed out; retry this failed run")
 
 
 if __name__ == "__main__":

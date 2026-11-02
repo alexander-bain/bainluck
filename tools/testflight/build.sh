@@ -3,7 +3,8 @@
 set -euo pipefail
 
 RELEASE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RELEASE_PROJECT="$RELEASE_ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
+RELEASE_SOURCE="${TESTFLIGHT_SOURCE_ROOT:?missing exact app source checkout}"
+RELEASE_PROJECT="$RELEASE_SOURCE/ios/Bain Luck/Bain Luck.xcodeproj"
 RELEASE_OUT="$RUNNER_TEMP/testflight-output"
 RELEASE_ARCHIVE="$RUNNER_TEMP/TestFlight.xcarchive"
 RELEASE_EXPORT="$RUNNER_TEMP/testflight-export"
@@ -13,6 +14,9 @@ mkdir -p "$RELEASE_OUT"
 : "${ASC_KEY_ID:?missing API key ID}"
 : "${ASC_ISSUER_ID:?missing API issuer ID}"
 : "${TESTFLIGHT_KEYCHAIN:?missing distribution keychain}"
+: "${TESTFLIGHT_SOURCE_SHA:?missing source SHA}"
+: "${TESTFLIGHT_LEASE_TOKEN:?missing current-attempt lease}"
+python3 "$RELEASE_ROOT/tools/testflight/lease.py" validate --source "$TESTFLIGHT_SOURCE_SHA" --token "$TESTFLIGHT_LEASE_TOKEN"
 
 # The locked Package.resolved is authoritative. Resolving here supplies the
 # fresh hosted runner with the binary dependencies the archive needs.
@@ -42,7 +46,7 @@ RELEASE_APP="$(python3 "$RELEASE_ROOT/tools/testflight/release.py" bundles \
 codesign --verify --deep --strict "$RELEASE_APP"
 
 xcodebuild -exportArchive -archivePath "$RELEASE_ARCHIVE" \
-  -exportOptionsPlist "$RELEASE_ROOT/ios/ExportOptions-AppStore.plist" \
+  -exportOptionsPlist "$RELEASE_SOURCE/ios/ExportOptions-AppStore.plist" \
   -exportPath "$RELEASE_EXPORT" > "$RELEASE_OUT/export.log" 2>&1
 RELEASE_IPAS=("$RELEASE_EXPORT"/*.ipa)
 if [ "${#RELEASE_IPAS[@]}" -ne 1 ] || [ ! -f "${RELEASE_IPAS[0]}" ]; then
@@ -59,9 +63,10 @@ RELEASE_EXPORTED_APP="$(python3 "$RELEASE_ROOT/tools/testflight/release.py" bund
 codesign --verify --deep --strict "$RELEASE_EXPORTED_APP"
 cp "$RELEASE_IPA" "$RELEASE_OUT/BainLuck-$TESTFLIGHT_VERSION-$TESTFLIGHT_BUILD.ipa"
 
+python3 "$RELEASE_ROOT/tools/testflight/lease.py" validate --source "$TESTFLIGHT_SOURCE_SHA" --token "$TESTFLIGHT_LEASE_TOKEN"
 xcrun altool --upload-app -f "$RELEASE_IPA" -t ios \
   --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" \
   --output-format json > "$RELEASE_OUT/delivery.json" 2>&1
 python3 "$RELEASE_ROOT/tools/testflight/release.py" delivery --log "$RELEASE_OUT/delivery.json"
 python3 "$RELEASE_ROOT/tools/testflight/release.py" confirm --version "$TESTFLIGHT_VERSION" \
-  --build "$TESTFLIGHT_BUILD" --source "$GITHUB_SHA" --receipt "$RELEASE_OUT/receipt.json"
+  --build "$TESTFLIGHT_BUILD" --source "$TESTFLIGHT_SOURCE_SHA" --receipt "$RELEASE_OUT/receipt.json"

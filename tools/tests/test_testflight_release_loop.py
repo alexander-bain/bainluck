@@ -277,7 +277,7 @@ def test_workflow_only_release_master_and_never_discards_pending_builds():
     assert all("concurrency" not in job for job in workflow["jobs"].values())
     assert (
         workflow["jobs"]["return-lease"]["if"]
-        == "always() && needs.queue.outputs.token != ''"
+        == "always() && (needs.release.outputs.token != '' || needs.queue.outputs.token != '')"
     )
     for name in ("scope", "queue", "release", "return-lease"):
         checkout = next(
@@ -285,7 +285,7 @@ def test_workflow_only_release_master_and_never_discards_pending_builds():
             for step in workflow["jobs"][name]["steps"]
             if step.get("uses", "").startswith("actions/checkout")
         )
-        assert checkout["with"]["ref"] == "${{ github.sha }}"
+        assert checkout["with"]["ref"] == "master"
         assert checkout["with"]["persist-credentials"] == "false"
 
 
@@ -322,3 +322,174 @@ def test_internal_lease_branch_does_not_queue_more_secret_scan_runners():
     assert "pull_request" in workflow["on"]
     assert workflow["on"]["pull_request"] in ("", None)
     assert workflow["on"]["schedule"]
+
+
+def test_failed_job_retry_reacquires_ownership_for_its_actual_attempt():
+    import yaml
+
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/testflight.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    steps = workflow["jobs"]["release"]["steps"]
+    lease_steps = [step for step in steps if step.get("id") == "lease"]
+    assert (
+        len(lease_steps) == 1
+    ), "release retry must acquire a fresh current-attempt lease"
+    assert "lease.py acquire" in lease_steps[0]["run"]
+    assert steps.index(lease_steps[0]) < next(
+        i for i, step in enumerate(steps) if step.get("id") == "number"
+    )
+    assert (
+        workflow["jobs"]["release"]["outputs"]["token"]
+        == "${{ steps.lease.outputs.token }}"
+    )
+    cleanup = workflow["jobs"]["return-lease"]["steps"][-1]
+    assert "needs.release.outputs.token" in cleanup["env"]["LEASE_TOKEN"]
+
+
+def test_retried_release_waits_for_another_merge_and_cannot_use_its_old_token():
+    lease = module("lease")
+    api = FakeGitHub()
+    first = lease.try_acquire(api, "source", 1, 1)
+    lease.release(api, first, 1, 1)
+    other = lease.try_acquire(api, "source", 2, 1)
+    assert lease.try_acquire(api, "source", 1, 2) is None
+    lease.release(api, other, 2, 1)
+    retry = lease.try_acquire(api, "source", 1, 2)
+    assert retry and retry != first
+    with pytest.raises(ValueError):
+        lease.release(api, first, 1, 2)
+    assert lease.read_state(api)[2]["attempt"] == 2
+    lease.release(api, retry, 1, 2)
+
+
+def test_batch_push_preserves_each_ios_commit_including_a_net_revert():
+    import subprocess
+
+    release = module("release")
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+
+        def git(*args):
+            return (
+                subprocess.check_output(
+                    ["git", "-C", str(root), *args], stderr=subprocess.DEVNULL
+                )
+                .decode()
+                .strip()
+            )
+
+        git("init")
+        git("config", "user.email", "test@example.invalid")
+        git("config", "user.name", "release-test")
+        path = root / "ios" / "app.swift"
+        path.parent.mkdir()
+        path.write_text("original\n")
+        git("add", ".")
+        git("commit", "-m", "baseline")
+        before = git("rev-parse", "HEAD")
+        path.write_text("changed\n")
+        git("add", ".")
+        git("commit", "-m", "ios merge one")
+        first = git("rev-parse", "HEAD")
+        (root / "readme.md").write_text("docs only\n")
+        git("add", ".")
+        git("commit", "-m", "docs merge")
+        path.write_text("original\n")
+        git("add", ".")
+        git("commit", "-m", "ios merge two reverts one")
+        reverted = git("rev-parse", "HEAD")
+        assert git("diff", "--name-only", before, reverted, "--", "ios/") == ""
+        assert release.new_ios_commits(root, before, reverted) == [first, reverted]
+
+
+def test_batch_push_dispatches_one_isolated_release_per_selected_source():
+    import yaml
+
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/testflight.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    jobs = workflow["jobs"]
+    assert (
+        "dispatch" in jobs
+    ), "batch must dispatch every selected commit, not only HEAD"
+    assert "github.event_name == 'push'" in jobs["dispatch"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in jobs["queue"]["if"]
+    assert "sources" in jobs["scope"]["outputs"]
+    assert "source" in jobs["scope"]["outputs"]
+    assert "source_sha" in workflow["on"]["workflow_dispatch"]["inputs"]
+    release_checkouts = [
+        step
+        for step in jobs["release"]["steps"]
+        if step.get("uses", "").startswith("actions/checkout")
+    ]
+    assert len(release_checkouts) == 2
+    assert release_checkouts[0]["with"]["ref"] == "master"
+    assert release_checkouts[1]["with"]["ref"] == "${{ needs.scope.outputs.source }}"
+
+
+def test_current_attempt_validation_and_stale_cleanup_preserve_another_owner():
+    lease = module("lease")
+    api = FakeGitHub()
+    old = lease.try_acquire(api, "source", 1, 1)
+    lease.release(api, old, 1, 1)
+    other = lease.try_acquire(api, "source", 2, 1)
+    assert not lease.release_if_owned(api, old, 1, 2)
+    assert lease.read_state(api)[0] == other
+    with pytest.raises(ValueError):
+        lease.validate(api, old, "source", 1, 2)
+    lease.release(api, other, 2, 1)
+    token = lease.try_acquire(api, "source", 1, 2)
+    lease.validate(api, token, "source", 1, 2)
+    with pytest.raises(ValueError):
+        lease.validate(api, token, "different-source", 1, 2)
+    assert lease.release_if_owned(api, token, 1, 2)
+
+
+def test_dispatch_preserves_all_source_shas_as_separate_master_runs():
+    release = module("release")
+    sources = ["a" * 40, "b" * 40]
+    sent = []
+    release.dispatch_sources(sources, sent.append)
+    assert sent == [
+        {"ref": "master", "inputs": {"source_sha": source}} for source in sources
+    ]
+
+
+def test_master_commit_selection_excludes_the_feature_commits_inside_a_merge():
+    import subprocess
+
+    release = module("release")
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+
+        def git(*args):
+            return (
+                subprocess.check_output(
+                    ["git", "-C", str(root), *args], stderr=subprocess.DEVNULL
+                )
+                .decode()
+                .strip()
+            )
+
+        git("init", "-b", "master")
+        git("config", "user.email", "test@example.invalid")
+        git("config", "user.name", "release-test")
+        (root / "ios").mkdir()
+        path = root / "ios" / "app.swift"
+        path.write_text("baseline\n")
+        git("add", ".")
+        git("commit", "-m", "baseline")
+        before = git("rev-parse", "HEAD")
+        git("checkout", "-b", "feature")
+        path.write_text("new feature\n")
+        git("add", ".")
+        git("commit", "-m", "feature change")
+        feature = git("rev-parse", "HEAD")
+        git("checkout", "master")
+        git("merge", "--no-ff", "feature", "-m", "merge iOS feature")
+        merged = git("rev-parse", "HEAD")
+        assert release.new_ios_commits(root, before, merged) == [merged]
+        assert release.requested_source(root, merged, "master") == [merged]
+        with pytest.raises(ValueError):
+            release.requested_source(root, feature, "master")
