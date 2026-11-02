@@ -174,6 +174,11 @@ def test_day0_trim_keeps_product_rules_and_gates_at_the_entrypoint():
         "Tier C requires Alex's tap",
         "`live-path` is the two-minute lane",
         "NOW #11852 is the only priority list and status line",
+        "Build nothing a platform already provides.",
+        "GitHub, Heroku, Vercel, Better Stack, Xcode Cloud",
+        "no custom webhooks, relays, log pipelines, release locks or promotion systems",
+        "nothing for a release-process need inside `backend/app` or `frontend/app`",
+        "post the need on NOW first, naming the platform feature",
         "Runner inboxes, YOUR-TURN.md and artifacts/ are retired",
     ):
         assert marker in text, f"entrypoint lost {marker!r}"

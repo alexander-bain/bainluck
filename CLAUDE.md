@@ -69,17 +69,17 @@ NOW #11852 is the only priority list and status line.
 Runner inboxes, YOUR-TURN.md and artifacts/ are retired.
 Gates prove something about the commit you tested, not the commit you push.
 
-- **Database migrations**: `alembic revision --autogenerate -m "description"`, applied on Heroku release
-- **Backend tests**: `cd backend && python3 -m pytest tests/ -v`
-- **Single test**: `cd backend && python3 -m pytest tests/<file>.py::<Class>::<test> -v`
-- **Integration tests**: `cd backend && python3 -m pytest tests/integration/ -v`
-- **Smoke test (MANDATORY before push)**: `cd backend && python3 -m pytest tests/test_startup.py -v` (<1s, catches import errors)
-- **Frontend gates (both MANDATORY before push)**: `cd frontend && npm run build` (the **ESLint gate** — it does NOT fail on TS errors), then `npm run typecheck` (the **TypeScript gate**, a real CI deploy gate — run it AFTER build, which it needs for `.next/types/**`). Ratchet semantics: gotcha #10.
-- **Frontend tests**: `cd frontend && npx jest` (single: `npx jest --testPathPatterns=DiscoverCard` — **plural**; jest 30 exits `1` on the singular, which reads as a test failure, not a bad flag)
-- **Procfile validates imports**: release phase runs `python3 -c "from app.main import app"` before Alembic — broken imports never reach the web dyno.
-- **CI runs both** and serializes Heroku deploys with deploy-job concurrency.
+**Build nothing a platform already provides.** GitHub, Heroku, Vercel, Better Stack, Xcode Cloud and the installed Claude GitHub Action handle approvals, deploys, rollbacks, monitoring, signing and review; no custom webhooks, relays, log pipelines, release locks or promotion systems, and nothing for a release-process need inside `backend/app` or `frontend/app`. If a need seems to require one, post the need on NOW first, naming the platform feature that would cover it.
 
-Admin URLs are in the Day 0 reference.
+- Migrations use `alembic revision --autogenerate -m "description"`; Heroku applies them on release.
+- Backend suite: `cd backend && python3 -m pytest tests/ -v`.
+- Before push: `cd backend && python3 -m pytest tests/test_startup.py -v`.
+- Frontend before push: `cd frontend && npm run build` (the **ESLint gate**), then `npm run typecheck` (the **TypeScript gate**; needs `.next/types/**`). See gotcha #10.
+- Frontend tests: `cd frontend && npx jest`; one suite: `npx jest --testPathPatterns=DiscoverCard` (plural).
+- The Heroku release phase imports `app.main` before Alembic; broken imports stop deployment.
+- CI runs backend and frontend gates and serializes Heroku deploys with deploy-job concurrency.
+
+Other test commands and admin URLs are in the Day 0 reference.
 
 ---
 
