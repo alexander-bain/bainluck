@@ -37,5 +37,5 @@ function summarize(manifests, expected) {
   if (result.length > 55000) throw new Error('summary too large; refusing');
   return result;
 }
-const SUMMARY_LABELS = ['area:frontend','program:ux','priority:p3'];
+const SUMMARY_LABELS = ['type:ops','area:frontend','program:ux','priority:p3'];
 module.exports = {weekStart,summarize,SUMMARY_LABELS};

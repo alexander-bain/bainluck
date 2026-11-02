@@ -43,6 +43,7 @@ test("every label is a non-empty string with no stray whitespace", () => {
 test("the weekly summary preserves the browser family's shared priority and area", () => {
   const {SUMMARY_LABELS} = require('../helpers/weeklySummary');
   assert.deepEqual(SUMMARY_LABELS.filter(label=>label.startsWith('priority:')),['priority:p3']);
+  assert.ok(SUMMARY_LABELS.includes('type:ops'));
   assert.ok(SUMMARY_LABELS.includes('area:frontend'));
   assert.ok(SUMMARY_LABELS.includes('program:ux'));
   const source = fs.readFileSync(SCRIPT,'utf8');
