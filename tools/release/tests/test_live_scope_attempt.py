@@ -21,15 +21,37 @@ class ScopeAttempt(unittest.TestCase):
         with self.assertRaises(ValueError):m.verify_attempt('1','2')
         m.verify_attempt('2','2')
 
-    def test_same_attempt_rechecks_disabled_flag_and_removed_label(self):
+    def test_same_attempt_rechecks_policy_receipt_and_removed_label(self):
         m=self.module()
         event={'pull_request':{'number':17}}
         pr={'number':17,'state':'open','head':{'sha':'abc'},'base':{'ref':'master'},'labels':[]}
-        def read(path):return {'value':'true'} if '/actions/variables/' in path else pr
+        receipt={'id':9,'payload':{'authority':'release-loop-policy-v1','fast_enabled':True,'master_sha':'a'*40}}
+        status={'id':20,'state':'success'}
+        def read(path):
+            if '/statuses?' in path:return [status]
+            if '/deployments?' in path:return [receipt]
+            return pr
         with self.assertRaises(ValueError):m.verify_eligibility('pull_request',event,'abc',read)
         pr['labels']=[{'name':'live-path'}]
         m.verify_eligibility('pull_request',event,'abc',read)
-        with self.assertRaises(ValueError):m.verify_eligibility('pull_request',event,'abc',lambda p:{'value':'false'} if '/actions/variables/' in p else pr)
+        receipt['payload']['fast_enabled']=False
+        with self.assertRaises(ValueError):m.verify_eligibility('pull_request',event,'abc',read)
+
+    def test_missing_failed_or_newer_disabled_policy_cannot_admit_fast_gate(self):
+        m=self.module()
+        event={'pull_request':{'number':17}}
+        pr={'number':17,'state':'open','head':{'sha':'abc'},'base':{'ref':'master'},'labels':[{'name':'live-path'}]}
+        enabled={'id':9,'payload':{'authority':'release-loop-policy-v1','fast_enabled':True,'master_sha':'a'*40}}
+        disabled={'id':10,'payload':{'authority':'release-loop-policy-v1','fast_enabled':False,'master_sha':'a'*40}}
+        for rows,statuses in [([],[]),([{'id':10,'payload':{'fast_enabled':True}}],[]),([enabled,disabled],[])]:
+            def read(path):
+                if '/statuses?' in path:return statuses
+                if '/deployments?' in path:return rows
+                return pr
+            with self.subTest(rows=rows,statuses=statuses),self.assertRaises(ValueError):
+                m.verify_eligibility('pull_request',event,'abc',read)
+        def failure(path):raise RuntimeError('policy API unavailable')
+        with self.assertRaises(RuntimeError):m.verify_eligibility('pull_request',event,'abc',failure)
 
     def test_retained_scope_fails_every_marker_and_deploy_barrier(self):
         jobs=yaml.safe_load((ROOT/'.github/workflows/ci.yml').read_text())['jobs']
