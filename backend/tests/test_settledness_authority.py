@@ -231,11 +231,16 @@ def test_awards_does_not_pass_price_or_sibling_state_as_assigned_state():
 
 
 def test_awards_won_is_only_authoritative_and_never_a_price_crown():
-    """The former crown-order guard now forbids the obsolete crown itself."""
+    """The former crown-order guard now forbids the obsolete crown itself, and
+    #5349 binds `won` to an independent settlement rather than any stored flag."""
     from app.utils import event_awards
 
     src = inspect.getsource(event_awards)
-    assert '"won": bool(getattr(o, "is_winner", False))' in src
+    assert '"won": is_result_grade(o)' in src
+    assert '"won": bool(getattr(o, "is_winner", False))' not in src
+    helper = inspect.getsource(event_awards.is_result_grade)
+    assert "is_authoritative(source)" in helper
+    assert "PRICE_DERIVED_SOURCES" in helper
     assert 'top["won"] = True' not in src
     assert "_WON_PRICE_THRESHOLD" not in src
     assert "ceremony_graded" not in src
