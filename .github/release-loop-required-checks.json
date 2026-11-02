@@ -1,0 +1,15 @@
+[
+  "change-scope",
+  "backend-tests (1)",
+  "backend-tests (2)",
+  "backend-tests (3)",
+  "backend-tests (4)",
+  "shard-completeness",
+  "golden-baseline-floor",
+  "database-integration (shared)",
+  "database-integration (isolated)",
+  "search-recall",
+  "frontend-build",
+  "Browser-audit contract fixtures",
+  "Tier-B approval"
+]
