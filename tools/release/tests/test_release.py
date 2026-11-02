@@ -100,3 +100,17 @@ class ConfirmedRollback(unittest.TestCase):
         def advance(seconds): clock[0]+=seconds
         rollback.verify_rollback('heroku','b'*40,read=lambda:next(rows),sleep=advance,now=lambda:clock[0])
         self.assertEqual(clock[0],2)
+
+class WebhookActivation(unittest.TestCase):
+    def test_preparation_does_not_mutate_platforms(self):
+        self.assertTrue((ROOT/'prepare_webhook.py').exists(),'webhook provisioner is missing')
+        import prepare_webhook
+        calls=[]
+        result=prepare_webhook.prepare(False,False,send=lambda *args:calls.append(args))
+        self.assertEqual(calls,[])
+        self.assertEqual(result['url'],'https://bainluck.com/api/release-webhook')
+
+    def test_activation_requires_master_current_confirmation(self):
+        self.assertTrue((ROOT/'prepare_webhook.py').exists(),'webhook provisioner is missing')
+        import prepare_webhook
+        with self.assertRaises(ValueError): prepare_webhook.prepare(True,False,send=lambda *_:None)

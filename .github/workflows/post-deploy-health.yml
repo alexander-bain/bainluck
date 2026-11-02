@@ -6,6 +6,8 @@ on:
     types: [completed]
     branches: [master]
   deployment_status:
+  repository_dispatch:
+    types: [heroku-release]
   # Heroku releases created outside GitHub have no deployment_status event.
   # The durable provider ID receipt reconciles them when the Mac is asleep.
   schedule:
