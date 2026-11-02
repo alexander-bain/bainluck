@@ -7,6 +7,8 @@ on:
   # code observes submitted/dismissed reviews without running privileged PR code.
   schedule:
     - cron: '*/5 * * * *'
+  repository_dispatch:
+    types: [tier-b-review]
   workflow_dispatch:
 
 permissions:
