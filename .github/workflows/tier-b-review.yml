@@ -1,0 +1,32 @@
+name: Tier-B review
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+concurrency:
+  group: tier-b-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  review:
+    if: contains(github.event.pull_request.labels.*.name, 'tier-b') && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r backend/requirements.txt
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
+            Follow docs/release-loop/tier-b-review-brief.md exactly; it is the whole brief. End with exactly one review: approve or request changes.
+          claude_args: '--allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd backend && python -m pytest:*)" --max-turns 60'

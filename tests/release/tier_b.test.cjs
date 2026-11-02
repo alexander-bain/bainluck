@@ -29,7 +29,7 @@ test('an unlabeled PR cannot overwrite a failing check on a shared head', async 
     {number:2,state:'open',user:{login:'alex'},head:{sha:'same'},labels:[]},
   ];
   const created=[];
-  const github={rest:{pulls:{get:()=>{},list:()=>{},listReviews:()=>{}},checks:{listForRef:()=>{},create:async x=>created.push(x)}},
+  const github={rest:{pulls:{get:()=>{},list:()=>{},listReviews:()=>{},listFiles:()=>{}},checks:{listForRef:()=>{},create:async x=>created.push(x)}},
     paginate:async (fn,args)=>fn===github.rest.pulls.list ? prs : []};
   github.rest.pulls.get=async(args)=>({data:prs.find(pr=>pr.number===args.pull_number)});
   await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:2}}});
@@ -42,7 +42,7 @@ test('refreshed Tier-B sibling joining a head cannot disappear from the group',a
   const old=[{number:1,state:'open',user:{login:'alex'},head:{sha:'old'},labels:[{name:'tier-b'}]},
     {number:2,state:'open',user:{login:'alex'},head:{sha:'same'},labels:[]}];
   const current=old.map(pr=>({...pr,head:{sha:'same'}}));const created=[];
-  const github={rest:{pulls:{get:async args=>({data:current.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
+  const github={rest:{pulls:{get:async args=>({data:current.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
     paginate:async fn=>fn===github.rest.pulls.list?old:[]};
   await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:2}}});
   assert.equal(created.find(c=>c.head_sha==='same')?.conclusion,'failure');
@@ -52,7 +52,7 @@ test('a surviving event reconciles a dismissed review on another head',async()=>
   const {evaluate}=require(file);
   const prs=[{number:1,state:'open',user:{login:'alex'},head:{sha:'a'},labels:[{name:'tier-b'}]},
     {number:2,state:'open',user:{login:'alex'},head:{sha:'b'},labels:[]}];const created=[];
-  const github={rest:{pulls:{get:async args=>({data:prs.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
+  const github={rest:{pulls:{get:async args=>({data:prs.find(p=>p.number===args.pull_number)}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
     paginate:async fn=>fn===github.rest.pulls.list?prs:[]};
   await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{client_payload:{pull_number:2}}});
   assert.equal(created.find(c=>c.head_sha==='a')?.conclusion,'failure');
@@ -61,7 +61,7 @@ test('a surviving event reconciles a dismissed review on another head',async()=>
 test('membership changes during the final check lookup force a fresh verdict',async()=>{
   const {evaluate}=require(file);
   let pr={number:1,state:'open',user:{login:'alex'},head:{sha:'same'},labels:[]};let changed=false;const created=[];
-  const github={rest:{pulls:{get:async()=>({data:{...pr,labels:[...pr.labels]}}),list:()=>{},listReviews:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
+  const github={rest:{pulls:{get:async()=>({data:{...pr,labels:[...pr.labels]}}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},checks:{listForRef:()=>{},create:async c=>created.push(c)}},
     paginate:async fn=>{
       if(fn===github.rest.pulls.list)return[{...pr,labels:[...pr.labels]}];
       if(fn===github.rest.checks.listForRef && !changed){changed=true;pr={...pr,labels:[{name:'tier-b'}]};}
@@ -69,4 +69,50 @@ test('membership changes during the final check lookup force a fresh verdict',as
     }};
   await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:1}}});
   assert.equal(created.at(-1)?.conclusion,'failure');
+});
+
+
+test('review policy changes reject bot approval and require Alex to merge', async () => {
+  const {evaluate} = require(file);
+  for (const changed of [
+    {filename:'.github/workflows/tier-b-review.yml'},
+    {filename:'docs/release-loop/tier-b-review-brief.md'},
+    {filename:'moved-brief.md',previous_filename:'docs/release-loop/tier-b-review-brief.md'},
+  ]) {
+    const pr={number:1,state:'open',user:{login:'alex'},head:{sha:'head'},labels:[{name:'tier-b'}]};
+    for (const user of [{login:'claude[bot]',type:'Bot'},{login:'github-actions[bot]'},{login:'reviewer',type:'User'}]) {
+      const created=[];
+      const github={rest:{pulls:{get:async()=>({data:pr}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},
+        checks:{listForRef:()=>{},create:async result=>created.push(result)}},
+        paginate:async(fn,args)=>{
+          if(fn===github.rest.pulls.list)return [pr];
+          if(fn===github.rest.pulls.listFiles){assert.equal(args.per_page,100);return [changed];}
+          if(fn===github.rest.pulls.listReviews)return [{id:1,user,state:'APPROVED',commit_id:'head'}];
+          return [];
+        }};
+      await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:1}}});
+      assert.equal(created[0].conclusion,user.login==='reviewer'?'success':'failure');
+      assert.match(created[0].output.summary,/Alex must merge/);
+    }
+  }
+});
+
+test('bot review works on ordinary changes but unknown file scope never publishes success', async () => {
+  const {evaluate} = require(file);
+  const pr={number:1,state:'open',user:{login:'alex'},head:{sha:'head'},labels:[{name:'tier-b'}]};
+  const created=[];
+  let unavailable=false;
+  const github={rest:{pulls:{get:async()=>({data:pr}),list:()=>{},listReviews:()=>{},listFiles:()=>{}},
+    checks:{listForRef:()=>{},create:async result=>created.push(result)}},
+    paginate:async fn=>{
+      if(fn===github.rest.pulls.list)return [pr];
+      if(fn===github.rest.pulls.listFiles){if(unavailable)throw new Error('file API unavailable');return [{filename:'backend/app/example.py'}];}
+      if(fn===github.rest.pulls.listReviews)return [{id:1,user:{login:'claude[bot]',type:'Bot'},state:'APPROVED',commit_id:'head'}];
+      return [];
+    }};
+  await evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{pull_request:{number:1}}});
+  assert.equal(created[0].conclusion,'success');
+  unavailable=true;created.length=0;
+  await assert.rejects(evaluate(github,{repo:{owner:'alexander-bain',repo:'bainluck'},payload:{}}),/file API unavailable/);
+  assert.equal(created.length,0);
 });

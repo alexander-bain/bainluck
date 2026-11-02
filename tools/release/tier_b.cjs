@@ -14,7 +14,7 @@ function verdict(pr, reviews) {
     review.user.login !== pr.user.login && review.state === 'APPROVED' &&
     review.commit_id === pr.head.sha);
   return approval ? {conclusion:'success',summary:`Approved at this head by ${approval.user.login}.`} :
-    {conclusion:'failure',summary:'tier-b requires an approving review at the current head from someone other than the PR author. Until #2734 gives agents their own GitHub App identity, Alex or Fable must handle the Tier-B merge; the author cannot approve their own PR.'};
+    {conclusion:'failure',summary:'tier-b requires an approving review at the current head from someone other than the PR author. The installed Claude GitHub Action supplies an independent bot identity; the author cannot approve their own PR.'};
 }
 
 async function currentOpen(github, repo, eventNumber) {
@@ -66,7 +66,11 @@ async function evaluate(github, context) {
       const results=[];
       for (const pr of prs) {
         const reviews=await github.paginate(github.rest.pulls.listReviews,{...repo,pull_number:pr.number,per_page:100});
-        results.push(verdict(pr,reviews));
+        const files = await github.paginate(github.rest.pulls.listFiles, {...repo,pull_number:pr.number,per_page:100});
+        const policyChanged = files.some(file => [file.filename,file.previous_filename].some(name => ['.github/workflows/tier-b-review.yml','docs/release-loop/tier-b-review-brief.md'].includes(name)));
+        const eligible = policyChanged ? reviews.filter(review => review.user.type !== 'Bot' && !review.user.login.endsWith('[bot]')) : reviews;
+        const result = verdict(pr,eligible);
+        results.push(policyChanged ? {...result,summary:result.summary+' Review policy changed; Alex must merge this PR.'} : result);
       }
       const failed=results.filter(result=>result.conclusion!=='success');
       verdicts.set(sha,{conclusion:failed.length?'failure':'success',
