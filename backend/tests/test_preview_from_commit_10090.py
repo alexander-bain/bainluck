@@ -1,16 +1,11 @@
-"""#10090 `preview_from_commit` — a committed live price previews from its own
-write's RETURNING rows on the refresher's last read graph, with no read back.
+"""#10090 the preview graph cache's hooks: what the writers hand over and forget.
 
-SHIP: a moving live price reaches readers as a preview in about 0.1 s (p50)
-instead of about 0.2-0.3 s.
-
-Two halves. The ledger OPERATIONS the composition sends are compared exactly
-with the ones the stamp's own re-read path (`_preview_before_stamp`, given
-`_refresh_batch`'s plan) sends for the same committed rows — no Redis needed,
-the real resolver (`compute_source_home_probability`) on a PM duel. Then the
-shipped LEDGER_SCRIPT on a private redis-server (the TSP-1 rig) shows what
-Redis does with them when the cached read is no longer current: a stale ticket
-and a mid-read settle are refused, a moved base composes on the committed floor.
+`preview_from_commit` (composing a preview from a write's RETURNING rows) lost
+its trial and was removed in the settings freeze (docs/live-settings.md). What
+it shared with `preview_at_receipt` stays and is pinned here: each writer hands
+its committed rows over only once committed, a settlement / grade / resolution
+/ withdrawal forgets its legs whether or not it committed, and a graph's ranks
+follow the re-rank statement's rule.
 """
 
 from __future__ import annotations
@@ -43,7 +38,6 @@ NOW = datetime.now(timezone.utc)
 #: The cached read's statement time, and the rows it saw.
 READ_AT = NOW - timedelta(seconds=1)
 SEEN = NOW - timedelta(seconds=2)
-SWITCH_ENV = "SPEED_SWITCH_TODAY_PREVIEW_FROM_COMMIT"
 RECEIPT_SWITCH_ENV = "SPEED_SWITCH_TODAY_PREVIEW_AT_RECEIPT"
 
 
@@ -144,7 +138,7 @@ def r(monkeypatch, anchors):
     monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.LedgerRegistry(sources=SOURCES))
     monkeypatch.setattr(blend_preview, "preview_events_for",
                         lambda source: frozenset({EV}) if source == "polymarket" else frozenset())
-    monkeypatch.setenv(SWITCH_ENV, "1")
+    monkeypatch.setenv(RECEIPT_SWITCH_ENV, "1")  # the graph cache serves receipt previews
     refresher = LiveBlendRefresher("polymarket")
     refresher.sent = []
 
@@ -161,67 +155,6 @@ def test_the_fixture_is_a_proven_reading_of_the_home_leg_alone():
     assert has_proven_home_orientation(reading)
     assert [row.id for row in reading.contributing_outcomes] == [HOME_LEG]
     assert round(reading.home_probability, 4) == 0.46
-
-
-async def test_the_composed_proposal_is_exactly_the_one_the_reread_path_sends(r, monkeypatch):
-    read(r, event(), legs())
-    r.note_committed_rows([returned()])
-    await drained(r)
-    [fast] = proposals(r.sent)
-    assert fast["value"] == 0.48 and fast["mode"] == "open"
-    assert (fast["read_ticket"], fast["ctx_rev"], fast["base_rev"]) == (0, 10, 10)
-
-    # The stamp's path: a fresh process registry, the committed rows read back
-    # by a statement inside the same ticket (no retirement between), the plan
-    # exactly as `_refresh_batch` builds it for a proven reading.
-    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.LedgerRegistry(sources=SOURCES))
-    r.sent.clear()
-    ev, group = event(), legs(home="0.480000", seen=NOW)
-    reading = compute_source_home_probability(group, HOME, AWAY)
-    plan = {EV: ([], {}, reading, round(reading.home_probability, 4),
-                 reading.contributing_outcomes)}
-    await r._preview_before_stamp({EV: (ev, group)}, plan, {})
-    [reread] = proposals(r.sent)
-    assert comparable(fast) == comparable(reread)
-
-
-async def test_a_committed_stamp_moves_the_cached_revision_forward_never_back(r):
-    read(r, event(), legs())
-    r._preview_graph_committed(EV, bag(pm=0.47), 11)
-    r._preview_graph_committed(EV, bag(pm=0.45), 9)  # an older commit acknowledged late
-    r.note_committed_rows([returned()])
-    await drained(r)
-    [op] = proposals(r.sent)
-    assert (op["ctx_rev"], op["base_rev"], op["read_ticket"]) == (11, 11, 0)
-    assert json.loads(op["base"])["sources"]["polymarket"]["value"] == 0.47
-
-
-async def test_commits_queued_before_the_worker_runs_compose_once_on_the_latest(r):
-    read(r, event(), legs())
-    r.note_committed_rows([returned(price="0.470000", seen=NOW)])
-    r.note_committed_rows([returned(price="0.490000", seen=NOW + timedelta(milliseconds=5))])
-    await drained(r)
-    assert [op["value"] for op in proposals(r.sent)] == [0.49]
-
-
-async def test_an_older_read_finishing_late_does_not_replace_a_newer_graph(r):
-    read(r, event(at=READ_AT), legs())
-    read(r, event(rev=9, at=READ_AT - timedelta(seconds=1)), legs(home="0.300000", away="0.700000"))
-    r.note_committed_rows([returned(seen=NOW)])
-    await drained(r)
-    assert [(op["value"], op["ctx_rev"]) for op in proposals(r.sent)] == [(0.48, 10)]
-
-
-async def test_the_switch_off_keeps_no_graph_and_composes_nothing(r, monkeypatch):
-    monkeypatch.delenv(SWITCH_ENV)
-    # No graph-keeping switch on at all: `preview_at_receipt` (today = 1 since
-    # the 2026-11-02 settings freeze, docs/live-settings.md) keeps the same
-    # graphs for its own previews, so this pins it off too.
-    monkeypatch.setenv(RECEIPT_SWITCH_ENV, "0")
-    read(r, event(), legs())
-    r.note_committed_rows([returned()])
-    await drained(r)
-    assert r._preview_graphs == {} and r.sent == []
 
 
 def _skip_cases():
@@ -261,163 +194,6 @@ def _skip_cases():
 # `rerank_market_fields_stmt` stores in the write's transaction) instead of
 # dropping the graph. live's positive guard (87515fd9 review): both cases red with
 # e3490dcd reverted.
-@pytest.mark.parametrize("legs_kw,price,want_ranks,want", [
-    ({}, "0.560000", [1, 2], 0.56),                 # order_flip: the favourite flips
-    ({"ranks": (1, 1)}, "0.480000", [2, 1], 0.48),  # stale_ranks: cached ranks not the field's
-])
-async def test_a_committed_rerank_patches_the_graphs_ranks_and_composes(r, monkeypatch, legs_kw, price, want_ranks, want):
-    clock = [100.0]
-    monkeypatch.setattr(module, "_mono", lambda: clock[0])
-    group = legs(**legs_kw)
-    before = [(row.id, row.rank, row.current_probability) for e in group for row in e.outcomes]
-    read(r, event(), group)
-    r.note_committed_rows([returned(price=price)])
-    kept = r._preview_graphs[EV][2]
-    assert [row.rank for e in kept for row in e.outcomes] == want_ranks  # = rerank_market_fields_stmt
-    assert [(row.id, row.rank, row.current_probability) for e in group for row in e.outcomes] == before
-    await drained(r)
-    assert [op["value"] for op in proposals(r.sent)] == [want]
-
-
-@pytest.mark.parametrize("case", sorted(_skip_cases()))
-async def test_nothing_is_composed_when_the_cached_graph_cannot_say_it(r, monkeypatch, case):
-    spec = _skip_cases()[case]
-    clock = [100.0]
-    monkeypatch.setattr(module, "_mono", lambda: clock[0])
-    read(r, event(**spec.get("ev", {})), legs(**spec.get("legs", {})),
-         overlaid=spec.get("overlaid", ()))
-    if spec.get("uncached"):
-        assert r._preview_graphs == {} and r._preview_graph_outcomes == {}
-    clock[0] += spec.get("age", 0.0)
-    if spec.get("resolver_admits_closed"):
-        from dataclasses import replace
-
-        def admits_closed(group, home, away, **kwargs):
-            return compute_source_home_probability(
-                [replace(entry, market=Row(**{**vars(entry.market), "status": "open"}))
-                 for entry in group], home, away, **kwargs)
-
-        monkeypatch.setattr("app.utils.live_blend.compute_source_home_probability", admits_closed)
-    if spec.get("unproven"):
-        monkeypatch.setattr("app.utils.live_blend.has_proven_home_orientation", lambda reading: False)
-    if spec.get("proof"):
-        monkeypatch.setattr(r, "_current_reading_proof", lambda *a, **kw: {"proof": True})
-    if "last_written" in spec:
-        r._last_written_value[EV] = spec["last_written"]
-    if spec.get("held"):
-        r.held_quotes = module.HeldRowQuotes()
-        r.held_quotes._quotes.update({oid: (0.5, 0.0) for oid in spec["held"]})
-    if spec.get("lock_retry"):
-        r._lock_retry.add(EV)
-    if "failed_hold" in spec:
-        r._failed_hold_until[EV] = clock[0] + spec["failed_hold"]
-    if spec.get("forget"):
-        r.forget_preview_outcomes([AWAY_LEG])
-        assert r._preview_graphs == {}
-    row_spec = dict(spec.get("row", {}))
-    row = returned(**{k: v for k, v in row_spec.items() if k != "current_probability"})
-    if "current_probability" in row_spec:
-        del row.current_probability  # an old statement's RETURNING shape
-    r.note_committed_rows([row])
-    if "newer_read" in spec:
-        read(r, event(at=NOW), legs(home="0.480000", seen=spec["newer_read"]))
-    await drained(r)
-    assert proposals(r.sent) == []
-    assert r.commit_preview_stats["errors"] == 0, "a refusal is a decision, never an exception"
-
-
-async def test_the_same_rows_compose_when_no_case_applies(r, monkeypatch):
-    """The skip cases' positive control: the same rig, nothing withheld."""
-    clock = [100.0]
-    monkeypatch.setattr(module, "_mono", lambda: clock[0])
-    read(r, event(), legs())
-    clock[0] += module.PREVIEW_GRAPH_MAX_AGE_S - 0.01
-    r.note_committed_rows([returned()])
-    await drained(r)
-    assert [op["value"] for op in proposals(r.sent)] == [0.48]
-
-
-async def test_a_terminal_read_drops_the_graph(r):
-    read(r, event(), legs())
-    read(r, event(status="completed", at=NOW), legs())
-    assert r._preview_graphs == {} and r._preview_graph_outcomes == {}
-    r.note_committed_rows([returned()])
-    await drained(r)
-    assert r.sent == []
-
-
-async def test_noting_rows_never_raises_into_the_writer(r):
-    read(r, event(), legs())
-    r.note_committed_rows([returned(seen="not a time")])
-    assert r.commit_preview_stats["errors"] == 1
-    await drained(r)
-    assert r.sent == []
-
-
-async def test_close_cancels_and_joins_a_composition_in_flight(r, monkeypatch):
-    entered, never = asyncio.Event(), asyncio.Event()
-
-    async def held(frames, *, prepare_frames=None):
-        entered.set()
-        await never.wait()
-
-    monkeypatch.setattr(r, "_publish_previews", held)
-    read(r, event(), legs())
-    r.note_committed_rows([returned()])
-    task = r._commit_preview_task
-    await asyncio.wait_for(entered.wait(), 5)
-    await r._close_commit_preview()
-    assert task.cancelled() and r._commit_preview_task is None
-
-
-async def test_a_failed_hold_that_has_lapsed_composes_again(r, monkeypatch):
-    clock = [100.0]
-    monkeypatch.setattr(module, "_mono", lambda: clock[0])
-    r._failed_hold_until[EV] = clock[0]
-    read(r, event(), legs())
-    r.note_committed_rows([returned()])
-    await drained(r)
-    assert [op["value"] for op in proposals(r.sent)] == [0.48]
-
-
-async def test_a_stored_unchanged_value_whose_rows_were_seen_again_composes(r):
-    """`stored_unchanged_unobserved`'s control: the same stored 0.48, but the
-    committed row was observed after it, so the re-read path stamps it."""
-    stored = {"value": 0.48, "updated_at": (NOW - timedelta(seconds=1)).isoformat()}
-    read(r, event(sources=bag() | {"polymarket": stored}), legs())
-    r.note_committed_rows([returned()])
-    await drained(r)
-    assert [op["value"] for op in proposals(r.sent)] == [0.48]
-
-
-async def test_a_read_that_started_before_a_commit_keeps_the_committed_row(r, monkeypatch):
-    """A read whose snapshot predates a COMMIT can finish after it and replace
-    the patched graph. Its row for that leg is the OLD one; a later write of a
-    sibling would then compose on it. The noted row is patched in instead."""
-    clock = [100.0]
-    monkeypatch.setattr(module, "_mono", lambda: clock[0])
-    read(r, event(at=READ_AT), legs())
-    started = clock[0] + 0.1  # the late read takes its ticket here...
-    clock[0] += 0.2
-    r.note_committed_rows([returned(price="0.480000", seen=NOW)])  # ...this commits...
-    clock[0] += 0.1
-    # ...and the read returns the pre-commit row with a newer statement time.
-    read(r, event(at=READ_AT + timedelta(milliseconds=200)), legs(), started=started)
-    rows = {row.id: row for entry in r._preview_graphs[EV][2] for row in entry.outcomes}
-    assert (rows[HOME_LEG].current_probability, rows[HOME_LEG].last_updated) == (
-        Decimal("0.480000"), NOW)
-    assert rows[AWAY_LEG].current_probability == Decimal("0.540000")
-    await drained(r)
-    assert [op["value"] for op in proposals(r.sent)] == [0.48]
-
-
-async def test_a_noted_row_is_forgotten_after_its_retention(r, monkeypatch):
-    clock = [100.0]
-    monkeypatch.setattr(module, "_mono", lambda: clock[0])
-    r.note_committed_rows([returned(oid=1), returned(oid=2)])
-    clock[0] += module.PREVIEW_NOTE_RETENTION_S + 0.01
-    r.note_committed_rows([returned(oid=3)])
-    assert list(r._noted_commits) == [3]
 
 
 async def test_a_change_outside_the_price_write_drops_the_graph_and_its_late_read(r, monkeypatch):
@@ -434,15 +210,6 @@ async def test_a_change_outside_the_price_write_drops_the_graph_and_its_late_rea
     assert r._preview_graphs == {}
     read(r, event(at=NOW), legs(), started=clock[0] + 0.01)
     assert set(r._preview_graphs) == {EV}
-
-
-async def test_with_the_switch_off_nothing_is_noted_or_forgotten(r, monkeypatch):
-    monkeypatch.delenv(SWITCH_ENV)
-    monkeypatch.setenv(RECEIPT_SWITCH_ENV, "0")  # as above: no switch on at all
-    r.note_committed_rows([returned()])
-    r.forget_preview_outcomes([HOME_LEG])
-    assert r._noted_commits == {} and r._forgotten_outcomes == {}
-    assert r._commit_preview_task is None
 
 
 def test_field_ranks_are_the_rerank_statements_rule():

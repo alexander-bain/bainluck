@@ -51,42 +51,6 @@ def _held(t):
 
 # ── the real composition path ────────────────────────────────────────────────
 
-async def test_a_throttled_commit_preview_freezes_confirmed_at_on_the_real_path(r):  # noqa: F811
-    """Stamped 0.46 acknowledged; the venue moves to 0.48; the flush commits
-    it and `_preview_from_commit_rows` shows 0.48 with no batch (throttled);
-    the venue flicks back to 0.46. Readers see 0.48: no advance."""
-    clock = _Clock()
-    t = _tracker(clock)
-    r.receipts = SimpleNamespace(confirmed=t)
-    _batch(t, "0.460000")
-    clock.tick(1)
-    t.note_input(EV, HOME_LEG, 0.48, clock.wall)
-    before = _c(t)
-    read(r, event(), legs())
-    r.note_committed_rows([returned(price="0.480000")])
-    await drained(r)
-    assert [op["value"] for op in proposals(r.sent)] == [0.48]  # on readers' screens
-    clock.tick(0.4)
-    t.note_input(EV, HOME_LEG, 0.46, clock.wall)
-    assert _c(t) == before
-    assert _held(t)
-
-
-async def test_no_proposal_no_freeze(r):  # noqa: F811
-    """Strawman guard: a commit whose plan is refused proposes nothing and
-    leaves the tracker as it was (an agreeing input still advances)."""
-    clock = _Clock()
-    t = _tracker(clock)
-    r.receipts = SimpleNamespace(confirmed=t)
-    _batch(t, "0.460000")
-    read(r, event(status="scheduled"), legs())  # not live: no graph, no plan
-    r.note_committed_rows([returned(price="0.480000")])
-    await drained(r)
-    assert proposals(r.sent) == []
-    clock.tick(1)
-    t.note_input(EV, HOME_LEG, 0.46, clock.wall)
-    assert _c(t) == clock.wall
-
 
 # ── the tracker: who supersedes an outside preview ───────────────────────────
 
