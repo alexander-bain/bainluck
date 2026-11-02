@@ -24,11 +24,25 @@ from fastapi.testclient import TestClient
 
 import app.tasks.live_blend_refresh as blend_mod
 from app.tasks import speed_switches as sw
-from app.tasks.live_blend_refresh import OPTIONAL_DB_ABANDON_ENV, OPTIONAL_DB_SWITCH
 from app.tasks.speed_switches import OFF, SpeedSwitches, SwitchState
 
-NAME = "abandon_optional_db"
+#: The layer's mechanics are pinned on a test-only boolean switch with both
+#: modes and today 0 (`_test_switch`). The real one these tests used,
+#: `abandon_optional_db`, lost its trial and was removed in the settings freeze;
+#: no remaining switch has that shape (`preview_at_receipt`'s today is 1), and a
+#: test-only switch has no effect on any live read path.
+NAME = "test_switch"
+TEST_SPEC = {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0}
 NOW = 1_800_000_000.0
+
+
+@pytest.fixture(autouse=True)
+def _test_switch(monkeypatch):
+    """`NAME` installed first in `SPECS` and `SWITCHES`, so a one-value store
+    (``[_stored()]``) is its value, as it was for the switch it stands in for."""
+    assert NAME not in sw.SPECS
+    monkeypatch.setattr(sw, "SPECS", {NAME: TEST_SPEC, **sw.SPECS})
+    monkeypatch.setattr(sw, "SWITCHES", (NAME,) + sw.SWITCHES)
 
 
 @pytest.fixture(autouse=True)
@@ -119,8 +133,8 @@ async def test_ab_is_on_for_exactly_one_parity_and_stays_there():
     on = {eid for eid in ids if s.arm(NAME, eid)}
     assert len(on) == 500 and all(eid % 2 == 1 for eid in on)
     assert on == {eid for eid in ids if s.arm(NAME, eid)}, "the same games every time"
-    assert s.tags(3) == " sw=abandon_optional_db:on"
-    assert s.tags(4) == " sw=abandon_optional_db:off"
+    assert s.tags(3) == " sw=test_switch:on"
+    assert s.tags(4) == " sw=test_switch:off"
 
 
 async def test_the_trial_ends_at_its_expiry_without_another_read():
@@ -194,7 +208,7 @@ async def test_an_error_turns_the_switch_off_here_for_the_rest_of_the_trial(capl
     s, store, _, mono = _switches([_stored(expires_in=600)])
     await _refreshed(s)
     with caplog.at_level(logging.WARNING, logger="app.tasks.speed_switches"):
-        s.trip(NAME, RuntimeError("abandoned read failed"))
+        s.trip(NAME, RuntimeError("switched path failed"))
         s.trip(NAME, RuntimeError("again"))
     assert not s.arm(NAME, 2)
     mono.t = sw.CACHE_S
@@ -353,13 +367,12 @@ def test_setter_is_mounted_behind_the_admin_router():
     assert "/api/admin/speed-switch" in paths
 
 
-# ── bucket 1's switched path: abandon only the trial's half ──────────────────
+# ── receipts carry each event's arm ──────────────────────────────────────────
 
 
 @pytest.fixture
 def trial(monkeypatch):
     """A running trial, half 0, through the module's own seam."""
-    monkeypatch.delenv(OPTIONAL_DB_ABANDON_ENV, raising=False)
     s = SpeedSwitches(read=lambda: [_stored(half=0, now=time.time())],
                       monotonic=time.monotonic)
     s._stored = {NAME: SwitchState("ab", 0, time.time() + 600)}
@@ -368,109 +381,15 @@ def trial(monkeypatch):
     return s
 
 
-def _refresher():
-    from tests.test_optional_db_abandon_10090 import refresher
-
-    return refresher()[0]
-
-
-async def test_trial_abandons_its_half_and_cancels_the_other(trial):
-    from tests.test_optional_db_abandon_10090 import Body
-
-    assert OPTIONAL_DB_SWITCH == NAME
-    r = _refresher()
-    off_half = Body()
-    with pytest.raises(TimeoutError):
-        await r._optional_db("normal_read", .02, off_half, 3)
-    assert off_half.ended == "cancelled" and r.optional_db_abandoned == 0
-    unkeyed = Body()
-    with pytest.raises(TimeoutError):
-        await r._optional_db("normal_read", .02, unkeyed)
-    assert unkeyed.ended == "cancelled" and r.optional_db_abandoned == 0
-    on_half = Body()
-    with pytest.raises(blend_mod.OptionalDbAbandoned):
-        await r._optional_db("normal_read", .02, on_half, 4)
-    assert on_half.ended is None and r.optional_db_abandoned == 1
-    on_half.release.set()
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    assert on_half.ended == "finished"
-
-
-async def test_trial_capacity_read_follows_its_key(trial):
-    from tests.test_optional_db_abandon_10090 import Body
-
-    r = _refresher()
-    for key, abandoned in ((5, False), (6, True)):
-        read = Body()
-
-        async def body(gate, read=read):
-            if gate is not None:
-                gate.reading = True
-            return await read()
-
-        caller = asyncio.create_task(r._optional_db_in_pass("preview_capacity", body, key))
-        await read.started.wait()
-        caller.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await caller
-        assert (read.ended is None) is abandoned
-        read.release.set()
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-
-
-async def test_trial_late_failure_switches_it_off_in_this_process(trial, caplog):
-    r = _refresher()
-    release = asyncio.Event()
-
-    async def fails_late():
-        await release.wait()
-        raise ValueError("late")
-
-    with pytest.raises(blend_mod.OptionalDbAbandoned):
-        await r._optional_db("normal_ack", .02, fails_late, 2)
-    release.set()
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert not trial.arm(NAME, 2)
-    from tests.test_optional_db_abandon_10090 import Body
-
-    after = Body()
-    with pytest.raises(TimeoutError):
-        await r._optional_db("normal_read", .02, after, 2)
-    assert after.ended == "cancelled", "the tripped switch still abandoned"
-
-
-async def test_trial_counts_the_detached_observation_read(trial):
-    r = _refresher()
-    r._detached_reads = {asyncio.get_running_loop().create_future()}
-    assert r._optional_db_busy()
-
-
-async def test_without_a_trial_the_switched_paths_are_unchanged(monkeypatch):
-    from tests.test_optional_db_abandon_10090 import Body
-
-    monkeypatch.delenv(OPTIONAL_DB_ABANDON_ENV, raising=False)
+async def test_without_a_trial_receipts_carry_no_arm(monkeypatch):
     s = SpeedSwitches(read=lambda: [None], monotonic=time.monotonic)
     monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
-    r = _refresher()
-    for key in (None, 2, 3):
-        body = Body()
-        with pytest.raises(TimeoutError):
-            await r._optional_db("normal_read", .02, body, key)
-        assert body.ended == "cancelled"
-    r._detached_reads = {asyncio.get_running_loop().create_future()}
-    assert not r._optional_db_busy()
     assert blend_mod._switch_tags(2) == ""
 
 
-# ── receipts carry each event's arm ──────────────────────────────────────────
-
-
 async def test_receipt_tags_name_each_events_arm(trial):
-    assert blend_mod._switch_tags(10) == " sw=abandon_optional_db:on"
-    assert blend_mod._switch_tags(11) == " sw=abandon_optional_db:off"
+    assert blend_mod._switch_tags(10) == " sw=test_switch:on"
+    assert blend_mod._switch_tags(11) == " sw=test_switch:off"
     assert blend_mod._switch_tags("not-an-id") == ""
 
 
@@ -493,7 +412,7 @@ async def test_tail_and_delivery_receipts_carry_the_arm(trial, monkeypatch, capl
     clock.t = 1006.0
     await held.refresh_pending()
     (tail,) = tr._receipts(caplog)
-    assert tail["sw"] == "abandon_optional_db:on"
+    assert tail["sw"] == "test_switch:on"
 
     clock.t = 0.0
     r, _ = dr._refresher(previously_live=(1,))
@@ -501,7 +420,7 @@ async def test_tail_and_delivery_receipts_carry_the_arm(trial, monkeypatch, capl
     clock.t = 61.0
     await r.refresh_pending()
     (line,) = dr._lines(caplog)
-    assert line["event"] == "1" and line["sw"] == "abandon_optional_db:off"
+    assert line["event"] == "1" and line["sw"] == "test_switch:off"
 
 
 # ── alternate: server-wide settings by wall-clock period ─────────────────────
@@ -518,9 +437,9 @@ def _alternation(a=1, b=3, period_s=60, start=START, span_s=1200.0, expires_in=N
                        "start": start, "expires_at": expires_at, **extra})
 
 
-def _both(attempts=None, abandon=None):
+def _both(attempts=None, boolean=None):
     """Stored values in SWITCHES order."""
-    by_name = {NAME: abandon, ATTEMPTS: attempts}
+    by_name = {NAME: boolean, ATTEMPTS: attempts}
     return [by_name.get(name) for name in sw.SWITCHES]
 
 
@@ -601,13 +520,13 @@ async def test_tags_name_the_arm_of_the_moment_the_line_describes():
 
 
 async def test_a_boolean_switch_alternates_off_and_on_for_every_read():
-    s, _, clock, _ = _switches(_both(abandon=_alternation(a=0, b=1, period_s=120)))
+    s, _, clock, _ = _switches(_both(boolean=_alternation(a=0, b=1, period_s=120)))
     await _refreshed(s)
     clock.t = START + 30
     assert not any(s.arm(NAME, eid) for eid in range(10))
     clock.t = START + 150
     assert all(s.arm(NAME, eid) for eid in range(10))
-    assert s.tags(4) == " sw=abandon_optional_db:on"
+    assert s.tags(4) == " sw=test_switch:on"
 
 
 # ── pending_attempts: read once per flush, never stalls the flush ────────────
@@ -778,32 +697,6 @@ def test_setter_refuses_an_alternation_outside_the_limits(admin, body):
     assert fake.values == {}
 
 
-async def test_bucket1_alternation_abandons_every_read_in_its_on_period(monkeypatch):
-    from tests.test_optional_db_abandon_10090 import Body
-
-    monkeypatch.delenv(OPTIONAL_DB_ABANDON_ENV, raising=False)
-    clock = _Clock(START + 30)                # the off period (a = 0)
-    s = SpeedSwitches(read=lambda: _both(), clock=clock, monotonic=time.monotonic)
-    s._stored = {NAME: SwitchState("alternate", 0, NOW + 600, 0, 1, 60, START)}
-    s._read_at = time.monotonic()
-    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
-    r = _refresher()
-    off = Body()
-    with pytest.raises(TimeoutError):
-        await r._optional_db("normal_read", .02, off, 4)
-    assert off.ended == "cancelled" and r.optional_db_abandoned == 0
-    clock.t = START + 90                      # the on period, every read, keyed or not
-    for key in (3, None):
-        on = Body()
-        with pytest.raises(blend_mod.OptionalDbAbandoned):
-            await r._optional_db("normal_ack", .02, on, key)
-        on.release.set()
-        for _ in range(3):
-            await asyncio.sleep(0)
-        assert on.ended == "finished"
-    assert r.optional_db_abandoned == 2
-
-
 # ── review R1/R2: no game outside the half has a switched read; one read thread ──
 @pytest.mark.parametrize("ids", [[4, 7], [7, 4], [2, 4, 9], (e for e in (6, 3))])
 def test_a_read_about_both_halves_has_no_key(ids):
@@ -814,30 +707,6 @@ def test_a_read_about_one_half_is_keyed_to_that_half():
     assert blend_mod._optional_db_key([8, 4, 6]) % 2 == 0
     assert blend_mod._optional_db_key([9, 5]) % 2 == 1
     assert blend_mod._optional_db_key([]) is None
-
-
-async def test_a_read_about_both_halves_is_never_abandoned_in_a_trial(trial):
-    from tests.test_optional_db_abandon_10090 import Body
-
-    r = _refresher()
-    mixed = Body()
-    with pytest.raises(TimeoutError):
-        await r._optional_db("normal_ack", .02, mixed, blend_mod._optional_db_key([4, 7]))
-    assert mixed.ended == "cancelled" and r.optional_db_abandoned == 0
-
-
-async def test_the_recovery_page_read_stays_off_in_a_trial(trial, monkeypatch):
-    r = _refresher()
-    keys = []
-
-    async def capture(kind, budget_s, body, key=None, gate=None):
-        keys.append((kind, key))
-        return None
-
-    monkeypatch.setattr(r, "_optional_db", capture)
-    r._normal_after = 32  # an owed_chart_points row id in the trial's parity
-    await r._recover_normal_prices()
-    assert keys == [("normal_read", None)]
 
 
 async def test_a_read_thread_that_outlives_its_bound_is_never_joined_by_a_second():
@@ -888,10 +757,10 @@ async def test_the_minute_before_an_alternation_carries_no_arm():
 
 
 async def test_the_minute_before_a_half_trial_carries_no_arm():
-    s, clock = await _running_from(_both(abandon=_stored(half=0)), NOW)
+    s, clock = await _running_from(_both(boolean=_stored(half=0)), NOW)
     clock.t = NOW + 20
     assert s.tags(4, at=NOW - 60) == ""
-    assert s.tags(4, at=NOW) == " sw=abandon_optional_db:on"
+    assert s.tags(4, at=NOW) == " sw=test_switch:on"
 
 
 @pytest.fixture
@@ -952,28 +821,24 @@ def test_a_stored_alternation_that_is_not_whole_pairs_reads_off(period_s, expire
 
 
 @pytest.mark.parametrize(
-    "layer, abandon, attempts, slots, expected",
+    "layer, attempts, slots, expected",
     [
         # admitted_stamp_batch is the module default, 4 since the settings freeze.
-        ("1", None, 1, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=1 "
-                          "abandon_optional_db=0 admitted_debt_slots=1 "
-                          "admitted_stamp_batch=4"),
-        ("0", "1", 3, 2, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 "
-                         "abandon_optional_db=1 admitted_debt_slots=2 "
-                         "admitted_stamp_batch=4"),
+        ("1", 1, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=1 "
+                    "admitted_debt_slots=1 admitted_stamp_batch=4"),
+        ("0", 3, 2, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 "
+                    "admitted_debt_slots=2 admitted_stamp_batch=4"),
         # Unset, the layer is on.
-        (None, None, 3, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=3 "
-                           "abandon_optional_db=0 admitted_debt_slots=1 "
-                           "admitted_stamp_batch=4"),
+        (None, 3, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=3 "
+                     "admitted_debt_slots=1 admitted_stamp_batch=4"),
     ],
 )
 def test_each_process_logs_the_layer_and_todays_values_once(
-        monkeypatch, caplog, layer, abandon, attempts, slots, expected):
-    for env, value in ((sw.TRIALS_ENV, layer), (OPTIONAL_DB_ABANDON_ENV, abandon)):
-        if value is None:
-            monkeypatch.delenv(env, raising=False)
-        else:
-            monkeypatch.setenv(env, value)
+        monkeypatch, caplog, layer, attempts, slots, expected):
+    if layer is None:
+        monkeypatch.delenv(sw.TRIALS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(sw.TRIALS_ENV, layer)
     monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", attempts)
     monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", slots)
     monkeypatch.setattr(blend_mod, "_SPEED_SWITCH_LOGGED_PID", None)

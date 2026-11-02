@@ -246,33 +246,9 @@ def _owed_budget_env(name, default, cast, low, high):
 #: 500 more on the observation preview, which PR #11700 owns), every one of
 #: worker-ws's 9–10 backends under 78 s old on a dyno up 90 minutes, and
 #: Kalshi's slowest flush spending up to 8.9 s in checkout and connection
-#: setup. Set to 1, the caller still stops waiting at the same deadline and
-#: gets the same TimeoutError, but the read is ABANDONED, not cancelled: it
-#: finishes on its own task and returns its connection to the pool. Default
-#: off. Read at call time; a config var change restarts the dyno anyway.
-OPTIONAL_DB_ABANDON_ENV = "LIVE_BLEND_ABANDON_OPTIONAL_DB"
-#: An abandoned read still holds its session slot and connection; one that has
-#: not finished this long after it started is cancelled after all.
-OPTIONAL_DB_ABANDON_LIMIT_S = 5.0
-
-
-class OptionalDbAbandoned(TimeoutError):
-    """The deadline passed and the read was left to finish on its own task."""
-
-
-def optional_db_abandons() -> bool:
-    return os.getenv(OPTIONAL_DB_ABANDON_ENV, "").strip().lower() in ("1", "true", "on", "yes")
-
-
-#: Its runtime trial name (`app.tasks.speed_switches`). ``alternate`` abandons
-#: every read in the "on" periods: the switch acts on the shared connection
-#: pool, so alternating periods is its faithful comparison. ``ab`` abandons only
-#: the reads whose games are ALL in the trial's half (one event-id parity), so no
-#: game outside the half ever has a switched read; a read about games of both
-#: halves stays off, and so does the normal recovery page read, which names no
-#: game until it returns. Its effect still reaches both halves' deliveries
-#: through the pool.
-OPTIONAL_DB_SWITCH = "abandon_optional_db"
+#: setup. Abandoning such a read at its deadline instead of cancelling it was
+#: trialled as `LIVE_BLEND_ABANDON_OPTIONAL_DB` / `abandon_optional_db` (Oct 29),
+#: lost, and was removed in the settings freeze (docs/live-settings.md).
 #: `FRESH_FLUSH_PENDING_ATTEMPTS`'s runtime trial name: ``alternate`` between two
 #: values by period, read once per flush (`_fresh_flush_pending_attempts`).
 PENDING_ATTEMPTS_SWITCH = "pending_attempts"
@@ -3640,10 +3616,10 @@ class LiveBlendRefresher:
                                 for name, value in today_env_in_force().items())
             logger.info(
                 "speed_switch[pid=%d]: layer SPEED_SWITCH_TRIALS=%s "
-                "today pending_attempts=%d abandon_optional_db=%d "
+                "today pending_attempts=%d "
                 "admitted_debt_slots=%d admitted_stamp_batch=%d%s",
                 os.getpid(), "on" if trials_enabled() else "off",
-                FRESH_FLUSH_PENDING_ATTEMPTS, int(optional_db_abandons()),
+                FRESH_FLUSH_PENDING_ATTEMPTS,
                 ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH, overrides,
             )
         #: #11181 — durable custody of owed chart points. Both production
@@ -3755,11 +3731,6 @@ class LiveBlendRefresher:
         # Local151 durable normal-price intent; no full frames retained in memory.
         self._normal_source = self.source + "_price_publish"
         self._normal_task = None
-        #: #10090 — optional reads abandoned at their deadline, by kind, still
-        #: finishing on their own task (`OPTIONAL_DB_ABANDON_ENV`).
-        self._optional_db_running: dict[str, asyncio.Task] = {}
-        self._optional_db_limits: dict[asyncio.Task, asyncio.TimerHandle] = {}
-        self.optional_db_abandoned = 0
         self._normal_retry_at = 0.0
         self._normal_closed = False
         self._normal_has_debt = True  # one recovery discovery on startup
@@ -6760,10 +6731,6 @@ class LiveBlendRefresher:
             await self._close_normal_recovery()
         except asyncio.CancelledError as exc:
             interrupted = exc
-        try:
-            await self._close_optional_db()
-        except asyncio.CancelledError as exc:
-            interrupted = exc
         self._start_history(force=True)
         task = self._history_task
         while task is not None and not task.done():
@@ -7907,12 +7874,12 @@ class LiveBlendRefresher:
     # ── #10090: optional reads abandoned at their deadline ───────────────────
 
     def _optional_db_busy(self) -> bool:
-        """Abandoned optional work already holds its share of the slots; skip this turn."""
-        held = sum(not task.done() for task in self._optional_db_running.values())
-        if optional_db_abandons() or _optional_db_trial().state(OPTIONAL_DB_SWITCH).mode != "off":
-            # The detached observation reads (#11700) share the same slots.
-            held += sum(not task.done() for task in self._detached_reads)
-        return held >= OPTIONAL_DB_HELD_MAX
+        """Whether optional reads already hold their share of the session slots.
+
+        No read is ever abandoned since the settings freeze removed
+        `abandon_optional_db`, so the share held is zero: busy only when the
+        share itself is zero (`OPTIONAL_DB_HELD_MAX`)."""
+        return OPTIONAL_DB_HELD_MAX <= 0
 
     def _trial_attempt_failed(self, flush_started, error: BaseException) -> None:
         """An old stamp only a `pending_attempts` trial allowed has failed: that
@@ -7924,146 +7891,15 @@ class LiveBlendRefresher:
             self._pending_attempts_limit = FRESH_FLUSH_PENDING_ATTEMPTS
             _optional_db_trial().trip(PENDING_ATTEMPTS_SWITCH, error)
 
-    @staticmethod
-    def _optional_db_on(key: Optional[int]) -> bool:
-        """The env switch, or the running trial's arm for the read keyed ``key``."""
-        if optional_db_abandons():
-            return True
-        trial = _optional_db_trial()
-        if trial.state(OPTIONAL_DB_SWITCH).mode == "alternate":
-            return trial.arm(OPTIONAL_DB_SWITCH, 0)  # the period's arm, every read
-        return key is not None and trial.arm(OPTIONAL_DB_SWITCH, key)
-
     async def _optional_db(self, kind: str, budget_s: float, body, key: Optional[int] = None,
                            gate=None):
-        """Await ``body()`` for at most ``budget_s``; TimeoutError past it.
-
-        Off (the default), exactly ``asyncio.timeout(budget_s)`` around the
-        body. On (`OPTIONAL_DB_ABANDON_ENV`), the body runs on its own task and
-        is never cancelled for the deadline: the caller is released with the
-        same TimeoutError and the body finishes, keeping its connection. A
-        cancellation of the CALLER still cancels the body and waits for it, as
-        the timeout's own cancellation did. With a ``gate``, a body that has not
-        set ``gate.reading`` (still queued for its session slot) is cancelled at
-        the deadline, as with the switch off: it holds no connection to keep.
-        """
-        if not self._optional_db_on(key):
-            async with asyncio.timeout(budget_s):
-                return await body()
-        if self._optional_db_busy():
-            raise TimeoutError(f"optional {kind} read skipped: abandoned reads hold their share")
-        task = asyncio.create_task(body(), name=f"optional-db:{kind}")
-        try:
-            # The same deadline scope as off; only the read behind it is shielded.
-            async with asyncio.timeout(budget_s):
-                return await asyncio.shield(task)
-        except TimeoutError:
-            if task.done():
-                # The read's own TimeoutError, or one that ended at the deadline.
-                if not task.cancelled():
-                    task.exception()
-                raise
-            if self._optional_db_busy() or (gate is not None and not gate.reading):
-                # Another read took the share meanwhile, or this one is still
-                # queued for its slot: cancel, as with the switch off.
-                await self._optional_db_cancel_and_join(task, TimeoutError())
-                raise
-            self._optional_db_abandon(kind, task, OPTIONAL_DB_ABANDON_LIMIT_S - budget_s)
-            raise OptionalDbAbandoned(f"optional {kind} read abandoned after {budget_s}s")
-        except BaseException as exc:
-            await self._optional_db_cancel_and_join(task, exc)
-            raise
+        """Await ``body()`` for at most ``budget_s``; TimeoutError past it."""
+        async with asyncio.timeout(budget_s):
+            return await body()
 
     async def _optional_db_in_pass(self, kind: str, body, key: Optional[int] = None):
-        """Await ``body(gate)`` under the enclosing pass's own deadline.
-
-        For preview capacity maintenance, whose reads sit inside its 1 s pass
-        timeout. Off, exactly ``await body(None)``. On, the body runs on its own
-        task behind a shield: when the pass deadline cancels the caller while
-        the body is inside its read (``gate.reading``), the caller ends exactly
-        as before and the read is left to finish, then stop at
-        ``gate.read_done()``. A cancellation anywhere else, or at shutdown,
-        still cancels the body and waits for it.
-        """
-        if not self._optional_db_on(key):
-            return await body(None)
-        if self._optional_db_busy():
-            raise TimeoutError(f"optional {kind} read skipped: abandoned reads hold their share")
-        gate = _CapacityReadGate()
-        task = asyncio.create_task(body(gate), name=f"optional-db:{kind}")
-        try:
-            return await asyncio.shield(task)
-        except CancelledError as exc:
-            if (gate.reading and not task.done() and not self._preview_maintenance_closed
-                    and not self._optional_db_busy()):
-                gate.abandoned = True
-                self._optional_db_abandon(kind, task, OPTIONAL_DB_ABANDON_LIMIT_S)
-                raise
-            await self._optional_db_cancel_and_join(task, exc)
-            raise
-
-    @staticmethod
-    async def _optional_db_cancel_and_join(task: asyncio.Task, exc: BaseException) -> None:
-        """Cancel the body as the caller was cancelled, and wait for it.
-
-        Every cancellation the caller receives while waiting (a shutdown, then
-        the pass timeout) is forwarded with its message, so the body unwinds
-        exactly as it did when it was the caller's own coroutine.
-        """
-        cancel = (lambda e: task.cancel(e.args[0] if e.args else None))
-        if isinstance(exc, CancelledError):
-            cancel(exc)
-        else:
-            task.cancel()
-        while not task.done():
-            try:
-                await asyncio.wait({task})
-            except CancelledError as again:
-                cancel(again)
-        if not task.cancelled():
-            task.exception()
-
-    def _optional_db_abandon(self, kind: str, task: asyncio.Task, limit_s: float) -> None:
-        self._optional_db_running[kind] = task
-        self.optional_db_abandoned += 1
-        # A read that never finishes still ends: past the limit it is cancelled,
-        # costing its connection as every read did before this switch.
-        self._optional_db_limits[task] = asyncio.get_running_loop().call_later(
-            max(0.0, limit_s), task.cancel,
-        )
-        task.add_done_callback(self._optional_db_finished)
-
-    def _optional_db_finished(self, task: asyncio.Task) -> None:
-        limit = self._optional_db_limits.pop(task, None)
-        if limit is not None:
-            limit.cancel()
-        for kind, running in list(self._optional_db_running.items()):
-            if running is task:
-                del self._optional_db_running[kind]
-        if not task.cancelled() and task.exception() is not None:
-            error = task.exception()
-            logger.warning(
-                "live_blend_refresh[%s]: abandoned optional read failed",
-                self.source, exc_info=(type(error), error, error.__traceback__),
-            )
-            if not optional_db_abandons():
-                # A trial's switched path failed: off here for the rest of it.
-                _optional_db_trial().trip(OPTIONAL_DB_SWITCH, error)
-
-    async def _close_optional_db(self) -> None:
-        """Cancel and join every abandoned read before the sessions close."""
-        interrupted = None
-        for task in list(self._optional_db_running.values()):
-            if not task.done():
-                task.cancel()
-            while not task.done():
-                try:
-                    await asyncio.wait({task})
-                except CancelledError as exc:
-                    interrupted = exc
-        self._optional_db_running.clear()
-        if interrupted is not None:
-            raise interrupted
+        """Await ``body(None)`` under the enclosing pass's own deadline."""
+        return await body(None)
 
     async def _publish(self, frames: list[dict]) -> set[tuple[int, int]]:
         """Fan the committed frames out to any SSE subscribers. Never raises.
