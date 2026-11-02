@@ -23,7 +23,7 @@ function main() {
   // still publish their run summary and artifacts without adding issue noise.
   if (run.event !== 'schedule' || run.head_branch !== 'master') return;
   const files = findManifests(process.env.AUDIT_ARTIFACT_ROOT || 'audit-artifacts');
-  const summary = summarize(files.map(file=>JSON.parse(fs.readFileSync(file,'utf8'))));
+  const summary = summarize(files.map(file=>JSON.parse(fs.readFileSync(file,'utf8'))), {headSha:run.head_sha,runId:String(run.id)});
   fs.writeFileSync('filer-summary.md',summary);
   const week = weekStart(run.created_at);
   const weekMarker = `<!-- browser-audit-week:${week} -->`;
