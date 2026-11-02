@@ -1,16 +1,11 @@
-"""#10090 — the Kalshi socket's upcoming-game window is a setting.
+"""#10090 — the Kalshi socket's upcoming-game window is 6 h, with no setting.
 
-`_kalshi_slate_event_window`'s scheduled arm ended at a literal
-`NOW() + INTERVAL '6 hours'`. It now reads `KALSHI_WS_UPCOMING_HOURS` (env,
-read once at import, default 6, clamped to 1..6), as the Polymarket socket
-reads `PM_WS_UPCOMING_HOURS`. Unset, the predicate is the same SQL text as
-before; set to 2, only the scheduled arm's upper bound moves. 11/01: the
-Kalshi venue process ran at 83-89% of a core on the Sunday slate.
+`KALSHI_WS_UPCOMING_HOURS` was tried at 2 on 2026-11-01 and removed 23 minutes
+later when Kalshi rate-limited the 30-second poll that covered the gap; the
+settings freeze deleted the knob (docs/live-settings.md). The predicate is the
+SQL text it always was.
 """
 
-import logging
-
-import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.tasks import kalshi_ws
@@ -39,39 +34,10 @@ def _base_window():
     )
 
 
-def test_at_the_default_the_predicate_is_byte_identical_to_before(monkeypatch):
-    assert kalshi_ws.KALSHI_WS_UPCOMING_HOURS_DEFAULT == 6
-    monkeypatch.setattr(kalshi_ws, "KALSHI_WS_UPCOMING_HOURS", 6)
+def test_the_predicate_is_byte_identical_to_the_six_hour_window():
     assert _sql(kalshi_ws._kalshi_slate_event_window()) == _sql(_base_window())
 
 
-def test_two_moves_only_the_upper_bound(monkeypatch):
-    monkeypatch.setattr(kalshi_ws, "KALSHI_WS_UPCOMING_HOURS", 2)
-    want = _sql(_base_window()).replace("NOW() + INTERVAL '6 hours'",
-                                        "NOW() + INTERVAL '2 hours'")
-    assert _sql(kalshi_ws._kalshi_slate_event_window()) == want
-
-
-def test_the_literal_can_only_hold_a_number(monkeypatch):
-    monkeypatch.setattr(kalshi_ws, "KALSHI_WS_UPCOMING_HOURS", "2 hours'; DROP TABLE events; --")
-    with pytest.raises(ValueError):
-        kalshi_ws._kalshi_slate_event_window()
-
-
-@pytest.mark.parametrize("raw, want", [(None, 6), ("  ", 6), ("2", 2), (" 2 ", 2), ("1", 1),
-                                       ("0", 1), ("-3", 1), ("7", 6), ("48", 6),
-                                       ("2.5", 6), ("2h", 6), ("two", 6)])
-def test_the_env_clamps_to_one_through_six_and_anything_else_is_six(monkeypatch, raw, want):
-    if raw is None:
-        monkeypatch.delenv("KALSHI_WS_UPCOMING_HOURS", raising=False)
-    else:
-        monkeypatch.setenv("KALSHI_WS_UPCOMING_HOURS", raw)
-    assert kalshi_ws._kalshi_upcoming_hours_env() == want
-
-
-def test_a_clamped_value_warns_once(monkeypatch, caplog):
-    monkeypatch.setenv("KALSHI_WS_UPCOMING_HOURS", "12")
-    with caplog.at_level(logging.WARNING, logger=kalshi_ws.logger.name):
-        assert kalshi_ws._kalshi_upcoming_hours_env() == 6
-    assert [r.getMessage() for r in caplog.records] == [
-        "Kalshi WS: KALSHI_WS_UPCOMING_HOURS='12' is outside 1..6; using 6"]
+def test_the_knob_is_gone():
+    assert not hasattr(kalshi_ws, "KALSHI_WS_UPCOMING_HOURS")
+    assert not hasattr(kalshi_ws, "_kalshi_upcoming_hours_env")

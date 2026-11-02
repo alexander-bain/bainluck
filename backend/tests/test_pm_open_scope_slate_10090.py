@@ -1,5 +1,7 @@
 """#10090 — ``POLYMARKET_WS_OPEN_SCOPE=slate``: the open arm keeps only what a
-live or near-start market depends on.
+live or near-start market depends on. ``slate`` is the default since the
+settings freeze (production since 2026-11-01, docs/live-settings.md); ``all``
+restores the full arm.
 
 The PM venue process is CPU-bound and the open arm streams every open
 contract. Under ``slate`` the full catalog is still discovered and paired; the
@@ -210,9 +212,12 @@ def _sql(stmt_or_clause):
     )
 
 
-def test_the_seed_read_is_the_socket_slates_event_predicate_over_open_markets():
+def test_the_seed_read_is_the_socket_slates_event_predicate_over_open_markets(monkeypatch):
     from sqlalchemy import and_
 
+    # The bare predicate; with props-to-poll on (its default) the read also
+    # refuses venue-labelled props (test_pm_props_to_poll_10090).
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     stmt = open_mod.open_contract_scope_markets_stmt()
     sql = _sql(stmt)
     assert "JOIN events ON futures_markets.event_id = events.id" in sql
@@ -234,15 +239,15 @@ def test_the_seed_read_follows_the_upcoming_window_setting(monkeypatch):
 @pytest.mark.parametrize(
     "raw, scope",
     [
-        (None, "all"),
-        ("", "all"),
+        (None, "slate"),
+        ("", "slate"),
         ("all", "all"),
         ("slate", "slate"),
         (" SLATE ", "slate"),
         ("live", "all"),
     ],
 )
-def test_the_flag_defaults_to_all(monkeypatch, raw, scope):
+def test_the_flag_defaults_to_slate_and_anything_unrecognised_is_all(monkeypatch, raw, scope):
     if raw is None:
         monkeypatch.delenv("POLYMARKET_WS_OPEN_SCOPE", raising=False)
     else:
@@ -486,7 +491,7 @@ async def test_a_scope_rollover_keeps_dropped_legs_debt_through_its_drain(monkey
             stop.set()
 
     rig.on_slate_read = on_slate_read
-    _arm(monkeypatch, rig, None)
+    _arm(monkeypatch, rig, "all")
     stats = await asyncio.wait_for(task._run_polymarket_ws_consumer(stop=stop), 30)
 
     assert seen["before"] == {"oY": OPEN_YES, "oN": OPEN_NO}
@@ -533,7 +538,7 @@ async def test_an_empty_slate_scope_runs_and_adopts_the_previous_runs_debt(monke
 async def test_an_empty_all_catalog_still_exits_before_recovery(monkeypatch):
     """6a control: with ``all`` an empty catalog keeps today's exit."""
     rig = ScopeRig(slate=EMPTY_SLATE, open_rows=[])
-    _arm(monkeypatch, rig, None)
+    _arm(monkeypatch, rig, "all")
     stats = await asyncio.wait_for(task._run_polymarket_ws_consumer(), 30)
     assert stats == {"status": "no_markets"}
     assert rig.seed_reads == 0
@@ -589,7 +594,7 @@ async def test_all_never_reads_the_seed(monkeypatch):
             stop.set()
 
     rig.on_slate_read = on_slate_read
-    _arm(monkeypatch, rig, None)
+    _arm(monkeypatch, rig, "all")
     stats = await asyncio.wait_for(task._run_polymarket_ws_consumer(stop=stop), 30)
     assert rig.seed_reads == 0
     assert seen["open"] == {"oY": OPEN_YES, "oN": OPEN_NO}

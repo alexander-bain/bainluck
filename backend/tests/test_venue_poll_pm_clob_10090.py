@@ -264,9 +264,12 @@ async def test_a_429_from_the_clob_re_raises(monkeypatch):
 
 @pytest.mark.parametrize(
     "raw, expected",
-    [(None, "gamma"), ("", "gamma"), ("gamma", "gamma"), ("CLOB", "clob"), ("bogus", "gamma")],
+    # `clob` is the default since the settings freeze (docs/live-settings.md);
+    # only `gamma` selects the first build.
+    [(None, "clob"), ("", "clob"), ("gamma", "gamma"), (" GAMMA ", "gamma"), ("CLOB", "clob"),
+     ("bogus", "clob")],
 )
-def test_the_source_switch_defaults_to_gamma(raw, expected):
+def test_the_source_switch_defaults_to_clob(raw, expected):
     env = {} if raw is None else {clob.PM_SOURCE_ENV: raw}
     assert clob.pm_source(env) == expected
 
@@ -510,10 +513,11 @@ async def _no_write(*_a, **_k):
 
 
 async def test_under_the_gamma_source_the_pass_never_reads_the_clob(monkeypatch):
-    """The default: VENUE_POLL_30S_PM_SOURCE unset is the first build exactly."""
+    """VENUE_POLL_30S_PM_SOURCE=gamma is the first build exactly (unset is
+    ``clob`` since the settings freeze)."""
     from tests.test_venue_poll_30s_10090 import _unit, _wire_pass
 
-    monkeypatch.delenv(clob.PM_SOURCE_ENV, raising=False)
+    monkeypatch.setenv(clob.PM_SOURCE_ENV, "gamma")
 
     async def explode(*_a, **_k):
         raise AssertionError("the gamma source never runs the CLOB pass")

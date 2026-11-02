@@ -23,7 +23,9 @@ from app.tasks import venue_poll_30s as v
 @pytest.mark.parametrize(
     "raw, expected",
     [
-        (None, set()),
+        # Unset is `polymarket` since the settings freeze (docs/live-settings.md);
+        # set and empty is still off.
+        (None, {"polymarket"}),
         ("", set()),
         ("0", set()),
         ("off", set()),
@@ -34,7 +36,7 @@ from app.tasks import venue_poll_30s as v
         ("bogus", set()),
     ],
 )
-def test_the_switch_is_off_unless_it_names_a_venue(raw, expected):
+def test_the_switch_is_off_unless_it_names_a_venue_and_unset_is_polymarket(raw, expected):
     env = {} if raw is None else {v.ENABLED_ENV: raw}
     assert v.enabled_venues(env) == expected
 
@@ -42,7 +44,7 @@ def test_the_switch_is_off_unless_it_names_a_venue(raw, expected):
 def test_a_dark_tick_body_touches_neither_redis_nor_the_database(monkeypatch):
     from app import tasks
 
-    monkeypatch.delenv(v.ENABLED_ENV, raising=False)
+    monkeypatch.setenv(v.ENABLED_ENV, "0")
 
     def explode(*_a, **_k):
         raise AssertionError("a dark tick must not take a lease or open a session")
@@ -233,17 +235,25 @@ def test_a_polymarket_market_is_skipped_only_when_every_priced_leg_is_unchanged(
 # ── hand-off: the sockets' own windows ────────────────────────────────────────
 
 
-def test_both_socket_windows_still_read_as_six_hours_with_the_band_inside_them():
+def test_both_socket_windows_read_their_hours_with_the_band_inside_them(monkeypatch):
     """If a socket's window changes shape this goes red, rather than the band
-    silently emptying (see ``_handoff_band_sql``)."""
+    silently emptying (see ``_handoff_band_sql``). Kalshi's window is 6 h; the
+    Polymarket window is `PM_WS_UPCOMING_HOURS`, 1 h by default since the
+    settings freeze (docs/live-settings.md), 6 h at most."""
+    from app.tasks import polymarket_ws
     from app.tasks.kalshi_ws import SUBSCRIPTION_REFRESH_SECONDS, _kalshi_slate_event_window
     from app.tasks.polymarket_ws import _slate_event_window
 
-    for window in (_kalshi_slate_event_window(), _slate_event_window()):
+    def check(window, hours):
         sql = v._render(window)
-        assert v._upcoming_hours(sql) == 6
+        assert v._upcoming_hours(sql) == hours
         band = v._handoff_band_sql(sql)
-        assert f"secs => {6 * 3600 - SUBSCRIPTION_REFRESH_SECONDS - v.HANDOFF_SLACK_S}" in band
+        assert f"secs => {hours * 3600 - SUBSCRIPTION_REFRESH_SECONDS - v.HANDOFF_SLACK_S}" in band
+
+    check(_kalshi_slate_event_window(), 6)
+    check(_slate_event_window(), 1)  # the module's own (default) setting
+    monkeypatch.setattr(polymarket_ws, "PM_WS_UPCOMING_HOURS", 6)
+    check(_slate_event_window(), 6)
 
 
 def test_the_population_sql_carries_the_shipped_socket_predicates_verbatim():
@@ -588,7 +598,8 @@ async def _noop():
 
 
 @pytest.mark.parametrize("scope, leaves_tokened_to_socket", [
-    (None, True), ("all", True), ("slate", False), ("SLATE", False),
+    # Unset is `slate` since the settings freeze (docs/live-settings.md).
+    (None, False), ("all", True), ("slate", False), ("SLATE", False),
 ])
 def test_under_the_slate_scope_tokened_markets_are_polled(monkeypatch, scope, leaves_tokened_to_socket):
     """#10090 (Alex 11/01): the slate scope drops most tokened markets from the

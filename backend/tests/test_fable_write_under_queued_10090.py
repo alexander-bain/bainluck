@@ -18,7 +18,9 @@ RIDES that attempt (`admit_fresh` re-stages it: no debt, no second attempt).
 The first test is RED on `6c9f406e` (the cohort is refused as HELD: the
 door returns nothing and the event is left to be kept owed) and GREEN with
 the change; the rest pin the lease, the running-attempt fence, the horizon,
-the startup arm, the held-first/admitted band and the off arm.
+the startup arm, the held-first/admitted band and the off arm. The default is
+9 since the settings freeze (production since 2026-10-31,
+docs/live-settings.md); ``0`` is the off arm, the full fence.
 """
 
 import asyncio
@@ -264,8 +266,8 @@ async def test_held_first_and_the_debt_slots_are_unchanged_by_the_lift(clock, mo
     await _finish(r, task)
 
 
-async def test_the_switch_off_is_todays_fence_and_door(clock, monkeypatch):
-    monkeypatch.delenv(SWITCH, raising=False)
+async def test_the_switch_off_is_the_full_fence_and_door(clock, monkeypatch):
+    monkeypatch.setenv(SWITCH, "0")
     r = _Gates(blocked={99, 7, 1, 2})
     task, window = await _saturated_call(r)
     assert r.fenced_event_ids() == r.holding_event_ids() == frozenset({99, 7, 1, 2, 50})
@@ -287,6 +289,11 @@ async def test_an_unparseable_or_zero_value_is_off(monkeypatch):
     monkeypatch.setenv(SWITCH, "all")
     assert module.stamp_write_under_queued() == 0
     monkeypatch.setenv(SWITCH, "9")
+    assert module.stamp_write_under_queued() == 9
+
+
+async def test_unset_is_the_next_nine_picks(monkeypatch):
+    monkeypatch.delenv(SWITCH, raising=False)
     assert module.stamp_write_under_queued() == 9
 
 

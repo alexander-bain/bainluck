@@ -98,7 +98,10 @@ pytestmark_async = pytest.mark.asyncio
 
 
 async def _saturated(monkeypatch, held_source):
-    """Workers busy with 2, 3, 4; live 5..10 queued in id order."""
+    """Workers busy with 2, 3, 4; live 5..10 queued in id order. `_gated`
+    gates one event per stamp, so the live batch (default 4 since the
+    settings freeze) is pinned to 1: each pick is its own stamp."""
+    monkeypatch.setattr(module, "ADMITTED_LIVE_BATCH", 1)
     statuses = {1: "scheduled", **{e: "live" for e in range(2, 11)}}
     x = await _seeded(monkeypatch, statuses)
     x.r.reader_held = held_source
@@ -205,7 +208,7 @@ async def _running_call(r):
 @pytestmark_async
 async def test_a_held_live_debt_takes_the_live_allowance_first(clock, monkeypatch):
     # The off arm of STAMP_HELD_OWED_FRESH: the held game rides the live slot.
-    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "0")
     r = _Gated(blocked={99, 1, 2, 3, 4})
     r.reader_held = lambda: frozenset({4})
     task = await _running_call(r)
@@ -248,7 +251,7 @@ async def test_held_live_debt_preference_yields_one_admission_in_four(clock, mon
     # Pre-game 7 holds the shared slot, so the live allowance alone decides.
     # Held 50 is owed again before every admission; unheld live 1, 2 wait.
     # The off arm of STAMP_HELD_OWED_FRESH: the held game rides the live slot.
-    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "0")
     r = _Gated(blocked={99, 7})
     r.reader_held = lambda: frozenset({50})
     task = await _running_call(r)

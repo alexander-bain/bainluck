@@ -1,10 +1,17 @@
-"""Protected DNPL reservations on the existing TSP-1 real Redis harness."""
+"""Protected DNPL reservations on the existing TSP-1 real Redis harness.
+
+These cases are written against the v1 allocation (192,64,128,64,48,16; total
+512), the default before the settings freeze. The default is now production's
+v2 split (96,48,192,128,448,112; total 1024), so every ledger here is built on
+the v1 policy explicitly: the TSP-1 rig's registries through the environment
+(`_v1_policy`), and this file's own registries by constructing it.
+"""
 
 from datetime import timedelta
 from types import SimpleNamespace
 import pytest
 from app.utils import blend_preview as bp
-from app.utils.preview_reservations import ReservationPolicy
+from app.utils.preview_reservations import RESERVATIONS_ENV, ReservationPolicy
 from tests.test_blend_preview_ledger_tsp1_10090 import (
     BASE10,
     NOW,
@@ -18,6 +25,15 @@ from tests.test_blend_preview_ledger_tsp1_10090 import (
 # Imported fixture objects remain available under the harness names.
 rig = _rig_fixture
 redis_kwargs = _redis_fixture
+
+V1_LIMITS = (192, 64, 128, 64, 48, 16)
+
+
+@pytest.fixture(autouse=True)
+def _v1_policy(monkeypatch):
+    """Autouse, so it is in place before the rig builds its registries."""
+    monkeypatch.setenv(RESERVATIONS_ENV, ",".join(map(str, V1_LIMITS)))
+
 
 T1 = "americanfootball_nfl"
 T2 = "basketball_wnba"
@@ -668,7 +684,7 @@ def _final_read_local_residue(*, protected=False, deferred=False):
     No production event attribution is implied. Redis expiry acknowledgements
     enter through _local_expired; actual Redis/held-reader coverage is separate.
     """
-    r = bp.LedgerRegistry(sources=SOURCES)
+    r = bp.LedgerRegistry(sources=SOURCES, policy=ReservationPolicy(V1_LIMITS))
     future = NOW + timedelta(hours=1)
 
     def put(eid, *, upcoming=False, at=0, value=0.61):

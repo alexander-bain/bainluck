@@ -33,6 +33,9 @@ pytestmark = pytest.mark.asyncio
 async def test_cancel_with_a_held_game_picked_out_of_order_keeps_every_unstamped_event_owed(
     monkeypatch,
 ):
+    # `_gated` gates one event per stamp, so each live pick is its own stamp:
+    # the live batch is pinned to 1 (its default is 4 since the settings freeze).
+    monkeypatch.setattr(module, "ADMITTED_LIVE_BATCH", 1)
     statuses = {1: "scheduled", **{e: "live" for e in range(2, 11)}}
     x = await _seeded(monkeypatch, statuses)
     receipts = x.r.receipts = module.TailReceipts("polymarket")
@@ -96,7 +99,7 @@ async def test_a_due_held_live_debt_is_preferred_even_after_admissions_that_had_
 ):
     # Pre-game 7 holds the shared slot, so the live allowance alone decides.
     # The off arm of STAMP_HELD_OWED_FRESH: the held game rides the live slot.
-    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "0")
     r = _Gated(blocked={99, 7})
     r.reader_held = lambda: frozenset({50})
     task = await _running_call(r)

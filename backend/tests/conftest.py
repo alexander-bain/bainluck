@@ -149,6 +149,17 @@ def _prematch_reading_cache_process_tier_only(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _pm_open_scope_all_unless_a_test_sets_it(monkeypatch):
+    """#10090 settings freeze: production's open-arm scope is ``slate``
+    (docs/live-settings.md). The ~30 consumer rigs predate it and fake none of
+    the slate's reader-presence reads, so under it a rig's consumer never
+    finishes. They test pricing, not scope: they get ``all``. The slate path's
+    own tests (`test_pm_open_scope_*`) set the variable, and a test that
+    deletes it reads the code default, ``slate``."""
+    monkeypatch.setenv("POLYMARKET_WS_OPEN_SCOPE", "all")
+
+
+@pytest.fixture(autouse=True)
 def _thaw_gc_freeze(monkeypatch):
     """#10090: a real Polymarket consumer run freezes the process's heap at its
     catalog installs (`app/utils/ws_gc.py`), after one full collection on the

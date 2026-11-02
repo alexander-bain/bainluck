@@ -36,16 +36,18 @@ LITERAL_TODAY = (PROMPT, HANDOVER, RELEASE)
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    """No override, the layer off, a fresh warn-once memo and switchboard."""
+    """No override, the layer off, a fresh warn-once memo and switchboard.
+    (The layer is on by default since the settings freeze, so off is "0".)"""
     for name in os.environ:
         if name.startswith("SPEED_SWITCH_TODAY_"):
             monkeypatch.delenv(name)
-    monkeypatch.delenv(sw.TRIALS_ENV, raising=False)
+    monkeypatch.setenv(sw.TRIALS_ENV, "0")
     monkeypatch.setattr(sw, "_WARNED_TODAY_ENV", set(), raising=False)
     monkeypatch.setattr(sw, "_SWITCHES", None)
     monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
     monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 1)
     monkeypatch.setattr(blend_mod, "ADMITTED_STAMP_BATCH", 1)
+    monkeypatch.setattr(blend_mod, "ADMITTED_LIVE_BATCH", 1)
 
 
 @pytest.fixture
@@ -86,14 +88,16 @@ def _alternation(a, b, period_s=60, span_s=120.0):
 
 
 def test_unset_every_switch_reads_exactly_todays_value():
-    settings = {"pending_attempts": 1, "admitted_debt_slots": 1, "admitted_stamp_batch": 1}
+    settings = {"pending_attempts": 1, "admitted_debt_slots": 1, "admitted_stamp_batch": 1,
+                "admitted_live_batch": 1}
     for name, spec in sw.SPECS.items():
         assert sw.today_env(name) is None, name
         assert sw.today(name) == settings.get(name, spec["today"]), name
         assert SpeedSwitches(read=list).value(name, 7) == 7, name
     assert sw.today_env_in_force() == {}
     assert blend_mod._lock_retry_prompt() is False
-    assert blend_mod._handover_fresh() is False
+    # `handover_fresh` today is 1 since the settings freeze (docs/live-settings.md).
+    assert blend_mod._handover_fresh() is True
     assert blend_mod._release_unattempted_debt() is False
 
 
@@ -117,6 +121,16 @@ async def test_env_one_turns_lock_retry_prompt_and_handover_fresh_on_with_no_tri
     assert sw.today_env_in_force() == {HANDOVER: 1, PROMPT: 1}
     # One of a/b must be today's: with today 1 an off/on alternation still runs.
     assert sw.validate(PROMPT, "alternate", a=1, b=0, period_s=60) is None
+
+
+async def test_env_zero_turns_handover_fresh_off_with_no_trial(monkeypatch):
+    # `handover_fresh` today is 1 since the settings freeze, so (unlike the
+    # case above, where its env "1" is now also the default) the env's
+    # in-force direction for it is off.
+    monkeypatch.setenv("SPEED_SWITCH_TODAY_HANDOVER_FRESH", "0")
+    assert blend_mod._handover_fresh() is False
+    assert sw.today(HANDOVER) == 0
+    assert sw.today_env_in_force() == {HANDOVER: 0}
 
 
 async def test_with_env_one_a_lock_skipped_price_is_retried_promptly(monkeypatch, clock):
@@ -226,7 +240,7 @@ def test_the_admin_read_shows_each_switchs_effective_today(monkeypatch):
     read = TestClient(app).get("/api/admin/speed-switch",
                                headers={"Authorization": "Bearer t0ken"}).json()
     assert read["today"][PROMPT] == 1
-    assert read["today"][HANDOVER] == 0 and read["today"]["pending_attempts"] == 1
+    assert read["today"][HANDOVER] == 1 and read["today"]["pending_attempts"] == 1
     assert set(read["today"]) == set(sw.SWITCHES)
 
 

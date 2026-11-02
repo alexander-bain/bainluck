@@ -230,20 +230,34 @@ async def test_a_price_that_flips_the_favourite_is_reranked_as_its_write_will_st
 
 
 async def test_the_switch_off_keeps_nothing_and_composes_nothing(r, monkeypatch):
-    monkeypatch.delenv(SWITCH_ENV)
+    monkeypatch.setenv(SWITCH_ENV, "0")
     read(r, event(), legs())
     receive(r, 0.48)
     await drained(r)
     assert r._preview_graphs == {} and r._receipt_quotes == {} and r.sent == []
 
 
-async def test_polymarket_is_the_default_venue_and_kalshi_rides_the_same_seam(monkeypatch, r):
+async def test_with_no_today_env_the_switch_is_on(r, monkeypatch):
+    # `SPECS` today = 1 since the settings freeze (docs/live-settings.md).
+    monkeypatch.delenv(SWITCH_ENV)
+    read(r, event(), legs())
+    receive(r, 0.48)
+    await drained(r)
+    assert [op["value"] for op in ops(r.sent, "propose")] == [0.48]
+
+
+async def test_all_venues_are_the_default_and_kalshi_rides_the_same_seam(monkeypatch, r):
+    # `all` is the default since the settings freeze (docs/live-settings.md);
+    # `polymarket` or `kalshi` narrows it, anything else reads `all`.
     kalshi = _refresher(monkeypatch, "kalshi")
+    monkeypatch.setenv(VENUES_ENV, "polymarket")
     read(kalshi, event(), legs())
     receive(kalshi, 0.48)
     await drained(kalshi)
     assert kalshi.sent == [] and kalshi._receipt_quotes == {}
-    monkeypatch.setenv(VENUES_ENV, "all")
+    monkeypatch.setenv(VENUES_ENV, "both")
+    assert module._receipt_venue("kalshi") and module._receipt_venue("polymarket")
+    monkeypatch.delenv(VENUES_ENV)
     read(kalshi, event(), legs())
     receive(kalshi, 0.48)
     await drained(kalshi)
@@ -589,11 +603,11 @@ def test_the_polymarket_socket_wires_the_withdrawal_route_and_stranded_revoke():
     assert "revoke_receipt_previews" in source
 
 
-def test_the_switch_is_registered_off_with_both_trial_modes():
+def test_the_switch_is_registered_on_with_both_trial_modes():
     from app.tasks.speed_switches import SPECS
 
     assert SPECS["preview_at_receipt"] == {
-        "modes": ("ab", "alternate"), "values": (0, 1), "today": 0}
+        "modes": ("ab", "alternate"), "values": (0, 1), "today": 1}
 
 
 def test_observation_basis_of_an_overlaid_row_is_its_bound():
