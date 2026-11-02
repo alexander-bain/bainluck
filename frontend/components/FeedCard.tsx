@@ -18,9 +18,11 @@ import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLead
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
 import {
+  cleanPersonOutcomeName,
   conceptCountdownHeadline,
   conceptDomainEmoji,
   conceptHeadlineBout,
+  isPersonOutcomeName,
 } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
@@ -60,9 +62,10 @@ interface FeedCardProps {
   onThumbsUp?: (category: string) => void;
   onThumbsDown?: (category: string) => void;
   category?: string;
+  collectionCard?: boolean;
 }
 
-export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: FeedCardProps) {
+export default function FeedCard({ item, onThumbsUp, onThumbsDown, category, collectionCard }: FeedCardProps) {
   // L2-215 Item 1: fail-closed defense-in-depth (#1486). The Sports page filters
   // empty predictive envelopes at its section boundary; guard the leaf too so an
   // empty concept/futures/tournament can never render as a bare tile.
@@ -141,6 +144,7 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
             onThumbsUp={onThumbsUp}
             onThumbsDown={onThumbsDown}
             category={category}
+            collectionCard={collectionCard}
           />
         ))}
       </>
@@ -154,6 +158,7 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
       onThumbsUp={onThumbsUp}
       onThumbsDown={onThumbsDown}
       category={category}
+      collectionCard={collectionCard}
     />
   );
 }
@@ -1123,12 +1128,14 @@ function FuturesFeedCard({
   onThumbsUp,
   onThumbsDown,
   category,
+  collectionCard = false,
 }: {
   item: FeedItem;
   data: FeedFuturesData;
   onThumbsUp?: (category: string) => void;
   onThumbsDown?: (category: string) => void;
   category?: string;
+  collectionCard?: boolean;
 }) {
   // UX-P238 — the headline answers the title's question. See
   // `lib/discover/heroOutcome.ts`; the measured near-miss recorded there is the
@@ -1453,9 +1460,18 @@ function FuturesFeedCard({
                   the common case is not cut at all. The main row's other half is
                   `line-clamp-2`, so the 30px comes out of a title that reflows. */}
               <div className="flex items-center justify-end gap-1 text-[11px] text-text-muted min-w-0 max-w-[130px]">
-                {isNonSports && leader && (
-                  <EntityImage type="wikipedia" name={leader.name} size={14} />
-                )}
+                {collectionCard
+                  ? leader && isPersonOutcomeName(leader.name) && (
+                      <EntityImage
+                        type="wikipedia"
+                        name={cleanPersonOutcomeName(leader.name)}
+                        size={14}
+                        showFallback={false}
+                      />
+                    )
+                  : isNonSports && leader && (
+                      <EntityImage type="wikipedia" name={leader.name} size={14} />
+                    )}
                 <span className="truncate">{leader.name}</span>
               </div>
               {/* UX-P275: gate on whether the move PRINTS, not on the wire

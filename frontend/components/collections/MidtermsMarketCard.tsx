@@ -8,6 +8,8 @@ import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { MIDTERMS_PARTY_COLOR, midtermsBalanceParties, midtermsOutcomeParty, type MidtermsParty } from "@/lib/midtermsParty";
 import MarketCard from "@/components/politics/MarketCard";
 import { SourceBadge } from "@/components/politics/atoms";
+import EntityImage from "@/components/EntityImage";
+import { cleanPersonOutcomeName, isPersonOutcomeName } from "@/lib/eventConceptDisplay";
 
 const partyName = (party: MidtermsParty) => party === "D" ? "Democratic" : "Republican";
 const colour = (party: MidtermsParty | null) => party ? MIDTERMS_PARTY_COLOR[party] : "var(--text-primary)";
@@ -50,7 +52,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   }
 
   const pair = twoLegCardPair(row);
-  if (presentation === "field" || !pair.second) return <MarketCard market={row} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} />;
+  if (presentation === "field" || !pair.second) return <MarketCard market={row} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} showLeaderHeadshot />;
   const percentages = renderedOutcomeRowPercents([pair.first.prob / 100, pair.second.prob / 100]);
   const legs = [pair.first, pair.second].map((leg, index) => {
     const source = market.top_outcomes.find(outcome => outcome.name === leg.name);
@@ -67,7 +69,12 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
     <div className="grid grid-cols-2 gap-4">
       {legs.map((leg, index) => <div key={leg.name} data-party={leg.party ?? "unknown"} className={`min-w-0 ${index ? "text-right" : ""}`}>
         <p className={`font-mono font-semibold leading-none tabular-nums ${compact ? "text-2xl" : "text-3xl"}`} style={{ color: colour(leg.party) }}>{leg.label}</p>
-        <p className="mt-1.5 text-xs leading-snug text-text-secondary">{leg.name}{leg.party && <span className="ml-1 font-semibold" style={{ color: colour(leg.party) }} aria-label={partyName(leg.party)}>({leg.party})</span>}</p>
+        <p className={`mt-1.5 flex items-center gap-1.5 text-xs leading-snug text-text-secondary ${index ? "justify-end" : ""}`}>
+          {leg.name === pair.first.name && isPersonOutcomeName(leg.name) && (
+            <EntityImage type="wikipedia" name={cleanPersonOutcomeName(leg.name)} size={20} showFallback={false} />
+          )}
+          <span>{leg.name}{leg.party && <span className="ml-1 font-semibold" style={{ color: colour(leg.party) }} aria-label={partyName(leg.party)}>({leg.party})</span>}</span>
+        </p>
       </div>)}
     </div>
     {pair.oneQuestion && <div aria-hidden className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-surface-elevated">

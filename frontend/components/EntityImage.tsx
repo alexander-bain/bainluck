@@ -31,6 +31,8 @@ interface EntityImageProps {
   size?: number;
   /** Additional CSS class */
   className?: string;
+  /** #11877: when false, render nothing when no image URL resolves (no initials placeholder). */
+  showFallback?: boolean;
 }
 
 /**
@@ -47,6 +49,7 @@ export default function EntityImage({
   fallbackColor = DEFAULT_FALLBACK_COLOR,
   size = 24,
   className = "",
+  showFallback = true,
 }: EntityImageProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -95,6 +98,10 @@ export default function EntityImage({
       />
     );
   }
+
+  // #11877 (Alex's Call 1): on collection cards, when Wikipedia has no article,
+  // show no tile at all rather than the initials placeholder.
+  if (!showFallback) return null;
 
   // UX-P235 (board item 14) — THE FALLBACK NOW LOOKS LIKE A FALLBACK.
   //

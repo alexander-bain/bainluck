@@ -4,6 +4,7 @@
 
 import { renderedOutcomeRowPercents } from "./renderedPercent";
 import { isSettlementPoint, splitSettlementPoints } from "./chartSettlementPoints";
+import { espnTeamLogoByName } from "./images";
 import type {
   EventConceptCompetitor,
   EventConceptChild,
@@ -171,6 +172,48 @@ export function isLikelyPersonName(name?: string | null): boolean {
   // "Jean-Christophe Peraud" or "Juan Manuel Cerundolo" — stay well inside this.
   if (trimmed.split(/\s+/).length > 5) return false;
 
+  return true;
+}
+
+const NON_PERSON_OUTCOME_TOKENS = new Set([
+  "democrat", "democrats", "democratic", "republican", "republicans", "gop",
+  "party", "parties", "senate", "house", "congress", "sweep", "control",
+  "majority", "candidate", "candidates", "nominee", "nominees", "another",
+  "none", "undecided", "tbd", "team", "state", "states", "united",
+]);
+
+const US_STATES = new Set([
+  "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+  "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+  "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+  "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+  "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+  "new mexico", "new york", "north carolina", "north dakota", "ohio",
+  "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+  "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+  "washington", "west virginia", "wisconsin", "wyoming",
+  "district of columbia", "puerto rico",
+]);
+
+/** #11877: strip trailing party tags ("Saritha Komatireddy (R)" → "Saritha Komatireddy")
+ *  so Wikipedia lookups ask for the person's name. */
+export function cleanPersonOutcomeName(name?: string | null): string {
+  if (!name) return "";
+  return name.replace(/\s*\([RDI]\)\s*$/i, "").trim();
+}
+
+/** #11877: true when a collection card outcome is a person's name (governor,
+ *  Senate candidate, player) rather than a party, chamber, state, team or binary label. */
+export function isPersonOutcomeName(name?: string | null): boolean {
+  const cleaned = cleanPersonOutcomeName(name);
+  if (!isLikelyPersonName(cleaned)) return false;
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return false;
+  const lower = cleaned.toLowerCase();
+  if (US_STATES.has(lower)) return false;
+  if (espnTeamLogoByName(cleaned) !== null) return false;
+  const tokens = lower.split(/[^a-z]+/i).filter(Boolean);
+  if (tokens.some((t) => NON_PERSON_OUTCOME_TOKENS.has(t))) return false;
   return true;
 }
 

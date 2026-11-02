@@ -4,6 +4,8 @@ import Link from "next/link";
 import type { PoliticsMarketRow } from "@/lib/api";
 import { twoLegCardPair } from "@/lib/twoLegCardPair";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import EntityImage from "@/components/EntityImage";
+import { cleanPersonOutcomeName, isPersonOutcomeName } from "@/lib/eventConceptDisplay";
 import { BORDER_COLOR, SourceBadge } from "./atoms";
 import s from "@/app/politics/politics.module.css";
 
@@ -12,11 +14,13 @@ export default function MarketCard({
   theme,
   forceField = false,
   forceDuel = false,
+  showLeaderHeadshot = false,
 }: {
   market: PoliticsMarketRow;
   theme: string;
   forceField?: boolean;
   forceDuel?: boolean;
+  showLeaderHeadshot?: boolean;
 }) {
   const borderColor = BORDER_COLOR[theme] || "#9CA3AF";
   // #6766 — TWO LEGS IS NOT THE SAME FACT AS TWO SIDES OF ONE QUESTION.
@@ -35,17 +39,19 @@ export default function MarketCard({
   const isBinary = !forceField && ((forceDuel && market.top_outcomes.length >= 2) || (market.outcome_count <= 2 && pair.oneQuestion));
 
   if (isBinary) {
-    return <BinaryCard market={market} borderColor={borderColor} />;
+    return <BinaryCard market={market} borderColor={borderColor} showLeaderHeadshot={showLeaderHeadshot} />;
   }
-  return <MultiCard market={market} borderColor={borderColor} showAll={forceField} />;
+  return <MultiCard market={market} borderColor={borderColor} showAll={forceField} showLeaderHeadshot={showLeaderHeadshot} />;
 }
 
 function BinaryCard({
   market,
   borderColor,
+  showLeaderHeadshot = false,
 }: {
   market: PoliticsMarketRow;
   borderColor: string;
+  showLeaderHeadshot?: boolean;
 }) {
   // #6766: the second number is the SERVED leg wherever the payload carries one.
   // `MarketCard` above only routes a complement pair here, so `second` is
@@ -92,8 +98,16 @@ function BinaryCard({
             >
               {yesPct ?? Math.round(yesProb)}%
             </span>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              {first.name}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
+              {showLeaderHeadshot && isPersonOutcomeName(first.name) && (
+                <EntityImage
+                  type="wikipedia"
+                  name={cleanPersonOutcomeName(first.name)}
+                  size={24}
+                  showFallback={false}
+                />
+              )}
+              <span>{first.name}</span>
             </span>
             <span
               style={{
@@ -122,10 +136,12 @@ function MultiCard({
   market,
   borderColor,
   showAll = false,
+  showLeaderHeadshot = false,
 }: {
   market: PoliticsMarketRow;
   borderColor: string;
   showAll?: boolean;
+  showLeaderHeadshot?: boolean;
 }) {
   const leader = market.top_outcomes?.[0];
   if (!leader) return null;
@@ -207,13 +223,24 @@ function MultiCard({
               )}
               <span
                 style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
                   fontSize: 14,
                   fontWeight: 600,
                   color: "var(--text-primary)",
                   marginTop: namesALeader ? 2 : 0,
                 }}
               >
-                {leader.name}
+                {showLeaderHeadshot && isPersonOutcomeName(leader.name) && (
+                  <EntityImage
+                    type="wikipedia"
+                    name={cleanPersonOutcomeName(leader.name)}
+                    size={24}
+                    showFallback={false}
+                  />
+                )}
+                <span>{leader.name}</span>
               </span>
             </div>
             <span
