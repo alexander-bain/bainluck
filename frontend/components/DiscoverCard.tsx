@@ -16,6 +16,7 @@ import { TournamentCard } from "./discover/TournamentCard";
 import { ConceptCard } from "./discover/ConceptCard";
 import { GroupCard } from "./discover/GroupCard";
 import { ThemeBundleCard } from "./discover/ThemeBundleCard";
+import { RoundupCard } from "./discover/roundup/RoundupCard";
 
 // ── Re-exports (public API) ──
 // Consumer code (discover/page.tsx) imports these from this file for backward compat.
@@ -192,7 +193,20 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             (the settled Tour de France WHAT-HIT marquee vanished on the landing
             page). Result-first settled grammar handled inside ConceptCard. */}
         {item.type === "concept" && <ConceptCard data={item.data as FeedConceptData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} />}
-        {item.type === "bundle" && (item.data as FeedBundleData).kind === "theme" ? (
+        {item.type === "bundle" && (item.data as FeedBundleData).kind === "roundup" ? (
+          // #10357 — a round-up draws only from its own served contract and
+          // opens only its own served container; it never falls through to the
+          // grouped-card parts below.
+          <RoundupCard
+            title={(item.data as FeedBundleData).title}
+            contract={(item.data as FeedBundleData).roundup}
+            collectionRef={(item.data as FeedBundleData).collection_ref}
+            items={(item.data as FeedBundleData).items}
+            bundleId={(item.data as FeedBundleData).id}
+            storyKey={(item.data as FeedBundleData).story_key}
+            positionIndex={positionIndex}
+          />
+        ) : item.type === "bundle" && (item.data as FeedBundleData).kind === "theme" ? (
           <ThemeBundleCard
             items={(item.data as FeedBundleData).items}
             title={(item.data as FeedBundleData).title}

@@ -2044,7 +2044,7 @@ export interface FeedBundleData {
   title: string;
   // "comparison" = numeric range heat-strip; "theme" = story/group cluster
   // (geopolitics story_key — slice 1; awards/competition group_id — slice 3).
-  kind: "comparison" | "theme";
+  kind: "comparison" | "theme" | "roundup";
   comparison_theme?: string | null;
   story_key?: string | null;
   group_id?: string | null;
@@ -2064,6 +2064,30 @@ export interface FeedBundleData {
   // (`backend/app/utils/theme_collection_ref.py`). Absent = no link; the card
   // never guesses a destination.
   collection_ref?: FeedThemeCollectionRef | null;
+  // #10357: `kind: "roundup"` only — the served round-up contract. The card is
+  // drawn from this and nothing else; a round-up without it is not drawn.
+  roundup?: FeedRoundupContract | null;
+}
+
+// #10357 — a round-up card ("NFL division front-runners"). Every number is the
+// server's Bain Luck blend; the client orders, formats and ages, never computes.
+export interface FeedRoundupRow {
+  market_id: number;
+  /** "NFC East: Cowboys" — the division, then its leader. */
+  label: string;
+  /** The leader's blended probability, a fraction in [0, 1]. */
+  probability: number;
+  /** The server's whole-percent rendering of `probability`, when it sent one. */
+  rendered_percent?: number | null;
+  /** The OLDEST contributing price behind this row's blend. */
+  observed_at?: string | null;
+}
+
+export interface FeedRoundupContract {
+  kicker: string;
+  tag?: string | null;
+  footer: string;
+  rows: FeedRoundupRow[];
 }
 
 // #9925: where a theme card's "View collection" goes. `name` is the
