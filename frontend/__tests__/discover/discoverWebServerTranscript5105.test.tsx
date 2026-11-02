@@ -54,6 +54,8 @@ jest.mock("@/hooks", () => ({
 jest.mock("@/hooks/useDiscoverPriceStream", () => ({
   useDiscoverPriceStream: (groups: unknown[]) => ({ items: groups, setPriceVisibility: () => {} }),
 }));
+// #11853: the pinned-collection card reads its own container, outside this feed transcript.
+jest.mock("@/hooks/usePinnedCollection", () => ({ usePinnedCollection: () => null }));
 jest.mock("@/lib/analytics", () => ({ trackEvent: () => {} }));
 jest.mock("@/lib/discoverInteractions", () => ({
   ...jest.requireActual("@/lib/discoverInteractions"),

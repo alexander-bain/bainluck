@@ -285,7 +285,11 @@ class TestTheNamedClasses:
             classify_member(ev(name="Winner of the US Open 2026")),
             classify_member(ev(name="Honey Deuce Sales")),
         }
-        assert produced == EDGE_CLASSES
+        # The curated midterms sections (#11853) are named by their manifest,
+        # never by the classifier.
+        from app.utils.midterms_collection import SECTION_CLASSES
+
+        assert produced == EDGE_CLASSES - SECTION_CLASSES
 
 
 class TestOrderingIsNotAccidental:

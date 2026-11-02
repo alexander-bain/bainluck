@@ -412,8 +412,11 @@ class TestSectionOrdering:
         assert order == ["match_winner", "brand_new_class", CLASS_UNCLASSIFIED]
 
     def test_every_named_class_has_a_position(self):
-        """`CLASS_ORDER` covers the whole vocabulary except `unclassified`."""
-        assert set(CLASS_ORDER) == EDGE_CLASSES - {CLASS_UNCLASSIFIED}
+        """`CLASS_ORDER` covers the whole vocabulary except `unclassified` and the
+        curated midterms sections (#11853), which keep their manifest's order."""
+        from app.utils.midterms_collection import SECTION_CLASSES
+
+        assert set(CLASS_ORDER) == EDGE_CLASSES - {CLASS_UNCLASSIFIED} - SECTION_CLASSES
 
     def test_empty_in_empty_out(self):
         assert order_classes(set()) == []
