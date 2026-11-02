@@ -193,6 +193,11 @@ def changed_frame(frames, eid, value):
 async def test_later_changed_a_writes_and_previews_before_b_slow_period_ends(
     rig, consumer, monkeypatch,
 ):
+    # A's changed preview here is the one its ordinary price write publishes,
+    # after B's statement deadline frees the flush. `preview_at_receipt` (on
+    # since the settings freeze, docs/live-settings.md) would compose A's
+    # preview from the received quote before any write, so it is off here.
+    monkeypatch.setenv('SPEED_SWITCH_TODAY_PREVIEW_AT_RECEIPT', '0')
     t, frames = await prepared(rig, consumer, monkeypatch)
     await slow_trigger(rig)
     pids = []

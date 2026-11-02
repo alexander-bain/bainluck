@@ -44,6 +44,7 @@ NOW = datetime.now(timezone.utc)
 READ_AT = NOW - timedelta(seconds=1)
 SEEN = NOW - timedelta(seconds=2)
 SWITCH_ENV = "SPEED_SWITCH_TODAY_PREVIEW_FROM_COMMIT"
+RECEIPT_SWITCH_ENV = "SPEED_SWITCH_TODAY_PREVIEW_AT_RECEIPT"
 
 
 def bag(*, pm=0.46, kalshi=0.5):
@@ -213,6 +214,10 @@ async def test_an_older_read_finishing_late_does_not_replace_a_newer_graph(r):
 
 async def test_the_switch_off_keeps_no_graph_and_composes_nothing(r, monkeypatch):
     monkeypatch.delenv(SWITCH_ENV)
+    # No graph-keeping switch on at all: `preview_at_receipt` (today = 1 since
+    # the 2026-11-02 settings freeze, docs/live-settings.md) keeps the same
+    # graphs for its own previews, so this pins it off too.
+    monkeypatch.setenv(RECEIPT_SWITCH_ENV, "0")
     read(r, event(), legs())
     r.note_committed_rows([returned()])
     await drained(r)
@@ -433,6 +438,7 @@ async def test_a_change_outside_the_price_write_drops_the_graph_and_its_late_rea
 
 async def test_with_the_switch_off_nothing_is_noted_or_forgotten(r, monkeypatch):
     monkeypatch.delenv(SWITCH_ENV)
+    monkeypatch.setenv(RECEIPT_SWITCH_ENV, "0")  # as above: no switch on at all
     r.note_committed_rows([returned()])
     r.forget_preview_outcomes([HOME_LEG])
     assert r._noted_commits == {} and r._forgotten_outcomes == {}

@@ -208,7 +208,12 @@ async def test_projected_rows_load_the_same_slate_as_the_full_blob(stored_live_o
 
 
 @pytest.mark.asyncio
-async def test_every_packet_behaviour_holds_on_the_projected_read():
+async def test_every_packet_behaviour_holds_on_the_projected_read(monkeypatch):
+    # Venue-refused rows are observed as `non_blend_market_ids`, which is the
+    # path with props on the socket. `PM_WS_PROPS_TO_POLL` is on since the
+    # 2026-11-02 settings freeze (docs/live-settings.md) and drops those rows
+    # from the slate instead (test_pm_props_to_poll_10090), so this pins it off.
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     load, _, calls = real_loader(STORED)
     slate = await load()
     # 1. Venue label: versioned non-winner labels refuse; unversioned, future

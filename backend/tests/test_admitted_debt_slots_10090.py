@@ -8,6 +8,11 @@ keeps admitting a busy slate no new `refresh` starts, so the per-flush attempt
 count (`FRESH_FLUSH_PENDING_ATTEMPTS`, raised by R7) is never spent there; the
 door's single debt slot is the whole drain. The slot count is a setting whose
 default is today's one.
+
+These tests count one owed event per stamp, so they pin both stamp batches to
+1 (the defaults are 4 since the 2026-11-02 settings freeze; the batches have
+their own tests in test_admitted_stamp_batch_10090 and
+test_fable_admitted_live_batch_10090).
 """
 
 import asyncio
@@ -69,6 +74,12 @@ async def _finish(r, task):
 @pytest.fixture(autouse=True)
 def _clock(monkeypatch):
     monkeypatch.setattr(lbr, "_mono", lambda: 1000.0)
+
+
+@pytest.fixture(autouse=True)
+def _one_event_per_stamp(monkeypatch):
+    monkeypatch.setattr(lbr, "ADMITTED_STAMP_BATCH", 1)
+    monkeypatch.setattr(lbr, "ADMITTED_LIVE_BATCH", 1)
 
 
 async def test_todays_door_takes_one_owed_event_per_admission_whatever_the_attempt_count(

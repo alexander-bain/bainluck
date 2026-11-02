@@ -8,7 +8,9 @@ carried it came p50 4.3 s / p90 12-19 s later, because the door's one
 live-debt slot is held by an unheld rider for that rider's whole queue turn.
 With the switch on, an owed held live game that is admissible joins the next
 admission as a cohort member (held-first pick, this flush's clock) instead of
-waiting for that slot. Unheld debt keeps its slots and turns.
+waiting for that slot. Unheld debt keeps its slots and turns. The switch is on
+by default since the settings freeze (production since 2026-10-31,
+docs/live-settings.md); ``STAMP_HELD_OWED_FRESH=0`` is the off arm.
 
 The first test is RED on `c8bdb692` (the switch does not exist there, so the
 held game waits) and GREEN with the change; the rest pin the gate it shares
@@ -128,10 +130,17 @@ async def test_a_held_owed_game_still_being_written_is_not_admitted(clock, monke
     await task
 
 
-async def test_with_the_switch_off_a_held_owed_game_waits_for_the_live_slot_as_today(
+async def test_the_switch_is_on_unless_set_to_zero(monkeypatch):
+    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
+    assert module.stamp_held_owed_fresh_on() is True
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "0")
+    assert module.stamp_held_owed_fresh_on() is False
+
+
+async def test_with_the_switch_off_a_held_owed_game_waits_for_the_live_slot_as_before(
     clock, monkeypatch,
 ):
-    monkeypatch.delenv(module.STAMP_HELD_OWED_FRESH_ENV, raising=False)
+    monkeypatch.setenv(module.STAMP_HELD_OWED_FRESH_ENV, "0")
     r = _Gated(blocked={99, 7, 1})
     r.reader_held = lambda: frozenset({50})
     task = await _running_call(r)

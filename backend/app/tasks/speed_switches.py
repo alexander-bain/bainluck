@@ -32,10 +32,9 @@ limits are enforced here, not by process:
 * a switched path that fails calls `trip`: that switch is OFF in this
   process for the rest of the trial, logged once.
 
-The layer itself is off unless `TRIALS_ENV` (``SPEED_SWITCH_TRIALS=1``) is
-set: off, every switch reads OFF and this module never touches Redis, so a
-worker that never runs a trial does exactly what it did before. Turning it on
-is one config change; after that each trial is an admin call, not a release.
+The layer is on by default (production since 2026-10-29); ``SPEED_SWITCH_TRIALS=0``
+turns it off: off, every switch reads OFF and this module never touches Redis.
+On, each trial is an admin call, not a release.
 
 Each process logs one line whenever a switch's trial changes (name, mode,
 half or values, expiry) and one line at every arm boundary of an alternation.
@@ -75,7 +74,7 @@ SPECS = {
     "release_unattempted_debt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
     # `live_blend_refresh.HANDOVER_FRESH_SWITCH`, read once per cohort a catalog
     # handover carries over committed: whether the next refresh stamps it fresh.
-    "handover_fresh": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    "handover_fresh": {"modes": ("alternate",), "values": (0, 1), "today": 1},
     # `live_blend_refresh.ADMITTED_STAMP_BATCH`, read once per admitted worker
     # turn that could batch: queued non-live events of one cohort stamped in one
     # transaction. Its "today" is the worker's own setting, `today()`.
@@ -87,7 +86,7 @@ SPECS = {
     "admitted_live_batch": {"modes": ("alternate",), "values": (1, 8), "today": 1},
     # `live_blend_refresh.OWED_PAST_WITHDRAWAL_SWITCH`, read once per debt drain
     # deferred only by a buffered withdrawal: whether the drain stamps past it.
-    "owed_past_withdrawal": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    "owed_past_withdrawal": {"modes": ("alternate",), "values": (0, 1), "today": 1},
     # `live_blend_refresh.LOCK_RETRY_PROMPT_SWITCH`, read once per row-lock skip:
     # whether its retry is attempted promptly as fresh or waits in the owed queue.
     "lock_retry_prompt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
@@ -104,7 +103,7 @@ SPECS = {
     # and per receipt composition: whether a live event's preview is composed
     # from the prices the socket just received, before their write, for the
     # venues `PREVIEW_AT_RECEIPT_VENUES` names. Per event, so `ab` compares it.
-    "preview_at_receipt": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0},
+    "preview_at_receipt": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 1},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")
@@ -152,7 +151,7 @@ OFF = SwitchState()
 
 
 def trials_enabled() -> bool:
-    return os.getenv(TRIALS_ENV, "").strip().lower() in ("1", "true", "on", "yes")
+    return os.getenv(TRIALS_ENV, "1").strip().lower() not in ("0", "false", "off", "no")
 
 
 def key(name: str) -> str:

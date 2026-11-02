@@ -149,8 +149,9 @@ MAX_UNCOMMITTED_ENV = "LIVE_BLEND_PREVIEW_MAX_UNCOMMITTED_S"
 #: The arms that may preview (`LiveBlendRefresher.source`).
 PREVIEW_SOURCES = frozenset({"kalshi", "polymarket"})
 #: How long one uncommitted value may stay on a reader's screen. A concrete
-#: product decision, not a measurement; the canary keeps the lab's number.
-DEFAULT_MAX_UNCOMMITTED_S = 60.0
+#: product decision, not a measurement: 180 s is Alex's decision D of
+#: 2026-11-01 (production since v6091; docs/live-settings.md).
+DEFAULT_MAX_UNCOMMITTED_S = 180.0
 #: Latest-per-event state is bounded; the oldest event is revoked past this.
 DEFAULT_MAX_EVENTS = 512
 #: Statuses a quote stream serves (`routes/event_stream.QUOTE_STATUSES`).

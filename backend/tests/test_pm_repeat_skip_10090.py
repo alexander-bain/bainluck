@@ -241,10 +241,12 @@ async def test_the_memo_and_stamps_are_pruned_to_live_entries(monkeypatch):
     assert set(r.ns["leg_writes"]) == {7}
 
 
-def test_switch_reads_milliseconds_default_250_and_zero_or_junk_is_off(monkeypatch, caplog):
+def test_switch_reads_milliseconds_default_3000_and_zero_or_junk_is_off(monkeypatch, caplog):
+    # 3000 ms is production's window since 2026-11-01 (docs/live-settings.md).
     monkeypatch.delenv("PM_WS_REPEAT_SKIP_MS", raising=False)
-    assert pm._repeat_skip_window_s() == 0.25
-    for raw, expected in (("", 0.25), ("0", 0.0), ("-5", 0.0), ("500", 0.5), ("nan", 0.0)):
+    assert pm._repeat_skip_window_s() == 3.0
+    for raw, expected in (("", 3.0), ("0", 0.0), ("-5", 0.0), ("250", 0.25), ("500", 0.5),
+                          ("nan", 0.0)):
         monkeypatch.setenv("PM_WS_REPEAT_SKIP_MS", raw)
         assert pm._repeat_skip_window_s() == expected, raw
     monkeypatch.setenv("PM_WS_REPEAT_SKIP_MS", "fast")

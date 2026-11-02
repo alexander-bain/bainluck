@@ -1,12 +1,16 @@
 """Real PG + Unix-socket Redis lab: a limits-only reservation change and its rollback.
 
-Production refusal reproduced first: the default "Other active" reservation
-(48) refuses event 49 with `bucket_full`. The relimit plans then run through the
+Production refusal reproduced first: the v1 "Other active" reservation (48),
+the default before the settings freeze, refuses event 49 with `bucket_full`. The relimit plans then run through the
 actual operator, runner, controller, PostgreSQL send permissions and Redis
 scripts (only platform writer observations are simulated, as in the existing
 operator controls). The new incarnation admits 160 Other events, a producer
 still configured with the old sizes refuses to bind, the old namespace is gone,
 and the scripted rollback restores the original allocation. No production.
+
+The default is production's v2 split since the settings freeze
+(docs/live-settings.md), so these labs start from the v1 allocation explicitly
+(`V1`) and roll back to it with the config var set to its exact bytes.
 """
 
 from dataclasses import asdict
@@ -36,6 +40,10 @@ pytestmark = [
 ]
 
 OTHER_FIRST = (128, 48, 96, 48, 160, 32)
+#: The v1 allocation these labs start from and roll back to (total 512).
+V1_LIMITS = (192, 64, 128, 64, 48, 16)
+V1_CONFIGURED = "192,64,128,64,48,16"
+V1 = ReservationPolicy(V1_LIMITS)
 SOURCES = frozenset({"kalshi", "polymarket"})
 
 
@@ -113,13 +121,13 @@ async def test_relimit_admits_more_other_events_and_rolls_back(recovery, tmp_pat
     server, repl = await r.client.info("server"), await r.client.info("replication")
     primary = (server["run_id"], repl["master_replid"])
 
-    # Today's production shape: incarnation 1, default sizes, Other active full at 48.
-    first = await r.prepare()
+    # The pre-freeze production shape: incarnation 1, v1 sizes, Other active full at 48.
+    first = await r.prepare(V1)
     await r.controller.arm(first)
     await r.controller.initialize(first)
     old = await r.controller.ready(first)
-    assert old.policy_fingerprint == ReservationPolicy().fingerprint
-    k = await producer(r.store, r.client, ReservationPolicy().limits)
+    assert old.policy_fingerprint == V1.fingerprint
+    k = await producer(r.store, r.client, V1_LIMITS)
     owner = str(k.claim_of("kalshi"))
     assert await fill_other_active(r.client, old, owner, 48, 1) == "bucket_full"
 
@@ -140,7 +148,7 @@ async def test_relimit_admits_more_other_events_and_rolls_back(recovery, tmp_pat
     # Fail closed: a producer still configured with the old sizes cannot bind,
     # an old-sized command is refused, and the retired namespace refuses its token.
     with pytest.raises(ValueError, match="reservation policy mismatch"):
-        await producer(r.store, r.client, ReservationPolicy().limits)
+        await producer(r.store, r.client, V1_LIMITS)
     assert await guarded(r.client, new, "claim",
                          fingerprint=old.policy_fingerprint) == ["policy_mismatch"]
     assert await guarded(r.client, old, "claim") == ["guard_refused"]
@@ -155,18 +163,18 @@ async def test_relimit_admits_more_other_events_and_rolls_back(recovery, tmp_pat
     assert await r.client.hget(ledger, "reservation_policy") == new.policy_fingerprint
     assert await r.client.hget(ledger, "r:count:4") == "160"
 
-    # Scripted rollback to 192,64,128,64,48,16 with the config var unset again.
-    back = t.build(new, primary, apps(), t.parse_limits("default"), "")
+    # Scripted rollback to 192,64,128,64,48,16, the config var set to those bytes.
+    back = t.build(new, primary, apps(), V1_LIMITS, V1_CONFIGURED)
     await run_plan(back["activate"], r.controller, tmp_path, monkeypatch, "rollback")
     await run_plan(back["retire"], r.controller, tmp_path, monkeypatch, "rollback-retire")
     restored = await r.store.read()
     assert (restored.incarnation, restored.state) == (3, "ready")
-    assert restored.policy_fingerprint == ReservationPolicy().fingerprint
+    assert restored.policy_fingerprint == V1.fingerprint
     assert await r.client.exists(*namespace_keys(new)) == 0
     assert await r.client.dbsize() == 5
     with pytest.raises(ValueError, match="reservation policy mismatch"):
         await producer(r.store, r.client, OTHER_FIRST)
-    k3 = await producer(r.store, r.client, ReservationPolicy().limits)
+    k3 = await producer(r.store, r.client, V1_LIMITS)
     assert await fill_other_active(r.client, restored, str(k3.claim_of("kalshi")), 48, 1) == "bucket_full"
 
 
@@ -190,7 +198,7 @@ async def test_relimit_across_512_to_a_v2_cap_of_1024_and_back(recovery, tmp_pat
     t, r = tool(), recovery
     server, repl = await r.client.info("server"), await r.client.info("replication")
     primary = (server["run_id"], repl["master_replid"])
-    first = await r.prepare()
+    first = await r.prepare(V1)
     await r.controller.arm(first)
     await r.controller.initialize(first)
     old = await r.controller.ready(first)
@@ -209,7 +217,7 @@ async def test_relimit_across_512_to_a_v2_cap_of_1024_and_back(recovery, tmp_pat
 
     # Old sizes cannot bind; a writer that predates v2 is refused at claim.
     with pytest.raises(ValueError, match="reservation policy mismatch"):
-        await producer(r.store, r.client, ReservationPolicy().limits)
+        await producer(r.store, r.client, V1_LIMITS)
     old_bytes = guarded_ledger_script(v1_only_script())
     assert await guarded(r.client, new, "claim", script=old_bytes) == ["policy_mismatch"]
 
@@ -231,15 +239,16 @@ async def test_relimit_across_512_to_a_v2_cap_of_1024_and_back(recovery, tmp_pat
         r.client, new, owner, 3000, 4, 1024, script=old_bytes) == "policy_mismatch"
     assert await r.client.hget(ledger, "nevents") == "1024"
 
-    # Rollback: today's v1 default (192,64,128,64,48,16), config var unset.
-    back = t.build(new, primary, apps(), t.parse_limits("default"), "")
+    # Rollback: the v1 allocation (192,64,128,64,48,16), the config var set to
+    # its bytes (unset now reads the v2 default, docs/live-settings.md).
+    back = t.build(new, primary, apps(), V1_LIMITS, V1_CONFIGURED)
     assert back["summary"]["to_ledger_cap"] == 512
     await run_plan(back["activate"], r.controller, tmp_path, monkeypatch, "rollback")
     await run_plan(back["retire"], r.controller, tmp_path, monkeypatch, "rollback-retire")
     restored = await r.store.read()
-    assert (restored.incarnation, restored.policy_fingerprint) == (3, ReservationPolicy().fingerprint)
+    assert (restored.incarnation, restored.policy_fingerprint) == (3, V1.fingerprint)
     assert await r.client.exists(*namespace_keys(new)) == 0
     with pytest.raises(ValueError, match="reservation policy mismatch"):
         await producer(r.store, r.client, V2_SPLIT)
-    k3 = await producer(r.store, r.client, ReservationPolicy().limits)
+    k3 = await producer(r.store, r.client, V1_LIMITS)
     assert await fill_other_active(r.client, restored, str(k3.claim_of("kalshi")), 48, 1) == "bucket_full"

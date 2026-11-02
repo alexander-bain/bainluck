@@ -17,11 +17,6 @@ from app.tasks.polymarket_ws import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _pack_on(monkeypatch):
-    monkeypatch.setattr(pm, "PM_PACK_PREVIEW_COHORTS", True)
-
-
 # Events 1-4, two legs each (one binary question per event).
 EVENT = {11: 1, 12: 1, 21: 2, 22: 2, 31: 3, 32: 3, 41: 4, 42: 4, 91: 9, 92: 9}
 MARKET = {11: 101, 12: 101, 21: 102, 22: 102, 31: 103, 32: 103,
@@ -67,24 +62,14 @@ def test_unselected_events_and_open_legs_are_never_joined():
     ]
 
 
-def test_switch_off_is_the_isolated_chunks_exactly(monkeypatch):
-    monkeypatch.setattr(pm, "PM_PACK_PREVIEW_COHORTS", False)
+def test_no_packable_events_keeps_the_chunks_exactly():
     chunks = [[11, 12], [21, 22], [31, 32]]
-    assert pack(chunks, {1, 2, 3}) is chunks
-    monkeypatch.setattr(pm, "PM_PACK_PREVIEW_COHORTS", True)
     assert pack(chunks, set()) is chunks
 
 
-@pytest.mark.parametrize("raw, expected", [
-    (None, True), ("", True), ("1", True), ("0", False), ("off", False),
-    (" FALSE ", False), ("no", False),
-])
-def test_env_switch(monkeypatch, raw, expected):
-    if raw is None:
-        monkeypatch.delenv("PM_PACK_PREVIEW_COHORTS", raising=False)
-    else:
-        monkeypatch.setenv("PM_PACK_PREVIEW_COHORTS", raw)
-    assert pm._pack_preview_cohorts_env() is expected
+def test_the_off_switch_is_gone():
+    assert not hasattr(pm, "PM_PACK_PREVIEW_COHORTS")
+    assert not hasattr(pm, "_pack_preview_cohorts_env")
 
 
 def test_after_isolation_the_observed_games_collapse_but_the_remainder_and_retry_stay():

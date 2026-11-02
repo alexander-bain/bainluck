@@ -1036,6 +1036,16 @@ async def owed_for(rig, source, event_id):
         ), {"source": source, "eid": event_id})).all()]
 
 
+def no_receipt_stamp_floor(monkeypatch):
+    """Every flush stamps: `preview_at_receipt` is on by default since the
+    settings freeze (production since 2026-10-31), and with it a live game with
+    a kept preview graph is stamped at most every `RECEIPT_STAMP_FLOOR_S`
+    (20 s), a floor beside `min_refresh_interval_s`. These cases zero both, so
+    each flush's price is committed and published (the receipt preview path
+    stays on)."""
+    monkeypatch.setattr("app.tasks.live_blend_refresh.RECEIPT_STAMP_FLOOR_S", 0.0)
+
+
 def count_pending(r):
     """Record every `refresh_pending` call; the premise is that none occur."""
     calls = []
@@ -1131,6 +1141,7 @@ async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
 ):
     t = await setup(rig, consumer, monkeypatch)
     t.r.min_refresh_interval_s = 0
+    no_receipt_stamp_floor(monkeypatch)
     gate = refuse_first_price_of(
         t.r, 1, t.r._publish, hold=COHORT_HOLD if cohort else 0,
     )
@@ -1389,6 +1400,7 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
     t = await setup(rig, consumer, monkeypatch)
     t.r._client = lambda: client
     t.r.min_refresh_interval_s = 0
+    no_receipt_stamp_floor(monkeypatch)
     settled: list[tuple[int, int]] = []
     settle = t.r._settle_normal_recovery
 

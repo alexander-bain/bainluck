@@ -29,6 +29,18 @@ from tests.test_single_event_commit_10090 import rig as refresher_rig, settle_un
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture
+def one_event_per_stamp(monkeypatch):
+    """The debt-turn tests count one event per stamp session. The non-live
+    batch (`ADMITTED_STAMP_BATCH`) is 4 since the 2026-11-02 settings freeze
+    (docs/live-settings.md), and a due debt event of the admitted cohort then
+    shares the head's transaction; the batch has its own tests in
+    test_admitted_stamp_batch_10090, so these pin it to 1."""
+    from app.tasks import live_blend_refresh as module
+
+    monkeypatch.setattr(module, "ADMITTED_STAMP_BATCH", 1)
+
+
 def _caller(monkeypatch, *, blocked):
     """The real flush (outcomes 1,2 -> game 1; 3 -> game 2; 9 standalone)
     driving the real refresher, whose UPDATEs for ``blocked`` games wait."""
@@ -288,7 +300,7 @@ async def test_later_flushes_are_admitted_while_the_call_admits_until_a_lifecycl
 
 
 async def test_debt_rides_the_door_one_event_at_a_time_while_the_call_lives_on(
-    monkeypatch,
+    monkeypatch, one_event_per_stamp,
 ):
     # #10090: a call that keeps admitting may outlive the moment a new refresh
     # would have taken the debt. The oldest due owed event rides an admission
@@ -347,7 +359,7 @@ async def test_cancelling_a_call_with_debt_in_flight_leaves_every_unstamped_even
 
 
 async def test_a_newly_owed_sibling_gets_a_debt_turn_beside_a_repeatedly_locked_one(
-    monkeypatch,
+    monkeypatch, one_event_per_stamp,
 ):
     # #10090, Root's debt-fairness counterexample on be0d6a8a: lock-retry debt
     # 2 and 3 arrives after the call took its population; 2's row stays locked

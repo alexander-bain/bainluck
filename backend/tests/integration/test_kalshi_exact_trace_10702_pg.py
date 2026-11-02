@@ -208,9 +208,9 @@ async def test_existing_full_path_and_outer_rollback_marks(
     engine_requests = []
 
     def task_engine(*, statement_timeout_ms=None, lock_timeout_ms=None,
-                    retain_full_pool=False):
+                    retain_full_pool=False, pool_pre_ping=True):
         engine_requests.append(
-            (statement_timeout_ms, lock_timeout_ms, retain_full_pool)
+            (statement_timeout_ms, lock_timeout_ms, retain_full_pool, pool_pre_ping)
         )
         return rig.engine
 
@@ -231,7 +231,9 @@ async def test_existing_full_path_and_outer_rollback_marks(
     monkeypatch.setenv("WS_KALSHI_TRACE_EXPIRES_AT", str(time.time() + 120))
     caplog.set_level("INFO")
     await asyncio.wait_for(task._run_kalshi_ws_consumer(), 5)
-    assert engine_requests == [(None, None, True)]
+    # The consumer engine asks for no pre-ping: `WS_CONSUMER_POOL_PRE_PING` is
+    # off by default since the settings freeze (production since 2026-10-30).
+    assert engine_requests == [(None, None, True, False)]
     records = [
         json.loads(r.message.split("kalshi-exact-trace ", 1)[1])
         for r in caplog.records

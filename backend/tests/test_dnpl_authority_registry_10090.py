@@ -86,7 +86,9 @@ async def test_two_sources_compose_and_publish_v3_with_real_ttl_then_revoke(
         )
         first = json.loads((await read_wire(listener)).payload)
         assert first["p"] == pytest.approx(0.6)
-        assert 0 < first["preview"]["ttl_ms"] <= 60000
+        # The default max-uncommitted window is 180 s since the settings freeze
+        # (decision D, production since v6091; blend_preview.DEFAULT_MAX_UNCOMMITTED_S).
+        assert 0 < first["preview"]["ttl_ms"] <= 180000
         await p.execute(
             await proposal(p, call, "polymarket", value=0.9, now=now),
             call,

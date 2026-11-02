@@ -7,12 +7,17 @@ minute stamped nothing (`unobserved` + `no_reading`), and every attempt paid its
 own session, read and COMMIT. `ADMITTED_STAMP_BATCH` (env, and the
 `admitted_stamp_batch` speed switch) lets one worker turn take up to that many
 queued events of the same cohort into one transaction, each in its own
-savepoint. Today's value is 1: one event, one transaction, unchanged.
+savepoint. 1 is the pre-batch behaviour (one event, one transaction); the
+default is 4, production's value since 2026-10-29 (docs/live-settings.md).
 
 Bounds pinned here: a live game is never in a batch and never waits behind one
 that formed while it was queued; queue order is kept; only one cohort (one
 flush clock, one stored wall) shares a transaction; a failed batch leaves every
 event owed exactly as a failed singleton does and switches the trial off.
+
+"Batch" here is the non-live batch. The live batch (`ADMITTED_LIVE_BATCH`,
+default 4) has its own tests in test_fable_admitted_live_batch_10090; this file
+pins it to 1 so a live game is always stamped alone here.
 """
 
 import asyncio
@@ -32,6 +37,11 @@ BATCH = "admitted_stamp_batch"
 @pytest.fixture(autouse=True)
 def _clock(monkeypatch):
     monkeypatch.setattr(lbr, "_mono", lambda: 1000.0)
+
+
+@pytest.fixture(autouse=True)
+def _live_events_stamped_alone(monkeypatch):
+    monkeypatch.setattr(lbr, "ADMITTED_LIVE_BATCH", 1)
 
 
 class _Recorded(_Gated):
@@ -80,10 +90,11 @@ def batch_trial(monkeypatch):
     return arm
 
 
-# ── today: one event, one transaction ────────────────────────────────────────
+# ── a setting of one: one event, one transaction ─────────────────────────────
 
 
-async def test_todays_setting_stamps_each_admitted_event_alone():
+async def test_a_setting_of_one_stamps_each_admitted_event_alone(monkeypatch):
+    monkeypatch.setattr(lbr, "ADMITTED_STAMP_BATCH", 1)
     r = _Recorded(blocked={99})
     task = await _running_call(r)
     assert r.admit_fresh(range(1, 7), flush_started=1001) == frozenset(range(1, 7))
@@ -92,9 +103,18 @@ async def test_todays_setting_stamps_each_admitted_event_alone():
     await _finish(r, task)
 
 
-async def test_the_setting_is_one_by_default():
-    assert lbr.ADMITTED_STAMP_BATCH == 1
-    assert sw.today(BATCH) == 1
+async def test_the_setting_is_four_by_default():
+    assert lbr.ADMITTED_STAMP_BATCH == 4
+    assert sw.today(BATCH) == 4
+
+
+async def test_todays_setting_batches_up_to_four_admitted_events():
+    r = _Recorded(blocked={99})
+    task = await _running_call(r)
+    assert r.admit_fresh(range(1, 7), flush_started=1001) == frozenset(range(1, 7))
+    await _settle()
+    assert _own_groups(r) == [[1, 2, 3, 4], [5, 6]]
+    await _finish(r, task)
 
 
 # ── a batch above one ────────────────────────────────────────────────────────
@@ -258,7 +278,7 @@ async def test_a_batch_cancelled_mid_stamp_leaves_every_event_owed(batch_trial):
 
 @pytest.mark.parametrize("mode, kwargs", [
     ("ab", {"half": 0}),                              # a worker constant has no per-game arm
-    ("alternate", {"a": 2, "b": 4, "period_s": 60}),  # neither arm is today's
+    ("alternate", {"a": 2, "b": 3, "period_s": 60}),  # neither arm is today's (4)
     ("alternate", {"a": 1, "b": 9, "period_s": 60}),  # above the bound
     ("alternate", {"a": 0, "b": 1, "period_s": 60}),
 ])
@@ -266,8 +286,8 @@ def test_a_batch_trial_outside_the_limits_is_refused(mode, kwargs):
     assert sw.validate(BATCH, mode, **kwargs) is not None
 
 
-def test_a_batch_alternation_of_today_and_four_is_accepted():
-    assert sw.validate(BATCH, "alternate", a=1, b=4, period_s=60) is None
+def test_a_batch_alternation_of_today_and_one_is_accepted():
+    assert sw.validate(BATCH, "alternate", a=4, b=1, period_s=60) is None
 
 
 def test_a_batch_alternation_keeps_the_workers_own_setting_on_one_arm(monkeypatch):

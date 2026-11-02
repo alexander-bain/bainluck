@@ -101,19 +101,6 @@ RESTORE_DNPL_PRICE_TIMEOUTS_SQL = text(
 )
 
 
-def _fuse_price_timeout_sets_env() -> bool:
-    """#10090 — env `PM_FUSE_PRICE_TIMEOUT_SETS`, read once at import.
-
-    On (the default), a DNPL-bound game chunk arms and restores its lock and
-    statement budgets in one statement each; `0`/`false`/`off`/`no` sends the
-    four separate statements, today's path exactly.
-    """
-    raw = os.environ.get("PM_FUSE_PRICE_TIMEOUT_SETS")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
-
-
-PM_FUSE_PRICE_TIMEOUT_SETS = _fuse_price_timeout_sets_env()
-
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
 #: burst — a game's other leg, sent right behind the first — joins the same
@@ -320,7 +307,7 @@ class _PMCatalogFlushBoundary:
         try:
             # No maps change beneath a stamp left running by an earlier batch.
             timing.enter("stamps")
-            if self.stamps is not None and _handover_shed_queued_enabled():
+            if self.stamps is not None:
                 # #10090: every game flush is held from here, so wait only for
                 # the attempts already running; queued ones go back to debt.
                 self.stamps.shed_queued()
@@ -340,20 +327,6 @@ class _PMCatalogFlushBoundary:
                     self.condition.notify_all()
             finally:
                 timing.finish(outcome)
-
-
-def _handover_shed_queued_enabled() -> bool:
-    """#10090 — env `PM_HANDOVER_SHED_QUEUED`, read at each catalog handover.
-
-    On (missing, blank, anything but an off word), the handover's `stamps`
-    phase, which holds every game flush, waits only for the stamp attempts
-    already running: queued ones go back to debt (`shed_queued`). Production
-    2026-10-31 00:46-01:36Z: `stamps` was 1.37-3.96 s of `blocked` 1.49-4.15 s,
-    and PM's worst stamps came in same-second clusters across games at the
-    handovers. "0"/"false"/"off"/"no" is today's join of the whole queue.
-    """
-    raw = os.environ.get("PM_HANDOVER_SHED_QUEUED")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
 
 
 def _handover_outcome(exc: BaseException) -> str:
@@ -741,40 +714,15 @@ def _bridged_side_first_env() -> bool:
     return False
 
 
-def _scan_prefilter_env() -> bool:
-    """#10090 — env `PM_SCAN_PREFILTER`, read once at import.
-
-    On (missing, blank, or anything but "0"/"false"/"off"/"no"), the two
-    whole-buffer scans — the flushes' `standalone_open_outcome_ids` and the
-    observation flush's `owners()` — are answered from `PMCatalogScans`. Off is
-    the Python walk over the price buffer they replaced, kept verbatim. Same
-    answers either way; production 2026-10-31 05:22Z had the two at ~17 % of
-    the Polymarket loop, growing with the buffer.
-    """
-    raw = os.environ.get("PM_SCAN_PREFILTER")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
-
-
-PM_SCAN_PREFILTER = _scan_prefilter_env()
-
-
-def _pack_preview_cohorts_env() -> bool:
-    """#10090 — env `PM_PACK_PREVIEW_COHORTS`, read once at import.
-
-    On (the default), adjacent observed preview-cohort transactions share one
-    (`_pm_pack_preview_cohort_chunks`); `0`/`false`/`off`/`no` gives each its
-    own transaction, today's path exactly.
-    """
-    raw = os.environ.get("PM_PACK_PREVIEW_COHORTS")
-    return raw is None or raw.strip().lower() not in ("0", "false", "off", "no")
-
-
-PM_PACK_PREVIEW_COHORTS = _pack_preview_cohorts_env()
-
-
 #: #10090: how long a repeated top of book stays skippable, and how often the
 #: per-token memo of the last handled book drops entries too old to skip on.
-PM_WS_REPEAT_SKIP_DEFAULT_MS = 250
+#: Production's value since 2026-11-01 (docs/live-settings.md): held-page p90
+#: did not rise against the 250 ms windows (874 ms vs 1,434 ms per-minute worst).
+PM_WS_REPEAT_SKIP_DEFAULT_MS = 3000
+#: #10090: the Polymarket blend stamp floor (`PM_WS_BLEND_FLOOR_SECONDS` overrides).
+#: 5 s, production's value since 2026-10-31 (docs/live-settings.md); receipt
+#: previews do not wait for it.
+PM_WS_BLEND_FLOOR_DEFAULT_S = 5.0
 REPEAT_SKIP_PRUNE_S = 1.0
 
 
@@ -788,7 +736,7 @@ def _repeat_skip_window_s() -> float:
     msgs/s; on an in-play capture 98.8 % of the quotes reaching `handle_price`
     repeated the last book (43,910 of 44,444), and a 250 ms window skips 93.2 %.
 
-    Missing or blank is the default (250 ms); `0` (or any value <= 0) is off,
+    Missing or blank is the default (3000 ms); `0` (or any value <= 0) is off,
     today's path exactly; anything unparseable is off with one warning.
     """
     raw = os.environ.get("PM_WS_REPEAT_SKIP_MS")
@@ -2824,10 +2772,10 @@ def _pm_pack_preview_cohort_chunks(
     position and no unit is split. A chunk joins only if every leg names a
     ``packable_events`` event and none is open or lock-retried (its NOWAIT
     probe or cooldown skip would refuse the whole joined transaction), so
-    lock retries stay alone exactly as before. ``PM_PACK_PREVIEW_COHORTS=0``
-    keeps the chunks as given.
+    lock retries stay alone exactly as before. (Its ``PM_PACK_PREVIEW_COHORTS``
+    off switch was removed in the settings freeze, docs/live-settings.md.)
     """
-    if not PM_PACK_PREVIEW_COHORTS or not packable_events:
+    if not packable_events:
         return chunks
 
     def packable(chunk):
@@ -2911,7 +2859,8 @@ class PMCatalogScans:
     price-write path (#11832 indexed every write and was not faster).
 
     An answer is used only for the exact maps it was built from, at the sizes
-    they had; anything else (or `PM_SCAN_PREFILTER=0`) takes the walk.
+    they had; anything else takes the walk. (Its `PM_SCAN_PREFILTER` off switch
+    was removed in the settings freeze, docs/live-settings.md.)
     """
 
     __slots__ = ("standalone_ids", "legs_by_event", "_built_from")
@@ -2923,8 +2872,6 @@ class PMCatalogScans:
 
     def rebuild(self, open_outcome_ids, event_id_by_outcome: dict, complement_of: dict):
         self._built_from = None
-        if not PM_SCAN_PREFILTER:
-            return
         self.standalone_ids = standalone_open_outcome_ids(
             open_outcome_ids, open_outcome_ids, event_id_by_outcome, complement_of,
         )
@@ -2953,8 +2900,6 @@ class PMCatalogScans:
         raises.
         """
         self._built_from = None
-        if not PM_SCAN_PREFILTER:
-            return False
         try:
             sizes = (len(open_outcome_ids), len(event_id_by_outcome), len(complement_of))
             standalone: set[int] = set()
@@ -2984,7 +2929,7 @@ class PMCatalogScans:
 
     def _events_current(self, event_id_by_outcome) -> bool:
         built = self._built_from
-        return (PM_SCAN_PREFILTER and built is not None
+        return (built is not None
                 and built[1] is event_id_by_outcome
                 and built[4] == len(event_id_by_outcome))
 
@@ -3345,8 +3290,11 @@ async def _apply_ws_resolution(session, market_id, outcomes, verdict):
 #: three weeks finished. 24 h is the widest margin that still costs nothing.
 SLATE_MAX_AGE_HOURS = 24
 
-#: The scheduled arm's upper bound, and its bounds when the env is set.
-PM_WS_UPCOMING_HOURS_DEFAULT = 6
+#: The scheduled arm's upper bound, and its bounds when the env is set. 1 h,
+#: production's value since 2026-11-01 (docs/live-settings.md): games 1-6 h out
+#: are on the 30-second CLOB poll, and a game a reader opens asks for the socket
+#: (`watch_held_presence`).
+PM_WS_UPCOMING_HOURS_DEFAULT = 1
 PM_WS_UPCOMING_HOURS_MIN = 1
 PM_WS_UPCOMING_HOURS_MAX = 6
 
@@ -3354,10 +3302,9 @@ PM_WS_UPCOMING_HOURS_MAX = 6
 def _upcoming_hours_env() -> int:
     """#10090 — env `PM_WS_UPCOMING_HOURS`, read once at import.
 
-    Missing or blank is the default, 6 (the window as it always was). A whole
-    number is clamped to 1..6 with one warning when it moves; anything else is
-    the default with one warning. The setting can narrow the window, never
-    widen it past where it has always been.
+    Missing or blank is the default, 1. A whole number is clamped to 1..6 with
+    one warning when it moves; anything else is the default with one warning.
+    The setting can never widen the window past the 6 h it always had.
 
     A changed value reaches the socket on RESTART ONLY: it is read at import,
     and every slate read after that (startup, admission, each recycle) uses it.
@@ -3842,7 +3789,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         stable_drop_retry_base_seconds,
     )
     from app.tasks.live_blend_refresh import (
-        DEFAULT_MIN_REFRESH_INTERVAL_S, HeldRowQuotes, LiveBlendRefresher, TailReceipts,
+        HeldRowQuotes, LiveBlendRefresher, TailReceipts,
         OwedChartCustody, adopt_handed_off,
         LOOP_REAP_TIMEOUT_S, event_ids_for_outcomes, hand_off_pending,
         reap_stopped_loops, run_flush_cadence,
@@ -3886,9 +3833,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # task factory, so every site below is unchanged.
     get_task_session = sessions.session
 
-    # #10662: opt in only this consumer. Removing the override restores both
-    # the legacy shared timer and the existing blend floor. A faster healthy
-    # timer must not also shorten the preexisting failed-write retry period.
+    # #10662: opt in only this consumer. Removing the override restores the
+    # legacy shared timer; the blend floor is its own setting below. A faster
+    # healthy timer must not also shorten the preexisting failed-write retry period.
     def cadence_override(name):
         value = os.getenv(name)
         if value is None:
@@ -3904,11 +3851,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         return seconds
 
     flush_period = PRICE_FLUSH_SECONDS
-    blend_floor = DEFAULT_MIN_REFRESH_INTERVAL_S
     override = cadence_override("PM_WS_PRICE_FLUSH_SECONDS")
     if override is not None:
         flush_period = override
-        blend_floor = flush_period
     # #10090: the game flush and its blend floor alone. Linked props stay on
     # `flush_period` and failed writes keep the legacy retry, so a faster
     # game cadence adds no prop work. Unset, the game follows `flush_period`.
@@ -3916,14 +3861,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     game_override = cadence_override("PM_WS_GAME_FLUSH_SECONDS")
     if game_override is not None:
         game_period = game_override
-        blend_floor = game_period
     # #10090: the blend stamp floor alone, without touching the price writes.
     # With previews at receipt the page no longer waits for a stamp, while the
     # stamps' reads (~78k rows/min) starve the one loop the receipt worker runs
-    # on (loop cpu 0.98, 2026-10-31). Unset keeps the floor above.
+    # on (loop cpu 0.98, 2026-10-31). Unset is `PM_WS_BLEND_FLOOR_DEFAULT_S`.
     floor_override = cadence_override("PM_WS_BLEND_FLOOR_SECONDS")
-    if floor_override is not None:
-        blend_floor = floor_override
+    blend_floor = floor_override if floor_override is not None else PM_WS_BLEND_FLOOR_DEFAULT_S
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
@@ -4684,9 +4627,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.live_blend_refresh import _mono, _wall, price_commit_ack_log_on
         from app.tasks.polymarket_ws import (
             _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
-            DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            DNPL_PRICE_STATEMENT_TIMEOUT_MS,
             ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL, RESTORE_DNPL_PRICE_TIMEOUTS_SQL,
-            PM_FUSE_PRICE_TIMEOUT_SETS, is_price_statement_timeout, _pm_game_flush_span,
+            is_price_statement_timeout, _pm_game_flush_span,
         )
         from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
@@ -4730,8 +4673,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
         # Includes unrelated game B: bounding B is what lets a later DNPL A
         # reach the same serial writer. Side loops and disabled/final stay as-is.
-        # A bound chunk is never final, so it always sends both pairs.
-        fuse_timeout_sets = bound_price_statement and PM_FUSE_PRICE_TIMEOUT_SETS
+        # A bound chunk is never final, so it always sends both pairs, fused
+        # into one statement each way (#10090; its off switch was removed in
+        # the settings freeze, docs/live-settings.md).
+        fuse_timeout_sets = bound_price_statement
         previous_statement_timeout = None
         rolled_back_statement_timeout = None
         price_statement_timeout_seen = False
@@ -4780,11 +4725,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             "lock_ms": lock_timeout_value(price_lock_timeout_ms),
                             "ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS),
                         },
-                    )).scalar_one()
-                elif bound_price_statement:
-                    previous_statement_timeout = (await session.execute(
-                        ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS)},
                     )).scalar_one()
                 clock_ticket = (
                     held_price_quotes.begin_write_clock()

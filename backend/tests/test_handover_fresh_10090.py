@@ -10,7 +10,9 @@ per call, so the drain took 10.5 s (13:31, 14:05 and 14:30 the same shape).
 
 On, `keep_committed` carries those events and the next `refresh` that finds one
 due stamps it fresh: live first, on the fixed workers, outside the allowance.
-Off (today, and any switch error) is exactly `keep_owed`.
+On is today's value (`SPECS` today = 1 since the settings freeze, production
+since 2026-10-29; docs/live-settings.md). Off (an alternation's off arm, and
+any switch error) is exactly `keep_owed`.
 """
 
 import asyncio
@@ -59,7 +61,7 @@ def _statuses(count, live=()):
     return {eid: "live" if eid in live else "scheduled" for eid in range(1, count + 1)}
 
 
-# ── the control: one call stamps the carried cohort, today it drains by one ──
+# ── the control: one call stamps the carried cohort, off it drains by one ────
 
 
 @pytest.mark.parametrize("on", [0, 1])
@@ -75,7 +77,7 @@ async def test_a_handover_cohort_is_stamped_by_the_next_call_not_one_per_call(
         assert x.r.pending_event_ids() == frozenset()
         assert x.r._carried_fresh == set()
     else:
-        # Today: the fresh price, then ONE old attempt under the allowance.
+        # Off: the fresh price, then ONE old attempt under the allowance.
         assert sorted(x.committed) == [1, 7]
         assert x.r.pending_event_ids() == frozenset({2, 3, 4, 5, 6})
     # The live fresh price is never queued behind the carried cohort.
@@ -146,6 +148,15 @@ def test_the_handover_arm_is_off_on_any_switch_error(monkeypatch):
     assert blend_mod._handover_fresh() is False
 
 
+def test_with_no_trial_running_the_handover_arm_is_todays_on(monkeypatch):
+    class _NoTrial:
+        def value(self, name, default, at=None):
+            return default
+
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: _NoTrial())
+    assert blend_mod._handover_fresh() is True
+
+
 # ── the hand-over itself: transfer carries through `keep_committed` ──────────
 
 
@@ -186,7 +197,7 @@ def test_transfer_still_keeps_owed_on_a_refresher_without_keep_committed():
 
 @pytest.mark.parametrize("mode, kwargs", [
     ("ab", {"half": 0}),                                  # a hand-over has no per-game arm
-    ("alternate", {"a": 1, "b": 1, "period_s": 60}),      # no today arm
+    ("alternate", {"a": 0, "b": 0, "period_s": 60}),      # no today arm
     ("alternate", {"a": 0, "b": 2, "period_s": 60}),
 ])
 def test_a_handover_trial_outside_the_limits_is_refused(mode, kwargs):
@@ -195,5 +206,5 @@ def test_a_handover_trial_outside_the_limits_is_refused(mode, kwargs):
 
 def test_a_handover_alternation_of_off_and_on_is_accepted():
     assert sw.validate(NAME, "alternate", a=0, b=1, period_s=60) is None
-    assert sw.today(NAME) == 0
+    assert sw.today(NAME) == 1
     assert NAME in sw.SWITCHES

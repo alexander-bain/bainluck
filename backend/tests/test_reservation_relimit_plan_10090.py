@@ -25,6 +25,10 @@ BACKEND = Path(__file__).resolve().parents[1]
 PRIMARY = ("a" * 40, "b" * 40)
 OTHER_FIRST = (128, 48, 96, 48, 160, 32)
 CONFIGURED = "128,48,96,48,160,32"
+#: The pre-freeze default allocation (v1, total 512). The default is now the v2
+#: split (`DEFAULT_LIMITS`, total 1024); the plans below start from a v1 ready
+#: authority unless a case names another policy.
+V1_LIMITS = (192, 64, 128, 64, 48, 16)
 
 
 def tool():
@@ -37,7 +41,7 @@ def tool():
 
 def ready(incarnation=1, policy=None, primary=PRIMARY, state="ready"):
     return Authority(3, incarnation, uuid4(), uuid4(), state, *primary,
-                     policy or ReservationPolicy().fingerprint)
+                     policy or ReservationPolicy(V1_LIMITS).fingerprint)
 
 
 def apps():
@@ -81,7 +85,7 @@ def test_rollback_to_default_from_a_relimited_authority():
     assert result["summary"]["to_fingerprint"] == ReservationPolicy().fingerprint
     assert result["summary"]["to_incarnation"] == 6
     # The defaults may also be configured explicitly.
-    t.build(relimited, PRIMARY, apps(), DEFAULT_LIMITS, "192,64,128,64,48,16")
+    t.build(relimited, PRIMARY, apps(), DEFAULT_LIMITS, ",".join(map(str, DEFAULT_LIMITS)))
 
 
 @pytest.mark.parametrize(
@@ -90,7 +94,7 @@ def test_rollback_to_default_from_a_relimited_authority():
         (ready(state="preparing"), OTHER_FIRST, CONFIGURED, "ready allocated"),
         (ready(state="disabled"), OTHER_FIRST, CONFIGURED, "ready allocated"),
         (ready(primary=("c" * 40, "b" * 40)), OTHER_FIRST, CONFIGURED, "not the normal route"),
-        (ready(), DEFAULT_LIMITS, "", "equal the authority"),
+        (ready(policy=ReservationPolicy().fingerprint), DEFAULT_LIMITS, "", "equal the authority"),
         # A league-map or semantics change is a different policy, not a resize.
         (ready(policy="v1-six-hour-0000000000000000:192,64,128,64,48,16"),
          OTHER_FIRST, CONFIGURED, "not limits-only"),

@@ -112,6 +112,7 @@ async def test_invalid_kalshi_override_is_rejected_before_slate_or_socket(
 async def test_kalshi_override_does_not_change_real_pm_consumer(monkeypatch):
     monkeypatch.setenv(ENV, "1")
     monkeypatch.delenv("PM_WS_PRICE_FLUSH_SECONDS", raising=False)
+    monkeypatch.delenv("PM_WS_BLEND_FLOOR_SECONDS", raising=False)
     import app.tasks.polymarket_ws as poly_task
 
     monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 3.5)
@@ -127,7 +128,9 @@ async def test_kalshi_override_does_not_change_real_pm_consumer(monkeypatch):
         (False, None, None),
     ]
     assert 0 < poly_task.PM_WAKE_COALESCE_SECONDS <= 0.01
-    assert instances[0].min_refresh_interval_s == 2
+    # PM's blend floor is its own setting since the settings freeze, 5 s
+    # (docs/live-settings.md); the Kalshi override does not reach it.
+    assert instances[0].min_refresh_interval_s == poly_task.PM_WS_BLEND_FLOOR_DEFAULT_S == 5.0
 
 
 def test_cadence_without_override_is_the_shared_timer_read_at_call_time(monkeypatch):

@@ -6,13 +6,23 @@ continuation already names the next old event, that read cannot change which
 event is attempted, so the head now reads its own group in its own write
 session. Without a continuation head, and on quiet/untimed flushes, the shared
 read and live-first selection are unchanged.
+
+"One old attempt" is FRESH_FLUSH_PENDING_ATTEMPTS=1, so this file pins it (the
+default is 3 since the 2026-11-02 settings freeze, docs/live-settings.md; with
+more than one attempt left there is no single head and the shared read decides).
 """
 
 import asyncio
 
 import pytest
 
+from app.tasks import live_blend_refresh as module
 from tests.test_single_event_commit_10090 import rig
+
+
+@pytest.fixture(autouse=True)
+def _one_old_attempt_per_fresh_flush(monkeypatch):
+    monkeypatch.setattr(module, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
 
 
 def hold_preparation(x):

@@ -59,9 +59,14 @@ def positions(monkeypatch):
 
 
 async def test_real_slate_prioritizes_live_win_and_keeps_both_token_orientations(
-    positions,
+    positions, monkeypatch,
 ):
     """Execute the real nested slate loader; fake only DB, Gamma and held cap."""
+    # The prop (2) stays subscribed as non-blend: the path with props on the
+    # socket. `PM_WS_PROPS_TO_POLL` is on since the 2026-11-02 settings freeze
+    # (docs/live-settings.md) and drops it from the slate
+    # (test_pm_props_to_poll_10090), so this pins it off.
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     winner = {
         "content_understanding_v1": {
             "v": 1,

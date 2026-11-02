@@ -191,6 +191,11 @@ async def test_the_default_priority_cap_is_200():
 
 async def test_the_catalog_refresh_passes_its_live_win_markets(monkeypatch):
     """Execute the real slate loader; the outcome top-up gets live WIN ids."""
+    # The prop (2) stays in the socket's fleet, outside the priority: the path
+    # with props on the socket. `PM_WS_PROPS_TO_POLL` is on since the 2026-11-02
+    # settings freeze (docs/live-settings.md) and drops it from the slate
+    # (test_pm_props_to_poll_10090), so this pins it off.
+    monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "0")
     winner = {
         "content_understanding_v1": {
             "v": 1,

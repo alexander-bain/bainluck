@@ -1,7 +1,9 @@
 """#10090 — the consumer engine's pre-ping is a setting, and set_lock says what it held.
 
-`WS_CONSUMER_POOL_PRE_PING` (read once at import, default on) turns off the
-pool's pre-ping on the socket consumers' engine only. On asyncpg the ping is
+`WS_CONSUMER_POOL_PRE_PING` (read once at import) turns off the pool's
+pre-ping on the socket consumers' engine only. Off is the default since the
+settings freeze (production since 2026-10-30, docs/live-settings.md); ``1``
+restores the pre-ping. On asyncpg the ping is
 three round trips (BEGIN, ``;``, ROLLBACK) on every checkout, and a Kalshi price
 phase checks out once, so it is three of the five round trips the phase's
 `set_lock` span waits on. Off, a connection the server closed is found by the
@@ -45,19 +47,21 @@ pytestmark = pytest.mark.asyncio
 
 
 def _parsed(monkeypatch, raw):
+    """The module's own call: default off."""
     monkeypatch.setenv(NAME, raw)
-    return wcs._pre_ping_env(NAME, True)
+    return wcs._pre_ping_env(NAME, False)
 
 
 # ------------------------------------------------------------ the setting ----
 
 
-async def test_missing_or_blank_is_on_without_a_warning(monkeypatch, caplog):
+async def test_missing_or_blank_is_the_default_without_a_warning(monkeypatch, caplog):
     monkeypatch.delenv(NAME, raising=False)
     with caplog.at_level(logging.WARNING, logger=wcs.logger.name):
+        assert wcs._pre_ping_env(NAME, False) is False
         assert wcs._pre_ping_env(NAME, True) is True
-        assert _parsed(monkeypatch, "") is True
-        assert _parsed(monkeypatch, "   ") is True
+        assert _parsed(monkeypatch, "") is False
+        assert _parsed(monkeypatch, "   ") is False
     assert not caplog.records
 
 
@@ -72,9 +76,9 @@ async def test_false_spellings(monkeypatch, raw):
 
 
 @pytest.mark.parametrize("raw", ["maybe", "2", "f", "disable"])
-async def test_invalid_is_on_with_one_warning(monkeypatch, caplog, raw):
+async def test_invalid_is_the_default_off_with_one_warning(monkeypatch, caplog, raw):
     with caplog.at_level(logging.WARNING, logger=wcs.logger.name):
-        assert _parsed(monkeypatch, raw) is True
+        assert _parsed(monkeypatch, raw) is False
     assert len(caplog.records) == 1
     assert "not a valid boolean" in caplog.records[0].getMessage()
 
@@ -100,8 +104,13 @@ def _imported(env_value):
     return json.loads(out.stdout.strip().splitlines()[-1]), out.stderr
 
 
-async def test_default_at_import_is_todays_engine():
+async def test_default_at_import_is_off_for_the_consumer_engine_only():
     (setting, consumer, celery, web), _ = _imported(None)
+    assert (setting, consumer, celery, web) == (False, False, True, True)
+
+
+async def test_on_at_import_is_the_old_engine():
+    (setting, consumer, celery, web), _ = _imported("1")
     assert (setting, consumer, celery, web) == (True, True, True, True)
 
 
@@ -112,9 +121,9 @@ async def test_off_at_import_turns_off_the_consumer_engine_only():
     assert "consumer engine pool_pre_ping=False" in stderr
 
 
-async def test_invalid_at_import_is_on_with_a_warning():
+async def test_invalid_at_import_is_the_default_off_with_a_warning():
     (setting, consumer, *_), stderr = _imported("sometimes")
-    assert setting is True and consumer is True
+    assert setting is False and consumer is False
     assert f"{NAME}='sometimes'" in stderr
 
 

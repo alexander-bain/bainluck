@@ -7,8 +7,9 @@ Production 16:01-16:35Z 2026-10-31 (Polymarket worker-ws, v6005 `667df791`,
 minute on three workers ~97% busy with ~250 attempts queued, so each live
 game's turn came every ~15-20 s (`stamp_wait_reason` STAMPED
 `admitted_age_s` p50 13-21 s). `_admitted_batch` batches non-live heads only,
-and only while no live game waits, which on that slate is never. Today's value
-is 1: one event, one transaction, unchanged.
+and only while no live game waits, which on that slate is never. 1 is the
+pre-batch behaviour (one event, one transaction); the default is 4,
+production's value since 2026-10-31 (docs/live-settings.md).
 
 Bounds pinned here (the control is RED on `667df791`, GREEN with the change):
 a live batch is the picked live game plus the head live games of ITS cohort
@@ -19,7 +20,7 @@ event keeps today's turn; a reader-held pick taken from the middle of the queue
 is joined only by head events of its own cohort; a failed live batch leaves
 every event owed exactly as a failed singleton does and trips the LIVE switch,
 not the non-live one; with the setting at 1 the order is byte-identical to
-today's; and the real transaction opens one session, one COMMIT, a savepoint
+the pre-batch order; and the real transaction opens one session, one COMMIT, a savepoint
 per event, every frame published after the COMMIT.
 """
 
@@ -48,7 +49,8 @@ def _clock(monkeypatch):
 @pytest.fixture
 def live_batch_trial(monkeypatch):
     """An `admitted_live_batch` alternation whose current arm the test sets;
-    the non-live batch stays at today's 1 unless the test says otherwise."""
+    the worker's settings and the non-live batch are pinned to 1 (the
+    pre-batch behaviour) unless the test says otherwise."""
     arm = {"value": 4, "non_live": 1, "tripped": [], "reads": 0}
 
     class _Trial:
@@ -97,7 +99,7 @@ async def test_live_games_of_one_cohort_at_the_head_share_one_transaction(live_b
     await _finish(r, task)
 
 
-async def test_todays_setting_stamps_each_live_event_alone(live_batch_trial):
+async def test_a_setting_of_one_stamps_each_live_event_alone(live_batch_trial):
     live_batch_trial["value"] = 1
     r = _Recorded(blocked={99})
     task = await _running_call(r)
@@ -108,9 +110,9 @@ async def test_todays_setting_stamps_each_live_event_alone(live_batch_trial):
     await _finish(r, task)
 
 
-def test_the_setting_is_one_by_default():
-    assert lbr.ADMITTED_LIVE_BATCH == 1
-    assert sw.today(LIVE_BATCH) == 1
+def test_the_setting_is_four_by_default():
+    assert lbr.ADMITTED_LIVE_BATCH == 4
+    assert sw.today(LIVE_BATCH) == 4
 
 
 async def test_two_live_cohorts_never_share_a_transaction(live_batch_trial):
@@ -281,7 +283,7 @@ async def test_a_failed_live_batch_leaves_every_event_owed_and_trips_the_live_sw
     # Held exactly as a failed singleton is: not due again at once.
     assert all(not r._due(eid, 1001) for eid in (10, 11, 12, 13))
     await _finish(r, task)
-    # The rest of the trial in this process is today's one event per stamp.
+    # The rest of the trial in this process is the worker's setting (1 here).
     assert all(len(group) == 1 for group in _own_groups(r)[1:])
 
 
@@ -305,7 +307,7 @@ async def test_a_live_batch_cancelled_mid_stamp_leaves_every_event_owed(live_bat
 
 @pytest.mark.parametrize("mode, kwargs", [
     ("ab", {"half": 0}),
-    ("alternate", {"a": 2, "b": 4, "period_s": 60}),
+    ("alternate", {"a": 2, "b": 3, "period_s": 60}),  # neither arm is today's (4)
     ("alternate", {"a": 1, "b": 9, "period_s": 60}),
     ("alternate", {"a": 0, "b": 1, "period_s": 60}),
 ])
@@ -313,8 +315,8 @@ def test_a_live_batch_trial_outside_the_limits_is_refused(mode, kwargs):
     assert sw.validate(LIVE_BATCH, mode, **kwargs) is not None
 
 
-def test_a_live_batch_alternation_of_today_and_four_is_accepted():
-    assert sw.validate(LIVE_BATCH, "alternate", a=1, b=4, period_s=60) is None
+def test_a_live_batch_alternation_of_today_and_one_is_accepted():
+    assert sw.validate(LIVE_BATCH, "alternate", a=4, b=1, period_s=60) is None
 
 
 def test_a_switch_read_error_reads_the_live_setting(monkeypatch):

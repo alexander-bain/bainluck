@@ -758,44 +758,6 @@ def _owns_kalshi_price_lifetime(consumer):
     return run
 
 
-#: The scheduled arm's upper bound, and its bounds when the env is set.
-KALSHI_WS_UPCOMING_HOURS_DEFAULT = 6
-KALSHI_WS_UPCOMING_HOURS_MIN = 1
-KALSHI_WS_UPCOMING_HOURS_MAX = 6
-
-
-def _kalshi_upcoming_hours_env() -> int:
-    """#10090 — env `KALSHI_WS_UPCOMING_HOURS`, read once at import, as
-    `polymarket_ws._upcoming_hours_env` reads `PM_WS_UPCOMING_HOURS`.
-
-    Missing or blank is the default, 6 (the window as it always was). A whole
-    number is clamped to 1..6 with one warning when it moves; anything else is
-    the default with one warning. It can narrow the window, never widen it.
-    A changed value reaches the socket on restart (a config change restarts
-    the dyno). 11/01: the Kalshi venue process ran at 83-89% of a core on a
-    Sunday slate; games hours away do not need a live book.
-    """
-    raw = os.environ.get("KALSHI_WS_UPCOMING_HOURS")
-    if raw is None or not raw.strip():
-        return KALSHI_WS_UPCOMING_HOURS_DEFAULT
-    try:
-        hours = int(raw.strip())
-    except ValueError:
-        logger.warning(
-            "Kalshi WS: KALSHI_WS_UPCOMING_HOURS=%r is not a whole number of "
-            "hours; using %d", raw, KALSHI_WS_UPCOMING_HOURS_DEFAULT,
-        )
-        return KALSHI_WS_UPCOMING_HOURS_DEFAULT
-    clamped = min(max(hours, KALSHI_WS_UPCOMING_HOURS_MIN), KALSHI_WS_UPCOMING_HOURS_MAX)
-    if clamped != hours:
-        logger.warning(
-            "Kalshi WS: KALSHI_WS_UPCOMING_HOURS=%r is outside %d..%d; using %d",
-            raw, KALSHI_WS_UPCOMING_HOURS_MIN, KALSHI_WS_UPCOMING_HOURS_MAX, clamped,
-        )
-    return clamped
-
-
-KALSHI_WS_UPCOMING_HOURS = _kalshi_upcoming_hours_env()
 #: #10090: a game contract's price is its last trade while that trade sits
 #: strictly inside the live book (`handle_ticker`); a trade at the bid or the
 #: ask keeps the midpoint. "0" restores the midpoint always.
@@ -814,7 +776,8 @@ def _is_team_game_ticker(ticker: str) -> bool:
 def _kalshi_slate_event_window():
     """The events whose Kalshi markets the socket subscribes to.
 
-    Live, scheduled within 6 h (``KALSHI_WS_UPCOMING_HOURS`` since #10090),
+    Live, scheduled within 6 h (a 2 h window drew Kalshi 429s on 2026-11-01;
+    docs/live-settings.md),
     and (#9484) an open market on a recently suspended event — see
     `app.tasks.ws_slate`. A function rather than inline so the real-Postgres
     contract reads the shipped expression.
@@ -829,9 +792,7 @@ def _kalshi_slate_event_window():
         and_(
             Event.status == "scheduled",
             Event.commence_time.isnot(None),
-            Event.commence_time <= text(
-                f"NOW() + INTERVAL '{int(KALSHI_WS_UPCOMING_HOURS)} hours'"
-            ),
+            Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
         ),
         suspended_open_market_arm(),
     )

@@ -16,7 +16,10 @@ from typing import Any
 # Initial-bootstrap configuration only. Existing ledgers reject a changed
 # allocation or league-map fingerprint, including across ordinary restarts.
 RESERVATIONS_ENV = "LIVE_BLEND_PREVIEW_RESERVATIONS"
-DEFAULT_LIMITS = (192, 64, 128, 64, 48, 16)
+#: Production's allocation since 2026-10-29 (Alex, decision 36: "A in perpetuity";
+#: docs/live-settings.md); the same bytes the env carried, so its v2 fingerprint
+#: is unchanged when the env is unset.
+DEFAULT_LIMITS = (96, 48, 192, 128, 448, 112)
 #: Ledger capacity per fingerprint version. v2 is v1's classification, status
 #: and window semantics with a larger resident cap; it exists only for totals
 #: above v1's, so every allocation has exactly one fingerprint and a v1-sized

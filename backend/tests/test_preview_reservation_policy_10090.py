@@ -94,11 +94,13 @@ def test_unusable_context_refuses_instead_of_inventing_priority(changes, revisio
     assert reservation_context(event(**changes), revision) is None
 
 
-def test_default_budget_preserves_total_and_protected_capacity(monkeypatch):
+def test_default_budget_is_productions_v2_split(monkeypatch):
+    # Production's allocation since 2026-10-29 (decision 36; docs/live-settings.md),
+    # the code default since the settings freeze: the v2 policy, total 1024.
     monkeypatch.delenv(RESERVATIONS_ENV, raising=False)
     policy = ReservationPolicy.configured()
-    assert policy.limits == (192, 64, 128, 64, 48, 16)
-    assert policy.total == 512
+    assert policy.limits == (96, 48, 192, 128, 448, 112)
+    assert (policy.version, policy.total) == ("v2", 1024)
 
 
 def test_bounded_custom_policy_changes_identity(monkeypatch):

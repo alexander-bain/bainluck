@@ -106,6 +106,13 @@ class _Rig:
 
     def build_engine(self, **budget):
         assert budget.pop("retain_full_pool", False) is True
+        # #10090: with `WS_CONSUMER_POOL_PRE_PING` off (the default since the
+        # settings freeze) the factory is also asked for no pre-ping, exactly
+        # that; on, it is asked what it was asked before.
+        from app.tasks import ws_consumer_sessions
+
+        if not ws_consumer_sessions.CONSUMER_POOL_PRE_PING:
+            assert budget.pop("pool_pre_ping", None) is False
         assert not budget, f"the consumer engine must carry no budget: {budget}"
         engine = _FakeEngine(len(self.engines), self.log)
         self.engines.append(engine)

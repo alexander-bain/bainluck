@@ -137,15 +137,16 @@ OPEN_SCOPE_SLATE = "slate"
 def open_contract_scope() -> str:
     """#10090: which open contracts the open arm keeps on the socket.
 
-    ``all`` (the default, and anything unrecognised, with one warning) keeps
-    every admitted contract, as before. ``slate`` keeps only what a market on
-    a live or near-start event needs (:func:`scope_open_contract_admission`);
-    everything else is left to the polls. Read at every catalog refresh, so
-    moving back to ``all`` restores the full arm through the same handover.
+    ``slate`` (the default, production since 2026-11-01; docs/live-settings.md)
+    keeps only what a market on a live or near-start event needs
+    (:func:`scope_open_contract_admission`); everything else is left to the
+    polls. ``all`` keeps every admitted contract, as before; anything
+    unrecognised reads ``all`` with one warning. Read at every catalog refresh,
+    so moving to ``all`` restores the full arm through the same handover.
     """
     raw = os.getenv("POLYMARKET_WS_OPEN_SCOPE")
     if raw is None or not raw.strip():
-        return OPEN_SCOPE_ALL
+        return OPEN_SCOPE_SLATE
     value = raw.strip().lower()
     if value in (OPEN_SCOPE_ALL, OPEN_SCOPE_SLATE):
         return value
@@ -167,9 +168,10 @@ def props_to_poll_enabled() -> bool:
     of ~11,200 subscribed tokens) carried a venue label that is not
     ``moneyline`` — props the blend never reads. Main game odds stay on the
     socket. A game a reader holds keeps its props live through the open arm's
-    held-event seed. Off by default; unset it to undo at the next restart.
+    held-event seed. On by default (production since 2026-11-01;
+    docs/live-settings.md); ``PM_WS_PROPS_TO_POLL=0`` undoes it at the next restart.
     """
-    return os.getenv("PM_WS_PROPS_TO_POLL", "0").strip() == "1"
+    return os.getenv("PM_WS_PROPS_TO_POLL", "1").strip() != "0"
 
 
 def venue_label_refusal_clause():

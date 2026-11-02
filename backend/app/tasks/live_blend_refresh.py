@@ -368,9 +368,10 @@ COMMIT_PATCH_FIELDS = ("current_probability", "last_updated", "is_winner", "reso
 #: its own task, never in a flush or a stamp. Which venues it applies to is
 #: `PREVIEW_AT_RECEIPT_VENUES_ENV`.
 PREVIEW_AT_RECEIPT_SWITCH = "preview_at_receipt"
-#: ``polymarket`` (default), ``kalshi`` or ``all``: the venues whose refresher
-#: the switch turns on. Both reach the same receipt seam (`HeldRowQuotes.
-#: note_input`), so one switch serves both; anything else reads ``polymarket``.
+#: ``all`` (default, production since 2026-10-31), ``polymarket`` or ``kalshi``:
+#: the venues whose refresher the switch turns on. Both reach the same receipt
+#: seam (`HeldRowQuotes.note_input`), so one switch serves both; anything else
+#: reads ``all``.
 PREVIEW_AT_RECEIPT_VENUES_ENV = "PREVIEW_AT_RECEIPT_VENUES"
 #: At most one receipt preview per event per this long. A burst of ticks for
 #: one game is coalesced into its newest prices; an event quiet for this long
@@ -490,10 +491,18 @@ def _release_unattempted_debt() -> bool:
         return False
 
 
+def _switch_today(name: str) -> int:
+    """A switch's value with no trial and no ``SPEED_SWITCH_TODAY_<NAME>``: its
+    `SPECS` today, the one place production's default lives (docs/live-settings.md)."""
+    from app.tasks.speed_switches import SPECS
+
+    return SPECS[name]["today"]
+
+
 def _handover_fresh() -> bool:
     """This hand-over's `handover_fresh` arm; off on any switch error."""
     try:
-        return bool(_optional_db_trial().value(HANDOVER_FRESH_SWITCH, 0))
+        return bool(_optional_db_trial().value(HANDOVER_FRESH_SWITCH, _switch_today(HANDOVER_FRESH_SWITCH)))
     except Exception:  # noqa: BLE001 — a switch read never fails a hand-over
         return False
 
@@ -501,7 +510,7 @@ def _handover_fresh() -> bool:
 def _owed_past_withdrawal() -> bool:
     """This drain's `owed_past_withdrawal` arm; off on any switch error."""
     try:
-        return bool(_optional_db_trial().value(OWED_PAST_WITHDRAWAL_SWITCH, 0))
+        return bool(_optional_db_trial().value(OWED_PAST_WITHDRAWAL_SWITCH, _switch_today(OWED_PAST_WITHDRAWAL_SWITCH)))
     except Exception:  # noqa: BLE001 — a switch read never fails a flush
         return False
 
@@ -713,7 +722,7 @@ def _receipt_venue(source) -> bool:
     """Whether `PREVIEW_AT_RECEIPT_VENUES_ENV` names this source's venue."""
     venues = os.getenv(PREVIEW_AT_RECEIPT_VENUES_ENV, "").strip().lower()
     if venues not in ("polymarket", "kalshi", "all"):
-        venues = "polymarket"
+        venues = "all"
     return venues == "all" or venues == source
 
 
@@ -724,7 +733,7 @@ def _preview_at_receipt_possible(source) -> bool:
             return False
         trial = _optional_db_trial()
         return (trial.state(PREVIEW_AT_RECEIPT_SWITCH).mode != "off"
-                or bool(trial.value(PREVIEW_AT_RECEIPT_SWITCH, 0)))
+                or bool(trial.value(PREVIEW_AT_RECEIPT_SWITCH, _switch_today(PREVIEW_AT_RECEIPT_SWITCH))))
     except Exception:  # noqa: BLE001 — a switch read never fails a read or write
         return False
 
@@ -737,7 +746,7 @@ def _preview_at_receipt(source, event_id) -> bool:
         trial = _optional_db_trial()
         if trial.state(PREVIEW_AT_RECEIPT_SWITCH).mode == "ab":
             return trial.arm(PREVIEW_AT_RECEIPT_SWITCH, int(event_id))
-        return bool(trial.value(PREVIEW_AT_RECEIPT_SWITCH, 0))
+        return bool(trial.value(PREVIEW_AT_RECEIPT_SWITCH, _switch_today(PREVIEW_AT_RECEIPT_SWITCH)))
     except Exception:  # noqa: BLE001 — a switch read never fails a write
         return False
 
@@ -791,8 +800,9 @@ PENDING_STAMP_BUDGET_S = _owed_budget_env("PENDING_STAMP_BUDGET_S", 1.0, float, 
 # order for a quiet flush, which keeps the full time budget above. Without it a
 # busy flush's old debt ran serially for up to that second after its fresh work.
 # Env `FRESH_FLUSH_PENDING_ATTEMPTS` (1..32); above 1 the time budget above
-# still stops the serial old work.
-FRESH_FLUSH_PENDING_ATTEMPTS = _owed_budget_env("FRESH_FLUSH_PENDING_ATTEMPTS", 1, int, 1, 32)
+# still stops the serial old work. Default 3, production's value since
+# 2026-10-28 (docs/live-settings.md).
+FRESH_FLUSH_PENDING_ATTEMPTS = _owed_budget_env("FRESH_FLUSH_PENDING_ATTEMPTS", 3, int, 1, 32)
 # #10090 — how many owed events a running call's door (`admit_fresh`) stamps at
 # once beside its admitted cohorts. The attempt count above is spent only when a
 # NEW `refresh` starts; a call that keeps admitting a busy slate outlives that,
@@ -809,8 +819,9 @@ ADMITTED_DEBT_SLOTS = _owed_budget_env("ADMITTED_DEBT_SLOTS", 1, int, 1, 3)
 # checkout, read and commit on one of FRESH_STAMP_WORKERS slots. Taken only
 # while no live game waits, from the head of the queue, and only events of the
 # same admitted cohort (same flush clock and stored wall); a live game is never
-# in one. Env `ADMITTED_STAMP_BATCH` (1..8); 1 is today's behaviour.
-ADMITTED_STAMP_BATCH = _owed_budget_env("ADMITTED_STAMP_BATCH", 1, int, 1, 8)
+# in one. Env `ADMITTED_STAMP_BATCH` (1..8); default 4, production's value
+# since 2026-10-29 (docs/live-settings.md); 1 is the pre-batch behaviour.
+ADMITTED_STAMP_BATCH = _owed_budget_env("ADMITTED_STAMP_BATCH", 4, int, 1, 8)
 # #10090 — how many queued LIVE admitted events of ONE cohort one stamp worker
 # takes into one transaction (the live counterpart of ADMITTED_STAMP_BATCH):
 # one session slot, one checkout, one read statement, one COMMIT and one
@@ -828,8 +839,9 @@ ADMITTED_STAMP_BATCH = _owed_budget_env("ADMITTED_STAMP_BATCH", 1, int, 1, 8)
 # middle of the queue is joined only by head events of its own cohort. Nothing
 # is reordered or skipped. The extra events count against ADMITTED_LIVE_RUN
 # exactly as their own picks would, so pre-game stamps keep today's share.
-# Env `ADMITTED_LIVE_BATCH` (1..8); 1 is today's behaviour.
-ADMITTED_LIVE_BATCH = _owed_budget_env("ADMITTED_LIVE_BATCH", 1, int, 1, 8)
+# Env `ADMITTED_LIVE_BATCH` (1..8); default 4, production's value since
+# 2026-10-31 (docs/live-settings.md); 1 is the pre-batch behaviour.
+ADMITTED_LIVE_BATCH = _owed_budget_env("ADMITTED_LIVE_BATCH", 4, int, 1, 8)
 _OWED_BUDGET_LOGGED = False
 #: #10090 — the pid that printed the speed-switch start line (a forked venue
 #: process prints its own).
@@ -1043,14 +1055,10 @@ ADMITTED_LIVE_RUN = 3
 # event, its cohort, clock, supersession and fences as before. After
 # READER_FIRST_RUN held stamps in a row while an unheld live game waited, the
 # oldest unheld one goes next, so unheld games keep at least one turn in
-# READER_FIRST_RUN + 1. ``STAMP_READER_FIRST=0`` restores the old order; an
-# unreadable or stale held set is empty, which is the old order too.
-STAMP_READER_FIRST_ENV = "STAMP_READER_FIRST"
+# READER_FIRST_RUN + 1. An unreadable or stale held set is empty, which is the
+# old order. (Its ``STAMP_READER_FIRST`` off switch was removed in the settings
+# freeze, docs/live-settings.md.)
 READER_FIRST_RUN = 3
-
-
-def stamp_reader_first_on() -> bool:
-    return os.getenv(STAMP_READER_FIRST_ENV, "1").strip() != "0"
 
 
 def _reader_held_tag(source, event_id) -> str:
@@ -1076,13 +1084,14 @@ def _reader_held_tag(source, event_id) -> str:
 # first admission that finds such a game admissible (not fenced, not
 # excluded, due) takes it as a cohort member on that flush's clock, picked
 # held-first, outside the debt slots. Unheld debt keeps its slots and turns;
-# the live pick bound (READER_FIRST_RUN) is unchanged. ``STAMP_HELD_OWED_FRESH=1``
-# turns it on; off (default), or with no held set, the order is today's.
+# the live pick bound (READER_FIRST_RUN) is unchanged. On by default
+# (production since 2026-10-31, docs/live-settings.md); ``STAMP_HELD_OWED_FRESH=0``
+# turns it off, and with no held set the order is the plain one.
 STAMP_HELD_OWED_FRESH_ENV = "STAMP_HELD_OWED_FRESH"
 
 
 def stamp_held_owed_fresh_on() -> bool:
-    return os.getenv(STAMP_HELD_OWED_FRESH_ENV, "0").strip() == "1"
+    return os.getenv(STAMP_HELD_OWED_FRESH_ENV, "1").strip() != "0"
 
 
 # #10090 write-under-queued — a game whose stamp attempt is QUEUED (admitted,
@@ -1106,8 +1115,10 @@ def stamp_held_owed_fresh_on() -> bool:
 # attempt) instead of being refused as HELD. A running attempt is fenced as
 # before; a cohort committed after its read started is kept owed as before;
 # the call's own fresh population (startup, a hand-over's carried events) is
-# fenced as before. Unset or ``0`` (default): today's fence, byte for byte.
+# fenced as before. Default 9, production's value since 2026-10-31
+# (docs/live-settings.md); ``0`` is the full fence, byte for byte.
 STAMP_WRITE_UNDER_QUEUED_ENV = "STAMP_WRITE_UNDER_QUEUED"
+STAMP_WRITE_UNDER_QUEUED_DEFAULT = "9"
 #: A worker that finds every queued attempt under a write lease re-checks at
 #: least this often; a lease never outlives its flush.
 WRITE_LEASE_WAIT_S = 0.25
@@ -1118,10 +1129,10 @@ WRITE_RIGHT_TTL_S = 5.0
 
 
 def stamp_write_under_queued() -> Optional[int]:
-    """The fence-lift horizon: None off (default); 0 every queued attempt
-    (``all``); N > 0 the next N picks per queue. Read at each use; anything
+    """The fence-lift horizon: None off; 0 every queued attempt (``all``);
+    N > 0 the next N picks per queue (default 9). Read at each use; anything
     unparseable is off."""
-    raw = os.getenv(STAMP_WRITE_UNDER_QUEUED_ENV, "0").strip().lower()
+    raw = os.getenv(STAMP_WRITE_UNDER_QUEUED_ENV, STAMP_WRITE_UNDER_QUEUED_DEFAULT).strip().lower()
     if raw in ("", "0", "off", "false", "no"):
         return None
     if raw in ("all", "every", "*"):
@@ -3875,7 +3886,7 @@ class LiveBlendRefresher:
         #: #10090 — events whose latest stamp read said live: admitted ones
         #: are stamped ahead of the rest (`_FreshAdmission.next_queued`).
         self._live_event_ids: set[int] = set()
-        #: #10090 held-first stamps (STAMP_READER_FIRST_ENV): the event ids a
+        #: #10090 held-first stamps: the event ids a
         #: reader holds open, installed by a consumer
         #: (`reader_presence.held_event_cache().event_ids`); None keeps the
         #: old order.
@@ -4126,9 +4137,9 @@ class LiveBlendRefresher:
 
     def _reader_held_ids(self) -> Container[int]:
         """#10090 held-first: the held event ids, or empty (the old order)
-        with the switch off, no source installed, or a failing one."""
+        with no source installed, or a failing one."""
         source = self.reader_held
-        if source is None or not stamp_reader_first_on():
+        if source is None:
             return frozenset()
         try:
             return source()
