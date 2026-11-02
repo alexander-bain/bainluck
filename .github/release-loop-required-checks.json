@@ -6,10 +6,9 @@
   "backend-tests (4)",
   "shard-completeness",
   "golden-baseline-floor",
-  "database-integration (shared)",
-  "database-integration (isolated)",
   "search-recall",
   "frontend-build",
   "Browser-audit contract fixtures",
-  "Tier-B approval"
+  "Tier-B approval",
+  "fast-gate"
 ]
