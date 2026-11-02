@@ -2529,7 +2529,7 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False, skip_unit
             table.c.last_updated,
             quote_moved_column(table),
             func.clock_timestamp().label("database_clock"),
-            # #10090 `preview_from_commit`: the committed row's resolver
+            # #10090 the preview graph cache: the committed row's resolver
             # inputs, so its preview is composed without reading it back.
             table.c.current_probability,
             table.c.is_winner,
@@ -5062,7 +5062,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         (`flush_props`), so a prop's withdrawal follows its price in one loop.
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
-        # #10090 `preview_from_commit`: a withdrawal (or its source removal)
+        # #10090 the preview graph cache: a withdrawal (or its source removal)
         # changes rows outside the price write; committed or maybe so, no
         # cached read graph keeps them.
         from app.tasks.live_blend_refresh import forget_preview_outcomes
@@ -7410,7 +7410,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         updated_at=settled_at,
                     )
         finally:
-            # #10090 `preview_from_commit`: committed or not, no cached read
+            # #10090 the preview graph cache: committed or not, no cached read
             # graph keeps these legs' pre-resolution rows.
             from app.tasks.live_blend_refresh import forget_preview_outcomes
 
