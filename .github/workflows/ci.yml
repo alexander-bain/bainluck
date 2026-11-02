@@ -163,6 +163,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
         working-directory: .
         env:
           SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
@@ -172,6 +173,10 @@ jobs:
             echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
             exit 1
           fi
+
+      - name: Ordinary candidate uses the full CI gates
+        if: needs.change-scope.outputs.live != 'true'
+        run: echo "Full CI validates this candidate; no live-path gate is selected."
 
       - uses: actions/checkout@v6
         if: needs.change-scope.outputs.live == 'true'
@@ -227,6 +232,7 @@ jobs:
 
     steps:
       - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
         working-directory: .
         env:
           SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
@@ -363,6 +369,7 @@ jobs:
 
     steps:
       - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
         working-directory: .
         env:
           SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
@@ -8314,6 +8321,7 @@ jobs:
 
     steps:
       - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
         working-directory: .
         env:
           SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
@@ -8447,6 +8455,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Require this run's change-scope attempt
+        if: needs.change-scope.outputs.live == 'true'
         working-directory: .
         env:
           SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}

@@ -53,14 +53,18 @@ class ScopeAttempt(unittest.TestCase):
         def failure(path):raise RuntimeError('policy API unavailable')
         with self.assertRaises(RuntimeError):m.verify_eligibility('pull_request',event,'abc',failure)
 
-    def test_retained_scope_fails_every_marker_and_deploy_barrier(self):
+    def test_only_retained_live_scope_fails_every_marker_and_deploy_barrier(self):
         jobs=yaml.safe_load((ROOT/'.github/workflows/ci.yml').read_text())['jobs']
         for name in ['fast-gate','backend-tests','e2e-contract','golden-baseline-floor','deploy']:
             guard=jobs[name]['steps'][0]
             self.assertEqual(guard['name'], "Require this run's change-scope attempt")
+            self.assertEqual(guard.get('if'), "needs.change-scope.outputs.live == 'true'")
             result=subprocess.run(['bash','-c',guard['run']],env={**os.environ,'SCOPE_ATTEMPT':'1','CURRENT_ATTEMPT':'2'},capture_output=True,text=True)
             self.assertEqual(result.returncode,1,name+' retained an old scope')
             self.assertIn('rerun ALL jobs',result.stdout)
+        full_marker = next(step for step in jobs['fast-gate']['steps']
+                           if step.get('name') == 'Ordinary candidate uses the full CI gates')
+        self.assertEqual(full_marker['if'], "needs.change-scope.outputs.live != 'true'")
         for name in ['fast-gate','deploy']:
             self.assertTrue(any(step.get('name')=='Recheck current fast eligibility' for step in jobs[name]['steps']))
 

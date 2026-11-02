@@ -40,6 +40,7 @@ COMPOSE_RECORD = (
     + " && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')"
 )
 GUARD = "Require this run's change-scope attempt"
+LIVE_ONLY = "needs.change-scope.outputs.live == 'true'"
 MARKER = "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'"
 
 
@@ -56,6 +57,8 @@ def _evaluate(cond: str | None, scope, reuse="", live=False) -> bool:
     value = "" if scope is None else scope
     if cond is None:
         return True
+    if cond.strip() == LIVE_ONLY:
+        return live
     if cond.strip() == RUNS:
         return value != "frontend" and reuse != "true" and not live
     if cond.strip() == REUSED:
@@ -136,7 +139,7 @@ def test_every_backend_tests_step_carries_one_of_the_two_scope_conditions():
     for step in steps:
         label = step.get("name") or step.get("uses")
         if label == GUARD:
-            assert step.get("if") is None and step.get("working-directory") == "."
+            assert step.get("if") == LIVE_ONLY and step.get("working-directory") == "."
             continue
         assert step.get("if") in (RUNS, MARKER, REUSED, COMPOSE_RECORD), (
             f"backend-tests step {label!r} has condition {step.get('if')!r}. Every step must "
@@ -163,9 +166,9 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
     ]
     real = [s.get("name") or s.get("uses") for s in steps if s.get("if") == RUNS]
     if scope == "frontend":
-        assert len(ran) == 2 and ran[0] == GUARD and ran[1].startswith("Frontend-only or live-path candidate"), ran
+        assert len(ran) == 1 and ran[0].startswith("Frontend-only or live-path candidate"), ran
     else:
-        assert ran == [GUARD, *real], (scope, ran)
+        assert ran == real, (scope, ran)
         assert any("Run tests" in r for r in ran)
 
 

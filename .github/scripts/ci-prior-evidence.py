@@ -393,6 +393,7 @@ def expected_steps(kind, value, count, block):
     executing = {
         None,
         reuse,
+        live,
         f"{scope} && {reuse}",
         f"{scope} && {reuse} && {live}",
         compose,
