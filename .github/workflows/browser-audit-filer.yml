@@ -42,12 +42,13 @@ concurrency:
   # Serialized per triggering run so a re-run cannot race itself. Deliberately
   # NOT cancel-in-progress: cancelling a filer mid-write is how a half-filed
   # issue happens.
-  group: browser-audit-filer-${{ github.event.workflow_run.id }}
+  group: browser-audit-weekly-summary
   cancel-in-progress: false
 
 jobs:
   file:
-    name: File verified findings
+    if: github.event.workflow_run.event == 'schedule' && github.event.workflow_run.head_branch == 'master'
+    name: Post one weekly summary
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

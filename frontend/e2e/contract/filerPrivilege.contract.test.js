@@ -68,16 +68,19 @@ describe("the browser rail keeps filing OUT of the browser job", () => {
     assert.match(filer, /cancel-in-progress:\s*false/);
   });
 
-  it("the consumer the filer runs exists and delegates every judgement", () => {
+  it("the consumer posts a weekly summary through a pure evidence grader", () => {
     const consumer = path.join(repoRoot, "frontend", "e2e", "scripts", "file-sweep-findings.js");
     assert.ok(filer.includes("scripts/file-sweep-findings.js"));
     assert.ok(fs.existsSync(consumer));
 
     const src = fs.readFileSync(consumer, "utf8");
-    assert.match(src, /require\("\.\.\/helpers\/sweepFiling"\)/, "decisions must come from the pure layer");
-    assert.match(src, /decide\(/);
-    // A missing manifest must refuse, never read as "all clear".
-    assert.match(src, /no manifest found/i);
+    assert.match(src, /require\('\.\.\/helpers\/weeklySummary'\)/);
+    assert.ok(!src.includes('Still failing on'), 'per-issue repeat comments are retired');
+    const helper = fs.readFileSync(path.join(repoRoot, 'frontend/e2e/helpers/weeklySummary.js'), 'utf8');
+    assert.match(helper, /decide\(/);
+    assert.match(helper, /no manifest found/i);
     assert.match(src, /dedup state unknown/i);
+    assert.match(filer, /group: browser-audit-weekly-summary/);
+
   });
 });
