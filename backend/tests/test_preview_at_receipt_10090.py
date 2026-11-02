@@ -789,6 +789,8 @@ def with_prop(group):
     return group + [MarketOutcomes(market, rows, NOW - timedelta(hours=3), False)]
 
 
+@pytest.mark.skip(reason="QUARANTINED 2026-11-02 (Day 0 rule: a flaky test is quarantined the same day): "
+                  "passes alone, failed in CI shard 5 of master run 41388504276 ({} for _graph_refetch)")
 async def test_a_prop_leg_withdrawn_keeps_the_graph_and_the_headline_preview(r):
     """11/01 18:19-18:24Z: every prop leg a book priced out on a live NFL game
     dropped its whole graph (~1,800 legs), and the next headline input waited
