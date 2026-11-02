@@ -250,6 +250,8 @@ def compose_division(
         return Refusal(d, "polymarket_not_open")
     if kalshi.mutually_exclusive is False or polymarket.mutually_exclusive is False:
         return Refusal(d, "not_single_winner")
+    if kalshi.mutually_exclusive is not True or polymarket.mutually_exclusive is not True:
+        return Refusal(d, "single_winner_unknown")
 
     k_expiry = _aware(kalshi.resolution_date)
     p_cutoff = _aware(polymarket.resolution_date)
@@ -270,6 +272,9 @@ def compose_division(
         return Refusal(d, "kalshi_outcomes_differ_from_register")
     if set(p_out) - {_POLYMARKET_FIELD_OUTCOME} != p_expected:
         return Refusal(d, "polymarket_outcomes_differ_from_register")
+    other = p_out.get(_POLYMARKET_FIELD_OUTCOME)
+    if other is not None and other.probability is not None and other.probability >= 0.01:
+        return Refusal(d, "polymarket_field_outcome_priced")
 
     clubs: list[ClubBlend] = []
     for c in pair.clubs:

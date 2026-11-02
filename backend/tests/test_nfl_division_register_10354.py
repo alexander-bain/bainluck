@@ -111,10 +111,13 @@ def test_other_is_never_mapped_to_a_club():
         (lambda m: row_for(m, "kalshi", "KXNFLNFCEAST-27").update(status="closed"), "kalshi_not_open"),
         (lambda m: row_for(m, "polymarket", "232617").update(status="resolved"), "polymarket_not_open"),
         (lambda m: row_for(m, "polymarket", "232617").update(mutually_exclusive=False), "not_single_winner"),
+        (lambda m: row_for(m, "polymarket", "232617").update(mutually_exclusive=None), "single_winner_unknown"),
         (lambda m: row_for(m, "kalshi", "KXNFLNFCEAST-27").update(resolution_date="2027-02-01T00:00:00+00:00"), "settles_after_polymarket_cutoff"),
         (lambda m: row_for(m, "polymarket", "232617").update(resolution_date=None), "settlement_undated"),
         (lambda m: row_for(m, "kalshi", "KXNFLNFCEAST-27")["outcomes"].append({"name": "Dallas Cowboys", "probability": 0.2}), "kalshi_outcomes_differ_from_register"),
+        (lambda m: row_for(m, "polymarket", "232617")["outcomes"].append({"name": "Dallas", "probability": 0.2}), "polymarket_outcomes_differ_from_register"),
         (lambda m: row_for(m, "polymarket", "232617")["outcomes"].pop(0), "polymarket_outcomes_differ_from_register"),
+        (lambda m: row_for(m, "polymarket", "232617")["outcomes"][-1].update(probability=0.01), "polymarket_field_outcome_priced"),
         (lambda m: row_for(m, "kalshi", "KXNFLNFCEAST-27")["outcomes"][0].update(probability=None), "unpriced:"),
         (lambda m: m.append(dict(row_for(m, "kalshi", "KXNFLNFCEAST-27"), market_id=99)), "kalshi_identity_ambiguous"),
     ],
@@ -126,6 +129,13 @@ def test_each_failure_refuses_that_division_by_name(mutate, reason):
     assert [r.division for r in refusals] == ["NFC East"]
     assert refusals[0].reason.startswith(reason)
     assert len(blends) == 7
+
+
+def test_polymarket_other_under_one_percent_still_blends():
+    markets = markets_copy()
+    row_for(markets, "polymarket", "232617")["outcomes"][-1].update(probability=0.005)
+    blends, refusals = compose_register(boards(markets))
+    assert refusals == [] and len(blends) == 8
 
 
 def test_venues_forty_points_apart_on_one_club_are_a_refusal_not_a_number():
