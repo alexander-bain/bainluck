@@ -264,31 +264,6 @@ def derive_market_concept_key(
     except Exception:
         pass
 
-    # 2b. Elections — the civic §6 sibling of awards: genuine general-election RACES
-    #     (governor / senate / house / chamber-control) up-link to their election-night
-    #     concept (`event:election:<edition>`). Restricted to `is_race` and ticker-stem-
-    #     gated: the classifier's primary/seat detectors match on NAME alone (a non-
-    #     election "…nominee -26" market could otherwise slip through), and a race ticker
-    #     is what guarantees the concept page includes this market -> the breadcrumb can
-    #     never point at a page that 404s. Novelties (turnout/margin), primaries, seat
-    #     forecasts and other editions correctly get no concept link (honest gap).
-    try:
-        from app.utils.event_election import (
-            classify_election_market,
-            derive_election_concept,
-            is_race,
-        )
-
-        eid_l = (external_id or "").lower()
-        if any(
-            stem in eid_l for stem in ("kxgov", "kxsenate", "kxhouse", "kxcongress")
-        ) and is_race(classify_election_market(external_id, name)):
-            el = derive_election_concept(external_id, name)
-            if el and el.get("key"):
-                return el["key"]
-    except Exception:
-        pass
-
     # 2c. Soccer tournaments — the World Cup trophy winner field up-links to its
     #     tournament concept (`event:soccer:<slug>`). Name-gated (is_wc_winner_field_market
     #     excludes boot/glove/group/novelty markets), so award/group markets fall through

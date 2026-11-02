@@ -11,11 +11,11 @@
  *     twitter:title  Bain Luck — Prediction Market Discovery      ← the home page
  *     canonical      …/tournaments/no-such-tournament-xyz          (correct, #5813)
  *
- *   /event/election/no-such-slug-xyz
+ *   /event/ufc/no-such-slug-xyz
  *     og:title             Event Odds | Bain Luck
  *     twitter:title        Bain Luck — Prediction Market Discovery ← the home page
  *     twitter:description  See what the world thinks will happen. Explore…
- *     canonical            …/event/election/no-such-slug-xyz       (correct, #5833)
+ *     canonical            …/event/ufc/no-such-slug-xyz            (correct, #5833)
  *
  * Both routes now use `unresolvedMetadata`, the builder #5840 shipped, which
  * states `twitter` rather than omitting it and splits a 404 from a transient
@@ -86,9 +86,9 @@ describe("the two new subjects keep the copy table honest", () => {
 describe("unresolvedPath encodes each segment separately", () => {
   it("a two-segment route keeps its separator", () => {
     // Encoding the pair joined would escape the slash BETWEEN them and collapse
-    // `/event/election/2026-midterms` into one segment.
-    expect(unresolvedPath("event", "election", "2026-midterms")).toBe(
-      "/event/election/2026-midterms"
+    // `/event/ufc/26sep15` into one segment.
+    expect(unresolvedPath("event", "ufc", "26sep15")).toBe(
+      "/event/ufc/26sep15"
     );
   });
 
@@ -156,7 +156,7 @@ describe("app/event/[domain]/[slug]/layout", () => {
   it("a dead slug no longer sends the home page's twitter tags", async () => {
     stubStatus(404);
     const meta = await conceptMetadata({
-      params: Promise.resolve({ domain: "election", slug: "no-such-slug-xyz" }),
+      params: Promise.resolve({ domain: "ufc", slug: "no-such-slug-xyz" }),
     });
 
     expect(asText(meta.twitter?.title)).not.toBe(HOME_TITLE);
@@ -165,8 +165,8 @@ describe("app/event/[domain]/[slug]/layout", () => {
     expect(meta.twitter?.images).toHaveLength(1);
 
     // #5833's half, unchanged — including the two-segment path.
-    expect(meta.alternates?.canonical).toBe("/event/election/no-such-slug-xyz");
-    expect(meta.openGraph?.url).toBe("/event/election/no-such-slug-xyz");
+    expect(meta.alternates?.canonical).toBe("/event/ufc/no-such-slug-xyz");
+    expect(meta.openGraph?.url).toBe("/event/ufc/no-such-slug-xyz");
     expect(meta.robots).toEqual({ index: false, follow: true });
   });
 
@@ -187,12 +187,12 @@ describe("app/event/[domain]/[slug]/layout", () => {
   it("a 500 is a bad minute, not a missing event", async () => {
     stubStatus(500);
     const meta = await conceptMetadata({
-      params: Promise.resolve({ domain: "election", slug: "2026-midterms" }),
+      params: Promise.resolve({ domain: "ufc", slug: "26sep15" }),
     });
 
     expect(asText(meta.title)).toBe("Event Odds");
     expect(meta.robots).toBeUndefined();
-    expect(meta.alternates?.canonical).toBe("/event/election/2026-midterms");
+    expect(meta.alternates?.canonical).toBe("/event/ufc/26sep15");
   });
 
   it("a live concept is untouched, and still canonicals to the PAYLOAD's slug", async () => {

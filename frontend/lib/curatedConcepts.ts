@@ -1,12 +1,9 @@
-// L2-96: frontend curated concept map — a small, deliberately-tiny table of
-// query phrases → event-concept suggestions, injected client-side into the
-// search typeahead. This exists because some event-concept hubs (the 2026
-// midterms is the first) have NO market whose NAME contains the phrase users
-// type — the backend derives concept suggestions from matching market names, so
-// typing "midterms" finds nothing even though `event:election:2026-midterms`
-// renders 375 races. The backend search ROUTE (a phrase detector mirroring the
-// golf-major one) is the durable fix and is owned by a separate lane; this
-// frontend table makes the hub discoverable now without touching that route.
+// L2-96 / #11878: frontend curated hub map — a small, deliberately-tiny table of
+// query phrases → hub/collection suggestions, injected client-side into the
+// search typeahead. This exists because curated collections (the 2026 midterms
+// collection is the first) have NO single market whose NAME contains the phrase
+// users type — typing "midterms" finds nothing unless we surface the collection
+// directly.
 //
 // Keep this list SHORT and high-confidence. Each alias is matched against the
 // normalized query; over-broad aliases would inject noise into every search.
@@ -14,17 +11,17 @@
 import type { TypeaheadSuggestion } from "@/lib/api";
 
 interface CuratedConcept {
-  /** Lowercased phrases that should surface this concept. */
+  /** Lowercased phrases that should surface this hub. */
   aliases: string[];
-  /** The event-concept key the suggestion routes to (`/event/[key]`). */
-  eventKey: string;
+  /** The route the suggestion navigates to. */
+  href: string;
   /** Display text in the dropdown. */
   text: string;
 }
 
 const CURATED_CONCEPTS: CuratedConcept[] = [
   {
-    eventKey: "event:election:2026-midterms",
+    href: "/collections/midterms-2026",
     text: "2026 Midterm Elections",
     aliases: [
       "midterm",
@@ -53,7 +50,7 @@ function normalize(q: string): string {
 }
 
 /**
- * Return synthetic `event_concept` typeahead suggestions for a raw query, or an
+ * Return synthetic `hub` typeahead suggestions for a raw query, or an
  * empty array. Matches when the query equals an alias, is a (>=4 char) prefix of
  * an alias (partial typing), or an alias (>=5 chars) appears inside the query.
  */
@@ -70,9 +67,9 @@ export function matchCuratedConcepts(query: string): TypeaheadSuggestion[] {
     );
     if (hit) {
       out.push({
-        type: "event_concept",
+        type: "hub",
         text: c.text,
-        event_key: c.eventKey,
+        href: c.href,
       });
     }
   }

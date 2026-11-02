@@ -319,7 +319,6 @@ def test_control_the_tennis_carrier_still_cannot_date_a_price():
 ADAPTER_MODULES = (
     "event_cycling",
     "event_f1",
-    "event_election",
     "event_awards",
     "event_soccer",
     "event_tennis",
@@ -327,10 +326,10 @@ ADAPTER_MODULES = (
     "event_concept",
 )
 
-#: Ten `primary` dicts across the eight modules — combat builds THREE: a card
+#: Nine `primary` dicts across the seven modules — combat builds THREE: a card
 #: with a priced main event, one with no futures market yet, and (#2602) one
 #: the venue lists that Kalshi does not.
-EXPECTED_ENVELOPE_SITES = 10
+EXPECTED_ENVELOPE_SITES = 9
 
 
 def _utils_dir() -> Path:
@@ -515,7 +514,6 @@ def test_guard_every_site_is_wired_to_the_helper_or_a_named_null():
     assert helper_modules == {
         "event_cycling",
         "event_f1",
-        "event_election",
         "event_awards",
         "event_soccer",
         "event_tennis",

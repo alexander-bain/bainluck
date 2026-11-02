@@ -17,6 +17,7 @@ import {
   awardsEventKey,
   awardsCeremonyName,
 } from "../../lib/eventKey";
+import { matchCuratedConcepts } from "../../lib/curatedConcepts";
 
 describe("cleanSlug", () => {
   test("mirrors backend clean_slug", () => {
@@ -181,9 +182,6 @@ describe("eventPath", () => {
     expect(eventPath("event:ufc:ufc-329-mcgregor-vs-holloway-2-26jul11")).toBe(
       "/event/ufc/ufc-329-mcgregor-vs-holloway-2-26jul11",
     );
-    expect(eventPath("event:election:2026-midterms")).toBe(
-      "/event/election/2026-midterms",
-    );
   });
   test("tolerates a 2-part or bare key", () => {
     expect(eventPath("ufc:26jul11")).toBe("/event/ufc/26jul11");
@@ -198,5 +196,17 @@ describe("parseEventKey", () => {
     expect(parseEventKey("event:ufc:26jul11")).toEqual({ domain: "ufc", slug: "26jul11" });
     expect(parseEventKey("ufc:26jul11")).toEqual({ domain: "ufc", slug: "26jul11" });
     expect(parseEventKey("the-open")).toEqual({ domain: "golf", slug: "the-open" });
+  });
+});
+
+describe("matchCuratedConcepts (#11878)", () => {
+  test("midterms aliases return a hub suggestion pointing to /collections/midterms-2026", () => {
+    expect(matchCuratedConcepts("midterms")).toEqual([
+      {
+        type: "hub",
+        text: "2026 Midterm Elections",
+        href: "/collections/midterms-2026",
+      },
+    ]);
   });
 });

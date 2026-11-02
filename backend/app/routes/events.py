@@ -13341,11 +13341,6 @@ async def search_events(
     # cards. One concept per event key, richest-first (deduped_futures is
     # volume-reranked).
     from app.utils.event_awards import derive_awards_concept as _derive_awards_concept
-    from app.utils.event_election import (
-        classify_election_market as _classify_election_market,
-        derive_election_concept as _derive_election_concept,
-        is_race as _is_election_race,
-    )
     from app.utils.event_cycling import derive_cycling_concept as _derive_cycling_concept
     from app.utils.event_soccer import derive_soccer_concept as _derive_soccer_concept
     from app.utils.event_tennis import is_winner_market as _is_winner_field
@@ -13376,42 +13371,6 @@ async def search_events(
                 "key": _aw["key"],
                 "name": _aw["name"],
                 "domain": "awards",
-                "market_id": _m.id,
-            })
-            if len(event_concepts) >= 5:
-                break
-            continue
-        # L2-95: elections are co-equal event concepts too (event:election:<slug>,
-        # bare → the matched edition, never dead — the adapter renders whenever a
-        # genuine race exists, and 375 midterm races are live). The deriver is
-        # category-agnostic (election markets carry llm_sport_category=politics) and
-        # returns None for novelties/other-edition (2028 pres) markets, so only a
-        # real race/primary/control surfaces the civic concept.
-        # #206 Item 1b: gate the deriver behind a US-election ticker stem + a real
-        # race (mirroring concept_links.py:194-197). Without it, a name-collision
-        # market — "France United Left Primary Winner" (French politics, matched by a
-        # bare "france" query) — classifies as `primary` and falsely surfaces the US
-        # "2026 Midterms" concept. The stem guard keeps only genuine US races/primaries.
-        _eid_l = (_m.external_id or "").lower()
-        _el = (
-            _derive_election_concept(_m.external_id, _m.name)
-            if any(
-                _stem in _eid_l
-                for _stem in ("kxgov", "kxsenate", "kxhouse", "kxcongress")
-            )
-            and _is_election_race(
-                _classify_election_market(_m.external_id, _m.name)
-            )
-            else None
-        )
-        if _el is not None:
-            if _el["key"] in _seen_concept_keys:
-                continue
-            _seen_concept_keys.add(_el["key"])
-            event_concepts.append({
-                "key": _el["key"],
-                "name": _el["name"],
-                "domain": "election",
                 "market_id": _m.id,
             })
             if len(event_concepts) >= 5:
@@ -15889,7 +15848,6 @@ async def typeahead_search(
     # ranked futures — tennis winner fields resolve to /event/[key] via the
     # adapter (exact clean_slug), so no dead links. First-class, above markets.
     from app.utils.event_awards import derive_awards_concept as _ta_derive_awards
-    from app.utils.event_election import derive_election_concept as _ta_derive_election
     from app.utils.event_soccer import derive_soccer_concept as _ta_derive_soccer
     from app.utils.event_tennis import is_winner_market as _ta_is_winner_field
     from app.utils.event_ufc import derive_ufc_concept as _ta_derive_ufc_concept
@@ -15911,20 +15869,6 @@ async def typeahead_search(
                 "text": _ta_aw["name"],
                 "event_key": _ta_aw["key"],
                 "sport_key": "awards",
-            })
-            continue
-        # L2-95: election concepts (event:election:<slug>) as first-class typeahead —
-        # the civic sibling of an awards ceremony (co-equal races).
-        _ta_el = _ta_derive_election(market.external_id, market.name)
-        if _ta_el is not None:
-            if _ta_el["key"] in _ta_seen_concept_keys:
-                continue
-            _ta_seen_concept_keys.add(_ta_el["key"])
-            event_concept_pool.append({
-                "type": "event_concept",
-                "text": _ta_el["name"],
-                "event_key": _ta_el["key"],
-                "sport_key": "election",
             })
             continue
         # #205: soccer tournaments (World Cup) — winner-field concept from a trophy market.

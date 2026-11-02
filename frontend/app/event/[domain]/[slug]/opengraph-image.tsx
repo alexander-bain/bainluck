@@ -75,13 +75,12 @@ async function fetchConcept(
  * envelope knows rather than more. That is #5603's fallback doing the work it
  * was written for, not a second rule.
  *
- * 🪤 THIS RETIRES THE MAP, SO TWO LIVE PILLS CHANGE BEYOND THE FILED DEFECT:
- * `/event/election/2026-midterms` (linked from `BottomNav` on every page of the
- * site) goes `Election` → `ELECTION`, and `/event/f1/2026-azerbaijan-grand-prix`
- * goes `Formula 1` → `F1`; both carry `sport_label: null` today, measured 04:41Z.
- * Deliberate, and the reason not to keep a prettifier beside the helper: those
- * two PAGES already print `ELECTION` and `F1` in their own chips, so the card
- * disagreed with its subject before this and agrees with it after.
+ * 🪤 THIS RETIRES THE MAP, SO LIVE PILLS CHANGE BEYOND THE FILED DEFECT:
+ * `/event/f1/2026-azerbaijan-grand-prix` goes `Formula 1` → `F1`; it carries
+ * `sport_label: null` today, measured 04:41Z. Deliberate, and the reason not to
+ * keep a prettifier beside the helper: that PAGE already prints `F1` in its own
+ * chip, so the card disagreed with its subject before this and agrees with it
+ * after.
  *
  * There is no wrapper and no branch: `concept?.event?.sport_label` is `undefined`
  * on exactly the failed fetch, which is the input the unevidenced arm answers.
@@ -91,9 +90,8 @@ async function fetchConcept(
  * #5888 — a pasted `/event/<domain>/<slug>` link unfurled with the home page's
  * picture.
  *
- * #5833 gave this route its words, including for the `/event/election/2026-midterms`
- * link that sits in `BottomNav` and `DesktopNav` on every page of the site. It
- * did not give it a card: measured with a crawler UA on 2026-09-13 10:13:53Z,
+ * #5833 gave this route its words. It did not give it a card: measured with a
+ * crawler UA on 2026-09-13 10:13:53Z,
  * this route, `/tournaments/us-open` and the home page all named one image, md5
  * `99618661539802337202ef69dc6595bc`.
  *

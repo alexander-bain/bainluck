@@ -290,7 +290,6 @@ def test_an_unreadable_probability_sorts_below_every_readable_one():
 EXPECTED_OUTCOME_ARGUMENTS = {
     "event_cycling": {"real_outcomes"},
     "event_awards": {"marquee_outcomes"},
-    "event_election": {"marquee_outcomes"},
     "event_f1": {"field_outcomes"},
     "event_soccer": {"ranked"},
     "event_combat": {"main_event.outcomes", "main_bout.outcomes"},

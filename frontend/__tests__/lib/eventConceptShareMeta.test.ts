@@ -42,19 +42,18 @@ const UFC_CARD: EventConceptShareSource = {
 };
 
 /**
- * `/event/election/2026-midterms` — the link `BottomNav` and `DesktopNav` carry
- * on every page of the site. 25 competitors, of which exactly two are priced.
+ * `/event/awards/oscars` — a category with multiple nominees, of which two are priced.
  */
-const MIDTERMS: EventConceptShareSource = {
+const AWARDS_DUEL: EventConceptShareSource = {
   event: {
-    name: "2026 Midterm Elections",
+    name: "The Oscars 2026",
     slug: null,
     status: "upcoming",
     venue: null,
     location: null,
   },
   primary: {
-    label: "California Governor",
+    label: "Best Actor",
     competitors: [
       { name: "Xavier Becerra", probability: 0.95, won: false },
       { name: "Steve Hilton", probability: 0.046, won: false },
@@ -115,14 +114,14 @@ describe("the fixtures are the payloads they claim to be", () => {
   // Without this, every rule below could be passing over a shape production
   // never serves, and the suite would stay green through a payload change.
   it("carries a colon in exactly one event name, which is what the separator turns on", () => {
-    const withColon = [UFC_CARD, MIDTERMS, US_OPEN, IRISH_OPEN].filter((s) =>
+    const withColon = [UFC_CARD, AWARDS_DUEL, US_OPEN, IRISH_OPEN].filter((s) =>
       (s.event?.name ?? "").includes(":")
     );
     expect(withColon).toEqual([UFC_CARD]);
   });
 
   it("carries a 0% tail on the two winner fields, so the drop is exercised", () => {
-    for (const source of [US_OPEN, IRISH_OPEN, MIDTERMS]) {
+    for (const source of [US_OPEN, IRISH_OPEN, AWARDS_DUEL]) {
       const zeros = (source.primary?.competitors ?? []).filter(
         (c) => c?.probability === 0
       );
@@ -135,7 +134,7 @@ describe("the fixtures are the payloads they claim to be", () => {
       (s.primary?.competitors ?? []).filter((c) => (c?.probability ?? 0) > 0)
         .length;
     expect(priced(IRISH_OPEN)).toBe(9);
-    expect([priced(UFC_CARD), priced(MIDTERMS), priced(US_OPEN)]).toEqual([
+    expect([priced(UFC_CARD), priced(AWARDS_DUEL), priced(US_OPEN)]).toEqual([
       2, 2, 2,
     ]);
   });
@@ -155,15 +154,15 @@ describe("a duel names both sides", () => {
     expect(title.split(":").length - 1).toBe(1);
   });
 
-  it("the midterms, with a colon because its name has none", () => {
-    expect(buildEventConceptShareCopy(MIDTERMS)).toEqual({
-      title: "2026 Midterm Elections: Xavier Becerra 95%, Steve Hilton 5%",
-      description: "California Governor. Xavier Becerra 95%, Steve Hilton 5%.",
+  it("the awards duel, with a colon because its name has none", () => {
+    expect(buildEventConceptShareCopy(AWARDS_DUEL)).toEqual({
+      title: "The Oscars 2026: Xavier Becerra 95%, Steve Hilton 5%",
+      description: "Best Actor. Xavier Becerra 95%, Steve Hilton 5%.",
     });
   });
 
   it("drops the 0% tail rather than printing '0%' three times", () => {
-    const { title } = buildEventConceptShareCopy(MIDTERMS);
+    const { title } = buildEventConceptShareCopy(AWARDS_DUEL);
     expect(title).not.toContain("0%,");
     expect(title).not.toContain("Tom Steyer");
   });
@@ -193,12 +192,12 @@ describe("a label that names only the role is not put in a sentence", () => {
 
   it("but a label that names a real contest IS used", () => {
     // The other direction, so the regex cannot quietly widen to swallow
-    // "Main event" or "California Governor".
+    // "Main event" or "Best Actor".
     expect(buildEventConceptShareCopy(UFC_CARD).description).toContain(
       "Main event"
     );
-    expect(buildEventConceptShareCopy(MIDTERMS).description).toContain(
-      "California Governor"
+    expect(buildEventConceptShareCopy(AWARDS_DUEL).description).toContain(
+      "Best Actor"
     );
   });
 });
@@ -428,7 +427,6 @@ const ADAPTER_LABELS: ReadonlyArray<readonly [string, string]> = [
   ["Race winner", "event_f1.py:358"],
   ["General Classification", "event_cycling.py:778"],
   ["Best Picture", "event_awards.py:545 clean_category_label()"],
-  ["California Governor", "event_election.py:473 clean_race_label()"],
 ];
 
 /** The OSCARS field, relabelled — the shape every adapter above produces. */
@@ -445,7 +443,7 @@ describe("the #6006 fixture reaches the branch the others miss", () => {
       (s.primary?.competitors ?? []).filter((c) => (c?.probability ?? 0) > 0)
         .length;
     expect(priced(OSCARS)).toBeGreaterThanOrEqual(3);
-    expect([priced(UFC_CARD), priced(MIDTERMS), priced(US_OPEN)]).toEqual([
+    expect([priced(UFC_CARD), priced(AWARDS_DUEL), priced(US_OPEN)]).toEqual([
       2, 2, 2,
     ]);
   });
@@ -493,7 +491,7 @@ describe("a field's label is a prefix, for every label an adapter mints", () => 
       IRISH_OPEN,
       US_OPEN,
       UFC_CARD,
-      MIDTERMS,
+      AWARDS_DUEL,
     ];
     for (const source of every) {
       expect(buildEventConceptShareCopy(source).description).not.toContain(

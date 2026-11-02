@@ -130,21 +130,20 @@ class TestConceptKey:
     def test_non_concept_category(self):
         assert derive_market_concept_key(None, "Fed Rate Decision", "economics", 3) is None
 
-    # L2-93 (B6): elections — the civic §6 sibling up-link. Genuine general-election
-    # races breadcrumb to the election-night concept; novelties/primaries/other editions
-    # do not (mirrors the awards up-link + the ElectionEventAdapter's own classification).
-    def test_election_governor_race_to_concept(self):
+    # #11878: the 2026 Midterms event concept was removed (the collection is the
+    # only midterms front door), so election markets no longer link to a concept.
+    def test_election_governor_race_gets_no_concept(self):
         assert (
             derive_market_concept_key("KXGOVCA-26", "California Governor winner?", "politics", 25)
-            == "event:election:2026-midterms"
+            is None
         )
 
-    def test_election_governor_party_race_to_concept(self):
+    def test_election_governor_party_race_gets_no_concept(self):
         assert (
             derive_market_concept_key(
                 "KXGOVPARTYAK-26", "Alaska Governor winner? (Party)", "politics", 2
             )
-            == "event:election:2026-midterms"
+            is None
         )
 
     def test_election_margin_of_victory_gets_no_concept(self):

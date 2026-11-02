@@ -1390,7 +1390,6 @@
     "tests/test_event_detail_kalshi_occurrence_5905.py": 1.273,
     "tests/test_event_detail_period_scores_9067.py": 0.188,
     "tests/test_event_detail_uncoalesced_10571.py": 0.27,
-    "tests/test_event_election.py": 0.058,
     "tests/test_event_f1.py": 0.068,
     "tests/test_event_frame_batching_10659.py": 0.085,
     "tests/test_event_history_aggregation_is_linear_6546.py": 13.915,
