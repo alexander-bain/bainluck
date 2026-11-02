@@ -28,7 +28,7 @@ def packet(number,suffix,path,title,tier_b):
     branch='loop/'+suffix
     actual=run(['git','-C',path,'branch','--show-current'])
     if actual!=branch or actual=='master':raise ValueError('PR path is on an unexpected branch')
-    if run(['git','-C',path,'status','--porcelain']):raise ValueError('commit the review work before publishing')
+    if run(['git','-C',path,'status','--porcelain']):raise ValueError('commit the review work before publishing: '+path)
     raw=(Path(path)/f'docs/release-loop/pr-{number:02d}.md').read_text()
     paragraphs=[part.strip() for part in raw.split('\n\n') if part.strip() and not part.lstrip().startswith(('#','Labels:'))]
     if len(paragraphs)!=1:raise ValueError('PR description must be one plain-English paragraph')
