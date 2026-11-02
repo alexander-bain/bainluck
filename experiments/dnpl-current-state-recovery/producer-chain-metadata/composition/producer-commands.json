@@ -1,0 +1,334 @@
+[
+  {
+    "at_ms": 1792540800000,
+    "kind": "preview",
+    "args": [
+      "offer",
+      1,
+      "blend",
+      1,
+      10,
+      "pending:1",
+      1792540859999,
+      1792540800000,
+      60000,
+      "live",
+      "{\"display_observed_at\":\"2026-10-21T00:00:00+00:00\",\"event_id\":1,\"observed_at\":\"2026-10-21T00:00:00+00:00\",\"p\":0.73,\"preview\":{\"base_rev\":10,\"epoch\":1,\"kind\":\"blend\",\"lease_id\":\"pending:1\",\"lease_issued_at_ms\":1792540800000,\"original_expires_at_ms\":1792540859999,\"pending\":{\"polymarket\":0.73},\"pending_entries\":{\"polymarket\":{\"eligibility\":{\"market_id\":10,\"rule\":\"live_blend.admissible_as_blend_speaker@5031\",\"scope\":\"full_event_winner\",\"source_market_id\":\"fixture-pm-boston-golden-state\",\"status\":\"verified\",\"v\":1},\"observed_basis\":{\"101\":1792540800.0},\"observed_value\":0.73,\"updated_at\":\"2026-10-21T00:00:00+00:00\",\"value\":0.73}},\"pending_entries_version\":1,\"seq\":1,\"ttl_ms\":60000},\"provisional\":true,\"source\":\"polymarket\",\"source_value\":0.73,\"status\":\"live\"}"
+    ],
+    "frame": {
+      "event_id": 1,
+      "p": 0.73,
+      "status": "live",
+      "source": "polymarket",
+      "source_value": 0.73,
+      "observed_at": "2026-10-21T00:00:00+00:00",
+      "display_observed_at": "2026-10-21T00:00:00+00:00",
+      "provisional": true,
+      "preview": {
+        "kind": "blend",
+        "epoch": 1,
+        "seq": 1,
+        "base_rev": 10,
+        "ttl_ms": 60000,
+        "lease_id": "pending:1",
+        "original_expires_at_ms": 1792540859999,
+        "lease_issued_at_ms": 1792540800000,
+        "pending": {
+          "polymarket": 0.73
+        },
+        "pending_entries_version": 1,
+        "pending_entries": {
+          "polymarket": {
+            "value": 0.73,
+            "updated_at": "2026-10-21T00:00:00+00:00",
+            "observed_basis": {
+              "101": 1792540800.0
+            },
+            "observed_value": 0.73,
+            "eligibility": {
+              "v": 1,
+              "status": "verified",
+              "scope": "full_event_winner",
+              "rule": "live_blend.admissible_as_blend_speaker@5031",
+              "market_id": 10,
+              "source_market_id": "fixture-pm-boston-golden-state"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "at_ms": 1792540802000,
+    "kind": "preview",
+    "args": [
+      "offer",
+      1,
+      "blend",
+      2,
+      10,
+      "pending:1",
+      1792540859999,
+      1792540802000,
+      58000,
+      "live",
+      "{\"display_observed_at\":\"2026-10-21T00:00:00+00:00\",\"event_id\":1,\"observed_at\":\"2026-10-21T00:00:02+00:00\",\"p\":0.73,\"preview\":{\"base_rev\":10,\"epoch\":1,\"kind\":\"blend\",\"lease_id\":\"pending:1\",\"lease_issued_at_ms\":1792540802000,\"original_expires_at_ms\":1792540859999,\"pending\":{\"polymarket\":0.73},\"pending_entries\":{\"polymarket\":{\"eligibility\":{\"market_id\":10,\"rule\":\"live_blend.admissible_as_blend_speaker@5031\",\"scope\":\"full_event_winner\",\"source_market_id\":\"fixture-pm-boston-golden-state\",\"status\":\"verified\",\"v\":1},\"observed_basis\":{\"101\":1792540800.0},\"observed_value\":0.73,\"updated_at\":\"2026-10-21T00:00:02+00:00\",\"value\":0.73}},\"pending_entries_version\":1,\"seq\":2,\"ttl_ms\":58000},\"provisional\":true,\"source\":\"polymarket\",\"source_value\":0.73,\"status\":\"live\"}"
+    ],
+    "frame": {
+      "event_id": 1,
+      "p": 0.73,
+      "status": "live",
+      "source": "polymarket",
+      "source_value": 0.73,
+      "observed_at": "2026-10-21T00:00:02+00:00",
+      "display_observed_at": "2026-10-21T00:00:00+00:00",
+      "provisional": true,
+      "preview": {
+        "kind": "blend",
+        "epoch": 1,
+        "seq": 2,
+        "base_rev": 10,
+        "ttl_ms": 58000,
+        "lease_id": "pending:1",
+        "original_expires_at_ms": 1792540859999,
+        "lease_issued_at_ms": 1792540802000,
+        "pending": {
+          "polymarket": 0.73
+        },
+        "pending_entries_version": 1,
+        "pending_entries": {
+          "polymarket": {
+            "value": 0.73,
+            "updated_at": "2026-10-21T00:00:02+00:00",
+            "observed_basis": {
+              "101": 1792540800.0
+            },
+            "observed_value": 0.73,
+            "eligibility": {
+              "v": 1,
+              "status": "verified",
+              "scope": "full_event_winner",
+              "rule": "live_blend.admissible_as_blend_speaker@5031",
+              "market_id": 10,
+              "source_market_id": "fixture-pm-boston-golden-state"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "at_ms": 1792540804000,
+    "kind": "preview",
+    "args": [
+      "offer",
+      1,
+      "blend",
+      3,
+      10,
+      "pending:1",
+      1792540859999,
+      1792540804000,
+      56000,
+      "live",
+      "{\"display_observed_at\":\"2026-10-21T00:00:00+00:00\",\"event_id\":1,\"observed_at\":\"2026-10-21T00:00:04+00:00\",\"p\":0.73,\"preview\":{\"base_rev\":10,\"epoch\":1,\"kind\":\"blend\",\"lease_id\":\"pending:1\",\"lease_issued_at_ms\":1792540804000,\"original_expires_at_ms\":1792540859999,\"pending\":{\"polymarket\":0.73},\"pending_entries\":{\"polymarket\":{\"eligibility\":{\"market_id\":10,\"rule\":\"live_blend.admissible_as_blend_speaker@5031\",\"scope\":\"full_event_winner\",\"source_market_id\":\"fixture-pm-boston-golden-state\",\"status\":\"verified\",\"v\":1},\"observed_basis\":{\"101\":1792540800.0},\"observed_value\":0.73,\"updated_at\":\"2026-10-21T00:00:04+00:00\",\"value\":0.73}},\"pending_entries_version\":1,\"seq\":3,\"ttl_ms\":56000},\"provisional\":true,\"source\":\"polymarket\",\"source_value\":0.73,\"status\":\"live\"}"
+    ],
+    "frame": {
+      "event_id": 1,
+      "p": 0.73,
+      "status": "live",
+      "source": "polymarket",
+      "source_value": 0.73,
+      "observed_at": "2026-10-21T00:00:04+00:00",
+      "display_observed_at": "2026-10-21T00:00:00+00:00",
+      "provisional": true,
+      "preview": {
+        "kind": "blend",
+        "epoch": 1,
+        "seq": 3,
+        "base_rev": 10,
+        "ttl_ms": 56000,
+        "lease_id": "pending:1",
+        "original_expires_at_ms": 1792540859999,
+        "lease_issued_at_ms": 1792540804000,
+        "pending": {
+          "polymarket": 0.73
+        },
+        "pending_entries_version": 1,
+        "pending_entries": {
+          "polymarket": {
+            "value": 0.73,
+            "updated_at": "2026-10-21T00:00:04+00:00",
+            "observed_basis": {
+              "101": 1792540800.0
+            },
+            "observed_value": 0.73,
+            "eligibility": {
+              "v": 1,
+              "status": "verified",
+              "scope": "full_event_winner",
+              "rule": "live_blend.admissible_as_blend_speaker@5031",
+              "market_id": 10,
+              "source_market_id": "fixture-pm-boston-golden-state"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "at_ms": 1792540806000,
+    "kind": "preview",
+    "args": [
+      "offer",
+      1,
+      "blend",
+      4,
+      10,
+      "pending:1",
+      1792540859999,
+      1792540806000,
+      54000,
+      "live",
+      "{\"display_observed_at\":\"2026-10-21T00:00:00+00:00\",\"event_id\":1,\"observed_at\":\"2026-10-21T00:00:06+00:00\",\"p\":0.73,\"preview\":{\"base_rev\":10,\"epoch\":1,\"kind\":\"blend\",\"lease_id\":\"pending:1\",\"lease_issued_at_ms\":1792540806000,\"original_expires_at_ms\":1792540859999,\"pending\":{\"polymarket\":0.73},\"pending_entries\":{\"polymarket\":{\"eligibility\":{\"market_id\":10,\"rule\":\"live_blend.admissible_as_blend_speaker@5031\",\"scope\":\"full_event_winner\",\"source_market_id\":\"fixture-pm-boston-golden-state\",\"status\":\"verified\",\"v\":1},\"observed_basis\":{\"101\":1792540800.0},\"observed_value\":0.73,\"updated_at\":\"2026-10-21T00:00:06+00:00\",\"value\":0.73}},\"pending_entries_version\":1,\"seq\":4,\"ttl_ms\":54000},\"provisional\":true,\"source\":\"polymarket\",\"source_value\":0.73,\"status\":\"live\"}"
+    ],
+    "frame": {
+      "event_id": 1,
+      "p": 0.73,
+      "status": "live",
+      "source": "polymarket",
+      "source_value": 0.73,
+      "observed_at": "2026-10-21T00:00:06+00:00",
+      "display_observed_at": "2026-10-21T00:00:00+00:00",
+      "provisional": true,
+      "preview": {
+        "kind": "blend",
+        "epoch": 1,
+        "seq": 4,
+        "base_rev": 10,
+        "ttl_ms": 54000,
+        "lease_id": "pending:1",
+        "original_expires_at_ms": 1792540859999,
+        "lease_issued_at_ms": 1792540806000,
+        "pending": {
+          "polymarket": 0.73
+        },
+        "pending_entries_version": 1,
+        "pending_entries": {
+          "polymarket": {
+            "value": 0.73,
+            "updated_at": "2026-10-21T00:00:06+00:00",
+            "observed_basis": {
+              "101": 1792540800.0
+            },
+            "observed_value": 0.73,
+            "eligibility": {
+              "v": 1,
+              "status": "verified",
+              "scope": "full_event_winner",
+              "rule": "live_blend.admissible_as_blend_speaker@5031",
+              "market_id": 10,
+              "source_market_id": "fixture-pm-boston-golden-state"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "at_ms": 1792540808000,
+    "kind": "preview",
+    "args": [
+      "offer",
+      1,
+      "blend",
+      5,
+      10,
+      "pending:1",
+      1792540859999,
+      1792540808000,
+      52000,
+      "live",
+      "{\"display_observed_at\":\"2026-10-21T00:00:00+00:00\",\"event_id\":1,\"observed_at\":\"2026-10-21T00:00:08+00:00\",\"p\":0.73,\"preview\":{\"base_rev\":10,\"epoch\":1,\"kind\":\"blend\",\"lease_id\":\"pending:1\",\"lease_issued_at_ms\":1792540808000,\"original_expires_at_ms\":1792540859999,\"pending\":{\"polymarket\":0.73},\"pending_entries\":{\"polymarket\":{\"eligibility\":{\"market_id\":10,\"rule\":\"live_blend.admissible_as_blend_speaker@5031\",\"scope\":\"full_event_winner\",\"source_market_id\":\"fixture-pm-boston-golden-state\",\"status\":\"verified\",\"v\":1},\"observed_basis\":{\"101\":1792540800.0},\"observed_value\":0.73,\"updated_at\":\"2026-10-21T00:00:08+00:00\",\"value\":0.73}},\"pending_entries_version\":1,\"seq\":5,\"ttl_ms\":52000},\"provisional\":true,\"source\":\"polymarket\",\"source_value\":0.73,\"status\":\"live\"}"
+    ],
+    "frame": {
+      "event_id": 1,
+      "p": 0.73,
+      "status": "live",
+      "source": "polymarket",
+      "source_value": 0.73,
+      "observed_at": "2026-10-21T00:00:08+00:00",
+      "display_observed_at": "2026-10-21T00:00:00+00:00",
+      "provisional": true,
+      "preview": {
+        "kind": "blend",
+        "epoch": 1,
+        "seq": 5,
+        "base_rev": 10,
+        "ttl_ms": 52000,
+        "lease_id": "pending:1",
+        "original_expires_at_ms": 1792540859999,
+        "lease_issued_at_ms": 1792540808000,
+        "pending": {
+          "polymarket": 0.73
+        },
+        "pending_entries_version": 1,
+        "pending_entries": {
+          "polymarket": {
+            "value": 0.73,
+            "updated_at": "2026-10-21T00:00:08+00:00",
+            "observed_basis": {
+              "101": 1792540800.0
+            },
+            "observed_value": 0.73,
+            "eligibility": {
+              "v": 1,
+              "status": "verified",
+              "scope": "full_event_winner",
+              "rule": "live_blend.admissible_as_blend_speaker@5031",
+              "market_id": 10,
+              "source_market_id": "fixture-pm-boston-golden-state"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "at_ms": 1792540808000,
+    "kind": "committed",
+    "args": [
+      "committed",
+      11,
+      "{\"event_id\":1,\"p\":0.73,\"rev\":{\"1\":11},\"source\":\"polymarket\",\"source_snapshot\":{\"event_id\":1,\"rev\":{\"1\":11},\"win_probability_sources\":{\"polymarket\":{\"color\":\"#3b82f6\",\"display_name\":\"Polymarket\",\"evidence_status\":\"unverified\",\"price_evidence\":\"not_evaluated\",\"type\":\"market\",\"updated_at\":\"2026-10-21T00:00:08+00:00\",\"value\":0.73}}},\"source_value\":0.73,\"status\":\"live\",\"updated_at\":\"2026-10-21T00:00:08+00:00\"}"
+    ],
+    "frame": {
+      "event_id": 1,
+      "p": 0.73,
+      "source": "polymarket",
+      "source_value": 0.73,
+      "updated_at": "2026-10-21T00:00:08+00:00",
+      "status": "live",
+      "rev": {
+        "1": 11
+      },
+      "source_snapshot": {
+        "event_id": 1,
+        "rev": {
+          "1": 11
+        },
+        "win_probability_sources": {
+          "polymarket": {
+            "value": 0.73,
+            "display_name": "Polymarket",
+            "type": "market",
+            "color": "#3b82f6",
+            "updated_at": "2026-10-21T00:00:08+00:00",
+            "evidence_status": "unverified",
+            "price_evidence": "not_evaluated"
+          }
+        }
+      }
+    }
+  }
+]

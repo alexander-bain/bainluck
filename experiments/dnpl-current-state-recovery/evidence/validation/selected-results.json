@@ -1,0 +1,48 @@
+{
+  "base": "b2b92fe86467d0accdb02f7b765ada020b594aec",
+  "run_date_utc": "2026-10-21",
+  "focused_exit_code": 0,
+  "groups": {
+    "selected_client": 81,
+    "independent_mounted_client": 17,
+    "snapshot_model": 8,
+    "numeric_lua51": 38,
+    "authority_model": 43,
+    "race_model": 39,
+    "adapter": 15,
+    "independent_numeric": 14,
+    "redis_py_encoder_no_network": 4,
+    "actual_source_producer_alias": 27,
+    "producer_command_model": 7,
+    "independent_source_seam": 12
+  },
+  "paired_negative_control_scenarios": 2,
+  "scoped_tsc_including_pending_hero_exit_code": 0,
+  "backend_startup": {
+    "passed": 4,
+    "exit_code": 0
+  },
+  "frontend_build": {
+    "exit_code": 0,
+    "next_telemetry_disabled": true,
+    "sentry_auth_token_supplied": false,
+    "scope": "unchanged app; isolated prototypes not wired"
+  },
+  "frontend_typecheck": {
+    "exit_code": 0,
+    "existing_errors": 66,
+    "baseline": 66,
+    "new_errors": 0
+  },
+  "not_run": [
+    "real Redis command tests",
+    "new browser benchmark",
+    "composed end-to-end implementation",
+    "full current production test suite"
+  ],
+  "real_redis_selector_only": {
+    "passed": 3,
+    "socket_or_process_operations": 0,
+    "real_engine_methods_unexecuted": 23
+  }
+}

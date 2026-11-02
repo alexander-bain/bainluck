@@ -1,0 +1,21 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.7.0 -- /workspace/shared/preview-state-recovery-20261021/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /workspace/shared/preview-state-recovery-20261021/publication-source/backend
+configfile: pytest.ini
+plugins: platformdirs-4.13.5, anyio-4.15.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+tests/test_startup.py::test_app_imports PASSED                           [ 25%]
+tests/test_startup.py::test_all_route_modules_import PASSED              [ 50%]
+tests/test_startup.py::test_key_task_modules_import PASSED               [ 75%]
+tests/test_startup.py::test_key_util_modules_import PASSED               [100%]
+
+=============================== warnings summary ===============================
+tests/test_startup.py::test_app_imports
+  /workspace/shared/preview-state-recovery-20261021/publication-source/backend/app/routes/auth.py:121: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========================= 4 passed, 1 warning in 7.19s =========================

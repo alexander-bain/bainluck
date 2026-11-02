@@ -1,0 +1,14 @@
+{
+  "producer-chain-metadata/reference/backend/app/utils/blend_preview.py": "a02404b14b6aba5df63da81add1bebe422c776ec956eeee12d454068bcf28281",
+  "producer-chain-metadata/reference/backend/app/tasks/live_blend_refresh.py": "1939e56e07a36e3d0071df88e4d2a1ba310b5e975ffcf667613b9e5e9141a22b",
+  "producer-chain-metadata/candidate/backend/app/utils/blend_preview.py": "30b899f2a72f0cfa993842fa3b5c38d354a6dc03c6f44ada7ad483469e107fdf",
+  "producer-chain-metadata/current_source.py": "e17e3bbf4e7577af343b4b95ba259cd3c15127069394400d12c796ec4da42116",
+  "producer-chain-metadata/producer_driver.py": "6ee49f5623ba7988ab2b677f63ba6a5a7f1e021c0585c34f5840492cbeb8eb6b",
+  "producer-chain-metadata/retention_input.py": "1532e940d28f72a8fca5b55306d4dabdc8cb67058d20d57cbe8e9869c65ee5e1",
+  "producer-chain-metadata/composition/adapter.py": "28048285a63c374b29c99a93862e7d73ec08b5b81f2486fc5183b4b128767427",
+  "producer-chain-metadata/composition/authority.lua": "5b762702f38792028eb13887b9684711e4026839b9a4c6ae808971b538e3a4ca",
+  "producer-chain-metadata/composition/fake_redis.lua": "f0bf9a8966585fec9168afbc6b911e1611670c2d23c8f6fc651f3da237115969",
+  "producer-chain-metadata/composition/producer-commands.lua": "b546a2cd9512909f150498c9db708c2fbf07a9b38e185e81f800ff55d75f7914",
+  "producer-chain-metadata/tests/test_composition.lua": "10e1c662b17017b8a296c1c1551a54b79365c7cf1ed44eefa54bde34ae544678",
+  "review/producer-chain/test_integration.py": "3a7cbefba00a022b59181ff8ea17d59126a4cf3ebd70517c43e3afd0321e253b"
+}
