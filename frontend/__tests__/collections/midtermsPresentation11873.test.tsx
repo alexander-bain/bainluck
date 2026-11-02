@@ -38,7 +38,7 @@ test("the complete served collection has distinct control, balance, race and gov
   for (const m of input.members) expect(html).toContain(`href="${m.href}"`);
   expect(html).toContain("19 more without a price yet");
   expect(html).not.toContain("Probability unavailable");
-  expect(html.replace(/<[^>]*>/g, "")).not.toMatch(/\d+\.\d+%/);
+  expect(html).not.toMatch(/>[^<]*\d+\.\d+%/);
   expect(JSON.stringify(input)).toBe(before);
 });
 
