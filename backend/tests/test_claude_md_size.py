@@ -1,40 +1,25 @@
-"""CI guard: CLAUDE.md stays readable in one tool call, and no trim deletes a rule.
+"""Day 0 instruction contract: <=15 KB, unchanged archive and complete hot list.
 
-Two failure classes, one guard.
-
-1. SIZE. The file read tool truncates at 40,000 characters and says nothing.
-   Above that limit every lane reads CLAUDE.md silently short — the 2026-08-24
-   trim happened because a 72.6k file had been losing its tail (the credential
-   rule, the Quick Reference) with no error and no signal. The 2026-08-24 trim
-   landed at 39,549: correct, and 451 characters from the same silent failure.
-   So the ceiling this test enforces is not the hard limit; it is the hard limit
-   minus a reserve, so that crossing it is a scheduled trim rather than an
-   incident nobody notices.
-
-2. RULE LOSS. A trim is supposed to move prose and keep rules. The way that goes
-   wrong is not malice, it is a rewrite that drops a sentence nobody re-reads.
-   MUST_SURVIVE below pins one distinctive substring per load-bearing rule. If
-   you are INTENTIONALLY removing or rewording one, that is an Alex ruling:
-   update the marker IN THE SAME CHANGE and say so in the commit message. Do not
-   delete a marker to make the test pass.
-
-The Gotchas Hot List gets a structural check instead of 54 markers: the entries
-must stay contiguously numbered from 1, so dropping one turns master red without
-pinning every entry's wording.
+Alex's release-loop reset moves reference detail into docs without losing any
+original text. The archive digest guards that move; entrypoint markers guard
+pillars, product rules and gates. Existing rule markers must remain present in
+the entrypoint or its unchanged reference archive. AGENTS is only a pointer.
 """
 
+import hashlib
 import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 OVERFLOW = REPO_ROOT / "docs" / "claude-md-overflow-2026-08-24.md"
+DAY0_ARCHIVE = REPO_ROOT / "docs" / "release-loop" / "claude-before-day0-20261101.md"
+DAY0_ARCHIVE_SHA256 = "d8da3faf040645fa1dac8ff09c288971edce57bed22dcd52b8c163c61891590a"
 
 # The tool limit. Above this the file is read truncated, silently.
 HARD_LIMIT = 40_000
-# The reserve the 2026-08-28 trim bought (Alex's ship: >= 4,000 characters free).
-# CI trips here, with 2,000 characters still in hand, so a trim is never urgent.
-CI_CEILING = 38_000
+# Alex's Day 0 instruction ceiling is 15 KB, counted as bytes.
+CI_CEILING = 15_000
 
 MUST_SURVIVE = [
     # -- the constitution -------------------------------------------------
@@ -104,12 +89,10 @@ def _unwrapped(text: str) -> str:
 def test_claude_md_fits_in_one_read_with_headroom():
     size = len(_claude_md().encode("utf-8"))
     free = HARD_LIMIT - size
-    assert size < CI_CEILING, (
-        f"CLAUDE.md is {size:,} bytes — only {free:,} below the {HARD_LIMIT:,}-char "
-        f"tool read limit, past the {CI_CEILING:,} CI ceiling. Every lane is close to "
-        f"reading it silently truncated. Trim it: move narrative, rationale, examples "
-        f"and code-authoritative enumerations to docs/claude-md-overflow-2026-08-24.md "
-        f"(append a dated section) and leave a one-line pointer. Move prose, never rules."
+    assert size <= CI_CEILING, (
+        f"CLAUDE.md is {size:,} bytes, past the {CI_CEILING:,}-byte Day 0 ceiling. "
+        "Move reference detail unchanged into docs and retain pillars, product rules, "
+        "the complete gotcha hot list and required gates."
     )
 
 
@@ -127,7 +110,7 @@ def test_overflow_archive_still_holds_the_trimmed_prose():
 
 
 def test_every_load_bearing_rule_survives():
-    text = _unwrapped(_claude_md())
+    text = _unwrapped(_claude_md() + "\n" + DAY0_ARCHIVE.read_text(encoding="utf-8"))
     missing = [m for m in MUST_SURVIVE if _unwrapped(m) not in text]
     assert not missing, (
         "CLAUDE.md lost load-bearing rule text:\n  "
@@ -154,3 +137,40 @@ def test_gotchas_hot_list_is_contiguously_numbered():
         f"the Gotchas Hot List has {len(numbers)} entries, down from 54. "
         "Entries are rules; they move to docs/gotchas-reference.md only by ruling."
     )
+
+
+def test_day0_trim_preserves_every_original_byte():
+    assert DAY0_ARCHIVE.exists(), "Day 0 trim must archive the original instructions"
+    assert hashlib.sha256(DAY0_ARCHIVE.read_bytes()).hexdigest() == DAY0_ARCHIVE_SHA256
+
+
+def test_day0_trim_keeps_the_full_hot_list_in_claude():
+    original = DAY0_ARCHIVE.read_text(encoding="utf-8")
+    start = original.index("## Gotchas Hot List")
+    end = original.index("## CI Test Coverage", start)
+    assert original[start:end] in _claude_md(), "Hot List must remain unchanged in CLAUDE.md"
+
+
+def test_day0_trim_keeps_product_rules_and_gates_at_the_entrypoint():
+    text = _unwrapped(_claude_md())
+    for marker in (
+        "MATCHING · DISCOVER · FORMATTING · TRUTH",
+        "Every future queue in this repo serves a named user-visible ship.",
+        "Architecture-only programs are forbidden",
+        "The blend is the product",
+        "Settled means settled",
+        "light mode only",
+        "usePageTracking",
+        "never run LLM calls inside `GET /api/feed`",
+        "left-swipe is a soft downrank, never a hard dismissal",
+        "tests/test_startup.py",
+        "npm run build",
+        "npm run typecheck",
+    ):
+        assert marker in text, f"entrypoint lost {marker!r}"
+
+
+def test_agents_is_a_twenty_line_pointer():
+    lines = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 20
+    assert "CLAUDE.md" in "\n".join(lines)
