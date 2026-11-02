@@ -82,7 +82,7 @@ def test_only_team_game_series_qualify():
 @pytest.mark.parametrize("prob,books,refused", [
     (0.35, ((0.35, 0.36), None), True),     # at the bid of a tight book
     (0.36, ((0.35, 0.36), None), True),     # at the ask
-    (0.37, ((0.35, 0.36), None), True),     # through it: the book prices it
+    (0.37, ((0.35, 0.36), None), False),    # a sweep past the edge is a real move (#9913)
     (0.355, ((0.35, 0.36), None), False),   # strictly inside says more
     (0.35, (None, None), False),            # no book yet: the trade is all there is
     (0.35, (), False),

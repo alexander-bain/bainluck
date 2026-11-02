@@ -1380,14 +1380,15 @@ def trade_prints_outside_wide_book(prob: float, books: tuple) -> bool:
 
 
 def trade_is_bid_ask_bounce(prob: float, books: tuple) -> bool:
-    """True for a trade AT (or through) the edge of a tight live book.
+    """True for a trade exactly AT the edge of a tight live book.
 
     #10090 (Alex 11/01 3:57 PM PT, of the chart's regular spikes: "they happen
     with such regularity that I doubt they represent accuracy"). On a tight
     book the trades alternate between the bid and the ask while the book does
     not move, so pricing each trade swung the leg a tick and back all game.
-    The book's midpoint already prices a tight market; a trade only says more
-    when it prints strictly inside the book. ``books`` is ``(latest,
+    The book's midpoint already prices a tight market. A trade strictly inside
+    the book says more, and so does one that sweeps PAST its edge (#9913: "a
+    trade just past it is a real price move"). ``books`` is ``(latest,
     previous)`` as for `trade_prints_outside_wide_book`; with no tight latest
     book nothing is refused here.
     """
@@ -1397,7 +1398,7 @@ def trade_is_bid_ask_bounce(prob: float, books: tuple) -> bool:
     bid, ask = latest
     if bid is None or ask is None or _poly_book_is_untradeable(bid, ask):
         return False
-    return prob <= bid or prob >= ask
+    return prob == bid or prob == ask
 
 
 def with_complements(

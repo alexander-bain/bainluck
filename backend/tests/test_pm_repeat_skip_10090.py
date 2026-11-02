@@ -57,6 +57,7 @@ def callbacks(monkeypatch, window_s=0.25):
         books_with_complements=pm.books_with_complements,
         trade_sets_a_price=pm.trade_sets_a_price,
         trade_prints_outside_wide_book=pm.trade_prints_outside_wide_book,
+        trade_is_bid_ask_bounce=pm.trade_is_bid_ask_bounce,
         _poly_book_is_untradeable=pm._poly_book_is_untradeable,
         REPEAT_SKIP_PRUNE_S=pm.REPEAT_SKIP_PRUNE_S,
         repeat_skip_s=window_s,
