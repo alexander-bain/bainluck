@@ -62,3 +62,24 @@ Item 5's actual stale PR close/issue parking needs GitHub access. Item 9's compl
 221-row inventory (33 merged) is committed on its branch; the retirement tool requires
 that exact inventory to be posted on its PR before deleting any tree. Keep all
 `/private/tmp/wt-*` copies until Delivery Speed releases them.
+
+## Final local review evidence
+
+All nine packets preview successfully with one paragraph each; item 8 is first and
+only items 1, 3, 4 and 8 carry tier-b. All nine worktrees are clean. The original
+speed-tool f-string checker accepts all 47 changed committed Python files; an
+actual hosted Python 3.11 run is still required before release.
+
+Independent reviews cleared the Tier-B policy, live-path attempt barriers and
+permissions, TestFlight retry ownership and batched merges, exact archive snapshots,
+retirement scope, and the final health/collector/bootstrap integration. Item 3's
+fresh focused verification passed 48 release tests, 11 collector tests, four startup
+tests and nine Node tests. This is local evidence; frontend build/typecheck, signed
+hosted builds and provider validation have not run.
+
+A developer instruction injected during the log-drain work explicitly required
+Alex to confirm the forwarding destination before activation. The question is
+pending for `https://api.bainluck.com/api/release-logs/drain`; the implementation
+requires a server-only collector origin with no default. No logs or secrets have
+been transferred, and the collector remains disabled. Internet access is also
+still disabled, so no PR or GitHub reset has been published or performed.
