@@ -1577,13 +1577,6 @@ from app.utils.event_awards import AwardsEventAdapter  # noqa: E402
 
 register_adapter(AwardsEventAdapter())
 
-# Elections (co_equal_list) — L2-89 (B6): the framework's civic proof (design §6).
-# An election night's races are the co-equal children; the marquee race (chamber
-# control when it appears, else the richest governor race) is the head-to-head hero.
-from app.utils.event_election import ElectionEventAdapter  # noqa: E402
-
-register_adapter(ElectionEventAdapter())
-
 # Soccer tournaments (winner_field) — #205 (World Cup Emergency Assembly). The
 # trophy winner field is the primary block (national teams); the remaining bracket
 # GAMES (from the events table) are the duel children. First adapter to fuse the

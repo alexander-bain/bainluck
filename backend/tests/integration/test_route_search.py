@@ -24,7 +24,6 @@ from app.routes.events import (
     _team_search_vector,
     _wc_concept_dict,
 )
-from app.utils.event_election import classify_election_market, is_race
 
 # #11093: offline response contracts; retry/deadline tests remain unpatched.
 pytestmark = pytest.mark.usefixtures("offline_redis_no_retry_sleep")
@@ -200,38 +199,6 @@ class TestWorldCupConceptDict:
 
     def test_matches_query_detector_payload(self):
         assert _wc_concept_dict() == _detect_query_world_cup_concept("world cup")
-
-
-class TestElectionDeriverGuard:
-    """#206 Item 1b root cause: a bare "france" query matches "France United Left
-    Primary Winner" (French politics, non-Kalshi ticker), which classifies as
-    `primary` and, before the guard, falsely surfaced the US "2026 Midterms" concept.
-    The search loop now gates the deriver on a US-election ticker stem + a real race
-    (mirroring concept_links.py). This tests that exact predicate."""
-
-    _STEMS = ("kxgov", "kxsenate", "kxhouse", "kxcongress")
-
-    def _passes_guard(self, external_id, name):
-        eid_l = (external_id or "").lower()
-        return any(s in eid_l for s in self._STEMS) and is_race(
-            classify_election_market(external_id, name)
-        )
-
-    def test_france_primary_is_rejected(self):
-        # The exact production culprit (market 16626230): French-politics market with
-        # a bare-numeric Polymarket ticker → no US-election stem → guard rejects it.
-        assert self._passes_guard("438483", "France United Left Primary Winner") is False
-
-    @pytest.mark.parametrize(
-        "external_id,name",
-        [
-            ("KXSENATE-26-GA", "Georgia Senate Election Winner"),
-            ("KXGOV-26-CA", "California Governor Election Winner"),
-            ("KXHOUSE-26-TX01", "Texas 1st District House Winner"),
-        ],
-    )
-    def test_real_us_races_pass_guard(self, external_id, name):
-        assert self._passes_guard(external_id, name) is True
 
 
 # ============================================================================

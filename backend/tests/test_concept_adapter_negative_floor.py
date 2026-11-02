@@ -69,7 +69,7 @@ def test_the_registry_is_not_silently_empty():
     """Guard the guard: if the registry were empty the parametrised tests below
     would vacuously pass while asserting nothing about anything."""
     doms = _domains()
-    assert len(doms) >= 9, f"expected the full adapter set, got {doms}"
+    assert len(doms) >= 8, f"expected the full adapter set, got {doms}"
     assert "tennis" in doms and "golf" in doms
 
 

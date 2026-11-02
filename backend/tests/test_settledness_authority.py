@@ -148,7 +148,6 @@ _ADAPTER_MODULES = [
     "app.utils.event_cycling",
     "app.utils.event_tennis",
     "app.utils.event_awards",
-    "app.utils.event_election",
 ]
 
 
@@ -159,14 +158,14 @@ def test_the_adapter_CALLS_the_authority_rather_than_transcribing_it(modname):
     Cycling's guard transcribed the expression under test, so the only thing
     binding the source was an `inspect.getsource` assert — and a transcription
     test proves the logic is right while saying nothing about whether the code
-    uses it. Five adapters, one authority, asserted at the source.
+    uses it. Four adapters, one authority, asserted at the source.
     """
     import importlib
 
     src = inspect.getsource(importlib.import_module(modname))
     assert "settled_under_assigned_state(" in src, (
         f"{modname} no longer calls the settledness authority — if the policy was "
-        "re-inlined, the next change to it will only reach one of six adapters."
+        "re-inlined, the next change to it will only reach one of five adapters."
     )
 
 
@@ -180,7 +179,6 @@ _REQUIRED_ASSIGNED_TERM = {
     "app.utils.event_cycling": ['assigned_settled=event_status == "settled"'],
     "app.utils.event_tennis": ['event_status == "settled"', "market_assigned_settled(m, outs)"],
     "app.utils.event_awards": ["market_assigned_settled(m)"],
-    "app.utils.event_election": ["market_assigned_settled(m, outs)"],
 }
 
 
@@ -241,26 +239,15 @@ def test_awards_won_is_only_authoritative_and_never_a_price_crown():
     assert "ceremony_graded" not in src
 
 
-def test_election_does_not_pass_a_price_derived_term_as_assigned_state():
-    from app.utils import event_election
-
-    src = inspect.getsource(event_election)
-    call = src[src.index("settled = settled_under_assigned_state(") :][:400]
-    assert "market_assigned_settled(m" in call
-    assert "event_status" not in call
-    assert "_WON_PRICE_THRESHOLD" not in call
-
-
-# --- election is NOT atomic in time -----------------------------------------
+# --- non-atomic contests do NOT chain parent state ---------------------------
 
 
 def test_a_graded_parent_does_not_settle_an_ungraded_election_child():
-    """The asymmetry that makes election the narrowest of the six.
+    """The asymmetry that makes non-atomic children independent of parent state.
 
     A fight card, a tournament, a grand tour, a slam and a ceremony conclude as
-    ONE thing. Races do not — they are decided independently and runoffs run weeks
-    past election night. So a called marquee race must leave an undecided House
-    race rendering as live.
+    ONE thing. Independent contests do not — they are decided independently. So a
+    called marquee contest must leave an undecided sibling rendering as live.
     """
     undecided_child = _Market(status="open", outcomes=[_Outcome(False), _Outcome(False)])
     assert (
@@ -270,19 +257,6 @@ def test_a_graded_parent_does_not_settle_an_ungraded_election_child():
         )
         is False
     ), "a contested down-ballot race was settled by something other than itself"
-
-
-def test_election_source_passes_only_the_child_s_own_state():
-    """Belt and braces on the above: the call must not reference the parent."""
-    from app.utils import event_election
-
-    src = inspect.getsource(event_election)
-    call = src[src.index("settled = settled_under_assigned_state(") :][:400]
-    for parent_term in ("competitors", "ceremony_graded", "marquee"):
-        assert parent_term not in call, (
-            f"election passed the parent term `{parent_term}`; races are not atomic "
-            "in time and the parent cannot settle them."
-        )
 
 
 # --- tennis: the assigned term is trustworthy BECAUSE of the L2-88 demotion --

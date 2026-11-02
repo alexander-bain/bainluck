@@ -356,11 +356,10 @@ describe("a dynamic route does not unfurl as the home page", () => {
  * declared `images`, they named themselves as canonical, and they were off the
  * root-inheritor list. What they declared was the SITE's card.
  *
- * So a reader pasting three unrelated links got one picture. Measured with a
+ * So a reader pasting unrelated links got one picture. Measured with a
  * crawler UA on 2026-09-13 at 10:13:53Z:
  *
  *   /tournaments/us-open                              -> /opengraph-image
- *   /event/election/2026-midterms                     -> /opengraph-image
  *   /event/ufc/contender-series-hunt-vs-perea-26sep15 -> /opengraph-image
  *
  * all md5 `99618661539802337202ef69dc6595bc`, beside titles as specific as

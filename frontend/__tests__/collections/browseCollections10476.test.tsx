@@ -124,7 +124,7 @@ const CATEGORIES = [
   ["Tennis", "/hub/tennis"],
   ["Esports", "/hub/esports"],
   ["Politics", "/politics"],
-  ["2026 Midterms", "/event/election/2026-midterms"],
+  ["2026 Midterms", "/collections/midterms-2026"],
   ["Entertainment", "/entertainment"],
   ["Economics", "/economics"],
   ["Weather", "/weather"],

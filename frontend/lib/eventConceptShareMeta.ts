@@ -10,8 +10,7 @@
  *
  * `app/event/[domain]/[slug]/` held one `"use client"` `page.tsx` and no
  * layout, so the route rendered the ROOT metadata verbatim. Read with a crawler
- * UA at 2026-09-13 06:43:37Z, `/event/election/2026-midterms` — which
- * `BottomNav` and `DesktopNav` link from EVERY page of the site — and
+ * UA at 2026-09-13 06:43:37Z, a live `/event/<domain>/<slug>` page and
  * `/event/ufc/nonexistent-slug-xyz-99` were byte-identical:
  *
  *   <title>Bain Luck — Prediction Market Discovery</title>
@@ -631,19 +630,17 @@ export function buildEventConceptShareCopy(source: EventConceptShareSource): {
   // which is the one word a reader needs, and unfurlers truncate a title long
   // before a description.
   // The label is a PREFIX, never the object of "leads the ___" (#6006). Every
-  // label that reaches this line is minted by one of eight adapters, and the
+  // label that reaches this line is minted by one of the adapters, and the
   // article reads correctly for exactly one of them:
   //
   //   "Main event"             event_combat.py:1248,1352  ✓  reads correctly
   //   "Race winner"            event_f1.py:358            ✗  "leads the Race winner at"
   //   "General Classification" event_cycling.py:778       ✗
   //   clean_category_label()   event_awards.py:545        ✗  "leads the Best Picture at"
-  //   clean_race_label()       event_election.py:473      ✗  "leads the California Governor at"
   //
   // ("Winner" from golf, soccer and tennis never arrives — `contestLabel`
-  // drops it.) Four of the five refute the article, so there is no article
-  // rule to write: dropping "the" unconditionally breaks the three role
-  // labels, and a "Best …" prefix test misses "California Governor".
+  // drops it.) Three of the four refute the article, so there is no article
+  // rule to write: dropping "the" unconditionally breaks the role labels.
   //
   // The DUEL branch above already solved this — it carries the label as a
   // leading clause and has shipped that way since #5833 ("Main event. Zevan

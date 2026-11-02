@@ -4,13 +4,12 @@
  * ═══ WHAT WAS ON PRODUCTION BEFORE THIS ═══
  *
  * `/tournaments/[slug]` and `/event/[domain]/[slug]` got their WORDS right in
- * #5813 and #5833 — "US Open 2026: Alexander Zverev 57%, Elena Rybakina 99%",
- * "2026 Midterm Elections: Xavier Becerra 96%, Steve Hilton 4%" — and then sat
- * that specific sentence next to the site's house card. Measured with a crawler
- * UA on 2026-09-13 at 10:13:53Z, three unrelated links named ONE picture:
+ * #5813 and #5833 — "US Open 2026: Alexander Zverev 57%, Elena Rybakina 99%" —
+ * and then sat that specific sentence next to the site's house card. Measured
+ * with a crawler UA on 2026-09-13 at 10:13:53Z, two unrelated links named ONE
+ * picture:
  *
  *   /tournaments/us-open                              -> /opengraph-image
- *   /event/election/2026-midterms                     -> /opengraph-image
  *   /event/ufc/contender-series-hunt-vs-perea-26sep15 -> /opengraph-image
  *
  * `GET /opengraph-image` answered `200 image/png`, md5
@@ -63,7 +62,7 @@ export interface UnfurlCardRow {
 }
 
 export interface UnfurlCardProps {
-  /** The pill in the top right: "Tennis", "UFC", "Election". */
+  /** The pill in the top right: "Tennis", "UFC", "Awards". */
   eyebrow: string;
   /** The subject — the tournament or event's own name. */
   title: string;
@@ -116,7 +115,6 @@ const CATEGORY_ACCENT: Record<string, string> = {
   boxing: "#9a3412",
   economics: "#7c3aed",
   politics: "#4338ca",
-  election: "#4338ca",
   tech: "#0891b2",
   culture: "#db2777",
   weather: "#0284c7",

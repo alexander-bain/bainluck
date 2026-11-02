@@ -195,7 +195,7 @@ describe("the card presents what it is handed", () => {
   it("colours by the route's own segment, and falls back rather than throwing", () => {
     expect(accentFor("ufc")).toBe(accentFor("mma"));
     expect(accentFor("UFC")).toBe(accentFor("ufc"));
-    expect(accentFor("election")).toBe(accentFor("politics"));
+    expect(accentFor("awards")).toBe(accentFor("entertainment"));
     expect(accentFor(null)).toBe(DEFAULT_ACCENT);
     expect(accentFor("a-domain-we-have-never-seen")).toBe(DEFAULT_ACCENT);
   });
