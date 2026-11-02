@@ -162,35 +162,42 @@ async def test_curated_publish_refuses_non_market_members_or_nested_children(
     assert session.commits == 0
 
 
-#: Production 2026-11-02: Kalshi 108619 and Polymarket 112905 as the venues name them.
-KALSHI_BALANCE = ["Democrats sweep", "D-House, R-Senate", "Republicans sweep", "R-House, D-Senate"]
-POLYMARKET_BALANCE = ["Democrats Sweep", "R Senate, D House", "Republicans Sweep",
-                      "D Senate, R House", "Other"]
+#: Production 2026-11-02: Kalshi 108619 and Polymarket 112905 as the venues name and price them.
+KALSHI_BALANCE = {"Democrats sweep": 0.735, "D-House, R-Senate": 0.225, "Republicans sweep": 0.058,
+                  "R-House, D-Senate": 0.007}
+POLYMARKET_BALANCE = {"Democrats Sweep": 0.725, "R Senate, D House": 0.215, "Republicans Sweep": 0.045,
+                      "D Senate, R House": 0.0065, "Other": 0.0005}
 
 
 def _balance(hydration_cards, kalshi, polymarket):
-    hydration_cards[108619]["top_outcomes"] = [{"name": n, "probability": 0.2} for n in kalshi]
-    hydration_cards[112905]["top_outcomes"] = [{"name": n, "probability": 0.2} for n in polymarket]
+    hydration_cards[108619]["top_outcomes"] = [{"name": n, "probability": p} for n, p in kalshi.items()]
+    hydration_cards[112905]["top_outcomes"] = [{"name": n, "probability": p} for n, p in polymarket.items()]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("polymarket,accepted", [
-    (POLYMARKET_BALANCE, True),
+@pytest.mark.parametrize("kalshi,polymarket,refusal", [
+    # A 0.05% "Other" on one venue is dropped; the venues align.
+    (KALSHI_BALANCE, POLYMARKET_BALANCE, None),
     # A real misalignment still refuses: Polymarket missing a split.
-    ([n for n in POLYMARKET_BALANCE if n != "D Senate, R House"], False),
+    (KALSHI_BALANCE, {n: p for n, p in POLYMARKET_BALANCE.items() if n != "D Senate, R House"},
+     "cannot align"),
+    # A 1% "Other" would print as a number the card hides.
+    (KALSHI_BALANCE, {**POLYMARKET_BALANCE, "Other": 0.01}, "1% or more"),
+    # Both venues listing a residual is not one venue's leftover.
+    ({**KALSHI_BALANCE, "Other": 0.0005}, POLYMARKET_BALANCE, "more than one venue"),
 ])
-async def test_the_venues_real_balance_outcomes_align(hydration, monkeypatch, polymarket, accepted):
+async def test_the_venues_real_balance_outcomes_align(hydration, monkeypatch, kalshi, polymarket, refusal):
     real_load = operator.load_midterms_cards
 
     async def load(db, ids):
         cards, twins, report = await real_load(db, ids)
-        _balance(cards, KALSHI_BALANCE, polymarket)
+        _balance(cards, kalshi, polymarket)
         return cards, twins, report
 
     monkeypatch.setattr(operator, "load_midterms_cards", load, raising=False)
     session = CuratedSession()
     receipt, code = await operator.run(operator.parse_args(args()), lambda: session)
-    if accepted:
+    if refusal is None:
         assert code == 0, receipt
     else:
-        assert code == 1 and "cannot align" in receipt["error"], receipt
+        assert code == 1 and refusal in receipt["error"], receipt

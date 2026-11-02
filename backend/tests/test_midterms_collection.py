@@ -227,6 +227,50 @@ def test_balance_outcomes_align_by_chamber_and_party(left, right):
     assert outcome_key(left) == outcome_key(right)
 
 
+def _balance_cards(other):
+    kalshi, polymarket = card(108619), card(112905, "polymarket")
+    kalshi["outcome_count"], polymarket["outcome_count"] = 4, 5
+    kalshi["top_outcomes"] = [
+        {"name": n, "probability": p}
+        for n, p in (("Democrats sweep", 0.735), ("D-House, R-Senate", 0.225),
+                     ("Republicans sweep", 0.058), ("R-House, D-Senate", 0.007))
+    ]
+    polymarket["top_outcomes"] = [
+        {"name": n, "probability": p}
+        for n, p in (("Democrats Sweep", 0.725), ("R Senate, D House", 0.215),
+                     ("Republicans Sweep", 0.045), ("D Senate, R House", 0.0065),
+                     ("Other", other))
+    ]
+    return kalshi, polymarket
+
+
+def test_a_one_venue_residual_under_one_percent_is_dropped_and_renormalized():
+    from app.utils.midterms_collection import blend_card, drop_residual, outcome_key
+
+    kalshi, polymarket = _balance_cards(0.0005)
+    _, cleaned = drop_residual([kalshi, polymarket])
+    assert [o["name"] for o in cleaned["top_outcomes"]] == [
+        "Democrats Sweep", "R Senate, D House", "Republicans Sweep", "D Senate, R House"]
+    # The venue keeps its book total (0.992); the 0.05% is spread in proportion.
+    assert sum(o["probability"] for o in cleaned["top_outcomes"]) == pytest.approx(0.992)
+    assert cleaned["top_outcomes"][0]["probability"] == pytest.approx(0.725 * 0.992 / 0.9915)
+    assert cleaned["outcome_count"] == 4
+    assert polymarket["top_outcomes"][-1]["name"] == "Other"  # the input is not mutated
+
+    blended = blend_card(kalshi, [kalshi, polymarket])
+    assert "other" not in {outcome_key(o["name"]) for o in blended["top_outcomes"]}
+    assert len(blended["top_outcomes"]) == blended["outcome_count"] == 4
+
+
+@pytest.mark.parametrize("other", [0.01, 0.2, None])
+def test_a_residual_of_one_percent_or_more_is_never_dropped(other):
+    from app.utils.midterms_collection import drop_residual, residual_refusal
+
+    kalshi, polymarket = _balance_cards(other)
+    assert residual_refusal([kalshi, polymarket])
+    assert drop_residual([kalshi, polymarket]) == [kalshi, polymarket]
+
+
 @pytest.mark.asyncio
 async def test_bounded_twin_read_keeps_races_visible_with_primary_prices(monkeypatch):
     from app.routes import events, futures

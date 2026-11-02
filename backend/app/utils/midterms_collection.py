@@ -53,6 +53,73 @@ def outcome_key(name: str) -> str:
     return value
 
 
+#: A residual bucket that names no outcome of the other venue (Polymarket's
+#: balance-of-power "Other", 0.05% on 2026-11-02).
+RESIDUAL_KEYS = frozenset({"other"})
+#: Below this, one venue's residual is dropped from the card and that venue's
+#: other outcomes are renormalized. At or above it the bucket would be a visible
+#: number the card hides, so the publisher refuses (`residual_refusal`).
+RESIDUAL_DROP_BELOW = 0.01
+
+
+def _residuals(card: dict) -> list[dict]:
+    return [
+        o
+        for o in card.get("top_outcomes", [])
+        if outcome_key(o["name"]) in RESIDUAL_KEYS
+    ]
+
+
+def residual_refusal(cards: list[dict]) -> str | None:
+    """Why these venues' residual buckets cannot be dropped, or None when they can."""
+    carriers = {c["source"] for c in cards if _residuals(c)}
+    if len(carriers) > 1:
+        return f"more than one venue lists a residual bucket: {sorted(carriers)}"
+    for c in cards:
+        for o in _residuals(c):
+            p = o.get("probability")
+            if p is None or p >= RESIDUAL_DROP_BELOW:
+                return (
+                    f"{c['source']} lists a residual {o['name']!r} bucket at {p}; "
+                    f"1% or more would be a visible number the card hides"
+                )
+    return None
+
+
+def drop_residual(cards: list[dict]) -> list[dict]:
+    """The cards without a droppable residual bucket; unchanged when it is not droppable.
+
+    The carrier's remaining outcomes are scaled to the total its outcomes had with
+    the residual, so the residual's share is spread over them in proportion and the
+    venue's own book total is kept.
+    """
+    if residual_refusal(cards):
+        return cards
+    out = []
+    for c in cards:
+        dropped = _residuals(c)
+        if not dropped:
+            out.append(c)
+            continue
+        c = copy.deepcopy(c)
+        priced = [o["probability"] for o in c["top_outcomes"] if o.get("probability") is not None]
+        total = sum(priced)
+        rest = total - sum(o["probability"] for o in dropped)
+        c["top_outcomes"] = [
+            o for o in c["top_outcomes"] if outcome_key(o["name"]) not in RESIDUAL_KEYS
+        ]
+        if rest > 0:
+            for o in c["top_outcomes"]:
+                if o.get("probability") is not None:
+                    o["probability"] = o["probability"] * total / rest
+        if "outcome_count" in c:
+            c["outcome_count"] = max(
+                len(c["top_outcomes"]), c["outcome_count"] - len(dropped)
+            )
+        out.append(c)
+    return out
+
+
 def _official_result(card: dict) -> tuple[str, str] | None:
     winners = [
         o["name"]
@@ -69,6 +136,7 @@ def _official_result(card: dict) -> tuple[str, str] | None:
 
 
 def blend_card(primary: dict, contributors: list[dict]) -> dict:
+    primary, *contributors = drop_residual([primary, *contributors])
     card = copy.deepcopy(primary)
     outcomes = {outcome_key(o["name"]): o for o in card.get("top_outcomes", [])}
     for contributor in contributors:
