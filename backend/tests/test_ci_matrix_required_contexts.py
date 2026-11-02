@@ -39,6 +39,7 @@ COMPOSE_RECORD = (
     RUNS
     + " && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')"
 )
+GUARD = "Require this run's change-scope attempt"
 MARKER = "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'"
 
 
@@ -134,6 +135,9 @@ def test_every_backend_tests_step_carries_one_of_the_two_scope_conditions():
     steps = _jobs()["backend-tests"]["steps"]
     for step in steps:
         label = step.get("name") or step.get("uses")
+        if label == GUARD:
+            assert step.get("if") is None and step.get("working-directory") == "."
+            continue
         assert step.get("if") in (RUNS, MARKER, REUSED, COMPOSE_RECORD), (
             f"backend-tests step {label!r} has condition {step.get('if')!r}. Every step must "
             f"carry `{RUNS}` (real work) or be the frontend marker; an unconditioned step "
@@ -159,9 +163,9 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
     ]
     real = [s.get("name") or s.get("uses") for s in steps if s.get("if") == RUNS]
     if scope == "frontend":
-        assert len(ran) == 1 and ran[0].startswith("Frontend-only or live-path candidate"), ran
+        assert len(ran) == 2 and ran[0] == GUARD and ran[1].startswith("Frontend-only or live-path candidate"), ran
     else:
-        assert ran == real, (scope, ran)
+        assert ran == [GUARD, *real], (scope, ran)
         assert any("Run tests" in r for r in ran)
 
 
@@ -204,4 +208,4 @@ def test_a_live_candidate_defers_all_full_shard_steps_but_keeps_contexts(scope):
     job = _jobs()["backend-tests"]
     assert "fast-gate" in job["needs"]
     ran = [s for s in job["steps"] if _evaluate(s.get("if"), scope, live=True)]
-    assert len(ran) == 1 and ran[0].get("if") == MARKER
+    assert len(ran) == 2 and ran[0].get("name") == GUARD and ran[1].get("if") == MARKER

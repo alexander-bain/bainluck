@@ -98,6 +98,8 @@ jobs:
       reuse_base: ${{ steps.prior.outputs.reuse_base }}
       live: ${{ steps.live.outputs.live }}
       tests: ${{ steps.live.outputs.tests }}
+      run_attempt: ${{ steps.live.outputs.run_attempt }}
+      head: ${{ steps.live.outputs.head }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -218,6 +220,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - name: Require this run's change-scope attempt
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         if: needs.change-scope.outputs.live == 'true'
       - uses: actions/setup-python@v7
@@ -226,6 +239,15 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      - name: Recheck current fast eligibility
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
+        run: python3 tools/release/verify_fast.py
+
       - name: Install dependencies
         if: needs.change-scope.outputs.live == 'true'
         run: pip install -r backend/requirements.txt
@@ -289,6 +311,16 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Require this run's change-scope attempt
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
       - name: Reused exact-commit test evidence
         if: needs.change-scope.outputs.reuse == 'true'
         working-directory: .
@@ -526,6 +558,7 @@ jobs:
   # target and exits 2 — which it announces as "The comparison did NOT run. Do
   # not read this as a pass." — but only to a log nobody opens on a green run.
   golden-baseline-floor:
+    needs: change-scope
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-'))
     runs-on: ubuntu-latest
     defaults:
@@ -533,6 +566,17 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Require this run's change-scope attempt
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -8707,6 +8751,7 @@ jobs:
         run: npm run typecheck
 
   e2e-contract:
+    needs: change-scope
     # L2-229 Item 1 — the browser-audit rail's fixtures, on ordinary push CI.
     #
     # These are the tests that test the tests: they mutate the workflow, the
@@ -8731,6 +8776,17 @@ jobs:
         working-directory: frontend/e2e
 
     steps:
+      - name: Require this run's change-scope attempt
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v7
@@ -8853,9 +8909,29 @@ jobs:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Require this run's change-scope attempt
+        working-directory: .
+        env:
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ -z "$SCOPE_ATTEMPT" ] || [ "$SCOPE_ATTEMPT" != "$CURRENT_ATTEMPT" ]; then
+            echo "::error::Retained change-scope outputs are stale; rerun ALL jobs."
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Recheck current fast eligibility
+        if: needs.change-scope.outputs.live == 'true'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOPE_ATTEMPT: ${{ needs.change-scope.outputs.run_attempt }}
+          SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
+        run: python3 tools/release/verify_fast.py
 
       - name: Deploy to Heroku (never-backwards guarded)
         run: |

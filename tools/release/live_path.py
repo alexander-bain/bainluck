@@ -171,7 +171,7 @@ def main():
                     print('live=false\ntests=[]')
                     if os.environ.get('GITHUB_OUTPUT'):
                         with open(os.environ['GITHUB_OUTPUT'], 'a') as destination:
-                            destination.write('live=false\ntests=[]\n')
+                            destination.write('live=false\ntests=[]\nrun_attempt=' + os.environ.get('GITHUB_RUN_ATTEMPT','') + '\nhead=' + args.head + '\n')
                     return 0
             for path in changed:
                 if path.startswith('tools/speed/') and path.endswith('.sh') and (root / path).exists():
@@ -186,7 +186,7 @@ def main():
             live = selected is not None
         except (OSError, ValueError, subprocess.CalledProcessError):
             pass
-    outputs = f'live={str(live).lower()}\ntests={json.dumps(selected or [])}\n'
+    outputs = f'live={str(live).lower()}\ntests={json.dumps(selected or [])}\nrun_attempt={os.environ.get("GITHUB_RUN_ATTEMPT","")}\nhead={args.head}\n'
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a') as destination:
             destination.write(outputs)

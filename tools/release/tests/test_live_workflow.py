@@ -89,7 +89,7 @@ class WorkflowTests(unittest.TestCase):
         ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
         watch = yaml.safe_load((ROOT / '.github/workflows/live-path-watchdog.yml').read_text())['jobs']
         for name in ['backend-tests', 'shard-completeness', 'database-integration', 'search-recall', 'frontend-build', 'e2e-contract']:
-            commands = lambda job: [(step.get('uses'), step.get('run')) for step in job['steps']]
+            commands = lambda job: [(step.get('uses'), step.get('run')) for step in job['steps'] if step.get('name') != "Require this run's change-scope attempt"]
             self.assertEqual(commands(ci[name]), commands(watch[name]), name + ' full-suite commands drifted')
         self.assertIn('scope=full', str(watch['change-scope']))
 
