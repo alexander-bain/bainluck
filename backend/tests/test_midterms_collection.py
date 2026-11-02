@@ -491,3 +491,116 @@ async def test_registered_polymarket_twins_match_and_blend_across_all_paired_mar
     assert served_by_id[109068]["top_outcomes"][0]["probability"] == pytest.approx(0.86)
     assert served_by_id[108645]["top_outcomes"][0]["probability"] == pytest.approx(0.46)
     assert served_by_id[108645]["outcome_count"] == 2
+
+
+def test_south_carolina_alias_lives_on_register_entry_not_generic_outcome_key():
+    from app.utils.midterms_collection import MIDTERMS_TWIN_BY_KALSHI_ID, outcome_key
+
+    assert outcome_key("Darline Graham Nordone (R)") == "darline graham nordone"
+    sc_entry = MIDTERMS_TWIN_BY_KALSHI_ID[109068]
+    assert outcome_key("Darline Graham Nordone (R)", sc_entry) == "darline graham"
+    assert outcome_key("Darline Graham Nordone (R)", MIDTERMS_TWIN_BY_KALSHI_ID[109085]) == "darline graham nordone"
+
+
+@pytest.mark.asyncio
+async def test_registered_twin_failing_outcome_check_reports_register_mismatch_without_pool_scan(
+    monkeypatch,
+):
+    from app.routes import events, futures
+    from app.services.midterms_collection import load_midterms_cards
+
+    def make_market(mid, name, source, outcomes):
+        return SimpleNamespace(
+            id=mid,
+            name=name,
+            source=source,
+            group_id=None,
+            settled_at=None,
+            outcomes=[
+                SimpleNamespace(
+                    name=n,
+                    current_probability=p,
+                    is_winner=False,
+                    resolution_source=None,
+                )
+                for n, p in outcomes
+            ],
+        )
+
+    primary = [
+        make_market(
+            109085,
+            "Kansas Senate winner?",
+            "kalshi",
+            [("Adam Hamilton", 0.14), ("Roger Marshall", 0.86)],
+        ),
+        make_market(
+            109082,
+            "Maine Senate winner?",
+            "kalshi",
+            [("Troy Jackson", 0.44), ("Susan Collins", 0.56)],
+        ),
+    ]
+    # 113093 (registered twin for 109085) has a drifted outcome name ("Replacement Nominee"),
+    # while 113095 (in the pool for 109082) happens to carry 109085's question/outcomes:
+    # 109085 must report "register_mismatch" and must NOT fuzzy-match 113095 from the pool.
+    candidates = [
+        make_market(
+            113093,
+            "Kansas Senate Election Winner",
+            "polymarket",
+            [("Replacement Nominee (D)", 0.18), ("Roger Marshall (R)", 0.82)],
+        ),
+        make_market(
+            113095,
+            "Kansas Senate Election Winner",
+            "polymarket",
+            [("Adam Hamilton (D)", 0.18), ("Roger Marshall (R)", 0.82)],
+        ),
+    ]
+
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self.rows
+
+    class Database:
+        def __init__(self):
+            self.reads = iter((primary, candidates))
+
+        async def execute(self, statement):
+            return Result(next(self.reads))
+
+    def serialize(market, withheld):
+        return {
+            "id": market.id,
+            "name": market.name,
+            "source": market.source,
+            "status": "open",
+            "outcome_count": len(market.outcomes),
+            "top_outcomes": [
+                {"name": o.name, "probability": o.current_probability}
+                for o in market.outcomes
+            ],
+        }
+
+    async def withheld_prices(db, markets):
+        return {}
+
+    monkeypatch.setattr(events, "_format_futures_for_search", serialize)
+    monkeypatch.setattr(
+        futures, "withheld_price_outcome_ids_for_markets", withheld_prices
+    )
+    _, twins, report = await load_midterms_cards(Database(), [109085, 109082])
+    report_by_id = {row["market_id"]: row for row in report}
+
+    assert report_by_id[109085]["twin_state"] == "register_mismatch"
+    assert report_by_id[109085]["polymarket_twin_ids"] == [113093]
+    assert report_by_id[109082]["twin_state"] == "register_mismatch"
+    assert report_by_id[109082]["polymarket_twin_ids"] == [113095]
+    assert twins == {}
