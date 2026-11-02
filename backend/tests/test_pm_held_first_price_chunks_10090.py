@@ -92,13 +92,10 @@ async def test_held_live_game_is_written_before_the_unrelated_blocked_write(monk
     assert 900 not in rig.ns['price_buffer']
 
 
-async def test_switch_off_restores_the_old_order(monkeypatch):
-    monkeypatch.setenv(lbr.STAMP_READER_FIRST_ENV, '0')
-    rig, task, writes = await held_rig(monkeypatch)
-    try:
-        assert writes == ONE_TRANSACTION
-    finally:
-        await finish(rig, task)
+def test_the_off_switch_is_gone():
+    # Removed in the settings freeze (docs/live-settings.md); no held game is the old order.
+    assert not hasattr(lbr, 'STAMP_READER_FIRST_ENV')
+    assert not hasattr(lbr, 'stamp_reader_first_on')
 
 
 @pytest.mark.parametrize('case', ['not-live', 'source-raises', 'other-game-held'])

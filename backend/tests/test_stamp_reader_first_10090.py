@@ -150,9 +150,10 @@ async def test_unheld_live_games_are_still_stamped_behind_held_ones(monkeypatch)
 
 
 @pytestmark_async
-async def test_the_switch_off_restores_the_fifo_order(monkeypatch):
-    monkeypatch.setenv(module.STAMP_READER_FIRST_ENV, "0")
-    x, started, release, running = await _saturated(monkeypatch, lambda: frozenset({10}))
+async def test_an_empty_held_set_keeps_the_fifo_order(monkeypatch):
+    # The STAMP_READER_FIRST off switch is gone (settings freeze); no held game is the old order.
+    assert not hasattr(module, "STAMP_READER_FIRST_ENV")
+    x, started, release, running = await _saturated(monkeypatch, lambda: frozenset())
     await _free_workers_one_at_a_time(x, started, release, running, (2,))
     assert started == list(range(1, 11))
 
