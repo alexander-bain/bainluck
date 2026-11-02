@@ -12,6 +12,7 @@ class WorkflowTests(unittest.TestCase):
         jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
         self.assertIn('fast-gate', jobs, 'bounded fast gate is missing')
         self.assertEqual(jobs['fast-gate']['timeout-minutes'], 2)
+        self.assertEqual(jobs['e2e-contract']['timeout-minutes'], 5)
         self.assertIn('fast-gate', jobs['backend-tests']['needs'])
         self.assertEqual(jobs['backend-tests']['strategy']['matrix']['shard'], list(range(1, 9)))
         self.assertIn('fast-gate', jobs['deploy']['needs'])
@@ -35,6 +36,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(jobs['backend-tests']['strategy']['matrix']['shard'], list(range(1, 9)))
         self.assertGreater(len(jobs['database-integration']['steps']), 200)
         self.assertNotIn('deploy', jobs)
+        self.assertEqual(jobs['e2e-contract']['timeout-minutes'], 5)
         workflow = yaml.safe_load(path.read_text())
         self.assertEqual(workflow['permissions']['deployments'], 'write')
         rollback = jobs['rollback']

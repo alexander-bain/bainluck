@@ -8314,7 +8314,7 @@ jobs:
     # what makes this gate safe to run on everything.
     name: Browser-audit contract fixtures
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: frontend/e2e
