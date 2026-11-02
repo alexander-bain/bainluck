@@ -16,6 +16,9 @@ name: gitleaks
 
 on:
   push:
+    # Lease state has a constant tree; source is scanned on master and PRs.
+    # This also avoids runner churn if the writer later uses a GitHub App token.
+    branches-ignore: [testflight-release-lock]
   pull_request:
   schedule:
     - cron: "0 8 * * 1"   # weekly full-history sweep, Monday 08:00 UTC

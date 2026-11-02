@@ -58,7 +58,9 @@ state and keep a constant source tree; a fast-forward update lets exactly one
 waiter own the next build. No Actions concurrency group drops intermediate
 pending merges. A controller that waits five hours fails visibly and can be retried.
 A waiting controller recovers ownership only after the owner's
-**specific workflow attempt** is completed. Do not force or delete this ref:
+**specific workflow attempt** is completed. The gitleaks push trigger excludes only this internal state branch; master,
+other source pushes, PRs and the weekly source scan retain their existing scans.
+Do not force or delete this ref:
 fast-forward updates are what keep an old waiter from unlocking a new owner.
 
 While owning the release, the action queries every Apple build page for the source

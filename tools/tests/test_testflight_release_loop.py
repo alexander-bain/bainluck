@@ -309,3 +309,16 @@ def test_competing_ref_advance_keeps_the_winning_owner():
     api.patch = competing_patch
     assert lease.try_acquire(api, "source", 3, 1) is None
     assert lease.read_state(api)[2]["run_id"] == 2
+
+
+def test_internal_lease_branch_does_not_queue_more_secret_scan_runners():
+    import yaml
+
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/gitleaks.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    assert workflow["on"]["push"]["branches-ignore"] == ["testflight-release-lock"]
+    assert "branches" not in workflow["on"]["push"]
+    assert "pull_request" in workflow["on"]
+    assert workflow["on"]["pull_request"] in ("", None)
+    assert workflow["on"]["schedule"]
