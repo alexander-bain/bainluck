@@ -11,6 +11,7 @@ permissions:
   contents: read
   actions: read
   issues: write
+  deployments: write
 jobs:
   select:
     runs-on: ubuntu-latest
@@ -1512,13 +1513,13 @@ jobs:
       != 'success' || needs.search-recall.result != 'success' || needs.frontend-build.result != 'success' || needs.e2e-contract.result != 'success')
     runs-on: ubuntu-latest
     concurrency:
-      group: heroku-deploy
+      group: ${{ matrix.provider == 'heroku' && 'heroku-deploy' || 'vercel-production' }}
       cancel-in-progress: false
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       GH_TOKEN: ${{ github.token }}
       NOW_ISSUE: ${{ vars.NOW_ISSUE }}
     steps:
@@ -1526,16 +1527,13 @@ jobs:
     - name: Rollback only the exact failing deployment
       env:
         CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
-      run: 'set +e
-
-        python3 tools/release/rollback.py --provider heroku --candidate-sha "$CANDIDATE_SHA" --reason "live-path full-suite watchdog failed"
-
-        HEROKU_STATUS=$?
-
-        python3 tools/release/rollback.py --provider vercel --candidate-sha "$CANDIDATE_SHA" --reason "live-path full-suite watchdog failed"
-
-        VERCEL_STATUS=$?
-
-        if [ "$HEROKU_STATUS" -ne 0 ] || [ "$VERCEL_STATUS" -ne 0 ]; then exit 1; fi
+        PROVIDER: ${{ matrix.provider }}
+      run: 'python3 tools/release/rollback.py --provider "$PROVIDER" --candidate-sha "$CANDIDATE_SHA" --reason "live-path full-suite watchdog failed"
 
         '
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+        - heroku
+        - vercel
