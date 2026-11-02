@@ -8,6 +8,7 @@ Official venue results override the blend as soon as either venue grades a winne
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 import json
 import re
 from datetime import datetime, timezone
@@ -25,6 +26,160 @@ MANIFEST = json.loads(MANIFEST_PATH.read_text())
 SLUG = MANIFEST["slug"]
 MARKET_IDS = tuple(mid for s in MANIFEST["sections"] for mid in s["market_ids"])
 SECTION_CLASSES = frozenset(s["key"] for s in MANIFEST["sections"])
+
+
+@dataclass(frozen=True)
+class MidtermsTwinEntry:
+    """Explicit Kalshi-to-Polymarket twin entry for the 2026 Midterms collection (#11871)."""
+
+    kalshi_market_id: int
+    kalshi_ticker: str
+    kalshi_name: str
+    polymarket_market_id: int | None
+    polymarket_external_id: str | None
+    polymarket_name: str | None
+    note: str
+
+
+# Explicit 14-market twin register for midterms-2026 (#11871), read from production
+# on 2026-11-02 and verified outcome-for-outcome.
+MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
+    MidtermsTwinEntry(
+        kalshi_market_id=108620,
+        kalshi_ticker="CONTROLS-2026",
+        kalshi_name="Which party will win the U.S. Senate?",
+        polymarket_market_id=112902,
+        polymarket_external_id="32224",
+        polymarket_name="Which party will win the Senate in 2026?",
+        note="paired (Democratic / Republican)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=108621,
+        kalshi_ticker="CONTROLH-2026",
+        kalshi_name="Which party will win the U.S. House?",
+        polymarket_market_id=112903,
+        polymarket_external_id="32225",
+        polymarket_name="Which party will win the House in 2026?",
+        note="paired (Democratic / Republican)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=108619,
+        kalshi_ticker="KXBALANCEPOWERCOMBO-27FEB",
+        kalshi_name="2026 Midterms: Congress Balance of Power?",
+        polymarket_market_id=112905,
+        polymarket_external_id="32228",
+        polymarket_name="Balance of Power: 2026 Midterms",
+        note="paired (4 chamber splits; Polymarket <1% Other dropped as residual)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109085,
+        kalshi_ticker="SENATEKS-26",
+        kalshi_name="Kansas Senate winner?",
+        polymarket_market_id=113093,
+        polymarket_external_id="57648",
+        polymarket_name="Kansas Senate Election Winner",
+        note="paired (Adam Hamilton / Roger Marshall)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109088,
+        kalshi_ticker="SENATEIA-26",
+        kalshi_name="Iowa Senate winner?",
+        polymarket_market_id=113092,
+        polymarket_external_id="57647",
+        polymarket_name="Iowa Senate Election Winner",
+        note="paired (Josh Turek / Ashley Hinson)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109082,
+        kalshi_ticker="SENATEME-26",
+        kalshi_name="Maine Senate winner?",
+        polymarket_market_id=113095,
+        polymarket_external_id="57650",
+        polymarket_name="Maine Senate Election Winner",
+        note="paired (Troy Jackson / Susan Collins)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109095,
+        kalshi_ticker="SENATEAK-26",
+        kalshi_name="Alaska Senate winner?",
+        polymarket_market_id=None,
+        polymarket_external_id=None,
+        polymarket_name=None,
+        note="no Polymarket market exists (Kalshi 109095 is a party-winner contract; Polymarket 113124 is a 7-candidate ranked-choice person contract)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109065,
+        kalshi_ticker="SENATETX-26",
+        kalshi_name="Texas Senate winner?",
+        polymarket_market_id=113109,
+        polymarket_external_id="57672",
+        polymarket_name="Texas Senate Election Winner",
+        note="paired (James Talarico / Ken Paxton)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109072,
+        kalshi_ticker="SENATEOHS-26",
+        kalshi_name="Ohio Senate winner?",
+        polymarket_market_id=113116,
+        polymarket_external_id="57682",
+        polymarket_name="Ohio Senate Election Winner",
+        note="paired (Sherrod Brown / Jon Husted)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109068,
+        kalshi_ticker="SENATESC-26",
+        kalshi_name="South Carolina Senate winner?",
+        polymarket_market_id=113106,
+        polymarket_external_id="57669",
+        polymarket_name="South Carolina Senate Election Winner",
+        note="paired (Darline Graham / Annie Andrews)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109081,
+        kalshi_ticker="SENATEMI-26",
+        kalshi_name="Michigan Senate winner?",
+        polymarket_market_id=113097,
+        polymarket_external_id="57658",
+        polymarket_name="Michigan Senate Election Winner",
+        note="paired (Abdul El-Sayed / Mike Rogers)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=108645,
+        kalshi_ticker="GOVPARTYGA-26",
+        kalshi_name="Georgia Governor winner?",
+        polymarket_market_id=113056,
+        polymarket_external_id="57161",
+        polymarket_name="Georgia Governor Election Winner",
+        note="paired (Keisha Lance Bottoms / Rick Jackson)",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=109918,
+        kalshi_ticker="KXDEMSWINGSTATEGOVSWEEP-26NOV03",
+        kalshi_name="Will Democrats sweep all swing state Governor races?",
+        polymarket_market_id=None,
+        polymarket_external_id=None,
+        polymarket_name=None,
+        note="no Polymarket market exists",
+    ),
+    MidtermsTwinEntry(
+        kalshi_market_id=108629,
+        kalshi_ticker="KXCLOSESTGOVERNOR-27JAN20",
+        kalshi_name="Closest Governor race in 2026?",
+        polymarket_market_id=None,
+        polymarket_external_id=None,
+        polymarket_name=None,
+        note="no Polymarket market exists (Kalshi 108629 lists 24 states; Polymarket 64546265 lists 36 states with >1% probability on states absent from Kalshi)",
+    ),
+)
+
+MIDTERMS_TWIN_BY_KALSHI_ID: dict[int, MidtermsTwinEntry] = {
+    entry.kalshi_market_id: entry for entry in MIDTERMS_TWIN_REGISTER
+}
+REGISTERED_POLYMARKET_TWIN_IDS: frozenset[int] = frozenset(
+    entry.polymarket_market_id
+    for entry in MIDTERMS_TWIN_REGISTER
+    if entry.polymarket_market_id is not None
+)
 
 
 def outcome_key(name: str) -> str:
@@ -50,6 +205,8 @@ def outcome_key(name: str) -> str:
         return "democratic"
     if value in {"republican", "republicans", "republican party", "gop"}:
         return "republican"
+    if value == "darline graham nordone":
+        return "darline graham"
     return value
 
 
