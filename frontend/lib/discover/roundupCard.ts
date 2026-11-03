@@ -78,16 +78,28 @@ export function buildRoundupCardModel(
   }
 
   const seen = new Set<number>();
-  const readable: { row: (typeof served)[number]; label: string; index: number }[] = [];
+  const readable: { row: (typeof served)[number]; rowId: number; label: string; index: number }[] = [];
   for (const [index, row] of served.entries()) {
     const label = text(row?.label);
     const p = row?.probability;
-    if (!row || !isPositiveInt(row.market_id) || !label || typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) {
+    const hasMarket = row != null && row.market_id !== undefined && row.market_id !== null;
+    const hasEvent = row != null && row.event_id !== undefined && row.event_id !== null;
+    const rowId = hasMarket ? row.market_id : hasEvent ? row.event_id : undefined;
+    if (
+      !row ||
+      hasMarket === hasEvent ||
+      !isPositiveInt(rowId) ||
+      !label ||
+      typeof p !== "number" ||
+      !Number.isFinite(p) ||
+      p < 0 ||
+      p > 1
+    ) {
       return { model: null, refusal: "bad_row" };
     }
-    if (seen.has(row.market_id)) return { model: null, refusal: "duplicate_market" };
-    seen.add(row.market_id);
-    readable.push({ row, label, index });
+    if (seen.has(rowId)) return { model: null, refusal: "duplicate_market" };
+    seen.add(rowId);
+    readable.push({ row, rowId, label, index });
   }
 
   // Highest first; a tie keeps the served order.
@@ -97,12 +109,12 @@ export function buildRoundupCardModel(
   const stale = stamps.map((s) => sourceIsStale(s, nowMs, FUTURES_STALE_AFTER_MS));
   const allOld = stale.every(Boolean);
 
-  const rows: RoundupRowModel[] = readable.map(({ row, label }, i) => {
+  const rows: RoundupRowModel[] = readable.map(({ row, rowId, label }, i) => {
     const parts = probabilityParts(row.probability, {
       rendered: typeof row.rendered_percent === "number" ? row.rendered_percent : undefined,
     });
     return {
-      marketId: row.market_id,
+      marketId: rowId,
       label,
       marker: parts.marker,
       digits: parts.digits,

@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
@@ -177,7 +177,7 @@ def is_event_eligible_for_window(
 
 def _team_short_label(team_data: Any, fallback_name: Any) -> str:
     if isinstance(team_data, Mapping):
-        for key in ("short_name", "display_name", "name", "abbreviation"):
+        for key in ("short_name", "display_name", "name"):
             val = team_data.get(key)
             if isinstance(val, str) and val.strip():
                 return val.strip()
@@ -187,18 +187,18 @@ def _team_short_label(team_data: Any, fallback_name: Any) -> str:
 def _extract_blended_leader(
     card: Mapping[str, Any],
 ) -> Optional[tuple[float, str, str, Optional[str]]]:
-    """Extract ``(leader_prob, leader_label, row_label, observed_at)`` from an event card's blend."""
-    current_odds = card.get("current_odds")
-    odds_map = current_odds if isinstance(current_odds, Mapping) else {}
+    """Extract ``(leader_prob, leader_label, row_label, observed_at)`` from an event card's hero blend.
 
+    Reads ONLY ``hero_probability`` and ``hero_probability_away`` — the fields
+    produced by ``resolve_hero`` in ``_format_event_with_aggregated_odds`` and
+    ``get_event`` (`app/routes/events.py`). Never falls back to books-only
+    ``current_odds``: if either hero probability is absent or settled, the game
+    is refused.
+    """
+    if card.get("hero_probability_source") == "settled":
+        return None
     home_prob = card.get("hero_probability")
-    if home_prob is None:
-        home_prob = odds_map.get("home_probability")
-
     away_prob = card.get("hero_probability_away")
-    if away_prob is None:
-        away_prob = odds_map.get("away_probability")
-
     if home_prob is None or away_prob is None:
         return None
     try:
@@ -225,6 +225,8 @@ def _extract_blended_leader(
         leader_prob = ap
         leader_label = away_label
 
+    current_odds = card.get("current_odds")
+    odds_map = current_odds if isinstance(current_odds, Mapping) else {}
     observed_at = odds_map.get("captured_at")
     observed_str = str(observed_at) if isinstance(observed_at, str) and observed_at.strip() else None
     row_label = f"{away_label} at {home_label}: {leader_label}"
@@ -347,51 +349,9 @@ def select_closest_window_events(
     return RoundupMembers(members=members, rows=rows, footer=footer)
 
 
-def _coerce_fixture_event_card(item: Any) -> Optional[dict[str, Any]]:
-    """Convert an event dict or namespace in tests into the event-card shape."""
-    if isinstance(item, Mapping):
-        if "type" in item and item.get("type") == "event" and isinstance(item.get("data"), Mapping):
-            item = item["data"]
-        if not (item.get("home_team") or item.get("home_team_name")):
-            return None
-        card = dict(item)
-        if "home_team" not in card and card.get("home_team_name"):
-            card["home_team"] = card["home_team_name"]
-        if "away_team" not in card and card.get("away_team_name"):
-            card["away_team"] = card["away_team_name"]
-        return card
-    home = getattr(item, "home_team", None) or getattr(item, "home_team_name", None)
-    away = getattr(item, "away_team", None) or getattr(item, "away_team_name", None)
-    eid = getattr(item, "id", None)
-    if not (home and away and isinstance(eid, int)):
-        return None
-    commence = getattr(item, "commence_time", None)
-    commence_iso = (
-        commence.isoformat() if isinstance(commence, datetime) else str(commence or "")
-    )
-    sport_obj = getattr(item, "sport", None)
-    sport_key = (
-        sport_obj
-        if isinstance(sport_obj, str)
-        else getattr(sport_obj, "key", None) or ""
-    )
-    return {
-        "id": int(eid),
-        "home_team": str(home),
-        "away_team": str(away),
-        "home_team_name": str(home),
-        "away_team_name": str(away),
-        "commence_time": commence_iso,
-        "status": str(getattr(item, "status", "scheduled") or "scheduled"),
-        "sport": str(sport_key),
-        "home_score": getattr(item, "home_score", None),
-        "away_score": getattr(item, "away_score", None),
-        "home_team_data": getattr(item, "home_team_data", None),
-        "away_team_data": getattr(item, "away_team_data", None),
-        "hero_probability": getattr(item, "hero_probability", None),
-        "hero_probability_away": getattr(item, "hero_probability_away", None),
-        "current_odds": getattr(item, "current_odds", None),
-    }
+CardLoader = Callable[
+    [Any, datetime, datetime], Awaitable[Sequence[Mapping[str, Any]]]
+]
 
 
 async def produce_window_events_closest(
@@ -399,10 +359,9 @@ async def produce_window_events_closest(
     db: Any,
     *,
     now: Optional[datetime] = None,
+    load_cards: Optional[CardLoader] = None,
 ) -> RoundupMembers | RoundupRefusal:
     """Execute a ``window_events_closest`` container definition against ``db``."""
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     effective_now = (
         now
         if isinstance(now, datetime) and now.tzinfo is not None
@@ -423,99 +382,57 @@ async def produce_window_events_closest(
     league = rule.get("league")
     footer_template = str(definition.get("footer") or "")
 
-    if isinstance(db, (list, tuple)):
-        cards = [
-            c
-            for c in (_coerce_fixture_event_card(x) for x in db)
-            if c is not None
+    if load_cards is not None:
+        ordered_cards = list(await load_cards(db, window_start, window_end))
+    else:
+        from sqlalchemy import and_, or_, select
+        from app.models import Event
+        from app.routes.containers import _hydrate_event_cards
+
+        if not hasattr(db, "execute") or not callable(db.execute):
+            return RoundupRefusal((("window", "unsupported_session"),))
+        res = await db.execute(
+            select(Event.id)
+            .where(
+                Event.status.notin_(
+                    (
+                        "completed",
+                        "closed",
+                        "final",
+                        "finished",
+                        "suspended",
+                        "postponed",
+                        "cancelled",
+                        "canceled",
+                    )
+                ),
+                or_(
+                    and_(
+                        Event.commence_time >= window_start,
+                        Event.commence_time < window_end,
+                    ),
+                    and_(
+                        Event.status == "live",
+                        Event.commence_time >= (window_start - timedelta(hours=6)),
+                        Event.commence_time < window_end,
+                    ),
+                ),
+            )
+            .order_by(Event.commence_time, Event.id)
+        )
+        raw_ids = res.scalars().all() if hasattr(res, "scalars") else []
+        candidate_ids = [
+            i for i in raw_ids if isinstance(i, int) and not isinstance(i, bool) and i > 0
         ]
-        return select_closest_window_events(
-            cards,
-            now=effective_now,
-            window_start=window_start,
-            window_end=window_end,
-            count=count,
-            minimum=minimum,
-            league=league,
-            footer_template=footer_template,
-        )
-
-    if not isinstance(db, AsyncSession):
-        if hasattr(db, "execute") and callable(db.execute):
-            from sqlalchemy import select
-            from app.models import Event
-
-            res = await db.execute(select(Event))
-            raw_rows = (
-                res.scalars().all()
-                if hasattr(res, "scalars")
-                else (res.fetchall() if hasattr(res, "fetchall") else [])
+        if len(candidate_ids) < max(minimum, count):
+            return RoundupRefusal(
+                (("window", f"candidates_{len(candidate_ids)}_below_minimum_{max(minimum, count)}"),)
             )
-            cards = [
-                c
-                for c in (_coerce_fixture_event_card(x) for x in raw_rows)
-                if c is not None
-            ]
-            return select_closest_window_events(
-                cards,
-                now=effective_now,
-                window_start=window_start,
-                window_end=window_end,
-                count=count,
-                minimum=minimum,
-                league=league,
-                footer_template=footer_template,
-            )
-        return RoundupRefusal((("window", "unsupported_session"),))
 
-    from sqlalchemy import and_, or_, select
-    from app.models import Event
-    from app.routes.containers import _hydrate_event_cards
-
-    candidate_ids = list(
-        (
-            await db.execute(
-                select(Event.id)
-                .where(
-                    Event.status.notin_(
-                        (
-                            "completed",
-                            "closed",
-                            "final",
-                            "finished",
-                            "suspended",
-                            "postponed",
-                            "cancelled",
-                            "canceled",
-                        )
-                    ),
-                    or_(
-                        and_(
-                            Event.commence_time >= window_start,
-                            Event.commence_time < window_end,
-                        ),
-                        and_(
-                            Event.status == "live",
-                            Event.commence_time >= (window_start - timedelta(hours=6)),
-                            Event.commence_time < window_end,
-                        ),
-                    ),
-                )
-                .order_by(Event.commence_time, Event.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if len(candidate_ids) < max(minimum, count):
-        return RoundupRefusal(
-            (("window", f"candidates_{len(candidate_ids)}_below_minimum_{max(minimum, count)}"),)
-        )
-
-    cards_by_id, _failed = await _hydrate_event_cards(db, [int(i) for i in candidate_ids])
-    ordered_cards = [
-        cards_by_id[int(i)] for i in candidate_ids if int(i) in cards_by_id
-    ]
+        cards_by_id, _failed = await _hydrate_event_cards(db, candidate_ids)
+        ordered_cards = [
+            cards_by_id[i] for i in candidate_ids if i in cards_by_id
+        ]
     return select_closest_window_events(
         ordered_cards,
         now=effective_now,
@@ -541,6 +458,7 @@ def build_window_events_closest_producer(
     *,
     enabled: Optional[Callable[[], bool]] = None,
     now_fn: Optional[Callable[[], datetime]] = None,
+    load_cards: Optional[CardLoader] = None,
 ) -> RoundupProducer:
     """Build a ``RoundupProducer`` from a declarative ``window_events_closest`` definition."""
     rule = definition.get("rule")
@@ -563,7 +481,7 @@ def build_window_events_closest_producer(
     async def _produce(db: Any) -> Any:
         current_now = now_fn() if now_fn is not None else None
         return await produce_window_events_closest(
-            frozen_def, db, now=current_now
+            frozen_def, db, now=current_now, load_cards=load_cards
         )
 
     return RoundupProducer(

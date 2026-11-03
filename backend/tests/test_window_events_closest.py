@@ -11,14 +11,32 @@ Covers Alex's rulings B, C, D on NOW #11852:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Mapping, Sequence
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import create_engine, select
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import Session
 
-from app.routes.containers import get_container
-from app.utils.roundup_containers import (
+
+@compiles(JSONB, "sqlite")
+def _jsonb_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
+    return "JSON"
+
+
+@compiles(ARRAY, "sqlite")
+def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
+    return "JSON"
+
+
+from app.models.models import Base, Event, OddsSnapshot, Sport, Team  # noqa: E402
+from app.routes.containers import _hydrate_event_cards, get_container  # noqa: E402
+from app.utils.hero_probability import resolve_hero  # noqa: E402
+from app.utils.roundup_containers import (  # noqa: E402
     ROUNDUP_PRODUCERS,
     RoundupRefusal,
     reset_roundup_cache_for_tests,
@@ -26,7 +44,7 @@ from app.utils.roundup_containers import (
     roundup_feed_items,
     roundup_revision,
 )
-from app.utils.window_events_closest import (
+from app.utils.window_events_closest import (  # noqa: E402
     CLOSEST_GAMES_TONIGHT_DEFINITION,
     CLOSEST_GAMES_TONIGHT_PRODUCER,
     CLOSEST_GAMES_TONIGHT_SLUG,
@@ -77,23 +95,21 @@ def _game_card(
     }
 
 
-class _FakeEventResult:
-    def __init__(self, rows: list[Any]) -> None:
-        self._rows = list(rows)
+def _card_loader_for(cards: Sequence[Mapping[str, Any]]):
+    async def _load(_db: Any, _start: datetime, _end: datetime) -> Sequence[Mapping[str, Any]]:
+        return list(cards)
 
-    def scalars(self) -> "_FakeEventResult":
-        return self
-
-    def all(self) -> list[Any]:
-        return list(self._rows)
+    return _load
 
 
-class _FakeEventSession:
-    def __init__(self, rows: list[Any]) -> None:
-        self.rows = list(rows)
+class _AsyncSessionAdapter:
+    """Thin async wrapper around an in-memory SQLite ``Session`` for ``_hydrate_event_cards``."""
 
-    async def execute(self, _stmt: Any) -> _FakeEventResult:
-        return _FakeEventResult(self.rows)
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        return self._s.execute(statement, *args)
 
 
 def test_stored_definition_carries_membership_and_kind_per_ruling_b():
@@ -206,7 +222,10 @@ async def test_fewer_than_four_eligible_games_refuses_and_404s_unavailable(monke
         _game_card(103, home_prob=0.59, away_prob=0.41),
     ]
     outcome = await produce_window_events_closest(
-        CLOSEST_GAMES_TONIGHT_DEFINITION, three_games, now=now
+        CLOSEST_GAMES_TONIGHT_DEFINITION,
+        None,
+        now=now,
+        load_cards=_card_loader_for(three_games),
     )
     assert isinstance(outcome, RoundupRefusal)
 
@@ -215,12 +234,13 @@ async def test_fewer_than_four_eligible_games_refuses_and_404s_unavailable(monke
         CLOSEST_GAMES_TONIGHT_DEFINITION,
         enabled=lambda: True,
         now_fn=lambda: now,
+        load_cards=_card_loader_for(three_games),
     )
     monkeypatch.setitem(ROUNDUP_PRODUCERS, CLOSEST_GAMES_TONIGHT_SLUG, pinned_producer)
 
     with pytest.raises(HTTPException) as exc:
         await get_container(
-            slug=CLOSEST_GAMES_TONIGHT_SLUG, db=_FakeEventSession(three_games)
+            slug=CLOSEST_GAMES_TONIGHT_SLUG, db=None
         )
     assert exc.value.status_code == 404
     assert exc.value.detail == {
@@ -255,6 +275,7 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
         CLOSEST_GAMES_TONIGHT_DEFINITION,
         enabled=lambda: True,
         now_fn=lambda: now,
+        load_cards=_card_loader_for(five_games),
     )
     monkeypatch.setitem(ROUNDUP_PRODUCERS, CLOSEST_GAMES_TONIGHT_SLUG, pinned_tonight)
 
@@ -282,13 +303,12 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
         second_def,
         enabled=lambda: True,
         now_fn=lambda: now,
+        load_cards=_card_loader_for(five_games),
     )
     monkeypatch.setitem(ROUNDUP_PRODUCERS, second_def["slug"], second_producer)
 
-    session = _FakeEventSession(five_games)
-
     # 1. All-sports closest games tonight picks [303 (0.60), 302 (0.56), 301 (0.52), 305 (0.51)] of 5 games.
-    served_tonight = await get_container(slug=CLOSEST_GAMES_TONIGHT_SLUG, db=session)
+    served_tonight = await get_container(slug=CLOSEST_GAMES_TONIGHT_SLUG, db=None)
     assert served_tonight["state"] == "published"
     assert served_tonight["slug"] == CLOSEST_GAMES_TONIGHT_SLUG
     assert served_tonight["subtitle"] == "Bain Luck blend · the 4 closest of 5 games tonight"
@@ -298,14 +318,14 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
     assert served_tonight["revision"] == roundup_revision([303, 302, 301, 305])
 
     # 2. NBA-only definition excludes NHL game 305 and picks [304 (0.64), 303 (0.60), 302 (0.56), 301 (0.52)] of 4 NBA games.
-    served_nba = await get_container(slug=second_def["slug"], db=session)
+    served_nba = await get_container(slug=second_def["slug"], db=None)
     assert served_nba["state"] == "published"
     assert served_nba["subtitle"] == "Bain Luck blend · the 4 closest of 4 NBA games tonight"
     assert [m["id"] for m in served_nba["sections"][0]["members"]] == [304, 303, 302, 301]
     assert served_nba["revision"] == roundup_revision([304, 303, 302, 301])
 
     # 3. roundup_feed_items includes both definitions with matching collection_ref revisions and event items.
-    feed_items = await roundup_feed_items(session)
+    feed_items = await roundup_feed_items(None)
     by_slug = {it["data"]["collection_ref"]["slug"]: it for it in feed_items}
     assert set(by_slug) == {CLOSEST_GAMES_TONIGHT_SLUG, second_def["slug"]}
     tonight_card = by_slug[CLOSEST_GAMES_TONIGHT_SLUG]
@@ -313,3 +333,134 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
     assert tonight_card["data"]["roundup"]["footer"] == served_tonight["subtitle"]
     assert [it["type"] for it in tonight_card["data"]["items"]] == ["event"] * 4
     assert [it["data"]["id"] for it in tonight_card["data"]["items"]] == [303, 302, 301, 305]
+
+
+@pytest.mark.asyncio
+async def test_row_probability_equals_event_page_hero_through_hydrate_event_cards_and_refuses_books_only():
+    """Through ``_hydrate_event_cards`` on a fake session:
+    1. Each round-up row probability comes from ``resolve_hero`` (``hero_probability`` /
+       ``hero_probability_away`` on the hydrated event card — the same function that
+       produces the event page's hero number), NOT from the books-only ``current_odds``.
+    2. A game whose ``resolve_hero`` returns ``None`` (no blend in
+       ``win_probability_sources``, even when ``current_odds`` has a books-only number)
+       is refused instead of falling back to ``current_odds``.
+    """
+    now = datetime.now(timezone.utc)
+    tipoff = now + timedelta(hours=2)
+    stamp = now.isoformat()
+
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+
+    sport_id = 41
+    team_pairs = [
+        (401, "Boston Celtics", "Celtics", "New York Knicks", "Knicks", 0.56, 0.72),
+        (402, "Los Angeles Lakers", "Lakers", "Phoenix Suns", "Suns", 0.52, 0.68),
+        (403, "Milwaukee Bucks", "Bucks", "Miami Heat", "Heat", 0.43, 0.65),
+        (404, "Denver Nuggets", "Nuggets", "Minnesota Timberwolves", "Timberwolves", 0.60, 0.75),
+        # Event 405 has NO win_probability_sources (resolve_hero -> None), only a 50.5% books snapshot:
+        (405, "Golden State Warriors", "Warriors", "Sacramento Kings", "Kings", None, 0.505),
+    ]
+
+    with Session(eng) as s:
+        s.add(Sport(id=sport_id, key="basketball_nba", name="NBA", group="Basketball"))
+        next_team_id = 1
+        for eid, home_full, home_short, away_full, away_short, blend_home, book_home in team_pairs:
+            for full_name, short_name in ((home_full, home_short), (away_full, away_short)):
+                s.add(
+                    Team(
+                        id=next_team_id,
+                        sport_id=sport_id,
+                        name=full_name,
+                        abbreviation=short_name[:3].upper(),
+                        logo_url=f"https://cdn.example/{short_name.lower()}.png",
+                        logo_url_small=f"https://cdn.example/{short_name.lower()}-sm.png",
+                    )
+                )
+                next_team_id += 1
+            sources = (
+                {
+                    "betting": {"value": blend_home, "updated_at": stamp},
+                    "kalshi": {"value": blend_home, "updated_at": stamp},
+                    "polymarket": {"value": blend_home, "updated_at": stamp},
+                }
+                if blend_home is not None
+                else {}
+            )
+            s.add(
+                Event(
+                    id=eid,
+                    sport_id=sport_id,
+                    home_team_name=home_full,
+                    away_team_name=away_full,
+                    commence_time=tipoff,
+                    status="scheduled",
+                    win_probability_sources=sources,
+                )
+            )
+            s.add(
+                OddsSnapshot(
+                    event_id=eid,
+                    bookmaker="fanduel",
+                    home_win_probability=book_home,
+                    away_win_probability=round(1.0 - book_home, 4),
+                    captured_at=now,
+                )
+            )
+        s.commit()
+
+    def _portable_odds_query(event_ids):
+        return select(OddsSnapshot).where(OddsSnapshot.event_id.in_(event_ids))
+
+    defn = {
+        **CLOSEST_GAMES_TONIGHT_DEFINITION,
+        "rule": {
+            **CLOSEST_GAMES_TONIGHT_DEFINITION["rule"],
+            "window": {
+                "start": (now - timedelta(hours=1)).isoformat(),
+                "end": (now + timedelta(hours=6)).isoformat(),
+            },
+        },
+    }
+
+    with (
+        patch("app.routes.events._load_gei_percentiles", new=AsyncMock(return_value={})),
+        patch("app.routes.events.latest_odds_per_bookmaker_query", new=_portable_odds_query),
+        patch("app.routes.events._team_cache", {}),
+        patch("app.routes.events._team_cache_time", 0.0),
+        Session(eng) as s,
+    ):
+        fake_db = _AsyncSessionAdapter(s)
+        hydrated_cards, failed = await _hydrate_event_cards(fake_db, [401, 402, 403, 404, 405])
+        assert failed == {}
+        # Event 405 has books-only current_odds (0.505) but no resolve_hero blend -> hero_probability is absent:
+        assert hydrated_cards[405]["current_odds"]["home_probability"] == pytest.approx(0.505)
+        assert "hero_probability" not in hydrated_cards[405]
+
+        outcome = await produce_window_events_closest(defn, fake_db, now=now)
+        assert not isinstance(outcome, RoundupRefusal)
+        # Event 405 is refused despite having the closest books-only number (0.505), leaving 4 eligible games:
+        assert outcome.footer == "Bain Luck blend · the 4 closest of 4 games tonight"
+        assert [r["event_id"] for r in outcome.rows] == [404, 403, 401, 402]
+
+        # Every row's probability equals resolve_hero(event)'s leader (and the card's hero_probability /
+        # hero_probability_away), NOT the books-only snapshot (0.75, 0.65, 0.72, 0.68):
+        for row, member in zip(outcome.rows, outcome.members):
+            eid = row["event_id"]
+            ev = s.get(Event, eid)
+            hero = resolve_hero(ev)
+            assert hero is not None
+            expected_leader = max(hero.home_probability, hero.away_probability)
+            card_leader = max(
+                member["card"]["hero_probability"],
+                member["card"]["hero_probability_away"],
+            )
+            assert row["probability"] == pytest.approx(expected_leader)
+            assert row["probability"] == pytest.approx(card_leader)
+            assert row["probability"] != pytest.approx(
+                hydrated_cards[eid]["current_odds"]["spread"] or 0.0
+            )
+        # Specifically for 403 (home=0.43, away=0.57 in blend vs 0.65 home in books):
+        row_403 = next(r for r in outcome.rows if r["event_id"] == 403)
+        assert row_403["probability"] == pytest.approx(0.57)
+        assert row_403["label"] == "Miami Heat at Milwaukee Bucks: Miami Heat"
