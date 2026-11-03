@@ -20,6 +20,7 @@ import logging
 import time
 import zlib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
@@ -521,22 +522,99 @@ def _roundup_covered_market_ids(roundup_item: Mapping[str, Any]) -> set[int]:
     return covered
 
 
+def _is_roundup_bundle_card(card: Any) -> bool:
+    return (
+        isinstance(card, Mapping)
+        and card.get("type") == "bundle"
+        and isinstance(card.get("data"), Mapping)
+        and card["data"].get("kind") == "roundup"
+    )
+
+
+def _opening_eligible_floor_index(
+    items: Sequence[dict[str, Any]],
+    seat_floor: int,
+    *,
+    now: Optional[datetime] = None,
+) -> int:
+    """Index in ``items`` after at least ``seat_floor`` opening-eligible cards.
+
+    ``seat_opening`` (#5105) moves restricted ordinary-live cards out of seats
+    1..10 and promotes the first ``seat_floor`` opening-eligible cards into the
+    opening ten. Seating a round-up at raw index ``seat_floor`` when restricted
+    cards sit in ``0..seat_floor-1`` would let ``seat_opening`` pull the round-up
+    into the vacated opening seats (#11902). Counting ``seat_floor``
+    opening-eligible cards first keeps the round-up at ``index >= seat_floor``
+    after the opening seating pass with the opening ten otherwise unchanged.
+    """
+    if seat_floor <= 0 or not items:
+        return max(0, seat_floor)
+
+    from app.utils.discover_opening_seating import (
+        GROUP_KINDS,
+        _group_members,
+        classify_card,
+    )
+
+    effective_now = (
+        now
+        if isinstance(now, datetime) and now.tzinfo is not None
+        else datetime.now(timezone.utc)
+    )
+    seatings = [
+        classify_card(card, now=effective_now) if isinstance(card, dict) else None
+        for card in items
+    ]
+    by_event_id = {
+        card["data"].get("id"): seating
+        for card, seating in zip(items, seatings)
+        if seating is not None
+        and seating.kind == "event"
+        and isinstance(card, dict)
+        and isinstance(card.get("data"), dict)
+    }
+    for card, seating in zip(items, seatings):
+        if (
+            seating is not None
+            and seating.kind in GROUP_KINDS
+            and isinstance(card, dict)
+        ):
+            reason, restricted_by = _group_members(
+                card, by_event_id, now=effective_now
+            )
+            if reason is None:
+                seating.restricted_by = restricted_by
+                seating.restricted = bool(restricted_by)
+
+    eligible_seen = 0
+    for idx, (card, seating) in enumerate(zip(items, seatings)):
+        is_restricted = bool(seating.restricted) if seating is not None else False
+        if not is_restricted and not _is_roundup_bundle_card(card):
+            eligible_seen += 1
+            if eligible_seen >= seat_floor:
+                return max(seat_floor, idx + 1)
+    return max(seat_floor, len(items))
+
+
 def insert_roundup_feed_items(
     items: list[dict[str, Any]],
     roundup_items: Sequence[dict[str, Any]],
     *,
     seat_floor: int = ROUNDUP_SEAT_FLOOR,
     page_window: int = 20,
+    now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
-    """Place served round-up cards on Discover after the opening ten without changing scores.
+    """Place served round-up cards on Discover in page one's back half without changing scores.
 
-    Under the Oct 7–8 ranking rulings (#4080 / #5100 / #5105 / #10356 / #10357):
-    * Seats 1–10 (indices ``0..seat_floor-1``) remain the untouched why-now opening ten.
-    * Any standalone ``futures`` card whose market id is represented by the round-up
-      is suppressed so no market appears twice on the feed.
-    * Each round-up card is seated in page one's back half starting at ``seat_floor``
-      (or at its earliest replaced member's seat when ``>= seat_floor``), inheriting
-      the neighbour's score at that seat without modifying any card's score.
+    Under the Oct 7–8 ranking rulings (#4080 / #5100 / #5105 / #10356 / #10357 / #11902):
+    * Covered standalone ``futures`` members fold into the round-up wherever they sit
+      in the deck (Rule 3, including inside indices ``0..seat_floor-1``), so no market
+      appears twice on the feed.
+    * Each round-up card is seated in page one's back half after at least
+      ``seat_floor`` opening-eligible cards (``index >= seat_floor`` / ``seat >= 11``
+      both before and after ``seat_opening``), or at its earliest replaced
+      post-opening member's seat when that is past the opening-eligible floor,
+      inheriting the neighbour's score at that seat without modifying any card's score.
     """
     if not items or not roundup_items:
         return items
@@ -588,13 +666,14 @@ def insert_roundup_feed_items(
                 filtered.append(existing)
             result = filtered
 
-        default_seat = seat_floor + inserted_count
+        floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
+        default_seat = floor_idx + inserted_count
         target_seat = (
             earliest_post_opening_seat
             if earliest_post_opening_seat is not None
             else default_seat
         )
-        target_idx = min(max(seat_floor, target_seat), len(result))
+        target_idx = min(max(floor_idx, target_seat), len(result))
 
         card = copy.deepcopy(dict(r_item))
         if result:
@@ -624,6 +703,7 @@ async def add_roundup_feed_items(
     seat_floor: int = ROUNDUP_SEAT_FLOOR,
     page_window: int = 20,
     budget_seconds: float = ROUNDUP_READ_BUDGET_SECONDS,
+    now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover."""
     if not items or len(items) < seat_floor or budget_seconds <= 0:
@@ -647,7 +727,11 @@ async def add_roundup_feed_items(
     if not produced:
         return items
     return insert_roundup_feed_items(
-        items, produced, seat_floor=seat_floor, page_window=page_window
+        items,
+        produced,
+        seat_floor=seat_floor,
+        page_window=page_window,
+        now=now,
     )
 
 

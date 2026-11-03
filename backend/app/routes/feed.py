@@ -6280,6 +6280,7 @@ async def get_feed(
                 feed_items,
                 page_window=DISCOVER_COMPOSITION_WINDOW,
                 budget_seconds=_feed_budget_remaining_s(),
+                now=now,
             )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
