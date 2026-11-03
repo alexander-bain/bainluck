@@ -38,6 +38,7 @@ from tests.test_ci_matrix_required_contexts import (
     _validate_backend_partition,
 )
 from tests.test_ci_supersede_concurrency import DEPLOY_NEEDS
+from tests.test_ci_postgres_groups import _normalize_failure_continuation
 
 ROOT = Path(__file__).resolve().parents[2]
 CI = Path(os.environ.get("CI_WORKFLOW_PATH") or ROOT / ".github/workflows/ci.yml")
@@ -199,6 +200,10 @@ def _validate_current_composed_promotion(
     jobs, *, workflow_defaults=None, workflow_env=None
 ):
     """A narrow current-workflow contract, not an arbitrary shell interpreter."""
+    jobs = copy.deepcopy(jobs)
+    jobs["database-integration"] = _normalize_failure_continuation(
+        jobs["database-integration"]
+    )
     if workflow_defaults is None:
         workflow_defaults = _workflow().get("defaults", {})
     if workflow_env is None:

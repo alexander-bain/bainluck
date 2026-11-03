@@ -153,6 +153,34 @@ REUSE_SUFFIX = " && " + REUSE_GUARD
 RECEIPT = "Reused exact-commit test evidence"
 
 
+def _normalize_failure_continuation(worker):
+    """Validate the exact continuation wrapper before the original reuse grammar."""
+    normalized = copy.deepcopy(worker)
+    steps = normalized["steps"]
+    summaries = [s for s in steps if s.get("id") == "database_integration_summary"]
+    assert len(summaries) == 1 and steps[-1] is summaries[0]
+    summary = summaries[0]
+    assert set(summary) == {"id", "name", "if", "continue-on-error", "env", "run"}
+    assert summary.get("name") == "Summarize database integration failures"
+    assert summary.get("if") == "${{ !cancelled() }}"
+    assert summary.get("continue-on-error") is True
+    assert summary.get("env") == {
+        "STEP_RESULTS": "${{ toJSON(steps) }}",
+        "INTEGRATION_GROUP": "${{ matrix.group }}",
+    }
+    assert "GITHUB_STEP_SUMMARY" in summary["run"]
+    assert all(token not in summary["run"] for token in (
+        "pytest", "tests/", "GITHUB_ENV", "DATABASE_URL", "REDIS_URL",
+    )), "diagnostic summary cannot conceal an execution unit"
+    steps.pop()
+    for step in steps:
+        match = re.fullmatch(r"\$\{\{ !cancelled\(\) && \((.+)\) \}\}", step.get("if", ""))
+        assert match, "missing or widened failure-continuation guard"
+        assert not step.get("continue-on-error", False), "test failures must still fail the job"
+        step["if"] = match.group(1)
+    return normalized
+
+
 def _normalize_reuse_worker(worker):
     """Validate the entire raw reuse boundary before reading original group rules.
 
@@ -188,7 +216,8 @@ def _normalize_reuse_worker(worker):
 
 def _inputs():
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
-    jobs["database-integration"] = _normalize_reuse_worker(jobs["database-integration"])
+    jobs["database-integration"] = _normalize_reuse_worker(
+        _normalize_failure_continuation(jobs["database-integration"]))
     return jobs, json.loads(MANIFEST.read_text())
 
 
@@ -491,7 +520,8 @@ def test_middle_guard_rejects_broken_fresh_database_boundary(mutation):
     "setup_missing_guard",
 ])
 def test_reuse_representation_refuses_lost_or_widened_guards(mutation):
-    worker = yaml.safe_load(WORKFLOW.read_text())["jobs"]["database-integration"]
+    worker = _normalize_failure_continuation(
+        yaml.safe_load(WORKFLOW.read_text())["jobs"]["database-integration"])
     unit = next(step for step in worker["steps"] if step.get("if") == "matrix.group == 'isolated'" + REUSE_SUFFIX)
     if mutation == "unit_missing_conjunct":
         unit["if"] = unit["if"].removesuffix(REUSE_SUFFIX)
@@ -525,6 +555,22 @@ def test_reuse_representation_refuses_lost_or_widened_guards(mutation):
         worker["steps"][1].pop("if")
     with pytest.raises(AssertionError):
         _normalize_reuse_worker(worker)
+
+
+@pytest.mark.parametrize("mutation", ["missing_guard", "widened_guard", "missing_summary", "hidden_test"])
+def test_failure_continuation_refuses_missing_guards_or_hidden_tests(mutation):
+    worker = yaml.safe_load(WORKFLOW.read_text())["jobs"]["database-integration"]
+    unit = next(step for step in worker["steps"] if "pytest" in step.get("run", ""))
+    if mutation == "missing_guard":
+        unit["if"] = re.fullmatch(r"\$\{\{ !cancelled\(\) && \((.+)\) \}\}", unit["if"]).group(1)
+    elif mutation == "widened_guard":
+        unit["if"] = unit["if"].replace("!cancelled() &&", "!cancelled() ||", 1)
+    elif mutation == "missing_summary":
+        worker["steps"].pop()
+    else:
+        worker["steps"][-1]["run"] += "\npython -m pytest tests/hidden.py\n"
+    with pytest.raises(AssertionError):
+        _normalize_failure_continuation(worker)
 
 
 def test_receipt_values_are_environment_data_never_interpolated_shell():
