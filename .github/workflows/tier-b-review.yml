@@ -27,8 +27,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           show_full_output: true
-          model: claude-sonnet-5-5
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
             Follow docs/release-loop/tier-b-review-brief.md exactly; it is the whole brief. End with exactly one review: approve or request changes.
-          claude_args: '--allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd backend && python -m pytest:*)" --max-turns 60'
+          claude_args: '--model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd backend && python -m pytest:*)" --max-turns 60'
