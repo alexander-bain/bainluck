@@ -133,6 +133,77 @@ function policyClient(prs) {
   return {github,calls,created};
 }
 const repo={owner:'alexander-bain',repo:'bainluck'};
+
+async function alexApprovalCase({files=[{filename:'.github/workflows/tier-b-review.yml'}],
+  labels=[{name:'tier-b'},{name:'alex-approved'}],events=[],reviews=[],eventError}={}) {
+  const pr={number:1,state:'open',user:{login:'alexander-bain'},head:{sha:'head'},labels};
+  const client=policyClient([pr]);
+  client.github.rest.pulls.listFiles=async args=>{client.calls.push({method:'files',...args});return files;};
+  client.github.rest.pulls.listReviews=async args=>{client.calls.push({method:'reviews',...args});return reviews;};
+  client.github.rest.issues={listEvents:async args=>{
+    client.calls.push({method:'events',...args});
+    assert.equal(args.issue_number,1);assert.equal(args.per_page,100);
+    if(eventError)throw eventError;
+    return events;
+  }};
+  client.run=()=>require(file).evaluate(client.github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:1}}});
+  return client;
+}
+
+for(const files of [
+  [{filename:'.github/workflows/tier-b-review.yml'}],
+  [{filename:'docs/release-loop/tier-b-review-brief.md'}],
+  [{filename:'moved.md',previous_filename:'docs/release-loop/tier-b-review-brief.md'}],
+]) test(`Alex's own policy PR passes through his label: ${files[0].filename}`,async()=>{
+  const client=await alexApprovalCase({files,events:[{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}}]});
+  await client.run();
+  assert.equal(client.created[0].conclusion,'success');
+  assert.match(client.created[0].output.summary,/Alex approved.*alex-approved/);
+  assert.match(client.created[0].output.summary,/Alex must merge/);
+});
+
+for(const events of [
+  [],
+  [{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'other'}}],
+  [{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain[bot]'}}],
+  [{id:2,event:'labeled',label:{name:'alex-approved'}}],
+  [{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}},
+   {id:3,event:'unlabeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}}],
+  [{id:3,event:'labeled',label:{name:'alex-approved'},actor:{login:'other'}},
+   {id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}},
+   {id:2,event:'unlabeled',label:{name:'alex-approved'},actor:{login:'other'}}],
+]) test(`an unverified or replaced alex-approved label cannot approve: ${JSON.stringify(events)}`,async()=>{
+  const client=await alexApprovalCase({events});await client.run();
+  assert.equal(client.created[0].conclusion,'failure');
+  assert.match(client.created[0].output.summary,/label must be applied by Alex/);
+});
+
+test('Alex can reapply the label after another actor; unrelated label events do not replace it',async()=>{
+  const client=await alexApprovalCase({events:[
+    {id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'other'}},
+    {id:2,event:'unlabeled',label:{name:'alex-approved'},actor:{login:'other'}},
+    {id:3,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}},
+    {id:4,event:'labeled',label:{name:'tier-b'},actor:{login:'other'}},
+  ]});await client.run();assert.equal(client.created[0].conclusion,'success');
+});
+
+test('the exit requires the current label and policy file scope, and never audits Tier A',async()=>{
+  for(const options of [
+    {labels:[{name:'tier-b'}]},
+    {files:[{filename:'tools/release/tier_b.cjs'}]},
+    {labels:[{name:'alex-approved'}]},
+  ]) {
+    const client=await alexApprovalCase({...options,events:[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}}]});
+    await client.run();
+    assert.equal(client.created[0].conclusion,options.labels?.every(l=>l.name!=='tier-b')?'success':'failure');
+    assert.equal(client.calls.filter(c=>c.method==='events').length,0);
+  }
+});
+
+test('unknown label attribution never publishes success',async()=>{
+  const client=await alexApprovalCase({eventError:new Error('events unavailable')});
+  await assert.rejects(client.run(),/events unavailable/);assert.equal(client.created.length,0);
+});
 const openPRs=()=>Array.from({length:74},(_,i)=>({number:i+1,state:'open',user:{login:'author'},
   head:{sha:`head-${i+1}`},labels:i<6?[{name:'tier-b'}]:[]}));
 

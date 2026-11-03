@@ -80,7 +80,15 @@ async function evaluate(github, context) {
         const files = await github.paginate(github.rest.pulls.listFiles, {...repo,pull_number:pr.number,per_page:100});
         const policyChanged = files.some(file => [file.filename,file.previous_filename].some(name => ['.github/workflows/tier-b-review.yml','docs/release-loop/tier-b-review-brief.md'].includes(name)));
         const eligible = policyChanged ? reviews.filter(review => review.user.type !== 'Bot' && !review.user.login.endsWith('[bot]')) : reviews;
-        const result = verdict(pr,eligible);
+        let result = verdict(pr,eligible);
+        if (policyChanged && result.conclusion !== 'success' && pr.labels.some(label=>label.name==='alex-approved')) {
+          const events = await github.paginate(github.rest.issues.listEvents, {...repo,issue_number:pr.number,per_page:100});
+          const applied = events.filter(event=>['labeled','unlabeled'].includes(event.event) && event.label?.name==='alex-approved')
+            .sort((a,b)=>b.id-a.id)[0];
+          result = applied?.event==='labeled' && applied.actor?.login==='alexander-bain'
+            ? {conclusion:'success',summary:'Alex approved this review-policy change via alex-approved.'}
+            : {...result,summary:result.summary+' The alex-approved label must be applied by Alex.'};
+        }
         results.push(policyChanged ? {...result,summary:result.summary+' Review policy changed; Alex must merge this PR.'} : result);
       }
       const failed=results.filter(result=>result.conclusion!=='success');
