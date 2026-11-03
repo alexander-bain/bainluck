@@ -306,8 +306,12 @@ async def test_partial_initializer_consumes_send_and_keeps_preparing(recovery, m
     assert await r.client.exists(*namespace_keys(current)) == 0
 
 
-async def test_identity_or_newer_authority_prevents_cleanup_ack(recovery):
+async def test_identity_or_newer_authority_prevents_cleanup_ack(recovery, monkeypatch):
     r = recovery
+    # #11903: this case checks identity and authority conflicts, not the store's deadline. CI run
+    # 41689760392 timed out a setup prepare at the 150 ms control budget (asyncpg preparing a cold
+    # statement). As #11900 did for its siblings, a 2 s test-local budget; the deadline controls keep 150 ms.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     first = await r.prepare()
     await r.controller.arm(first)
     await r.controller.initialize(first)
