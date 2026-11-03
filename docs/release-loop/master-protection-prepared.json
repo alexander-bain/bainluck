@@ -3,7 +3,7 @@
   "allow_auto_merge": true,
   "master_protection": {
     "required_status_checks": {
-      "strict": true,
+      "strict": false,
       "contexts": [
         "Browser-audit contract fixtures",
         "Tier-B approval",
@@ -11,6 +11,10 @@
         "backend-tests (2)",
         "backend-tests (3)",
         "backend-tests (4)",
+        "backend-tests (5)",
+        "backend-tests (6)",
+        "backend-tests (7)",
+        "backend-tests (8)",
         "change-scope",
         "fast-gate",
         "frontend-build",

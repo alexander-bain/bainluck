@@ -13,7 +13,7 @@ def protection(contexts):
     if not contexts:
         raise ValueError('refusing protection without required checks')
     return {
-        'required_status_checks': {'strict': True, 'contexts': sorted(set(contexts))},
+        'required_status_checks': {'strict': False, 'contexts': sorted(set(contexts))},
         'enforce_admins': True,
         'required_pull_request_reviews': {
             'dismiss_stale_reviews': True,

@@ -11,6 +11,8 @@ The health branch now pins Action reporting to NOW #11852, keeps its verdict and
 
 `master-protection-prepared.json` is the local, unapplied policy preview: pull requests required, administrators enforced, empty bypass allowances, and required checks retained. Actual existing GitHub protection could not be read; the activation tool must reread it and preserve existing required contexts and approval count when Alex writes **branch protection on**. Items 2 and 8 must be on current master before their checks become required. No activation or auto-merge was enabled.
 
+Nov 2 follow-up to Fable review 6592269894: the prepared policy now uses `strict: false` (Alex's decision) and explicitly requires all eight backend shards. The `alex-approved` review-policy exit is a separate Tier-B PR and must land before activation. Protection and auto-merge activation remain held for Alex's exact words.
+
 Resume publication from a session or terminal with GitHub connectivity using `python3 /tmp/bainluck-wt-loop/tools/release/publish_prs.py --publish`. It starts with item 8 and writes PR URLs to `/tmp/release-loop-published-prs.json`. Merge/rebase and flaky-test cleanup wait for **master is current**. Archive and retirement holds remain in force.
 
 ## Tonight's holds

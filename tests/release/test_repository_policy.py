@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -13,10 +14,20 @@ class RepositoryPolicyTest(unittest.TestCase):
         spec.loader.exec_module(policy)
         body = policy.protection(['backend-tests (1)', 'Tier-B approval'])
         self.assertTrue(body['enforce_admins'])
-        self.assertTrue(body['required_status_checks']['strict'])
+        self.assertFalse(body['required_status_checks']['strict'])
         self.assertIn('Tier-B approval', body['required_status_checks']['contexts'])
         self.assertIsInstance(body['required_pull_request_reviews'], dict)
         self.assertFalse(body['allow_force_pushes'])
         self.assertFalse(body['allow_deletions'])
+
+    def test_prepared_checks_require_all_eight_backend_shards(self):
+        contexts = json.loads((ROOT / '.github/release-loop-required-checks.json').read_text())
+        self.assertEqual({name for name in contexts if name.startswith('backend-tests (')},
+                         {f'backend-tests ({shard})' for shard in range(1, 9)})
+        prepared = json.loads((ROOT / 'docs/release-loop/master-protection-prepared.json').read_text())
+        checks = prepared['master_protection']['required_status_checks']
+        self.assertFalse(checks['strict'])
+        self.assertEqual(checks['contexts'], sorted(set(contexts)))
+        self.assertFalse(prepared['activated'])
 
 if __name__ == '__main__': unittest.main()
