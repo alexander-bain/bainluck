@@ -2794,7 +2794,7 @@ def compose_nfl_division_roundup(
     If any registered division refuses, or fewer than four blend, or any shown
     Kalshi card cannot be serialized, returns ``(None, None)``.
     """
-    from app.utils.container_presentation import market_destination
+    from app.utils.container_presentation import MEMBER_MARKET, market_destination
 
     feed_item = assemble_nfl_division_roundup(
         blends,
@@ -2839,7 +2839,7 @@ def compose_nfl_division_roundup(
         }
         members.append(
             {
-                "type": "market",
+                "type": MEMBER_MARKET,
                 "id": mid,
                 "destination": market_destination(mid),
                 "card": card,
