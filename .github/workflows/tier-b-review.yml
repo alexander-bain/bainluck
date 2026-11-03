@@ -26,6 +26,8 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          show_full_output: true
+          model: claude-sonnet-5-5
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
             Follow docs/release-loop/tier-b-review-brief.md exactly; it is the whole brief. End with exactly one review: approve or request changes.
