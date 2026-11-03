@@ -31,7 +31,7 @@ export function RoundupRow({ row, nowMs }: { row: RoundupRowModel; nowMs: number
         <span className="min-w-0 break-words text-[15px] leading-[1.3] text-text-primary" data-testid="roundup-row-label">
           {row.label}
         </span>
-        {row.rowMark ? <PriceAgeMark observedAt={row.observedAt} nowMs={nowMs} cadence="futures" scope="row" /> : null}
+        {row.rowMark ? <PriceAgeMark observedAt={row.observedAt} nowMs={nowMs} cadence={row.cadence} scope="row" /> : null}
       </span>
       <span
         className="col-start-2 mt-[7px] block h-[6px] overflow-hidden rounded-[3px] bg-surface-elevated"

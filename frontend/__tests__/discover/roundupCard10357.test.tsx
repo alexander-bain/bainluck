@@ -158,14 +158,15 @@ describe("#10357 round-up model", () => {
       tag: "SPORTS",
       footer: "Bain Luck blend · the 4 closest of 7 games tonight",
       rows: [
-        { event_id: 102, label: "Bucks at Celtics: Celtics", probability: 0.61, observed_at: "2026-10-06T20:30:00Z" },
-        { event_id: 104, label: "Timberwolves at Nuggets: Nuggets", probability: 0.58, observed_at: "2026-10-06T20:30:00Z" },
-        { event_id: 103, label: "Devils at Rangers: Devils", probability: 0.54, observed_at: "2026-10-06T20:30:00Z" },
-        { event_id: 101, label: "Suns at Lakers: Lakers", probability: 0.51, observed_at: "2026-10-06T20:30:00Z" },
+        { event_id: 102, label: "Bucks at Celtics: Celtics", probability: 0.61, observed_at: FRESH },
+        { event_id: 104, label: "Timberwolves at Nuggets: Nuggets", probability: 0.58, observed_at: FRESH },
+        { event_id: 103, label: "Devils at Rangers: Devils", probability: 0.54, observed_at: FRESH },
+        { event_id: 101, label: "Suns at Lakers: Lakers", probability: 0.51, observed_at: FRESH },
       ],
     };
     const { model, refusal } = buildRoundupCardModel("The closest games tonight", closestGamesContract, NOW_MS);
     expect(refusal).toBeNull();
+    expect(model!.cadence).toBe("live");
     expect(model!.rows.map((r) => r.marketId)).toEqual([102, 104, 103, 101]);
     expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
       "61% Bucks at Celtics: Celtics",
@@ -187,6 +188,32 @@ describe("#10357 round-up model", () => {
       "Round-up SPORTS The closest games tonight 61 % Bucks at Celtics: Celtics 58 % Timberwolves at Nuggets: Nuggets 54 % Devils at Rangers: Devils 51 % Suns at Lakers: Lakers Bain Luck blend · the 4 closest of 7 games tonight",
     );
     expect(html).toMatch(/<a href="\/collections\/roundup-closest-games-tonight"[^>]*data-testid="roundup-card"/);
+  });
+
+  it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {
+    const twoHoursOld = "2026-10-06T19:41:00Z";
+    const eventContract: FeedRoundupContract = {
+      kicker: "Round-up",
+      tag: "SPORTS",
+      footer: "Bain Luck blend · the 4 closest of 7 games tonight",
+      rows: [
+        { event_id: 102, label: "Bucks at Celtics: Celtics", probability: 0.61, observed_at: FRESH },
+        { event_id: 104, label: "Timberwolves at Nuggets: Nuggets", probability: 0.58, observed_at: twoHoursOld },
+        { event_id: 103, label: "Devils at Rangers: Devils", probability: 0.54, observed_at: FRESH },
+        { event_id: 101, label: "Suns at Lakers: Lakers", probability: 0.51, observed_at: FRESH },
+      ],
+    };
+    const marketContract = contractFor(card("canonical"), [FRESH, twoHoursOld, FRESH, FRESH]);
+
+    const { model: eventModel } = buildRoundupCardModel("The closest games tonight", eventContract, NOW_MS);
+    expect(eventModel!.rows.map((r) => r.rowMark)).toEqual([false, true, false, false]);
+    const eventHtml = render(eventContract, { title: "The closest games tonight" });
+    expect(marks(eventHtml)).toEqual(["row:2h ago"]);
+    expect(eventHtml).toContain('data-cadence="live"');
+
+    const { model: marketModel } = buildRoundupCardModel("NFL division front-runners", marketContract, NOW_MS);
+    expect(marketModel!.rows.map((r) => r.rowMark)).toEqual([false, false, false, false]);
+    expect(marks(render(marketContract))).toEqual([]);
   });
 
   describe("age, from R4's three fixture cases (now = 2026-10-06T21:41Z, six-hour futures rule)", () => {
