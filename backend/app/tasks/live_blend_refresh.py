@@ -3949,6 +3949,12 @@ class LiveBlendRefresher:
         #: longest of their waits this minute as (seconds, event id).
         self._hl_noreading = 0
         self._hl_noreading_max: tuple[float, Optional[int]] = (0.0, None)
+        #: #11909: inputs resolved to the served number because no proof of
+        #: their reading's home orientation is possible (`_hl_unprovable_resolve`),
+        #: how many of them moved a leg's price, and the longest wait.
+        self._hl_unprovable = 0
+        self._hl_unprovable_moved = 0
+        self._hl_unprovable_max: tuple[float, Optional[int]] = (0.0, None)
         self._hl_fallback: dict[str, int] = {}
         #: event id -> mono when its receipt proposal was composed (split timing).
         self._hl_composed: dict[int, float] = {}
@@ -9351,6 +9357,39 @@ class LiveBlendRefresher:
         except Exception:
             pass
 
+    def _hl_unprovable_resolve(self, event_id, moved: bool) -> None:
+        """#11909: a receipt whose reading no receipt can ever orient
+        (`home_side_nameable`). Alex 11/03: "a proof that can never arrive must
+        not hold a live number". The screen keeps the served number with its
+        honest age, so the input leaves the clock at once: counted
+        (``unprovable=N/max@event,moved=M`` in the minute line), never ranked
+        as a delivery, since no new value reached the screen for it. The
+        event's stamp stays urgent, as an `na_proof` mark made it, so a moved
+        price is still stamped past the receipt floor. An entry an earlier
+        refusal already holds was a real wait and ends here at its age, under
+        that reason. Never raises."""
+        try:
+            entry = self._hl_pending.get(event_id)
+            if entry is None:
+                return
+            if event_id not in self._urgent_stamp:
+                self._urgent_stamp[event_id] = _mono()
+                self.urgent_stamp_stats["marked"] += 1
+            if entry[1] != "receipt":
+                entry[1] += ">served_unprovable"
+                self._hl_resolve(event_id)
+                return
+            self._hl_pending.pop(event_id, None)
+            self._hl_composed.pop(event_id, None)
+            self._hl_commit_at.pop(event_id, None)
+            age = max(0.0, _mono() - entry[0])
+            self._hl_unprovable += 1
+            self._hl_unprovable_moved += int(bool(moved))
+            if age > self._hl_unprovable_max[0]:
+                self._hl_unprovable_max = (age, event_id)
+        except Exception:
+            self.receipt_preview_stats["errors"] += 1
+
     def _hl_settle_finished(self, grouped) -> None:
         """#10090: a read sees an input's event finished. Alex 10/31: "If
         there's no valid price to show, I won't count that as a miss." An input
@@ -9469,18 +9508,28 @@ class LiveBlendRefresher:
         (nr_age, nr_event), self._hl_noreading_max = self._hl_noreading_max, (0.0, None)
         if noreading:
             noreading = "%d/%dms@%s" % (noreading, int(round(nr_age * 1000)), nr_event)
+        # #11909: only when nonzero, so a minute without one reads as before.
+        unprovable = ""
+        if self._hl_unprovable:
+            (up_age, up_event) = self._hl_unprovable_max
+            unprovable = " unprovable=%d/%dms@%s,moved=%d" % (
+                self._hl_unprovable, int(round(up_age * 1000)), up_event,
+                self._hl_unprovable_moved)
+        self._hl_unprovable, self._hl_unprovable_moved = 0, 0
+        self._hl_unprovable_max = (0.0, None)
         fallback, self._hl_fallback = self._hl_fallback, {}
         if not samples:
-            return "n=0 late=%d settled=%d nobook=%d noreading=%s" % (late, settled, nobook, noreading)
+            return "n=0 late=%d settled=%d nobook=%d noreading=%s%s" % (
+                late, settled, nobook, noreading, unprovable)
         ordered = sorted(x[0] for x in samples)
         pick = lambda q: int(round(ordered[min(len(ordered) - 1, int(q * len(ordered)))] * 1000))
         worst = sorted(samples, key=lambda x: -x[0])[:5]
         return ("n=%d p50_ms=%d p90_ms=%d max_ms=%d worst=%s fallback=%s late=%d settled=%d "
-                "nobook=%d noreading=%s") % (
+                "nobook=%d noreading=%s%s") % (
             len(samples), pick(0.5), pick(0.9), int(round(ordered[-1] * 1000)),
             ",".join("%s:%d:%s" % (eid, int(round(lat * 1000)), how) for lat, eid, how in worst),
             ",".join("%s:%d" % kv for kv in sorted(fallback.items())) or "-", late, settled, nobook,
-            noreading)
+            noreading, unprovable)
 
     def _note_receipt_class(self, kind: str, event_id) -> None:
         """Count one receipt composition outcome against its event (stats line)."""
@@ -9586,7 +9635,7 @@ class LiveBlendRefresher:
             _coerce_timestamp, observation_basis, oldest_observation_time,
         )
         from app.utils.live_blend import (
-            compute_source_home_probability, has_proven_home_orientation,
+            compute_source_home_probability, has_proven_home_orientation, home_side_nameable,
         )
         from app.utils.settledness import market_assigned_settled
 
@@ -9774,6 +9823,25 @@ class LiveBlendRefresher:
                 # 94 s as late:na_orientation, owed no stamp.
                 self._note_receipt_class("na_noreading", event_id)
                 self._hl_no_price(event_id)
+                return None
+            if proof_kwargs and not home_side_nameable(patched, event.home_team_name):
+                # #11909: no leg of any market names the home side, so no
+                # receipt can ever prove this reading's orientation (Bax v
+                # Cadenasso, Nov 3: "Bax" is too short for the side test, and
+                # each input waited 15-40 s as na_proof for the next stamp).
+                # Nothing is previewed: the input resolves to the served
+                # number, whose age keeps counting from its own confirmation.
+                # The stamp, which orients through `_oriented`, still
+                # delivers a moved price, urgent as before.
+                original = {row.id: getattr(row, "current_probability", None)
+                            for entry in group for row in entry.outcomes if row.id in overlaid}
+                moved = any(
+                    row.id in overlaid and (original.get(row.id) is None
+                                            or round(float(original[row.id]), 6)
+                                            != round(float(row.current_probability), 6))
+                    for entry in patched for row in entry.outcomes)
+                self._note_receipt_class("served_unprovable", event_id)
+                self._hl_unprovable_resolve(event_id, moved)
                 return None
             self._note_receipt_class("not_admitted", event_id)
             self._hl_mark(event_id, "na_proof" if proof_kwargs else "na_orientation")

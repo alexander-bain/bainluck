@@ -1,0 +1,63 @@
+name: Twin-register candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pairs:
+        description: "Maximum shortlisted Kalshi ↔ Polymarket pairs to send to the Batch API"
+        required: false
+        default: "120"
+      max_cost_usd:
+        description: "Hard cost ceiling in USD (never above 60)"
+        required: false
+        default: "60"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  twin-candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Run twin_candidates.py against public /api/futures/browse and Anthropic Batch API
+        id: run_candidates
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          SUMMARY=$(python3 tools/matching/twin_candidates.py \
+            --max-pairs "${{ inputs.max_pairs || '120' }}" \
+            --max-cost-usd "${{ inputs.max_cost_usd || '60' }}" \
+            --md-out docs/matching/twin-candidates-2026-11.md \
+            --json-out docs/matching/twin-candidates-2026-11.json)
+          echo "$SUMMARY"
+          PAIRS_SENT=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["pairs_sent"])' "$SUMMARY")
+          HIGH_CONF=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["high_confidence_candidates"])' "$SUMMARY")
+          BATCH_ID=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["batch_id"])' "$SUMMARY")
+          echo "pairs_sent=$PAIRS_SENT" >> "$GITHUB_OUTPUT"
+          echo "high_confidence_candidates=$HIGH_CONF" >> "$GITHUB_OUTPUT"
+          echo "batch_id=$BATCH_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR with docs/matching/twin-candidates-2026-11.{md,json}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="docs/twin-candidates-2026-11-run-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add docs/matching/twin-candidates-2026-11.md docs/matching/twin-candidates-2026-11.json
+          git commit -m "docs(matching): twin-register candidates 2026-11 (batch ${{ steps.run_candidates.outputs.batch_id }})"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --title "docs(matching): twin-register candidates 2026-11 (${{ steps.run_candidates.outputs.high_confidence_candidates }} high-confidence of ${{ steps.run_candidates.outputs.pairs_sent }} pairs)" \
+            --body "PILLAR: MATCHING / TRUTH · SHIP: candidate table of Kalshi ↔ Polymarket open futures market pairs evaluated via the Anthropic Message Batches API (\`claude-sonnet-5-5\`, capped at \$60).\n\n- **Batch ID:** \`${{ steps.run_candidates.outputs.batch_id }}\`\n- **Pairs sent:** **${{ steps.run_candidates.outputs.pairs_sent }}**\n- **High-confidence candidates:** **${{ steps.run_candidates.outputs.high_confidence_candidates }}**\n- Nothing in this PR writes to a live code register; verification and promotion into \`MIDTERMS_TWIN_REGISTER\`-style code is a separate Tier-B change."

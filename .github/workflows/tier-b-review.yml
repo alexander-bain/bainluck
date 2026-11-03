@@ -4,6 +4,8 @@ on:
     types: [opened, reopened, synchronize, labeled, ready_for_review]
 permissions:
   contents: read
+  actions: read
+  checks: read
   pull-requests: write
   issues: read
   id-token: write
@@ -14,20 +16,78 @@ jobs:
   review:
     if: contains(github.event.pull_request.labels.*.name, 'tier-b') && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
+      - name: Wait for green CI at this head
+        id: ci
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const repo = context.repo;
+            const number = context.payload.pull_request.number;
+            const head = context.payload.pull_request.head.sha;
+            const deadline = Date.now() + 30 * 60 * 1000;
+            while (Date.now() < deadline) {
+              const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
+              if (pr.state !== 'open' || pr.draft || pr.head.sha !== head ||
+                  !pr.labels.some(label => label.name === 'tier-b')) {
+                core.notice('PR closed, became draft, lost tier-b, or moved head; no review.');
+                return;
+              }
+              const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo,
+                {...repo, head_sha: head, event: 'pull_request', per_page: 100});
+              // A superseded/cancelled suite must not masquerade as red CI.
+              // For each workflow use its newest non-cancelled run at this head.
+              const latest = new Map();
+              for (const run of [...runs].sort((a, b) => b.id - a.id)) {
+                if (run.conclusion !== 'cancelled' && !latest.has(run.path)) latest.set(run.path, run);
+              }
+              const ci = latest.get('.github/workflows/ci.yml');
+              const ignoredSuites = new Set(runs.filter(run =>
+                run.conclusion === 'cancelled' || latest.get(run.path)?.id !== run.id ||
+                ['.github/workflows/tier-b-review.yml', '.github/workflows/tier-b.yml'].includes(run.path)
+              ).map(run => run.check_suite_id).filter(id => id != null));
+              const checks = (await github.paginate(github.rest.checks.listForRef,
+                {...repo, ref: head, filter: 'latest', per_page: 100})).filter(check =>
+                  !['review', 'Tier-B approval'].includes(check.name) &&
+                  !ignoredSuites.has(check.check_suite?.id));
+              const red = checks.find(check => check.status === 'completed' &&
+                !['success', 'neutral', 'skipped', 'cancelled'].includes(check.conclusion));
+              if (red || (ci?.status === 'completed' && ci.conclusion !== 'success')) {
+                core.setFailed(`CI is red at ${head}: ${red?.name || ci.html_url}; no review.`);
+                return;
+              }
+              if (ci?.conclusion === 'success' && checks.length && checks.every(check =>
+                  check.status === 'completed' && ['success', 'neutral', 'skipped'].includes(check.conclusion))) {
+                const {data: current} = await github.rest.pulls.get({...repo, pull_number: number});
+                if (current.state !== 'open' || current.draft || current.head.sha !== head ||
+                    !current.labels.some(label => label.name === 'tier-b')) return;
+                core.setOutput('ready', 'true');
+                core.notice(`CI is green at ${head}: ${ci.html_url}`);
+                return;
+              }
+              core.info(`Waiting for CI at ${head}; reviewer has not started.`);
+              await new Promise(resolve => setTimeout(resolve, 60000));
+            }
+            core.setFailed(`Timed out after 30 minutes waiting for green CI at ${head}; no review.`);
       - uses: actions/checkout@v6
+        if: steps.ci.outputs.ready == 'true'
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v7
+        if: steps.ci.outputs.ready == 'true'
         with:
           python-version: "3.11"
       - run: pip install -q -r backend/requirements.txt
+        if: steps.ci.outputs.ready == 'true'
       - uses: anthropics/claude-code-action@v1
+        if: steps.ci.outputs.ready == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           show_full_output: true
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
+            CI was verified green at head ${{ github.event.pull_request.head.sha }} before this review. Ignore superseded/cancelled runs and the Tier-B approval check; inspect the latest CI run for this head if needed.
+            Run tests directly, without a pipe: cd backend && python3 -m pytest <files> -q. Use Read/Grep for files. Shell commands may also use an absolute backend path; python/python3 pytest are allowed separately from cd.
             Follow docs/release-loop/tier-b-review-brief.md exactly; it is the whole brief. End with exactly one review: approve or request changes.
-          claude_args: '--model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd backend && python -m pytest:*)" --max-turns 60'
+          claude_args: '--model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh run view:*),Bash(echo:*),Bash(tail:*)" --max-turns 60'
