@@ -18,13 +18,18 @@ function verdict(pr, reviews) {
 }
 
 async function currentOpen(github, repo, eventNumber) {
+  if (eventNumber) {
+    const pr = await github.rest.pulls.get({...repo,pull_number:eventNumber}).then(r=>r.data);
+    return pr.state === 'open' ? [pr] : [];
+  }
   const listed = await github.paginate(github.rest.pulls.list,{...repo,state:'open',per_page:100});
-  const numbers = [...new Set([...listed.map(pr=>pr.number),...(eventNumber?[eventNumber]:[])])];
   const current = [];
-  // Refresh before grouping: a PR may have synchronized to another sibling's
-  // SHA since pagination. Initial list head/label fields are never authority.
-  for (const number of numbers) {
-    const pr = await github.rest.pulls.get({...repo,pull_number:number}).then(r=>r.data);
+  for (const listedPR of listed) {
+    // Tier A is label-only. Refresh Tier B before reading its head's reviews
+    // and grouping siblings; the final membership read catches list changes.
+    const pr = listedPR.labels.some(label=>label.name==='tier-b')
+      ? await github.rest.pulls.get({...repo,pull_number:listedPR.number}).then(r=>r.data)
+      : listedPR;
     if (pr.state === 'open') current.push(pr);
   }
   return current;
@@ -36,23 +41,25 @@ function membership(prs) {
     .sort((a,b)=>a.number-b.number));
 }
 
-async function publish(github,repo,sha,result,stillCurrent) {
+async function publish(github,repo,sha,result) {
   const checks = await github.paginate(github.rest.checks.listForRef,{...repo,ref:sha,check_name:'Tier-B approval',per_page:100});
-  if (stillCurrent && !(await stillCurrent())) return false;
   const previous = checks.filter(check=>check.app?.slug==='github-actions').sort((a,b)=>b.id-a.id)[0];
-  if (previous?.conclusion === result.conclusion && previous?.output?.summary === result.summary) return true;
+  if (previous?.conclusion === result.conclusion && previous?.output?.summary === result.summary) return;
   await github.rest.checks.create({...repo,name:'Tier-B approval',head_sha:sha,
     status:'completed',conclusion:result.conclusion,completed_at:new Date().toISOString(),
     output:{title:'Tier-B approval',summary:result.summary}});
-  return true;
 }
 
 async function evaluate(github, context) {
   const repo=context.repo;
-  const eventNumber=context.payload.pull_request?.number || context.payload.client_payload?.pull_number;
+  const eventNumber=context.eventName === 'schedule' ? undefined : Number(
+    context.payload.pull_request?.number ?? context.payload.client_payload?.pull_number ?? context.payload.inputs?.pull_number);
+  if (eventNumber !== undefined && (!Number.isSafeInteger(eventNumber) || eventNumber < 1)) {
+    throw new Error('A pull request number is required outside the scheduled sweep.');
+  }
   const observed=new Set();
-  // Every event reconciles EVERY current SHA. GitHub concurrency coalesces
-  // pending events; the surviving event must also cover a discarded dismissal.
+  // Events touch their PR only. The half-hour sweep also reconciles review
+  // dismissals and events coalesced by GitHub's per-PR concurrency queue.
   for (let attempt=0;attempt<2;attempt++) {
     const current=await currentOpen(github,repo,eventNumber);
     const groups=new Map();
@@ -65,6 +72,10 @@ async function evaluate(github, context) {
     for (const [sha,prs] of groups) {
       const results=[];
       for (const pr of prs) {
+        if (!pr.labels.some(label=>label.name==='tier-b')) {
+          results.push(verdict(pr,[]));
+          continue;
+        }
         const reviews=await github.paginate(github.rest.pulls.listReviews,{...repo,pull_number:pr.number,per_page:100});
         const files = await github.paginate(github.rest.pulls.listFiles, {...repo,pull_number:pr.number,per_page:100});
         const policyChanged = files.some(file => [file.filename,file.previous_filename].some(name => ['.github/workflows/tier-b-review.yml','docs/release-loop/tier-b-review-brief.md'].includes(name)));
@@ -76,20 +87,12 @@ async function evaluate(github, context) {
       verdicts.set(sha,{conclusion:failed.length?'failure':'success',
         summary:(failed.length?failed:results).map(x=>x.summary).join('\n')});
     }
+    for (const [sha,result] of verdicts) await publish(github,repo,sha,result);
+    // One membership check after publishing, never an all-PR read per SHA.
+    // Retry once if a head or label moved; repeated churn fails observed heads.
     const refreshed=await currentOpen(github,repo,eventNumber);
     refreshed.forEach(pr=>observed.add(pr.head.sha));
-    if (membership(current)!==membership(refreshed)) continue;
-    const stillCurrent=async()=>{
-      const latest=await currentOpen(github,repo,eventNumber);
-      latest.forEach(pr=>observed.add(pr.head.sha));
-      return membership(current)===membership(latest);
-    };
-    let changed=false;
-    for (const [sha,result] of verdicts) {
-      if (!(await publish(github,repo,sha,result,stillCurrent))) {changed=true;break;}
-    }
-    if (changed) continue;
-    return;
+    if (membership(current)===membership(refreshed)) return;
   }
   for (const sha of observed) await publish(github,repo,sha,{conclusion:'failure',
     summary:'PR membership, head or labels changed during both evaluation attempts; re-evaluation required.'});
