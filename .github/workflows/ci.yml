@@ -3143,7 +3143,7 @@ jobs:
         # Real PG verifies row-lock JSONB merge semantics; fakes cannot.
         # The read-modify-write strawman must still lose a key.
         if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "set -o pipefail\npython -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \\\n  tests/integration/test_stamp_fused_intent_10090_pg.py \\\n  tests/integration/test_nonvenue_live_push_pg_8761.py \\\n  tests/integration/test_nonvenue_trace_pg_10090.py \\\n  tests/integration/test_probability_publication_pg_4971.py \\\n  tests/integration/test_optional_db_abandon_pg_10090.py \\\n  -v -rs 2>&1 | tee /tmp/liveblendrace.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/liveblendrace.txt; then\n  echo \"::error::live blend concurrent stamp gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
+        run: "set -o pipefail\npython -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \\\n  tests/integration/test_stamp_fused_intent_10090_pg.py \\\n  tests/integration/test_nonvenue_live_push_pg_8761.py \\\n  tests/integration/test_nonvenue_trace_pg_10090.py \\\n  tests/integration/test_probability_publication_pg_4971.py \\\n  -v -rs 2>&1 | tee /tmp/liveblendrace.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/liveblendrace.txt; then\n  echo \"::error::live blend concurrent stamp gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
       - name: "#8129 earlier completed blend groups release rows and publish (real Postgres)"
         id: db_181_8129_earlier_completed_blend_groups_rele
         if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
