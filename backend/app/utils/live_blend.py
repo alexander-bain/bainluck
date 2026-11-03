@@ -243,6 +243,30 @@ def has_proven_home_orientation(reading: BlendReading) -> bool:
     )
 
 
+def home_side_nameable(group: Sequence[MarketOutcomes], home_team_name: str) -> bool:
+    """#11909: whether ANY reading of ``group`` could ever prove its home
+    orientation (`has_proven_home_orientation`).
+
+    Every proof needs an outcome row the side test (`_outcome_names_team`)
+    reads as the home side: `named_home_quote` and `named_two_way_devig` ask
+    `_is_unique_named_home_quote` of a home row, and a three-way partition
+    needs exactly one home member. With no such row in any market of the
+    group no price can prove it; only new outcome names could. Specimen: Bax
+    v Cadenasso (event 15340299, Nov 3), legs "Florent Bax" / "Lorenzo
+    Cadenasso": "Bax" is too short for the side test, so only the away leg
+    names a side. A necessary condition only: True says nothing about
+    whether a proof holds now.
+    """
+    if not home_team_name:
+        return False
+    return any(
+        getattr(row, "name", None)
+        and _pmm._outcome_names_team(row.name, home_team_name)
+        for entry in group or ()
+        for row in entry.outcomes
+    )
+
+
 def _is_unique_named_home_quote(
     entry: MarketOutcomes, outcome: Any, home_team_name: str, away_team_name: str
 ) -> bool:
