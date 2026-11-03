@@ -445,6 +445,24 @@ async def get_container(
     if not containers_read_enabled() or (slug == MIDTERMS_SLUG and not midterms_enabled()):
         raise HTTPException(status_code=404, detail="Not found")
 
+    from app.utils.discover_bundles import (
+        NFL_DIVISION_ROUNDUP_SLUG,
+        nfl_division_roundup,
+        nfl_division_roundup_enabled,
+    )
+
+    if slug == NFL_DIVISION_ROUNDUP_SLUG:
+        if not nfl_division_roundup_enabled():
+            raise HTTPException(
+                status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
+            )
+        _feed_item, roundup_payload = await nfl_division_roundup(db)
+        if roundup_payload is None:
+            raise HTTPException(
+                status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
+            )
+        return roundup_payload
+
     published = await read_published(db, slug)
     if published.state == READ_UNAVAILABLE:
         raise HTTPException(
@@ -604,7 +622,10 @@ def _remember_local(key: str, entry: CachedRead) -> None:
 
 
 def _reset_read_cache_for_tests() -> None:
+    from app.utils.discover_bundles import reset_nfl_division_roundup_cache_for_tests
+
     _local_entries.clear()
+    reset_nfl_division_roundup_cache_for_tests()
 
 
 async def _load_entry(key: str, now: float) -> tuple[Optional[CachedRead], bool]:
