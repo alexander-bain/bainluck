@@ -8,14 +8,18 @@ week from `backend/app/tasks/container_nfl_assembly.py`.
 
 ## What merging changes
 
-Nothing on production. The policy has its own switch,
-`CONTAINER_NFL_AUTO_PUBLISH_ENABLED`, unset by default. With it unset the policy
-issues no database statement; each NFL week's pass report gains a
-`publication` block reading `decision: disabled` plus `harvest_complete` /
-`harvest_refusal` — what the harvest alone says, before any stored check.
+NFL week assembly (A2) and automatic publication (A4) are enabled by default.
+The hourly `assemble_containers` pass selects weeks from the authority's schedule,
+assembles their members, and publishes complete eligible weeks in the same
+transaction. The past-week status blocker was fixed by #11914.
 
-It is NOT `CONTAINER_COLLECTIONS_ENABLED`. That switch lets the hourly pass
-write NFL/MLB member edges; it never granted publication and still does not.
+`CONTAINER_COLLECTIONS_ENABLED` explicitly controls both NFL and MLB assembly.
+When unset, only NFL runs; MLB still needs an explicit truthy value. An existing
+`true` value retains its NFL/MLB behavior. Explicit `false` stops both families.
+`CONTAINER_NFL_AUTO_PUBLISH_ENABLED` independently controls NFL publication:
+unset means enabled; explicit `false` stops publication while assembly can continue.
+The PR changes these defaults openly; no per-week command or production config
+write is needed. A partial or corrected week still follows the refusal rules below.
 
 ## What it does when on
 
@@ -34,7 +38,7 @@ It publishes only when all of these hold (each refusal is named in the report):
 |---|---|
 | authority named the week: season read, is the declared season, week scheduled | `schedule_season_unknown`, `schedule_is_another_season`, `week_not_in_schedule` |
 | every contest is exactly one member game — compared as sets of contest ids, never counts | `contest_without_event_row`, `contest_with_duplicate_event_rows`, `week_contest_with_conflicting_identity`, `contests_not_exactly_members` |
-| question read was not capped | `market_read_truncated` |
+| market read was not capped | `market_read_truncated` |
 | no id-less or placeholder slot filed under this week | `week_slot_without_contest_id`, `week_slot_is_placeholder` |
 | no contest with an id but an unreadable round whose kickoff is unknown or within 48 h of this week's known kickoffs | `week_slot_without_week_identity` |
 | none of our rows in the week's kickoff span is stamped with a contest id this read lists nowhere, and that read of our rows was not capped (unstamped rows stay report-only — #2693 symptoms) | `stamped_game_missing_from_schedule`, `unidentified_read_truncated` |
@@ -72,23 +76,16 @@ holds a game that is no longer its own. Correct it with the operator's
 reviewed `withdraw-members`; the policy then still waits for a person
 (`member_withdrawn`), by design.
 
-## Activation (not authorized by this change)
+## Activation and undo
 
-Authority owns the activation decision. Preconditions, in order:
+Alex authorized A2 + A4 together on NOW #11852. Merge on green CI and current-head
+independent Tier-B approval. The deployed hourly pass handles the next run;
+publication still requires the correction schema and every completeness and
+reader-eligibility guard above. Verify the current authority-defined week in
+production Discover at 390 px and its `/api/containers/<slug>` members and states.
 
-1. #9651's correction schema is applied on the target database (else every
-   decision is `withheld: publication_schema_absent`).
-2. The hourly pass is running the NFL collection: `CONTAINER_COLLECTIONS_ENABLED`
-   on (a one-off `only=nfl-<season>` dispatch is not automatic). That switch is
-   its own decision: it ALSO starts the hourly MLB-postseason collection's edge
-   writes, so approve it as a separate line item with its own undo.
-3. Read at least one pass report with the switch off and check `publication`
-   for the current week reads `harvest_complete: true` where expected.
-4. Set `CONTAINER_NFL_AUTO_PUBLISH_ENABLED=true` on the main app (`bainluck`):
-   `assemble_containers` runs there on the `background` queue and is not in
-   `HEAVY_TASKS`. Production config vars are attended.
-
-Undo: unset the switch — later passes stop deciding. A hub it already published
-is withdrawn with the reviewed operator (`--operation withdraw`); the ledger row
-it wrote names `actor = auto:container_nfl_publication` and the policy version.
-Nothing here restores `unpublished` (the helpers have no such action).
+To stop future publication, set `CONTAINER_NFL_AUTO_PUBLISH_ENABLED=false`.
+To stop automatic collection assembly, set `CONTAINER_COLLECTIONS_ENABLED=false`.
+Unsetting either variable restores its default; it is not an undo. Existing
+published hubs remain published. Withdrawing one remains the reviewed operator's
+`--operation withdraw`, recorded in the correction ledger.
