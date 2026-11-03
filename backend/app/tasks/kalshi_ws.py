@@ -2392,7 +2392,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 skipped_phase = {}
                 held_ambiguous = False
                 written_outcome_ids: list[int] = []
-                # #10090 `preview_from_commit`: the rows the UPDATE returned,
+                # #10090 the preview graph cache: the rows the UPDATE returned,
                 # handed to the refresher only once this phase has committed.
                 returned_rows: list = []
                 written_observations: dict = {}
@@ -3390,7 +3390,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             updated_at=resolved.settled_at,
                         )
             finally:
-                # #10090 `preview_from_commit`: the grade writes this leg
+                # #10090 the preview graph cache: the grade writes this leg
                 # outside the price write. Committed or not (a cancellation
                 # may cut the commit), before any await, no cached read graph
                 # keeps its pre-grade row.
@@ -3623,7 +3623,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             )
                         )
             finally:
-                # #10090 `preview_from_commit`: committed or not (a
+                # #10090 the preview graph cache: committed or not (a
                 # cancellation may cut the commit), before any await, no
                 # cached read graph keeps these legs' pre-settlement rows.
                 from app.tasks.live_blend_refresh import forget_preview_outcomes

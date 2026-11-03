@@ -246,33 +246,9 @@ def _owed_budget_env(name, default, cast, low, high):
 #: 500 more on the observation preview, which PR #11700 owns), every one of
 #: worker-ws's 9–10 backends under 78 s old on a dyno up 90 minutes, and
 #: Kalshi's slowest flush spending up to 8.9 s in checkout and connection
-#: setup. Set to 1, the caller still stops waiting at the same deadline and
-#: gets the same TimeoutError, but the read is ABANDONED, not cancelled: it
-#: finishes on its own task and returns its connection to the pool. Default
-#: off. Read at call time; a config var change restarts the dyno anyway.
-OPTIONAL_DB_ABANDON_ENV = "LIVE_BLEND_ABANDON_OPTIONAL_DB"
-#: An abandoned read still holds its session slot and connection; one that has
-#: not finished this long after it started is cancelled after all.
-OPTIONAL_DB_ABANDON_LIMIT_S = 5.0
-
-
-class OptionalDbAbandoned(TimeoutError):
-    """The deadline passed and the read was left to finish on its own task."""
-
-
-def optional_db_abandons() -> bool:
-    return os.getenv(OPTIONAL_DB_ABANDON_ENV, "").strip().lower() in ("1", "true", "on", "yes")
-
-
-#: Its runtime trial name (`app.tasks.speed_switches`). ``alternate`` abandons
-#: every read in the "on" periods: the switch acts on the shared connection
-#: pool, so alternating periods is its faithful comparison. ``ab`` abandons only
-#: the reads whose games are ALL in the trial's half (one event-id parity), so no
-#: game outside the half ever has a switched read; a read about games of both
-#: halves stays off, and so does the normal recovery page read, which names no
-#: game until it returns. Its effect still reaches both halves' deliveries
-#: through the pool.
-OPTIONAL_DB_SWITCH = "abandon_optional_db"
+#: setup. Abandoning such a read at its deadline instead of cancelling it was
+#: trialled as `LIVE_BLEND_ABANDON_OPTIONAL_DB` / `abandon_optional_db` (Oct 29),
+#: lost, and was removed in the settings freeze (docs/live-settings.md).
 #: `FRESH_FLUSH_PENDING_ATTEMPTS`'s runtime trial name: ``alternate`` between two
 #: values by period, read once per flush (`_fresh_flush_pending_attempts`).
 PENDING_ATTEMPTS_SWITCH = "pending_attempts"
@@ -331,19 +307,6 @@ LOCK_RETRY_PROMPT_DELAYS_S = (1.0, 2.0, 4.0)
 #: on the busy wide-book games whose buffer never clears, so a due
 #: `lock_retry_prompt` stayed out flush after flush.
 LOCK_RETRY_PAST_WITHDRAWAL_SWITCH = "lock_retry_past_withdrawal"
-#: #10090 runtime trial (``ab``/``alternate`` 0/1, today 0), read per event when
-#: a committed price write hands its RETURNING rows over (`note_committed_rows`):
-#: on, a live event's preview is composed from those rows patched into the
-#: refresher's last read graph and proposed at once, with that read's ticket,
-#: revision and base, before the stamp's own session, ticket and SELECT. Redis
-#: refuses an open on a stale ticket (`read_required`) and an older context
-#: that would change the event's class (`stale_context`; a same-class one
-#: passes, `keep_class`); a continue is guarded by its chain, which every
-#: retire/terminal removes. The ordinary refresh runs behind it either way, so
-#: a refusal costs only the head start. Production 2026-10-29
-#: 23:28-23:52Z (discover): live recv->stamped_at p50 187 ms Kalshi / 279 ms PM,
-#: about half of it after the price commit.
-PREVIEW_FROM_COMMIT_SWITCH = "preview_from_commit"
 #: How old a cached read graph may be when a commit is composed onto it. The
 #: rows this process commits are patched in; a write by another process (a
 #: REST-poll price, a backfill or sweep settlement, an event status change) is
@@ -626,27 +589,6 @@ def forget_preview_outcomes(refresher, outcome_ids) -> None:
     if callable(forget):
         with contextlib.suppress(Exception):
             forget(list(outcome_ids))
-
-
-def _preview_from_commit_possible() -> bool:
-    """Whether any event may have `preview_from_commit` on now; False on error."""
-    try:
-        trial = _optional_db_trial()
-        return (trial.state(PREVIEW_FROM_COMMIT_SWITCH).mode != "off"
-                or bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0)))
-    except Exception:  # noqa: BLE001 — a switch read never fails a read or write
-        return False
-
-
-def _preview_from_commit(event_id) -> bool:
-    """This event's `preview_from_commit` arm; off on any switch error."""
-    try:
-        trial = _optional_db_trial()
-        if trial.state(PREVIEW_FROM_COMMIT_SWITCH).mode == "ab":
-            return trial.arm(PREVIEW_FROM_COMMIT_SWITCH, int(event_id))
-        return bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0))
-    except Exception:  # noqa: BLE001 — a switch read never fails a write
-        return False
 
 
 #: A preview batch larger than this is published in chunks (see `_publish_previews`).
@@ -3674,10 +3616,10 @@ class LiveBlendRefresher:
                                 for name, value in today_env_in_force().items())
             logger.info(
                 "speed_switch[pid=%d]: layer SPEED_SWITCH_TRIALS=%s "
-                "today pending_attempts=%d abandon_optional_db=%d "
+                "today pending_attempts=%d "
                 "admitted_debt_slots=%d admitted_stamp_batch=%d%s",
                 os.getpid(), "on" if trials_enabled() else "off",
-                FRESH_FLUSH_PENDING_ATTEMPTS, int(optional_db_abandons()),
+                FRESH_FLUSH_PENDING_ATTEMPTS,
                 ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH, overrides,
             )
         #: #11181 — durable custody of owed chart points. Both production
@@ -3789,11 +3731,6 @@ class LiveBlendRefresher:
         # Local151 durable normal-price intent; no full frames retained in memory.
         self._normal_source = self.source + "_price_publish"
         self._normal_task = None
-        #: #10090 — optional reads abandoned at their deadline, by kind, still
-        #: finishing on their own task (`OPTIONAL_DB_ABANDON_ENV`).
-        self._optional_db_running: dict[str, asyncio.Task] = {}
-        self._optional_db_limits: dict[asyncio.Task, asyncio.TimerHandle] = {}
-        self.optional_db_abandoned = 0
         self._normal_retry_at = 0.0
         self._normal_closed = False
         self._normal_has_debt = True  # one recovery discovery on startup
@@ -3946,22 +3883,15 @@ class LiveBlendRefresher:
         self.observation_read_stats: dict[str, int] = {
             "detached": 0, "finished": 0, "capped": 0, "ceiling_cancelled": 0,
         }
-        #: #10090 `preview_from_commit` — each live preview event's last read
-        #: graph: event id -> (`_mono` of the read, event, group). Replaced, never
-        #: mutated: a committed row or stamp installs a patched copy.
+        #: #10090 preview graph cache (`preview_at_receipt`) — each live preview
+        #: event's last read graph: event id -> (`_mono` of the read, event,
+        #: group). Replaced, never mutated.
         self._preview_graphs: dict[int, tuple] = {}
         #: Outcome id -> the cached event whose graph holds it.
         self._preview_graph_outcomes: dict[int, int] = {}
-        #: Committed outcomes awaiting composition: event id -> {outcome id:
-        #: the `last_updated` its write returned}. One worker drains it.
-        self._commit_preview_due: dict[int, dict[int, Any]] = {}
-        #: Outcome id -> (`_mono` noted, its committed `COMMIT_PATCH_FIELDS`),
-        #: oldest note first, kept `PREVIEW_NOTE_RETENTION_S`.
-        self._noted_commits: dict[int, tuple] = {}
         #: Outcome id -> `_mono` when this process last changed it outside a
         #: price write (`forget_preview_outcomes`), oldest first, kept as long.
         self._forgotten_outcomes: dict[int, float] = {}
-        self._commit_preview_task: Optional[asyncio.Task] = None
         self.commit_preview_stats: dict[str, int] = {"proposed": 0, "errors": 0}
         #: #10090 `preview_at_receipt` — outcome id -> the newest received
         #: quote: (price as the row stores it, frozen DB-clock bound, input seq,
@@ -6394,7 +6324,7 @@ class LiveBlendRefresher:
         # does no admission read either (#10090).
         if stopped_waiting is not None and stopped_waiting():
             raise _ObservationReadAbandoned
-        # `preview_from_commit`: a kept graph is as old as its ticket.
+        # The preview graph cache: a kept graph is as old as its ticket.
         read_started = _mono()
         with _observation_read_step("admission"):
             preview_ticket = (
@@ -6794,19 +6724,11 @@ class LiveBlendRefresher:
         except asyncio.CancelledError as exc:
             interrupted = exc
         try:
-            await self._close_commit_preview()
-        except asyncio.CancelledError as exc:
-            interrupted = exc
-        try:
             await self._close_receipt_preview()
         except asyncio.CancelledError as exc:
             interrupted = exc
         try:
             await self._close_normal_recovery()
-        except asyncio.CancelledError as exc:
-            interrupted = exc
-        try:
-            await self._close_optional_db()
         except asyncio.CancelledError as exc:
             interrupted = exc
         self._start_history(force=True)
@@ -7952,12 +7874,12 @@ class LiveBlendRefresher:
     # ── #10090: optional reads abandoned at their deadline ───────────────────
 
     def _optional_db_busy(self) -> bool:
-        """Abandoned optional work already holds its share of the slots; skip this turn."""
-        held = sum(not task.done() for task in self._optional_db_running.values())
-        if optional_db_abandons() or _optional_db_trial().state(OPTIONAL_DB_SWITCH).mode != "off":
-            # The detached observation reads (#11700) share the same slots.
-            held += sum(not task.done() for task in self._detached_reads)
-        return held >= OPTIONAL_DB_HELD_MAX
+        """Whether optional reads already hold their share of the session slots.
+
+        No read is ever abandoned since the settings freeze removed
+        `abandon_optional_db`, so the share held is zero: busy only when the
+        share itself is zero (`OPTIONAL_DB_HELD_MAX`)."""
+        return OPTIONAL_DB_HELD_MAX <= 0
 
     def _trial_attempt_failed(self, flush_started, error: BaseException) -> None:
         """An old stamp only a `pending_attempts` trial allowed has failed: that
@@ -7969,146 +7891,15 @@ class LiveBlendRefresher:
             self._pending_attempts_limit = FRESH_FLUSH_PENDING_ATTEMPTS
             _optional_db_trial().trip(PENDING_ATTEMPTS_SWITCH, error)
 
-    @staticmethod
-    def _optional_db_on(key: Optional[int]) -> bool:
-        """The env switch, or the running trial's arm for the read keyed ``key``."""
-        if optional_db_abandons():
-            return True
-        trial = _optional_db_trial()
-        if trial.state(OPTIONAL_DB_SWITCH).mode == "alternate":
-            return trial.arm(OPTIONAL_DB_SWITCH, 0)  # the period's arm, every read
-        return key is not None and trial.arm(OPTIONAL_DB_SWITCH, key)
-
     async def _optional_db(self, kind: str, budget_s: float, body, key: Optional[int] = None,
                            gate=None):
-        """Await ``body()`` for at most ``budget_s``; TimeoutError past it.
-
-        Off (the default), exactly ``asyncio.timeout(budget_s)`` around the
-        body. On (`OPTIONAL_DB_ABANDON_ENV`), the body runs on its own task and
-        is never cancelled for the deadline: the caller is released with the
-        same TimeoutError and the body finishes, keeping its connection. A
-        cancellation of the CALLER still cancels the body and waits for it, as
-        the timeout's own cancellation did. With a ``gate``, a body that has not
-        set ``gate.reading`` (still queued for its session slot) is cancelled at
-        the deadline, as with the switch off: it holds no connection to keep.
-        """
-        if not self._optional_db_on(key):
-            async with asyncio.timeout(budget_s):
-                return await body()
-        if self._optional_db_busy():
-            raise TimeoutError(f"optional {kind} read skipped: abandoned reads hold their share")
-        task = asyncio.create_task(body(), name=f"optional-db:{kind}")
-        try:
-            # The same deadline scope as off; only the read behind it is shielded.
-            async with asyncio.timeout(budget_s):
-                return await asyncio.shield(task)
-        except TimeoutError:
-            if task.done():
-                # The read's own TimeoutError, or one that ended at the deadline.
-                if not task.cancelled():
-                    task.exception()
-                raise
-            if self._optional_db_busy() or (gate is not None and not gate.reading):
-                # Another read took the share meanwhile, or this one is still
-                # queued for its slot: cancel, as with the switch off.
-                await self._optional_db_cancel_and_join(task, TimeoutError())
-                raise
-            self._optional_db_abandon(kind, task, OPTIONAL_DB_ABANDON_LIMIT_S - budget_s)
-            raise OptionalDbAbandoned(f"optional {kind} read abandoned after {budget_s}s")
-        except BaseException as exc:
-            await self._optional_db_cancel_and_join(task, exc)
-            raise
+        """Await ``body()`` for at most ``budget_s``; TimeoutError past it."""
+        async with asyncio.timeout(budget_s):
+            return await body()
 
     async def _optional_db_in_pass(self, kind: str, body, key: Optional[int] = None):
-        """Await ``body(gate)`` under the enclosing pass's own deadline.
-
-        For preview capacity maintenance, whose reads sit inside its 1 s pass
-        timeout. Off, exactly ``await body(None)``. On, the body runs on its own
-        task behind a shield: when the pass deadline cancels the caller while
-        the body is inside its read (``gate.reading``), the caller ends exactly
-        as before and the read is left to finish, then stop at
-        ``gate.read_done()``. A cancellation anywhere else, or at shutdown,
-        still cancels the body and waits for it.
-        """
-        if not self._optional_db_on(key):
-            return await body(None)
-        if self._optional_db_busy():
-            raise TimeoutError(f"optional {kind} read skipped: abandoned reads hold their share")
-        gate = _CapacityReadGate()
-        task = asyncio.create_task(body(gate), name=f"optional-db:{kind}")
-        try:
-            return await asyncio.shield(task)
-        except CancelledError as exc:
-            if (gate.reading and not task.done() and not self._preview_maintenance_closed
-                    and not self._optional_db_busy()):
-                gate.abandoned = True
-                self._optional_db_abandon(kind, task, OPTIONAL_DB_ABANDON_LIMIT_S)
-                raise
-            await self._optional_db_cancel_and_join(task, exc)
-            raise
-
-    @staticmethod
-    async def _optional_db_cancel_and_join(task: asyncio.Task, exc: BaseException) -> None:
-        """Cancel the body as the caller was cancelled, and wait for it.
-
-        Every cancellation the caller receives while waiting (a shutdown, then
-        the pass timeout) is forwarded with its message, so the body unwinds
-        exactly as it did when it was the caller's own coroutine.
-        """
-        cancel = (lambda e: task.cancel(e.args[0] if e.args else None))
-        if isinstance(exc, CancelledError):
-            cancel(exc)
-        else:
-            task.cancel()
-        while not task.done():
-            try:
-                await asyncio.wait({task})
-            except CancelledError as again:
-                cancel(again)
-        if not task.cancelled():
-            task.exception()
-
-    def _optional_db_abandon(self, kind: str, task: asyncio.Task, limit_s: float) -> None:
-        self._optional_db_running[kind] = task
-        self.optional_db_abandoned += 1
-        # A read that never finishes still ends: past the limit it is cancelled,
-        # costing its connection as every read did before this switch.
-        self._optional_db_limits[task] = asyncio.get_running_loop().call_later(
-            max(0.0, limit_s), task.cancel,
-        )
-        task.add_done_callback(self._optional_db_finished)
-
-    def _optional_db_finished(self, task: asyncio.Task) -> None:
-        limit = self._optional_db_limits.pop(task, None)
-        if limit is not None:
-            limit.cancel()
-        for kind, running in list(self._optional_db_running.items()):
-            if running is task:
-                del self._optional_db_running[kind]
-        if not task.cancelled() and task.exception() is not None:
-            error = task.exception()
-            logger.warning(
-                "live_blend_refresh[%s]: abandoned optional read failed",
-                self.source, exc_info=(type(error), error, error.__traceback__),
-            )
-            if not optional_db_abandons():
-                # A trial's switched path failed: off here for the rest of it.
-                _optional_db_trial().trip(OPTIONAL_DB_SWITCH, error)
-
-    async def _close_optional_db(self) -> None:
-        """Cancel and join every abandoned read before the sessions close."""
-        interrupted = None
-        for task in list(self._optional_db_running.values()):
-            if not task.done():
-                task.cancel()
-            while not task.done():
-                try:
-                    await asyncio.wait({task})
-                except CancelledError as exc:
-                    interrupted = exc
-        self._optional_db_running.clear()
-        if interrupted is not None:
-            raise interrupted
+        """Await ``body(None)`` under the enclosing pass's own deadline."""
+        return await body(None)
 
     async def _publish(self, frames: list[dict]) -> set[tuple[int, int]]:
         """Fan the committed frames out to any SSE subscribers. Never raises.
@@ -8663,7 +8454,7 @@ class LiveBlendRefresher:
                 self.source, exc_info=(type(error), error, error.__traceback__),
             )
 
-    # ── #10090 `preview_from_commit` ────────────────────────────────────────
+    # ── #10090 the preview graph cache (`preview_at_receipt`) ───────────────
 
     def _remember_preview_graphs(self, grouped, original_rows, read_started,
                                  stamp_read: bool = True) -> None:
@@ -8680,7 +8471,7 @@ class LiveBlendRefresher:
         """
         graphs = getattr(self, "_preview_graphs", None)
         receipt = _preview_at_receipt_possible(getattr(self, "source", None))
-        if graphs is None or not (receipt or _preview_from_commit_possible()):
+        if graphs is None or not receipt:
             return
         try:
             originals = None
@@ -8706,8 +8497,7 @@ class LiveBlendRefresher:
                 if any(id(row) not in original_rows
                        for entry in group for row in entry.outcomes):
                     # A held-quote overlay. `preview_at_receipt` keeps the rows
-                    # as read (its own overlay carries the held quotes);
-                    # `preview_from_commit` alone drops the graph, as before.
+                    # as read (its own overlay carries the held quotes).
                     if originals is None and receipt:
                         values = getattr(original_rows, "values", None)
                         originals = ({row.id: row for row in values()}
@@ -8730,14 +8520,7 @@ class LiveBlendRefresher:
                             for entry in kept[2] for row in entry.outcomes):
                         self._forget_preview_graph(event_id)
                     continue
-                noted = self._noted_commits
-                patched = _patched_group(group, {
-                    row.id: noted[row.id][1]
-                    for entry in group for row in entry.outcomes if row.id in noted
-                })
-                if patched is None:
-                    self._forget_preview_graph(event_id)
-                    continue
+                patched = list(group)
                 self._install_preview_graph(event_id, (read_started, event, patched))
                 unstamped = getattr(self, "_graph_unstamped", None)
                 if unstamped is not None:
@@ -9043,8 +8826,7 @@ class LiveBlendRefresher:
         Called synchronously after the write's COMMIT, before its first await.
         Each row is noted for `PREVIEW_NOTE_RETENTION_S` (a read in flight
         patches it in); each cached graph holding a returned row gets a patched
-        copy, and a live event whose `preview_from_commit` arm is on is queued
-        for a preview composed from that copy (`_preview_from_commit_rows`).
+        copy for `preview_at_receipt`.
         """
         note_rows = getattr(getattr(self, "receipts", None), "note_committed_rows", None)
         if note_rows is not None:
@@ -9054,16 +8836,13 @@ class LiveBlendRefresher:
             self._receipt_call(note_rows, rows)
         graphs = getattr(self, "_preview_graphs", None)
         receipt = _preview_at_receipt_possible(getattr(self, "source", None))
-        commit_arm = _preview_from_commit_possible()
-        if graphs is None or not (receipt or commit_arm):
+        if graphs is None or not receipt:
             return
         try:
             from app.utils.aggregation import _coerce_timestamp
 
             now = _mono()
             wake = False
-            noted = self._noted_commits
-            patches: dict[int, dict[int, dict]] = {}
             for row in rows:
                 oid = getattr(row, "id", None)
                 values = {name: getattr(row, name, _NOT_RETURNED) for name in COMMIT_PATCH_FIELDS}
@@ -9105,34 +8884,7 @@ class LiveBlendRefresher:
                         self._receipt_due[event_id] = None
                         self._receipt_now.add(event_id)
                         wake = True
-                if not commit_arm:
-                    continue
-                noted.pop(oid, None)
-                noted[oid] = (now, values)
-                if event_id is not None:
-                    patches.setdefault(event_id, {})[oid] = values
-            if receipt:
-                _prune_notes(self._receipt_commits, now, lambda note: note[0])
-            if commit_arm:
-                _prune_notes(noted, now, lambda note: note[0])
-            for event_id, returned in patches.items():
-                read_at, event, group = graphs[event_id]
-                patched = _patched_group(group, returned)
-                if patched is None:
-                    # The write's re-rank moved a stored `rank` the resolver sorts by.
-                    self._forget_preview_graph(event_id)
-                    continue
-                self._install_preview_graph(event_id, (read_at, event, patched))
-                if _preview_from_commit(event_id):
-                    self._commit_preview_due.setdefault(event_id, {}).update(
-                        (oid, values["last_updated"]) for oid, values in returned.items()
-                    )
-            if self._commit_preview_due:
-                task = self._commit_preview_task
-                if task is None or task.done():
-                    self._commit_preview_task = asyncio.create_task(
-                        self._drain_commit_previews(), name=f"commit-preview-{self.source}",
-                    )
+            _prune_notes(self._receipt_commits, now, lambda note: note[0])
             if wake:
                 self._wake_receipt(True)
         except Exception:
@@ -9147,7 +8899,7 @@ class LiveBlendRefresher:
         or when its outcome is unknown. Never raises."""
         graphs = getattr(self, "_preview_graphs", None)
         receipt = _preview_at_receipt_possible(getattr(self, "source", None))
-        if graphs is None or not (receipt or _preview_from_commit_possible()):
+        if graphs is None or not receipt:
             return
         try:
             now = _mono()
@@ -9228,134 +8980,6 @@ class LiveBlendRefresher:
             self.commit_preview_stats["errors"] += 1
             logger.warning("live_blend_refresh[%s]: committed bag not cached", self.source,
                            exc_info=True)
-
-    async def _drain_commit_previews(self) -> None:
-        while self._commit_preview_due:
-            due, self._commit_preview_due = self._commit_preview_due, {}
-            try:
-                await self._preview_from_commit_rows(due)
-            except Exception:
-                self.commit_preview_stats["errors"] += 1
-                logger.warning("live_blend_refresh[%s]: preview from commit not sent",
-                               self.source, exc_info=True)
-
-    def _commit_preview_plan(self, event_id: int, written: dict, now: float):
-        """``(event, reading, value, contributing)`` the re-read path would
-        propose for this commit, from the cached graph; None to leave it there.
-
-        Only a live event whose graph is young, needs no current-book proof,
-        holds no held quote (the re-read would overlay it), is not held back
-        from refreshing, still holds exactly the rows this process committed
-        and resolves with a proven home orientation. Then the re-read path's
-        own no-new-observation gate (#5661) against the stored entry. A value
-        equal to the last written one is always left to the re-read path, even
-        when `_should_write` would re-stamp it as due: stricter than
-        `_should_write`, never looser.
-        """
-        from app.utils.aggregation import oldest_observation_time
-        from app.utils.live_blend import (
-            compute_source_home_probability, has_proven_home_orientation,
-        )
-        from app.utils.settledness import market_assigned_settled
-
-        cached = self._preview_graphs.get(event_id)
-        if cached is None:
-            return None
-        read_at, event, group = cached
-        held = self.held_quotes
-        if (now - read_at > PREVIEW_GRAPH_MAX_AGE_S
-                or event.status != "live" or event.completed_at is not None
-                or getattr(event, "preview_read_ticket", None) is None
-                or type(getattr(event, "preview_rev", None)) is not int
-                or event_id in self._lock_retry
-                or self._failed_hold_until.get(event_id, now) > now
-                or self._current_reading_proof(event_id, group, [], park_refused=False)
-                or (held is not None and any(row.id in held
-                                             for entry in group for row in entry.outcomes))):
-            return None
-        rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
-        if any(oid not in rows or rows[oid][1].last_updated != at
-               for oid, at in written.items()):
-            return None  # a newer read or write replaced a row since
-        reading = compute_source_home_probability(
-            group, event.home_team_name, event.away_team_name,
-        )
-        if reading is None or not has_proven_home_orientation(reading):
-            return None  # the stamp's own path owns the inversion fallback
-        contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
-        ids = {getattr(row, "id", None) for row in contributing}
-        if ids.isdisjoint(written) or not ids.issubset(rows):
-            return None
-        if any(entry.market.status != "open"
-               or market_assigned_settled(entry.market, entry.outcomes)
-               or any(row.resolution_source is not None or row.is_winner is True
-                      for row in entry.outcomes)
-               for entry in {id(rows[oid][0]): rows[oid][0] for oid in ids}.values()):
-            return None
-        value = round(reading.home_probability, 4)
-        if (restamp_records_no_observation(
-                value, oldest_observation_time(contributing),
-                getattr(event, "win_probability_sources", None), self.source)
-                or self._last_written_value.get(event_id) == value):
-            return None
-        return event, reading, value, contributing
-
-    async def _preview_from_commit_rows(self, due: dict) -> None:
-        """Propose each queued event's preview from its cached graph, no read.
-
-        The proposal is the re-read path's (`_preview_before_stamp`) for the
-        plan `_commit_preview_plan` admits, carrying the cached read's ticket,
-        revision and base, so Redis refuses an open whose ticket is no longer
-        current (`read_required`) or an older context that would change the
-        event's class (`stale_context`), and the refused open is forgotten
-        locally. The ordinary refresh of the same commit runs
-        behind it whatever happens here.
-        """
-        from app.utils.aggregation import observation_basis
-        from app.utils.blend_preview import registry
-
-        now = _mono()
-        plans = []
-        for event_id, written in due.items():
-            plan = self._commit_preview_plan(event_id, written, now)
-            if plan is not None and observation_basis(plan[3]):
-                plans.append((event_id, *plan))
-        if not plans:
-            return
-        confirmed = getattr(self.receipts, "confirmed", None)
-        if confirmed is not None:
-            # #10090 decision J: no batch holds these events (`begin`), yet
-            # readers may see this preview until a later batch's stamp.
-            self._receipt_call(confirmed.previewed, [plan[0] for plan in plans])
-        preview = registry()
-        frames = preview.expire()
-        for event_id, event, reading, value, contributing in plans:
-            frames.extend(preview.propose(
-                event_id, self.source, value=value, event=event,
-                row_sources=event.preview_sources, row_rev=event.preview_rev,
-                eligibility=getattr(reading, "eligibility", None),
-                observed_basis=observation_basis(contributing),
-            ))
-            self.commit_preview_stats["proposed"] += 1
-        await self._publish_previews(frames)
-
-    async def _close_commit_preview(self) -> None:
-        """Cancel and join the composition worker before the sessions close."""
-        task, self._commit_preview_task = getattr(self, "_commit_preview_task", None), None
-        if task is None:
-            return
-        if not task.done():
-            task.cancel()
-        interrupted = None
-        while not task.done():
-            try:
-                await asyncio.wait({task})
-            except CancelledError as exc:
-                interrupted = exc
-        if not task.cancelled():
-            task.exception()
-        if interrupted is not None:
-            raise interrupted
 
     # ── #10090 `preview_at_receipt` ─────────────────────────────────────────
 
@@ -9951,7 +9575,7 @@ class LiveBlendRefresher:
         re-rank will store it. A row stored at or after a quote's bound at a
         DIFFERENT price is ambiguous (the stored row may be newer): the whole
         event waits for its stamp, as `HeldRowQuotes.overlay_event` does.
-        Then `_commit_preview_plan`'s checks: a proven orientation, every
+        Then these checks: a proven orientation, every
         contributor read, an overlaid one among them, open unsettled markets.
         Skipped when the blend, in tenths of a percent, is what the event
         already shows.
@@ -10283,7 +9907,7 @@ class LiveBlendRefresher:
         proposals = [event_id for event_id, plan in plans if plan[0] == "propose"]
         confirmed = getattr(self.receipts, "confirmed", None)
         if confirmed is not None and proposals:
-            # #10090 decision J, as `_preview_from_commit_rows`: readers may
+            # #10090 decision J: readers may
             # see this preview before any batch holds these events.
             self._receipt_call(confirmed.previewed, proposals)
 

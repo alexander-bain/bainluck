@@ -42,7 +42,7 @@ here also reaches heavy. Each row says whether heavy runs the code it governs.
 | `PM_WS_BLEND_FLOOR_SECONDS` | `5` | The Polymarket blend stamp runs at most every 5 s; receipt previews do not wait for it. Row 14. | Default 5 s (`PM_WS_BLEND_FLOOR_DEFAULT_S`) | no |
 | `LIVE_BLEND_PREVIEW_RESERVATIONS` | `96,48,192,128,448,112` | Preview ledger slots by league tier (v2 policy, cap 1024); Alex, decision 36: "A in perpetuity". Row 15. | Default (same bytes, same v2 fingerprint, so the running ledger is unchanged) | no |
 | `LIVE_BLEND_PREVIEW_MAX_UNCOMMITTED_S` | `180` | How long one uncommitted value may stay on a reader's screen; Alex's decision D of Nov 1. | Default 180 s | no |
-| `LIVE_BLEND_ABANDON_OPTIONAL_DB` | unset (on for 8 h on Oct 29) | An optional read past its deadline is abandoned, not cancelled. Lost its trial. | Stays unset. Its `abandon_optional_db` trial switch is deleted in the follow-up PR (below) | no |
+| `LIVE_BLEND_ABANDON_OPTIONAL_DB` | unset (on for 8 h on Oct 29) | An optional read past its deadline is abandoned, not cancelled. Lost its trial. | Removed with its `abandon_optional_db` trial switch | no |
 | `COLLECTIONS_ENABLED` | `true` (set Nov 2, 11:25 AM PT, after the publication) | The Midterms 2026 collection page and its Discover/Politics pin (#11853). | Switch (a feature gate, not a speed setting) | no (web) |
 | `CONTAINER_COLLECTIONS_ENABLED` | `true` (set Nov 2 with it) | The Midterms gate's second half; also the hourly NFL-week / MLB-postseason assembly pass, which writes membership and never publishes. | Switch | no (the pass runs on bainluck's background queue) |
 
@@ -56,9 +56,11 @@ race. They stay as they are, outside this freeze.
 
 ## Trial switches that lost their trials
 
-`preview_from_commit` (trialled Oct 31, p90 worse in all three pairs, ledger row 17) and `abandon_optional_db` stay off
-(their today value is 0) and are deleted in their own PR, after the Midterms collection is live and Monday Night
-Football has been checked. The freeze itself changes only defaults and deletes only the never-flipped switches below.
+Deleted from the code on 2026-11-02, after the Midterms collection went live and Monday Night Football was checked:
+- `preview_from_commit`: trialled Oct 31, with p90 worse in all three pairs (ledger row 17). The read-graph cache it
+  shared stays, for `preview_at_receipt`.
+- `abandon_optional_db`, the trial for `LIVE_BLEND_ABANDON_OPTIONAL_DB`: an optional read past its deadline is
+  cancelled, as production always ran it.
 
 ## Switches deleted from the code
 
