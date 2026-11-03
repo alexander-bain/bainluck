@@ -2832,7 +2832,13 @@ def _build_nfl_division_roundup_members(
                 "event_id": None,
             }
         )
-    return feed_item, members
+    from app.utils.roundup_containers import RoundupMembers, compose_roundup_feed_item
+
+    enriched_feed_item = compose_roundup_feed_item(
+        NFL_DIVISION_ROUNDUP_PRODUCER,
+        RoundupMembers(members=members, rows=rows, feed_item=feed_item),
+    )
+    return enriched_feed_item, members
 
 
 def compose_nfl_division_roundup(

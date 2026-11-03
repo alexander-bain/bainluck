@@ -12,6 +12,7 @@ definition so moving from code to data is a storage change, not a shape change.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import inspect
 import json
@@ -26,15 +27,20 @@ from app.utils.container_presentation import MEMBER_MARKET, market_destination
 __all__ = [
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_PRODUCERS",
+    "ROUNDUP_READ_BUDGET_SECONDS",
+    "ROUNDUP_SEAT_FLOOR",
     "RoundupMembers",
     "RoundupProducer",
     "RoundupRefusal",
+    "add_roundup_feed_items",
     "compose_roundup_container",
     "compose_roundup_feed_item",
     "evaluate_roundup_producer",
+    "insert_roundup_feed_items",
     "register_roundup_producer",
     "reset_roundup_cache_for_tests",
     "roundup_container_id",
+    "roundup_feed_enabled",
     "roundup_feed_items",
     "roundup_revision",
     "serve_roundup",
@@ -43,6 +49,11 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ROUNDUP_CACHE_TTL_S = 60.0
+ROUNDUP_READ_BUDGET_SECONDS = 0.5
+#: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
+#: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
+#: back half starting at index 10 (seat 11), with no ranking change.
+ROUNDUP_SEAT_FLOOR = 10
 
 _roundup_local_cache: dict[
     tuple[str, Any], tuple[float, Optional[dict[str, Any]], Optional[dict[str, Any]]]
@@ -226,16 +237,58 @@ def compose_roundup_feed_item(
     members: RoundupMembers,
 ) -> Optional[dict[str, Any]]:
     """Build the Discover feed item for a round-up producer from its produced members."""
-    if members.feed_item is not None:
-        return copy.deepcopy(members.feed_item)
     if not members.members:
-        return None
+        return copy.deepcopy(members.feed_item) if members.feed_item is not None else None
     rows = list(members.rows)
-    member_ids = [int(m["id"]) for m in (_normalize_member_entry(x) for x in members.members)]
+    normalized = [_normalize_member_entry(x) for x in members.members]
+    member_ids = [int(m["id"]) for m in normalized]
     item_id = producer.story_key or f"roundup:{producer.slug.removeprefix('roundup-')}"
+    base_score = (
+        float(members.feed_item.get("score", producer.score) or 0.0)
+        if isinstance(members.feed_item, Mapping)
+        else float(producer.score)
+    )
+    member_items = [
+        {
+            "type": "futures",
+            "score": base_score,
+            "reason": str(
+                (
+                    rows[idx].get("label")
+                    if idx < len(rows) and isinstance(rows[idx], Mapping)
+                    else None
+                )
+                or producer.name
+            ),
+            "headline": str(
+                (
+                    rows[idx].get("label")
+                    if idx < len(rows) and isinstance(rows[idx], Mapping)
+                    else None
+                )
+                or producer.name
+            ),
+            "data": dict(m["card"]),
+        }
+        for idx, m in enumerate(normalized)
+        if isinstance(m.get("card"), Mapping)
+    ]
+    collection_ref = {
+        "slug": producer.slug,
+        "href": f"/collections/{producer.slug}",
+        "name": producer.name,
+        "revision": roundup_revision(member_ids),
+        "collection_count": len(member_ids),
+    }
+    if members.feed_item is not None:
+        out = copy.deepcopy(members.feed_item)
+        if isinstance(out.get("data"), dict):
+            out["data"]["items"] = member_items
+            out["data"]["collection_ref"] = collection_ref
+        return out
     return {
         "type": "bundle",
-        "score": float(producer.score),
+        "score": base_score,
         "reason": producer.name,
         "headline": producer.name,
         "context_summary": None,
@@ -247,12 +300,8 @@ def compose_roundup_feed_item(
             "shared_question": None,
             "item_count": len(member_ids),
             "member_ids": member_ids,
-            "items": [],
-            "collection_ref": {
-                "slug": producer.slug,
-                "href": f"/collections/{producer.slug}",
-                "name": producer.name,
-            },
+            "items": member_items,
+            "collection_ref": collection_ref,
             "roundup": {
                 "kicker": producer.kicker,
                 "tag": producer.tag or producer.category.upper(),
@@ -416,6 +465,190 @@ async def roundup_feed_items(db: Any) -> list[dict[str, Any]]:
         if feed_item is not None and container_payload is not None:
             items.append(feed_item)
     return items
+
+
+def roundup_feed_enabled(
+    *,
+    mode: Optional[str],
+    include_events: bool = True,
+    include_futures: bool = True,
+    my_teams_only: bool = False,
+    debug: bool = False,
+    category: Optional[str] = None,
+    sport: Optional[str] = None,
+) -> bool:
+    """Whether Discover should place registered round-up cards on the canonical feed."""
+    from app.routes.containers import containers_read_enabled
+
+    return (
+        (mode or "discover").lower() == "discover"
+        and bool(include_events)
+        and bool(include_futures)
+        and not my_teams_only
+        and not debug
+        and not category
+        and not sport
+        and containers_read_enabled()
+        and any(
+            p.enabled is None or p.enabled() for p in ROUNDUP_PRODUCERS.values()
+        )
+    )
+
+
+def _roundup_covered_market_ids(roundup_item: Mapping[str, Any]) -> set[int]:
+    """All market IDs (shown and paired across venues) represented by ``roundup_item``."""
+    data = roundup_item.get("data")
+    if not isinstance(data, Mapping):
+        return set()
+    covered: set[int] = set()
+    for mid in data.get("member_ids") or ():
+        if isinstance(mid, int) and not isinstance(mid, bool):
+            covered.add(int(mid))
+    roundup = data.get("roundup")
+    if isinstance(roundup, Mapping):
+        for row in roundup.get("rows") or ():
+            if not isinstance(row, Mapping):
+                continue
+            rmid = row.get("market_id")
+            if isinstance(rmid, int) and not isinstance(rmid, bool):
+                covered.add(int(rmid))
+            pair = row.get("pair")
+            if isinstance(pair, Mapping):
+                for k in ("kalshi_market_id", "polymarket_market_id"):
+                    pmid = pair.get(k)
+                    if isinstance(pmid, int) and not isinstance(pmid, bool):
+                        covered.add(int(pmid))
+    return covered
+
+
+def insert_roundup_feed_items(
+    items: list[dict[str, Any]],
+    roundup_items: Sequence[dict[str, Any]],
+    *,
+    seat_floor: int = ROUNDUP_SEAT_FLOOR,
+    page_window: int = 20,
+) -> list[dict[str, Any]]:
+    """Place served round-up cards on Discover after the opening ten without changing scores.
+
+    Under the Oct 7–8 ranking rulings (#4080 / #5100 / #5105 / #10356 / #10357):
+    * Seats 1–10 (indices ``0..seat_floor-1``) remain the untouched why-now opening ten.
+    * Any standalone ``futures`` card whose market id is represented by the round-up
+      is suppressed so no market appears twice on the feed.
+    * Each round-up card is seated in page one's back half starting at ``seat_floor``
+      (or at its earliest replaced member's seat when ``>= seat_floor``), inheriting
+      the neighbour's score at that seat without modifying any card's score.
+    """
+    if not items or not roundup_items:
+        return items
+
+    valid_roundups = [
+        r
+        for r in roundup_items
+        if isinstance(r, Mapping)
+        and isinstance(r.get("data"), Mapping)
+        and r["data"].get("collection_ref")
+    ]
+    if not valid_roundups:
+        return items
+
+    result = list(items)
+    existing_bundle_ids = {
+        it.get("data", {}).get("id")
+        for it in result
+        if isinstance(it, Mapping)
+        and it.get("type") == "bundle"
+        and isinstance(it.get("data"), Mapping)
+    }
+
+    inserted_count = 0
+    changed = False
+    for r_item in valid_roundups:
+        r_id = r_item["data"].get("id")
+        if r_id in existing_bundle_ids:
+            continue
+
+        covered_ids = _roundup_covered_market_ids(r_item)
+        earliest_post_opening_seat: Optional[int] = None
+        if covered_ids:
+            filtered: list[dict[str, Any]] = []
+            for idx, existing in enumerate(result):
+                if (
+                    isinstance(existing, Mapping)
+                    and existing.get("type") == "futures"
+                    and isinstance(existing.get("data"), Mapping)
+                    and existing["data"].get("id") in covered_ids
+                ):
+                    changed = True
+                    if (
+                        earliest_post_opening_seat is None
+                        and seat_floor <= idx < page_window
+                    ):
+                        earliest_post_opening_seat = idx
+                    continue
+                filtered.append(existing)
+            result = filtered
+
+        default_seat = seat_floor + inserted_count
+        target_seat = (
+            earliest_post_opening_seat
+            if earliest_post_opening_seat is not None
+            else default_seat
+        )
+        target_idx = min(max(seat_floor, target_seat), len(result))
+
+        card = copy.deepcopy(dict(r_item))
+        if result:
+            anchor = result[target_idx] if target_idx < len(result) else result[-1]
+            if not card.get("score"):
+                card["score"] = float(anchor.get("score", 0.0) or 0.0)
+            if "_rank_score" in anchor and "_rank_score" not in card:
+                card["_rank_score"] = anchor["_rank_score"]
+            if "_sort_time" in anchor and "_sort_time" not in card:
+                card["_sort_time"] = anchor["_sort_time"]
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict) and not child.get("score"):
+                    child["score"] = card["score"]
+
+        result.insert(target_idx, card)
+        existing_bundle_ids.add(r_id)
+        inserted_count += 1
+        changed = True
+
+    return result if changed else items
+
+
+async def add_roundup_feed_items(
+    db: Any,
+    items: list[dict[str, Any]],
+    *,
+    seat_floor: int = ROUNDUP_SEAT_FLOOR,
+    page_window: int = 20,
+    budget_seconds: float = ROUNDUP_READ_BUDGET_SECONDS,
+) -> list[dict[str, Any]]:
+    """Evaluate registered round-up producers and place their cards on Discover."""
+    if not items or len(items) < seat_floor or budget_seconds <= 0:
+        return items
+    try:
+        produced = await asyncio.wait_for(
+            roundup_feed_items(db),
+            timeout=min(budget_seconds, ROUNDUP_READ_BUDGET_SECONDS),
+        )
+    except Exception:
+        if hasattr(db, "rollback") and callable(db.rollback):
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+        logger.warning(
+            "Discover round-up read failed; keeping ordinary cards", exc_info=True
+        )
+        return items
+
+    if not produced:
+        return items
+    return insert_roundup_feed_items(
+        items, produced, seat_floor=seat_floor, page_window=page_window
+    )
 
 
 ROUNDUP_PRODUCERS: dict[str, RoundupProducer] = {}

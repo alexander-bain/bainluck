@@ -6260,6 +6260,30 @@ async def get_feed(
                 # touched could never verify.
                 _capture.abandon("theme_collection_refs")
 
+        from app.utils.roundup_containers import (
+            add_roundup_feed_items,
+            roundup_feed_enabled,
+        )
+
+        if roundup_feed_enabled(
+            mode=mode,
+            include_events=include_events,
+            include_futures=include_futures,
+            my_teams_only=my_teams_only,
+            debug=debug or exclude_reviewed,
+            category=category,
+            sport=sport,
+        ):
+            _before_roundups = feed_items
+            feed_items = await add_roundup_feed_items(
+                db,
+                feed_items,
+                page_window=DISCOVER_COMPOSITION_WINDOW,
+                budget_seconds=_feed_budget_remaining_s(),
+            )
+            if _capture is not None and feed_items is not _before_roundups:
+                _capture.abandon("roundup_containers")
+
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —
         # reordering after the window has been taken would reorder twenty cards
