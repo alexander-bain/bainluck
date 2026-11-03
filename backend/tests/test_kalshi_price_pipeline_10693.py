@@ -333,7 +333,9 @@ print("three optimized refusals")
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,
-        timeout=30,
+        # #11893: this checks optimized-mode refusals, not a cold Python
+        # interpreter's import/bytecode time on a contended CI runner.
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "three optimized refusals"

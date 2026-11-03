@@ -278,8 +278,11 @@ async def test_lost_initializer_reply_is_read_back_without_resend(
     assert sent.count(activation.INITIALIZE_ONCE_SCRIPT) == 1
 
 
-async def test_partial_initializer_consumes_send_and_keeps_preparing(recovery):
+async def test_partial_initializer_consumes_send_and_keeps_preparing(recovery, monkeypatch):
     r = recovery
+    # #11893: this case checks protocol state after a partial initializer;
+    # the authority-store deadline controls retain their separate 150ms bound.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     current = await r.prepare()
     await r.controller.arm(current)
     await r.store.take_activation_step(current, 2)

@@ -162,18 +162,23 @@ async def test_replaced_owner_is_not_resurrected_by_completed_read(monkeypatch):
 
 
 async def test_older_graph_cannot_clear_a_newer_failed_sample(monkeypatch):
-    r, held, _, _, obs, validate, now, _, entered, release, _ = clock_rig(
-        monkeypatch, failure="cleanup"
-    )
-    task = asyncio.create_task(r.preview_accepted_observations(obs, validate))
-    await asyncio.wait_for(entered.wait(), 1)
-    held._sample_started += 1
-    held._sample_failure_ordinal = held._sample_started
-    held._sample_failure_episode = True
-    held._sample_backoff_until = held._now() + 5
-    until = held._sample_backoff_until
-    release.set()
-    await task
+    r, held, _, _, obs, validate, now, *_ = clock_rig(monkeypatch)
+    original = r._observation_read_factory
+    until = held._now() + 5
+
+    @asynccontextmanager
+    async def fail_newer_sample_during_close():
+        async with original() as session:
+            yield session
+            # #11893: inject the ordering at close, without racing the
+            # parent's scheduling against the real 250ms read deadline.
+            held._sample_started += 1
+            held._sample_failure_ordinal = held._sample_started
+            held._sample_failure_episode = True
+            held._sample_backoff_until = until
+
+    r._observation_read_factory = fail_newer_sample_during_close
+    await r.preview_accepted_observations(obs, validate)
     assert held._database_bound == now.timestamp()
     assert held._sample_failure_episode and held._sample_backoff_until == until
 
