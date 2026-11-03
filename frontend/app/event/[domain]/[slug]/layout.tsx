@@ -36,25 +36,65 @@ const DOMAIN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,95}$/;
 
 /**
- * The concept envelope, or null.
+ * #11888 — 5-minute in-process revalidation window where a `404` displaces a
+ * cached `200`. Next's Data Cache (`next: { revalidate: 300 }`) retains the
+ * last `200` payload when revalidation receives a `404`, leaving a removed
+ * event's page serving its old title and `index, follow` until the Data Cache
+ * is manually purged. Fetching with `cache: "no-store"` and memoizing both
+ * `200` and `404` lookups for five minutes keeps the one-request-per-5m bound
+ * while ensuring a `404` replaces a cached `200` on the next revalidation.
+ * Transient `unavailable` (5xx / network) outcomes are never cached.
+ */
+const CONCEPT_CACHE_TTL_MS = 300_000;
+const CONCEPT_CACHE_MAX_ENTRIES = 512;
+
+interface CachedConceptLookup {
+  lookup: ConceptLookup;
+  expiresAt: number;
+}
+
+const conceptLookupCache = new Map<string, CachedConceptLookup>();
+
+function storeConceptLookup(key: string, lookup: ConceptLookup, now: number): void {
+  if (!conceptLookupCache.has(key) && conceptLookupCache.size >= CONCEPT_CACHE_MAX_ENTRIES) {
+    const oldestKey = conceptLookupCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      conceptLookupCache.delete(oldestKey);
+    }
+  }
+  conceptLookupCache.set(key, {
+    lookup,
+    expiresAt: now + CONCEPT_CACHE_TTL_MS,
+  });
+}
+
+/**
+ * The concept envelope, or why there is none.
  *
  * `GET /api/event/{key}` takes no projection parameter, so this is the whole
- * envelope — 2 KB for a fight card, 36 KB for the midterms, 1.1 MB for a tennis
- * winner field carrying per-competitor history. It is the same call the page
- * already makes, and `revalidate: 300` means one per route per five minutes
- * rather than one per crawl; a narrower projection is a backend change and is
- * not this ship.
+ * envelope — 2 KB for a fight card, 1.1 MB for a tennis winner field carrying
+ * per-competitor history. It is the same call the page already makes, and
+ * `CONCEPT_CACHE_TTL_MS` (5 minutes) means one upstream call per route per five
+ * minutes rather than one per crawl, with a `404` displacing any prior cached
+ * `200` (#11888).
  *
  * A metadata request must never take the page down over a card, so every
- * failure path returns `null` and the copy falls back.
+ * failure path returns `{ ok: false, ... }` and the copy falls back.
  */
 async function fetchConcept(domain: string, slug: string): Promise<ConceptLookup> {
   if (!DOMAIN.test(domain) || !SLUG.test(slug)) return { ok: false, failure: "not-found" };
 
+  const key = `event:${domain}:${slug}`;
+  const now = Date.now();
+  const cached = conceptLookupCache.get(key);
+  if (cached && now < cached.expiresAt) {
+    return cached.lookup;
+  }
+
   try {
     const response = await fetch(
-      `${API_URL}/api/event/${encodeURIComponent(`event:${domain}:${slug}`)}`,
-      { next: { revalidate: 300 } }
+      `${API_URL}/api/event/${encodeURIComponent(key)}`,
+      { cache: "no-store" }
     );
     // A key with no concept answers 404, and that is the ONLY honest "this is
     // not an event" signal here — the page renders client-side and answers 200
@@ -64,9 +104,19 @@ async function fetchConcept(domain: string, slug: string): Promise<ConceptLookup
     // #5861: and it is the only status allowed to say so. A 500 or a dropped
     // connection used to land in the same branch, which would now `noindex` a
     // live concept for as long as the API was unwell.
-    if (response.status === 404) return { ok: false, failure: "not-found" };
+    //
+    // #11888: caching the 404 (`not-found`) for the 5-minute window displaces a
+    // prior cached 200 so a removed concept serves "This event isn't on Bain
+    // Luck" (`noindex`) within one revalidation window with no manual purge.
+    if (response.status === 404) {
+      const notFound: ConceptLookup = { ok: false, failure: "not-found" };
+      storeConceptLookup(key, notFound, Date.now());
+      return notFound;
+    }
     if (!response.ok) return { ok: false, failure: "unavailable" };
-    return { ok: true, concept: await response.json() };
+    const found: ConceptLookup = { ok: true, concept: await response.json() };
+    storeConceptLookup(key, found, Date.now());
+    return found;
   } catch {
     return { ok: false, failure: "unavailable" };
   }
