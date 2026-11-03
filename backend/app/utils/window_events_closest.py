@@ -415,8 +415,8 @@ async def produce_window_events_closest(
     rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
     try:
         window_start, window_end = resolve_window(rule.get("window"), effective_now)
-    except ValueError as exc:
-        return RoundupRefusal((("window", str(exc)),))
+    except ValueError as err:
+        return RoundupRefusal((("window", str(err)),))
 
     count = int(rule.get("count", 4))
     minimum = int(rule.get("minimum", count))
