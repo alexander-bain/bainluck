@@ -241,21 +241,6 @@ jobs:
         \nasync def provision():\n    engine = create_async_engine(os.environ[\"SEARCH_TEST_DATABASE_URL\"])\n    try:\n        async with engine.begin()\
         \ as conn:\n            await conn.execute(text(\"CREATE EXTENSION IF NOT EXISTS pg_trgm\"))\n    finally:\n        await engine.dispose()\n\
         \nasyncio.run(provision())\nPYPG\n"
-    - name: '#11884 controlled first integration failure'
-      id: db_proof_first_failure
-      if: ${{ !cancelled() && matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true' }}
-      run: 'python - <<''PROOF''
-
-        from pathlib import Path
-
-        Path(''/tmp/test_db_summary_first_11884.py'').write_text("def test_first_failure():\n    assert False, ''11884 controlled failure''\n")
-
-        PROOF
-
-        python -m pytest /tmp/test_db_summary_first_11884.py -q
-
-        '
-
     - id: db_006_search_recall_contract_real_postgres
       name: Search recall contract (real Postgres)
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
@@ -2437,21 +2422,6 @@ jobs:
         \  exit 1\n}\ncat /tmp/roster11315.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/roster11315.txt; then\n  echo \"::error::#11315 roster lock\
         \ gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]19 passed([,[:space:]]|$)\" /tmp/roster11315.txt || {\n  echo \"::error::#11315 roster\
         \ lock gate did not run all nineteen cases\"\n  exit 1\n}\n"
-
-    - name: '#11884 controlled second integration failure'
-      id: db_proof_second_failure
-      if: ${{ !cancelled() && matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true' }}
-      run: 'python - <<''PROOF''
-
-        from pathlib import Path
-
-        Path(''/tmp/test_db_summary_second_11884.py'').write_text("def test_second_failure():\n    assert False, ''11884 controlled failure''\n")
-
-        PROOF
-
-        python -m pytest /tmp/test_db_summary_second_11884.py -q
-
-        '
 
     - name: Summarize database integration failures
       id: database_integration_summary

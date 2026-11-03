@@ -499,21 +499,6 @@ jobs:
         # The tail's first fixture rebuilds every ORM table before yielding.
         if: ${{ !cancelled() && (matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true') }}
         run: "python - <<'PYPG'\nimport asyncio\nimport os\nfrom sqlalchemy import text\nfrom sqlalchemy.ext.asyncio import create_async_engine\n\nasync def provision():\n    engine = create_async_engine(os.environ[\"SEARCH_TEST_DATABASE_URL\"])\n    try:\n        async with engine.begin() as conn:\n            await conn.execute(text(\"CREATE EXTENSION IF NOT EXISTS pg_trgm\"))\n    finally:\n        await engine.dispose()\n\nasyncio.run(provision())\nPYPG\n"
-      - name: '#11884 controlled first integration failure'
-        id: db_proof_first_failure
-        if: ${{ !cancelled() && matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true' }}
-        run: 'python - <<''PROOF''
-
-          from pathlib import Path
-
-          Path(''/tmp/test_db_summary_first_11884.py'').write_text("def test_first_failure():\n    assert False, ''11884 controlled failure''\n")
-
-          PROOF
-
-          python -m pytest /tmp/test_db_summary_first_11884.py -q
-
-          '
-
       - name: Search recall contract (real Postgres)
         id: db_006_search_recall_contract_real_postgres
         if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
@@ -4748,21 +4733,6 @@ jobs:
   # The existing required context stays non-matrix. A failed, cancelled or
   # unexpectedly skipped worker must never satisfy branch protection as green.
   # Frontend-only candidates retain the original intentional job-level skip.
-
-      - name: '#11884 controlled second integration failure'
-        id: db_proof_second_failure
-        if: ${{ !cancelled() && matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true' }}
-        run: 'python - <<''PROOF''
-
-          from pathlib import Path
-
-          Path(''/tmp/test_db_summary_second_11884.py'').write_text("def test_second_failure():\n    assert False, ''11884 controlled failure''\n")
-
-          PROOF
-
-          python -m pytest /tmp/test_db_summary_second_11884.py -q
-
-          '
 
       - name: Summarize database integration failures
         id: database_integration_summary
