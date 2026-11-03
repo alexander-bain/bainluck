@@ -135,9 +135,16 @@ function policyClient(prs) {
 const repo={owner:'alexander-bain',repo:'bainluck'};
 
 async function alexApprovalCase({files=[{filename:'.github/workflows/tier-b-review.yml'}],
-  labels=[{name:'tier-b'},{name:'alex-approved'}],events=[],reviews=[],eventError}={}) {
+  labels=[{name:'tier-b'},{name:'alex-approved'}],events=[],reviews=[],eventError,commitError}={}) {
   const pr={number:1,state:'open',user:{login:'alexander-bain'},head:{sha:'head'},labels};
   const client=policyClient([pr]);
+  client.pr=pr;
+  client.headCommitDate='2026-11-02T00:00:00Z';
+  client.github.rest.repos={getCommit:async args=>{
+    client.calls.push({method:'commit',...args});assert.equal(args.ref,pr.head.sha);
+    if(commitError)throw commitError;
+    return {data:{commit:{committer:{date:client.headCommitDate}}}};
+  }};
   client.github.rest.pulls.listFiles=async args=>{client.calls.push({method:'files',...args});return files;};
   client.github.rest.pulls.listReviews=async args=>{client.calls.push({method:'reviews',...args});return reviews;};
   client.github.rest.issues={listEvents:async args=>{
@@ -155,11 +162,13 @@ for(const files of [
   [{filename:'docs/release-loop/tier-b-review-brief.md'}],
   [{filename:'moved.md',previous_filename:'docs/release-loop/tier-b-review-brief.md'}],
 ]) test(`Alex's own policy PR passes through his label: ${files[0].filename}`,async()=>{
-  const client=await alexApprovalCase({files,events:[{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}}]});
+  const client=await alexApprovalCase({files,events:[{id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'}]});
   await client.run();
   assert.equal(client.created[0].conclusion,'success');
   assert.match(client.created[0].output.summary,/Alex approved.*alex-approved/);
   assert.match(client.created[0].output.summary,/Alex must merge/);
+  assert.equal(client.calls.filter(c=>c.method==='commit').length,1);
+  assert.match(client.created[0].output.summary,/windows must never apply this label/);
 });
 
 for(const events of [
@@ -176,13 +185,14 @@ for(const events of [
   const client=await alexApprovalCase({events});await client.run();
   assert.equal(client.created[0].conclusion,'failure');
   assert.match(client.created[0].output.summary,/label must be applied by Alex/);
+  assert.equal(client.calls.filter(c=>c.method==='commit').length,0);
 });
 
 test('Alex can reapply the label after another actor; unrelated label events do not replace it',async()=>{
   const client=await alexApprovalCase({events:[
     {id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'other'}},
     {id:2,event:'unlabeled',label:{name:'alex-approved'},actor:{login:'other'}},
-    {id:3,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'}},
+    {id:3,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'},
     {id:4,event:'labeled',label:{name:'tier-b'},actor:{login:'other'}},
   ]});await client.run();assert.equal(client.created[0].conclusion,'success');
 });
@@ -197,12 +207,44 @@ test('the exit requires the current label and policy file scope, and never audit
     await client.run();
     assert.equal(client.created[0].conclusion,options.labels?.every(l=>l.name!=='tier-b')?'success':'failure');
     assert.equal(client.calls.filter(c=>c.method==='events').length,0);
+    assert.equal(client.calls.filter(c=>c.method==='commit').length,0);
   }
 });
 
 test('unknown label attribution never publishes success',async()=>{
   const client=await alexApprovalCase({eventError:new Error('events unavailable')});
   await assert.rejects(client.run(),/events unavailable/);assert.equal(client.created.length,0);
+});
+
+test('a label approved on one head fails after a push until Alex reapplies it',async()=>{
+  const events=[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'}];
+  const client=await alexApprovalCase({events});
+  await client.run();assert.equal(client.created.at(-1).conclusion,'success');
+  client.pr.head.sha='new-head';client.headCommitDate='2026-11-02T00:02:00Z';
+  await client.run();assert.equal(client.created.at(-1).conclusion,'failure');
+  assert.match(client.created.at(-1).output.summary,/alex-approved predates the current head; re-apply after review/);
+  events.push({id:2,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:03:00Z'});
+  await client.run();assert.equal(client.created.at(-1).conclusion,'success');
+  assert.deepEqual(client.calls.filter(c=>c.method==='commit').map(c=>c.ref),['head','new-head','new-head']);
+});
+
+test('equal or unknown label/head dates cannot approve',async()=>{
+  for(const [labeledAt,committedAt] of [
+    ['2026-11-02T00:00:00Z','2026-11-02T00:00:00Z'],
+    [undefined,'2026-11-02T00:00:00Z'],
+    ['invalid','2026-11-02T00:00:00Z'],
+    ['2026-11-02T00:01:00Z',undefined],
+  ]) {
+    const client=await alexApprovalCase({events:[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:labeledAt}]});
+    client.headCommitDate=committedAt;await client.run();
+    assert.equal(client.created.at(-1).conclusion,'failure');
+    assert.match(client.created.at(-1).output.summary,/alex-approved predates the current head; re-apply after review/);
+  }
+});
+
+test('an unavailable head commit never publishes success',async()=>{
+  const client=await alexApprovalCase({commitError:new Error('commit unavailable'),events:[{id:1,event:'labeled',label:{name:'alex-approved'},actor:{login:'alexander-bain'},created_at:'2026-11-02T00:01:00Z'}]});
+  await assert.rejects(client.run(),/commit unavailable/);assert.equal(client.created.length,0);
 });
 const openPRs=()=>Array.from({length:74},(_,i)=>({number:i+1,state:'open',user:{login:'author'},
   head:{sha:`head-${i+1}`},labels:i<6?[{name:'tier-b'}]:[]}));

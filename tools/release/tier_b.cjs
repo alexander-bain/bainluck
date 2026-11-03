@@ -85,9 +85,16 @@ async function evaluate(github, context) {
           const events = await github.paginate(github.rest.issues.listEvents, {...repo,issue_number:pr.number,per_page:100});
           const applied = events.filter(event=>['labeled','unlabeled'].includes(event.event) && event.label?.name==='alex-approved')
             .sort((a,b)=>b.id-a.id)[0];
-          result = applied?.event==='labeled' && applied.actor?.login==='alexander-bain'
-            ? {conclusion:'success',summary:'Alex approved this review-policy change via alex-approved.'}
-            : {...result,summary:result.summary+' The alex-approved label must be applied by Alex.'};
+          if (applied?.event==='labeled' && applied.actor?.login==='alexander-bain') {
+            const head = await github.rest.repos.getCommit({...repo,ref:pr.head.sha}).then(r=>r.data);
+            const labeledAt = Date.parse(applied.created_at);
+            const committedAt = Date.parse(head.commit?.committer?.date);
+            result = Number.isFinite(labeledAt) && Number.isFinite(committedAt) && labeledAt > committedAt
+              ? {conclusion:'success',summary:'Alex approved this review-policy change via alex-approved. Attribution uses Alex’s shared account; windows must never apply this label.'}
+              : {conclusion:'failure',summary:'alex-approved predates the current head; re-apply after review'};
+          } else {
+            result = {...result,summary:result.summary+' The alex-approved label must be applied by Alex.'};
+          }
         }
         results.push(policyChanged ? {...result,summary:result.summary+' Review policy changed; Alex must merge this PR.'} : result);
       }
