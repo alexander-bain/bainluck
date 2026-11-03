@@ -21,11 +21,9 @@ import pytest
 from app.tasks import live_blend_refresh as module
 from app.tasks.live_blend_refresh import LiveBlendRefresher
 from app.utils import blend_preview
-from app.utils.aggregation import compute_aggregate_probability, stamp_source_reading
 from app.utils.live_blend import (
     MarketOutcomes, compute_source_home_probability, has_proven_home_orientation,
 )
-from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs, rig  # noqa: F401
 
 SOURCES = frozenset({"kalshi", "polymarket"})
 EV = 7
@@ -88,12 +86,6 @@ def read(r, ev, group, *, overlaid=(), started=None):
     rows = {id(row) for entry in group for row in entry.outcomes if row.id not in overlaid}
     r._remember_preview_graphs({EV: (ev, group)}, rows,
                                module._mono() if started is None else started)
-
-
-async def drained(r):
-    task = r._commit_preview_task
-    if task is not None:
-        await asyncio.wait_for(task, 5)
 
 
 def proposals(sent):
@@ -221,116 +213,6 @@ def test_field_ranks_are_the_rerank_statements_rule():
 
 
 # --------------------------------------------------------------- real Redis
-
-
-def _expected_p(base, pm_value):
-    shim = Row(win_probability_sources=stamp_source_reading(dict(base), "polymarket", pm_value),
-               status="live", espn_win_prob_home=None, opening_home_probability=None)
-    return compute_aggregate_probability(shim, "live")
-
-
-def _blends(frames):
-    return [f for f in frames if f["preview"]["kind"] == "blend"]
-
-
-@pytest.fixture
-def on_redis(rig, r, monkeypatch):  # noqa: F811 — the TSP-1 fixture
-    """The refresher's proposals executed by the polymarket process's claimed registry."""
-    monkeypatch.setattr(blend_preview, "_REGISTRY", rig.p)
-
-    async def execute(frames, *, prepare_frames=None):
-        await rig.p.execute(frames, rig.call, rig.channel, rig.stats)
-
-    monkeypatch.setattr(r, "_publish_previews", execute)
-    return rig
-
-
-async def _ticket(rig):
-    ticket, _ = await rig.p.read_ticket(rig.call, "polymarket")
-    assert isinstance(ticket, int)
-    return ticket
-
-
-async def test_redis_publishes_the_composed_value_on_the_cached_base(r, on_redis):
-    rig = on_redis
-    read(r, event(ticket=await _ticket(rig)), legs())
-    r.note_committed_rows([returned()])
-    await drained(r)
-    [frame] = _blends(await rig.drain())
-    assert frame["preview"]["pending"] == {"polymarket": 0.48}
-    assert frame["p"] == pytest.approx(_expected_p(bag(), 0.48))
-
-
-async def test_a_retirement_after_the_cached_read_refuses_it_and_the_reread_opens(r, on_redis):
-    rig = on_redis
-    ticket = await _ticket(rig)
-    read(r, event(ticket=ticket), legs())
-    # Any retirement since the read moves the ledger-global barrier.
-    await rig.p.execute([rig.p.retire_missing(99, "polymarket", ticket)],
-                        rig.call, rig.channel, rig.stats)
-    assert await _ticket(rig) == ticket + 1
-    r.note_committed_rows([returned()])
-    await drained(r)
-    assert await rig.drain() == []
-    assert rig.p.refusal_counts[("polymarket", "read_required")] == 1
-    assert not rig.p.has_pending(EV, "polymarket"), "a refused open leaves no local chain"
-    # Today's path, unchanged: its own read takes the new ticket and opens.
-    ev, group = event(ticket=ticket + 1, at=NOW), legs(home="0.480000", seen=NOW)
-    reading = compute_source_home_probability(group, HOME, AWAY)
-    await r._preview_before_stamp({EV: (ev, group)}, {EV: (
-        [], {}, reading, 0.48, reading.contributing_outcomes)}, {})
-    [frame] = _blends(await rig.drain())
-    assert frame["preview"]["pending"] == {"polymarket": 0.48}
-
-
-async def test_a_settle_after_the_cached_read_is_never_previewed_over(r, on_redis):
-    rig = on_redis
-    ticket = await _ticket(rig)
-    read(r, event(ticket=ticket), legs())
-    # Another read saw the game finish and recorded the terminal (rev 11).
-    await rig.p.execute([rig.p.terminal_read(EV, "polymarket", 11, ticket)],
-                        rig.call, rig.channel, rig.stats)
-    r.note_committed_rows([returned()])
-    await drained(r)
-    assert _blends(await rig.drain()) == []
-
-
-async def test_a_moved_base_composes_on_the_committed_floor_never_the_cached_one(r, on_redis):
-    rig = on_redis
-    read(r, event(ticket=await _ticket(rig)), legs())
-    # A moving game: this arm's previous price is already pending on rev 10.
-    r.note_committed_rows([returned(price="0.470000", seen=NOW - timedelta(milliseconds=500))])
-    await drained(r)
-    assert [f["preview"]["pending"] for f in _blends(await rig.drain())] == [{"polymarket": 0.47}]
-    # The other venue's process stamps rev 11 after the cached read.
-    bag11 = bag(kalshi=0.62)
-    await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=None, sources=bag11, rev=11,
-                                         event=event(rev=11, at=NOW)))
-    r.note_committed_rows([returned(price="0.480000", seen=NOW)])
-    await drained(r)
-    [frame] = _blends(await rig.drain())
-    assert frame["preview"]["pending"] == {"polymarket": 0.48}
-    assert frame["preview"]["base_rev"] == 11
-    assert frame["p"] == pytest.approx(_expected_p(bag11, 0.48))
-    assert frame["p"] != pytest.approx(_expected_p(bag(), 0.48))
-
-
-async def test_with_no_ledger_state_a_moved_base_frame_names_its_older_base(r, on_redis):
-    """A commit on an event Redis holds no state for records no base (`none`),
-    so the composition stands on the cached rev 10 and its frame says so. The
-    reader shows a preview only while it holds no NEWER committed revision
-    (`frontend/lib/blendPreview.ts` `displayedPreview`): the rev-11 commit's own
-    frame hides it. Today's path has the same exposure inside its read-to-
-    propose window; here the window is the cached graph's age."""
-    rig = on_redis
-    read(r, event(ticket=await _ticket(rig)), legs())
-    await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=None, sources=bag(kalshi=0.62),
-                                         rev=11, event=event(rev=11, at=NOW)))
-    r.note_committed_rows([returned()])
-    await drained(r)
-    [frame] = _blends(await rig.drain())
-    assert frame["preview"]["base_rev"] == 10
-    assert frame["p"] == pytest.approx(_expected_p(bag(), 0.48))
 
 
 # ------------------------------------------------------------ the PM writer

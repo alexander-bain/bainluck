@@ -14,13 +14,10 @@ advance ``confirmed_at`` while readers still see the preview.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 from app.utils.confirmed_at import ConfirmedAt
 from tests.test_confirmed_at_10090 import STAMPED_AT, _Clock, _rows
-from tests.test_preview_from_commit_10090 import (  # noqa: F401 — `r`, `anchors` are fixtures
-    EV, HOME_LEG, anchors, drained, event, legs, proposals, r, read, returned,
-)
+from tests.test_preview_from_commit_10090 import EV, HOME_LEG
 
 TTL = 60.0
 
