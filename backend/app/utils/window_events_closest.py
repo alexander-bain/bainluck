@@ -157,7 +157,7 @@ def is_event_eligible_for_window(
 
     if status == "live":
         # A live game belongs to the window if it kicked off before window_end
-        # and not before the sports-day's live carry-inslack (6h before window_start).
+        # and not before the sports-day's live carry-in slack (6h before window_start).
         if commence >= window_end or commence < (window_start - timedelta(hours=6)):
             return False
     else:
@@ -442,6 +442,10 @@ async def produce_window_events_closest(
             )
 
         cards_by_id, _failed = await _hydrate_event_cards(db, candidate_ids)
+        if _failed:
+            return RoundupRefusal(
+                (("window", f"hydrate_failed_{len(_failed)}"),)
+            )
         folded_map = (
             await folded_card_numbers_batch(db, list(events_by_id.values()))
             if events_by_id
