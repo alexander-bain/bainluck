@@ -7,7 +7,8 @@
 # target, starts a worker-ws log capture, waits up to 45 min for a newer succeeded release, then judges it:
 #   1. boot check (boot_check.py on the capture): crash markers, a bad exception class, or A10 flush-lock errors
 #      >= 15 in [scan+3 min, scan+13 min] -> ROLLBACK;
-#   2. latency guards on the 0.5 s meter's log (streak.py writes STREAK_LOG): two consecutive minutes over 5 s,
+#   2. latency guards on the 0.5 s meter's log (streak.py writes STREAK_LOG): two consecutive minutes over 5 s
+#      counting only waits that started after the release (#11908),
 #      or the release's share of 0.5 s minutes more than 20 points below the 30 minutes before it -> ROLLBACK.
 # PASS needs both. A rollback POSTs the recorded release id back. Every line goes to stdout; the run directory
 # (printed first) keeps the capture and each check's output. Exit 0 PASS, 3 rolled back, 2 no verdict in time.
@@ -62,7 +63,7 @@ while :; do
     python3 "$HERE/boot_check.py" "$REL" capture-worker-ws.txt > boot.txt 2>&1; V=$(grep '^VERDICT' boot.txt | tail -1)
     case "$V" in "VERDICT PASS"*) BOOT=ok; say "$LABEL boot $V";; "VERDICT ROLLBACK"*) rollback "boot $V";; esac
   fi
-  L=$(python3 "$HERE/latency_guard2.py" "$STREAK" "$START" 5000 10 2>&1 | tail -1)
+  L=$(python3 "$HERE/latency_guard2.py" "$STREAK" "$START" 5000 10 "${REL:11:5}" 2>&1 | tail -1)
   H=$(python3 "$HERE/latency_guard3.py" "$STREAK" "${REL:11:5}" "$START" 12 20 30 2>&1 | tail -1)
   case "$H" in "VERDICT ROLLBACK"*) rollback "$H";; "VERDICT PASS"*) case "$L" in "VERDICT PASS"*) L="$L; $H";; esac;;
     *) case "$L" in "VERDICT PASS"*) L="VERDICT WAIT ($H)";; esac;; esac
