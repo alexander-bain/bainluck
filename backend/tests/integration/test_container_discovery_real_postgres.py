@@ -332,3 +332,32 @@ class TestFeedCacheFingerprint10003:
             assert loaded.slug == "nfl-2026-week-5"
         finally:
             await pg_session.execute(text("ALTER TABLE containers RENAME COLUMN mr_10003 TO membership_revision"))
+
+
+class TestNflWeekAuthorityStatus11906:
+    """#11906: a played NFL week whose authority games have finished never serves 'scheduled'."""
+
+    async def test_played_week_serves_final_and_underway_week_serves_live(self, pg_session):
+        hubs, ev = await _seed(pg_session)
+        # All three member games of wk5 (wk5_a, wk5_b, nested) have finished,
+        # while the container row itself still holds status = 'scheduled'.
+        await pg_session.execute(
+            text("UPDATE events SET status = 'completed' WHERE id = ANY(:ids)"),
+            {"ids": [ev["wk5_a"], ev["wk5_b"], ev["nested"]]},
+        )
+        await pg_session.commit()
+
+        read = await discovery.discover_collections(pg_session, slugs=["nfl-2026-week-5", "nfl-2026-week-6"])
+        by_slug = {c["slug"]: c for c in read.collections}
+        assert by_slug["nfl-2026-week-5"]["status"] == "final"
+        assert by_slug["nfl-2026-week-5"]["status"] != "scheduled"
+        assert by_slug["nfl-2026-week-6"]["status"] == "scheduled"
+
+        # When a week has played games and remaining scheduled games, it serves 'live'.
+        await pg_session.execute(
+            text("UPDATE events SET status = 'scheduled' WHERE id = :id"),
+            {"id": ev["wk5_b"]},
+        )
+        await pg_session.commit()
+        read_underway = await discovery.discover_collections(pg_session, slugs=["nfl-2026-week-5"])
+        assert read_underway.collections[0]["status"] == "live"

@@ -103,6 +103,41 @@ REASON_DISABLED = "discovery_disabled"
 REASON_HUB_DISABLED = "hub_read_disabled"
 REASON_SCHEMA_ABSENT = "publication_schema_absent"
 
+_FINISHED_EVENT_STATUSES = frozenset({"completed", "closed", "final", "finished"})
+_CANCELLED_EVENT_STATUSES = frozenset({"cancelled", "canceled"})
+_TERMINAL_EVENT_STATUSES = _FINISHED_EVENT_STATUSES | _CANCELLED_EVENT_STATUSES
+
+
+def nfl_week_status(
+    game_statuses: Optional[Iterable[Optional[str]]],
+    *,
+    fallback: Optional[str] = "scheduled",
+) -> Optional[str]:
+    """Derive an NFL week's container status from its authority member games (#11906).
+
+    A published NFL week's member ``event`` rows are the authority's contests
+    for that week (#5341). A week whose games have all finished serves
+    ``"final"`` and can never serve ``"scheduled"``; a week with any live game
+    or with games played and games remaining serves ``"live"``; only a week
+    with no played or live games serves ``"scheduled"``.
+    """
+    if game_statuses is None:
+        return fallback
+    cleaned = [
+        str(s).strip().lower()
+        for s in game_statuses
+        if s is not None and str(s).strip()
+    ]
+    if not cleaned:
+        return fallback
+    if all(s in _CANCELLED_EVENT_STATUSES for s in cleaned):
+        return "cancelled"
+    if all(s in _TERMINAL_EVENT_STATUSES for s in cleaned):
+        return "final"
+    if any(s == "live" or s in _FINISHED_EVENT_STATUSES for s in cleaned):
+        return "live"
+    return "scheduled"
+
 
 def container_discovery_enabled() -> bool:
     """Read at call time, like the hub's own switch, so it flips without a restart."""
@@ -176,6 +211,9 @@ def collection_card(
         return None, EXCLUDED_NOT_MATCHED
 
     window_start, window_end = row.get("window_start"), row.get("window_end")
+    status = row.get("status")
+    if edition.get("kind") == EDITION_NFL_WEEK and "game_statuses" in row:
+        status = nfl_week_status(row.get("game_statuses"), fallback=status)
     card = {
         "type": CARD_TYPE,
         # ``text`` is the field every search result is labelled by.
@@ -186,7 +224,7 @@ def collection_card(
         "state": READ_PUBLISHED,
         "revision": int(row["revision"]) if row.get("revision") is not None else None,
         "edition": edition,
-        "status": row.get("status"),
+        "status": status,
         "window_start": window_start.isoformat() if window_start is not None else None,
         "window_end": window_end.isoformat() if window_end is not None else None,
         # Members whose row we still hold. The hub can show fewer only by
@@ -250,7 +288,28 @@ def _discovery_sql(*, by_slug: bool, by_prefix: bool, by_season: bool, by_events
         "   AND e.parent_id = parts.part_id "
         "  WHERE e.child_type IN ('event', 'market')"
         ") "
-        "SELECT hub.id, hub.name, hub.slug, hub.status, hub.window_start, hub.window_end, "
+        "SELECT hub.id, hub.name, hub.slug, "
+        "       CASE "
+        "         WHEN starts_with(hub.slug, 'nfl-') AND COUNT(DISTINCT ev.id) > 0 THEN "
+        "           CASE "
+        "             WHEN COUNT(DISTINCT ev.id) FILTER ( "
+        "               WHERE ev.status IN ('cancelled', 'canceled') "
+        "             ) = COUNT(DISTINCT ev.id) THEN 'cancelled' "
+        "             WHEN COUNT(DISTINCT ev.id) FILTER ( "
+        "               WHERE ev.status IN ('completed', 'closed', 'final', 'finished', 'cancelled', 'canceled') "
+        "             ) = COUNT(DISTINCT ev.id) THEN 'final' "
+        "             WHEN bool_or( "
+        "               ev.status = 'live' "
+        "               AND (ev.commence_time IS NULL OR ev.commence_time <= now()) "
+        "             ) "
+        "               OR COUNT(DISTINCT ev.id) FILTER ( "
+        "                 WHERE ev.status IN ('completed', 'closed', 'final', 'finished') "
+        "               ) > 0 THEN 'live' "
+        "             ELSE 'scheduled' "
+        "           END "
+        "         ELSE hub.status "
+        "       END AS status, "
+        "       hub.window_start, hub.window_end, "
         "       hub.parent_container_id, hub.publication_state, hub.revision, "
         "       COUNT(DISTINCT ev.id) AS game_count, "
         "       COUNT(DISTINCT fm.id) AS question_count, "
