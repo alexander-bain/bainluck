@@ -2215,11 +2215,12 @@ export interface FeedBundleData {
   deadline_family?: FeedDeadlineFamilyContract | null;
 }
 
-// #10357 — a round-up card ("NFL division front-runners"). Every number is the
-// server's Bain Luck blend; the client orders, formats and ages, never computes.
-export interface FeedRoundupRow {
-  market_id: number;
-  /** "NFC East: Cowboys" — the division, then its leader. */
+// #10357 — a round-up card ("NFL division front-runners", "The closest games
+// tonight"). Every number is the server's Bain Luck blend; the client orders,
+// formats and ages, never computes. Each row keys on `market_id` (futures
+// round-up) or `event_id` (game round-up), never both.
+export type FeedRoundupRow = {
+  /** "NFC East: Cowboys" — the division or game, then its leader. */
   label: string;
   /** The leader's blended probability, a fraction in [0, 1]. */
   probability: number;
@@ -2227,7 +2228,10 @@ export interface FeedRoundupRow {
   rendered_percent?: number | null;
   /** The OLDEST contributing price behind this row's blend. */
   observed_at?: string | null;
-}
+} & (
+  | { market_id: number; event_id?: never }
+  | { event_id: number; market_id?: never }
+);
 
 export interface FeedRoundupContract {
   kicker: string;
