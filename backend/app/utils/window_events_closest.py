@@ -191,11 +191,13 @@ def _extract_blended_leader(
 
     Reads ONLY ``hero_probability`` and ``hero_probability_away`` — the fields
     produced by ``resolve_hero`` in ``_format_event_with_aggregated_odds`` and
-    ``get_event`` (`app/routes/events.py`). Never falls back to books-only
-    ``current_odds``: if either hero probability is absent or settled, the game
-    is refused.
+    ``get_event`` (`app/routes/events.py`). Accepts ONLY
+    ``hero_probability_source == "blend"`` and refuses everything else
+    (``opening``, ``final_unresolved``, ``settled``, absent). Reads the row's
+    ``observed_at`` from ``hero_probability_observed_at``, never from
+    ``current_odds.captured_at``.
     """
-    if card.get("hero_probability_source") == "settled":
+    if card.get("hero_probability_source") != "blend":
         return None
     home_prob = card.get("hero_probability")
     away_prob = card.get("hero_probability_away")
@@ -225,9 +227,7 @@ def _extract_blended_leader(
         leader_prob = ap
         leader_label = away_label
 
-    current_odds = card.get("current_odds")
-    odds_map = current_odds if isinstance(current_odds, Mapping) else {}
-    observed_at = odds_map.get("captured_at")
+    observed_at = card.get("hero_probability_observed_at")
     observed_str = str(observed_at) if isinstance(observed_at, str) and observed_at.strip() else None
     row_label = f"{away_label} at {home_label}: {leader_label}"
     return leader_prob, leader_label, row_label, observed_str
@@ -388,11 +388,16 @@ async def produce_window_events_closest(
         from sqlalchemy import and_, or_, select
         from app.models import Event
         from app.routes.containers import _hydrate_event_cards
+        from app.utils.aggregation import newest_source_reading_time
+        from app.utils.proven_duplicates import (
+            FoldedBlendView,
+            folded_card_numbers_batch,
+        )
 
         if not hasattr(db, "execute") or not callable(db.execute):
             return RoundupRefusal((("window", "unsupported_session"),))
         res = await db.execute(
-            select(Event.id)
+            select(Event)
             .where(
                 Event.status.notin_(
                     (
@@ -420,19 +425,52 @@ async def produce_window_events_closest(
             )
             .order_by(Event.commence_time, Event.id)
         )
-        raw_ids = res.scalars().all() if hasattr(res, "scalars") else []
-        candidate_ids = [
-            i for i in raw_ids if isinstance(i, int) and not isinstance(i, bool) and i > 0
-        ]
+        raw_rows = res.scalars().all() if hasattr(res, "scalars") else []
+        events_by_id: dict[int, Any] = {}
+        candidate_ids: list[int] = []
+        for row in raw_rows:
+            if isinstance(row, int) and not isinstance(row, bool) and row > 0:
+                candidate_ids.append(row)
+            else:
+                ev_id = getattr(row, "id", None)
+                if isinstance(ev_id, int) and not isinstance(ev_id, bool) and ev_id > 0:
+                    candidate_ids.append(ev_id)
+                    events_by_id[ev_id] = row
         if len(candidate_ids) < max(minimum, count):
             return RoundupRefusal(
                 (("window", f"candidates_{len(candidate_ids)}_below_minimum_{max(minimum, count)}"),)
             )
 
         cards_by_id, _failed = await _hydrate_event_cards(db, candidate_ids)
-        ordered_cards = [
-            cards_by_id[i] for i in candidate_ids if i in cards_by_id
-        ]
+        folded_map = (
+            await folded_card_numbers_batch(db, list(events_by_id.values()))
+            if events_by_id
+            else {}
+        )
+        ordered_cards = []
+        for i in candidate_ids:
+            if i not in cards_by_id:
+                continue
+            card = dict(cards_by_id[i])
+            if (
+                "hero_probability_observed_at" not in card
+                and card.get("hero_probability_source") == "blend"
+                and i in events_by_id
+            ):
+                ev = events_by_id[i]
+                folded = folded_map.get(i)
+                blend_view = (
+                    FoldedBlendView(ev, folded.win_probability_sources)
+                    if folded is not None and folded.win_probability_sources is not None
+                    else ev
+                )
+                observed_at = newest_source_reading_time(
+                    blend_view, require_complete=True
+                )
+                card["hero_probability_observed_at"] = (
+                    observed_at.isoformat() if observed_at is not None else None
+                )
+            ordered_cards.append(card)
     return select_closest_window_events(
         ordered_cards,
         now=effective_now,

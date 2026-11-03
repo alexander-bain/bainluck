@@ -49,6 +49,7 @@ from app.utils.window_events_closest import (  # noqa: E402
     CLOSEST_GAMES_TONIGHT_PRODUCER,
     CLOSEST_GAMES_TONIGHT_SLUG,
     PRODUCER_KIND_WINDOW_EVENTS_CLOSEST,
+    _extract_blended_leader,
     build_window_events_closest_producer,
     produce_window_events_closest,
     select_closest_window_events,
@@ -66,13 +67,15 @@ def _game_card(
     commence_time: str = "2026-11-04T00:30:00+00:00",
     home_prob: float | None = 0.54,
     away_prob: float | None = 0.46,
+    hero_source: str | None = "blend",
+    hero_observed_at: str | None = "2026-11-03T22:15:00+00:00",
     home_crest: str | None = "https://cdn.example/home.png",
     away_crest: str | None = "https://cdn.example/away.png",
     home_score: int | None = None,
     away_score: int | None = None,
     captured_at: str = "2026-11-03T22:00:00+00:00",
 ) -> dict[str, Any]:
-    return {
+    card: dict[str, Any] = {
         "id": event_id,
         "home_team": home,
         "away_team": away,
@@ -93,6 +96,11 @@ def _game_card(
             "captured_at": captured_at,
         },
     }
+    if hero_source is not None:
+        card["hero_probability_source"] = hero_source
+    if hero_observed_at is not None:
+        card["hero_probability_observed_at"] = hero_observed_at
+    return card
 
 
 def _card_loader_for(cards: Sequence[Mapping[str, Any]]):
@@ -109,7 +117,13 @@ class _AsyncSessionAdapter:
         self._s = session
 
     async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
-        return self._s.execute(statement, *args)
+        res = self._s.execute(statement, *args)
+        for obj in list(self._s.identity_map.values()):
+            for attr in ("commence_time", "captured_at", "completed_at"):
+                val = getattr(obj, attr, None)
+                if isinstance(val, datetime) and val.tzinfo is None:
+                    setattr(obj, attr, val.replace(tzinfo=timezone.utc))
+        return res
 
 
 def test_stored_definition_carries_membership_and_kind_per_ruling_b():
@@ -341,73 +355,33 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
     1. Each round-up row probability comes from ``resolve_hero`` (``hero_probability`` /
        ``hero_probability_away`` on the hydrated event card — the same function that
        produces the event page's hero number), NOT from the books-only ``current_odds``.
-    2. A game whose ``resolve_hero`` returns ``None`` (no blend in
-       ``win_probability_sources``, even when ``current_odds`` has a books-only number)
-       is refused instead of falling back to ``current_odds``.
+    2. Each row's ``observed_at`` equals ``hero_probability_observed_at`` (the hero's
+       blend stamp), NOT ``current_odds.captured_at``.
+    3. Games whose ``hero_probability_source`` is ``"opening"``, ``"final_unresolved"``,
+       ``"settled"``, or absent (books-only ``current_odds``) are refused while
+       blended siblings survive.
     """
     now = datetime.now(timezone.utc)
     tipoff = now + timedelta(hours=2)
-    stamp = now.isoformat()
+    hero_stamp = (now - timedelta(minutes=3)).isoformat()
+    odds_captured_dt = now - timedelta(minutes=10)
 
     eng = create_engine("sqlite://")
     Base.metadata.create_all(eng)
 
     sport_id = 41
     team_pairs = [
-        (401, "Boston Celtics", "Celtics", "New York Knicks", "Knicks", 0.56, 0.72),
-        (402, "Los Angeles Lakers", "Lakers", "Phoenix Suns", "Suns", 0.52, 0.68),
-        (403, "Milwaukee Bucks", "Bucks", "Miami Heat", "Heat", 0.43, 0.65),
-        (404, "Denver Nuggets", "Nuggets", "Minnesota Timberwolves", "Timberwolves", 0.60, 0.75),
-        # Event 405 has NO win_probability_sources (resolve_hero -> None), only a 50.5% books snapshot:
-        (405, "Golden State Warriors", "Warriors", "Sacramento Kings", "Kings", None, 0.505),
+        (401, "Boston Celtics", "Celtics", "New York Knicks", "Knicks", 0.56, 0.72, "scheduled", None),
+        (402, "Los Angeles Lakers", "Lakers", "Phoenix Suns", "Suns", 0.52, 0.68, "scheduled", None),
+        (403, "Milwaukee Bucks", "Bucks", "Miami Heat", "Heat", 0.43, 0.65, "scheduled", None),
+        (404, "Denver Nuggets", "Nuggets", "Minnesota Timberwolves", "Timberwolves", 0.60, 0.75, "scheduled", None),
+        # Event 405 has NO win_probability_sources and no opening -> resolve_hero is None (absent):
+        (405, "Golden State Warriors", "Warriors", "Sacramento Kings", "Kings", None, 0.505, "scheduled", None),
+        # Event 406 has NO win_probability_sources and an opening line -> hero_probability_source == "opening":
+        (406, "Dallas Mavericks", "Mavericks", "Houston Rockets", "Rockets", None, 0.501, "scheduled", 0.502),
+        # Event 407 has a finished status with no scores and a blend -> hero_probability_source == "final_unresolved":
+        (407, "Cleveland Cavaliers", "Cavaliers", "Orlando Magic", "Magic", 0.503, 0.503, "completed", None),
     ]
-
-    with Session(eng) as s:
-        s.add(Sport(id=sport_id, key="basketball_nba", name="NBA", group="Basketball"))
-        next_team_id = 1
-        for eid, home_full, home_short, away_full, away_short, blend_home, book_home in team_pairs:
-            for full_name, short_name in ((home_full, home_short), (away_full, away_short)):
-                s.add(
-                    Team(
-                        id=next_team_id,
-                        sport_id=sport_id,
-                        name=full_name,
-                        abbreviation=short_name[:3].upper(),
-                        logo_url=f"https://cdn.example/{short_name.lower()}.png",
-                        logo_url_small=f"https://cdn.example/{short_name.lower()}-sm.png",
-                    )
-                )
-                next_team_id += 1
-            sources = (
-                {
-                    "betting": {"value": blend_home, "updated_at": stamp},
-                    "kalshi": {"value": blend_home, "updated_at": stamp},
-                    "polymarket": {"value": blend_home, "updated_at": stamp},
-                }
-                if blend_home is not None
-                else {}
-            )
-            s.add(
-                Event(
-                    id=eid,
-                    sport_id=sport_id,
-                    home_team_name=home_full,
-                    away_team_name=away_full,
-                    commence_time=tipoff,
-                    status="scheduled",
-                    win_probability_sources=sources,
-                )
-            )
-            s.add(
-                OddsSnapshot(
-                    event_id=eid,
-                    bookmaker="fanduel",
-                    home_win_probability=book_home,
-                    away_win_probability=round(1.0 - book_home, 4),
-                    captured_at=now,
-                )
-            )
-        s.commit()
 
     def _portable_odds_query(event_ids):
         return select(OddsSnapshot).where(OddsSnapshot.event_id.in_(event_ids))
@@ -428,28 +402,98 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
         patch("app.routes.events.latest_odds_per_bookmaker_query", new=_portable_odds_query),
         patch("app.routes.events._team_cache", {}),
         patch("app.routes.events._team_cache_time", 0.0),
-        Session(eng) as s,
+        Session(eng, expire_on_commit=False) as s,
     ):
+        s.add(Sport(id=sport_id, key="basketball_nba", name="NBA", group="Basketball"))
+        next_team_id = 1
+        for (
+            eid,
+            home_full,
+            home_short,
+            away_full,
+            away_short,
+            blend_home,
+            book_home,
+            ev_status,
+            opening_home,
+        ) in team_pairs:
+            for full_name, short_name in ((home_full, home_short), (away_full, away_short)):
+                s.add(
+                    Team(
+                        id=next_team_id,
+                        sport_id=sport_id,
+                        name=full_name,
+                        abbreviation=short_name[:3].upper(),
+                        logo_url=f"https://cdn.example/{short_name.lower()}.png",
+                        logo_url_small=f"https://cdn.example/{short_name.lower()}-sm.png",
+                    )
+                )
+                next_team_id += 1
+            sources = (
+                {
+                    "betting": {"value": blend_home, "updated_at": hero_stamp},
+                    "kalshi": {"value": blend_home, "updated_at": hero_stamp},
+                    "polymarket": {"value": blend_home, "updated_at": hero_stamp},
+                }
+                if blend_home is not None
+                else {}
+            )
+            s.add(
+                Event(
+                    id=eid,
+                    sport_id=sport_id,
+                    home_team_name=home_full,
+                    away_team_name=away_full,
+                    commence_time=tipoff,
+                    status=ev_status,
+                    win_probability_sources=sources,
+                    opening_home_probability=opening_home,
+                    opening_away_probability=(round(1.0 - opening_home, 4) if opening_home is not None else None),
+                )
+            )
+            s.add(
+                OddsSnapshot(
+                    event_id=eid,
+                    bookmaker="fanduel",
+                    home_win_probability=book_home,
+                    away_win_probability=round(1.0 - book_home, 4),
+                    captured_at=odds_captured_dt,
+                )
+            )
+        s.commit()
+
         fake_db = _AsyncSessionAdapter(s)
-        hydrated_cards, failed = await _hydrate_event_cards(fake_db, [401, 402, 403, 404, 405])
+        hydrated_cards, failed = await _hydrate_event_cards(
+            fake_db, [401, 402, 403, 404, 405, 406, 407]
+        )
         assert failed == {}
-        # Event 405 has books-only current_odds (0.505) but no resolve_hero blend -> hero_probability is absent:
+        # Event 405 has books-only current_odds (0.505) and no hero_probability:
         assert hydrated_cards[405]["current_odds"]["home_probability"] == pytest.approx(0.505)
         assert "hero_probability" not in hydrated_cards[405]
+        # Event 406 has hero_probability_source == "opening" (0.502):
+        assert hydrated_cards[406]["hero_probability_source"] == "opening"
+        assert hydrated_cards[406]["hero_probability"] == pytest.approx(0.502)
+        assert _extract_blended_leader(hydrated_cards[406]) is None
+        # Event 407 has hero_probability_source == "final_unresolved" (0.503):
+        assert hydrated_cards[407]["hero_probability_source"] == "final_unresolved"
+        assert hydrated_cards[407]["hero_probability"] == pytest.approx(0.503)
+        assert _extract_blended_leader(hydrated_cards[407]) is None
 
         outcome = await produce_window_events_closest(defn, fake_db, now=now)
         assert not isinstance(outcome, RoundupRefusal)
-        # Event 405 is refused despite having the closest books-only number (0.505), leaving 4 eligible games:
+        # Events 405 (absent), 406 (opening), and 407 (final_unresolved) are all refused
+        # while the 4 blended siblings [404, 403, 401, 402] survive:
         assert outcome.footer == "Bain Luck blend · the 4 closest of 4 games tonight"
         assert [r["event_id"] for r in outcome.rows] == [404, 403, 401, 402]
 
-        # Every row's probability equals resolve_hero(event)'s leader (and the card's hero_probability /
-        # hero_probability_away), NOT the books-only snapshot (0.75, 0.65, 0.72, 0.68):
+        # Every row's probability equals resolve_hero(event)'s leader and its observed_at
+        # equals hero_probability_observed_at (not current_odds.captured_at):
         for row, member in zip(outcome.rows, outcome.members):
             eid = row["event_id"]
             ev = s.get(Event, eid)
             hero = resolve_hero(ev)
             assert hero is not None
+            assert hero.source == "blend"
             expected_leader = max(hero.home_probability, hero.away_probability)
             card_leader = max(
                 member["card"]["hero_probability"],
@@ -457,10 +501,52 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
             )
             assert row["probability"] == pytest.approx(expected_leader)
             assert row["probability"] == pytest.approx(card_leader)
-            assert row["probability"] != pytest.approx(
-                hydrated_cards[eid]["current_odds"]["spread"] or 0.0
-            )
+            assert row["observed_at"] == member["card"]["hero_probability_observed_at"] == hero_stamp
+            assert row["observed_at"] != hydrated_cards[eid]["current_odds"]["captured_at"]
         # Specifically for 403 (home=0.43, away=0.57 in blend vs 0.65 home in books):
         row_403 = next(r for r in outcome.rows if r["event_id"] == 403)
         assert row_403["probability"] == pytest.approx(0.57)
         assert row_403["label"] == "Miami Heat at Milwaukee Bucks: Miami Heat"
+
+
+def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
+    """``_extract_blended_leader`` and ``select_closest_window_events`` accept only
+    ``hero_probability_source == "blend"`` and refuse ``opening``, ``final_unresolved``,
+    ``settled``, and absent sources, reading ``observed_at`` from ``hero_probability_observed_at``.
+    """
+    now = datetime(2026, 11, 3, 22, 0, tzinfo=timezone.utc)
+    w_start, w_end = sports_day_window(now)
+    hero_stamp = "2026-11-03T22:19:45+00:00"
+    odds_stamp = "2026-11-03T19:00:00+00:00"
+
+    cards = [
+        # Non-blend sources with closer numbers (0.501–0.504) that must be refused:
+        _game_card(501, home="Mavs", away="Rockets", home_prob=0.501, away_prob=0.499, hero_source="opening", hero_observed_at=hero_stamp, captured_at=odds_stamp),
+        _game_card(502, home="Cavs", away="Magic", home_prob=0.502, away_prob=0.498, hero_source="final_unresolved", hero_observed_at=hero_stamp, captured_at=odds_stamp),
+        _game_card(503, home="Nets", away="Hawks", home_prob=1.0, away_prob=0.0, hero_source="settled", hero_observed_at=hero_stamp, captured_at=odds_stamp),
+        _game_card(504, home="Pacers", away="Bulls", home_prob=0.504, away_prob=0.496, hero_source=None, hero_observed_at=hero_stamp, captured_at=odds_stamp),
+        # 4 blended siblings that survive:
+        _game_card(511, home="Celtics", away="Knicks", home_prob=0.52, away_prob=0.48, hero_source="blend", hero_observed_at=hero_stamp, captured_at=odds_stamp),
+        _game_card(512, home="Lakers", away="Suns", home_prob=0.55, away_prob=0.45, hero_source="blend", hero_observed_at=hero_stamp, captured_at=odds_stamp),
+        _game_card(513, home="Bucks", away="Heat", home_prob=0.58, away_prob=0.42, hero_source="blend", hero_observed_at=hero_stamp, captured_at=odds_stamp),
+        _game_card(514, home="Nuggets", away="Warriors", home_prob=0.61, away_prob=0.39, hero_source="blend", hero_observed_at=hero_stamp, captured_at=odds_stamp),
+    ]
+
+    for refused_id in (501, 502, 503, 504):
+        card = next(c for c in cards if c["id"] == refused_id)
+        assert _extract_blended_leader(card) is None
+
+    result = select_closest_window_events(
+        cards,
+        now=now,
+        window_start=w_start,
+        window_end=w_end,
+        count=4,
+        minimum=4,
+    )
+    assert not isinstance(result, RoundupRefusal)
+    assert [r["event_id"] for r in result.rows] == [514, 513, 512, 511]
+    assert result.footer == "Bain Luck blend · the 4 closest of 4 games tonight"
+    for row in result.rows:
+        assert row["observed_at"] == hero_stamp
+        assert row["observed_at"] != odds_stamp
