@@ -15,6 +15,7 @@ import zipfile
 
 import pytest
 import yaml
+from tests.test_ci_postgres_groups import _normalize_failure_continuation
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".github/scripts/ci-prior-evidence.py"
@@ -492,13 +493,17 @@ def test_api_permission_timeout_or_shape_failure_takes_full_path(
 
 def test_reuse_conditions_are_an_explicit_addition_to_every_paid_step():
     reuse = "needs.change-scope.outputs.reuse != 'true'"
+    jobs = copy.deepcopy(JOBS)
+    jobs["database-integration"] = _normalize_failure_continuation(
+        jobs["database-integration"]
+    )
     for name in (
         "backend-tests",
         "database-integration",
         "shard-completeness",
         "frontend-build",
     ):
-        for step in JOBS[name]["steps"]:
+        for step in jobs[name]["steps"]:
             if step.get("name") == "Require this run's change-scope attempt":
                 assert "SCOPE_ATTEMPT" in step["run"]
                 continue

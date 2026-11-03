@@ -412,6 +412,20 @@ def expected_steps(kind, value, count, block):
         match = re.match(r"name: (.+)\n", definition)
         condition = re.search(r"^        if: (.+)$", definition, re.M)
         expression = condition.group(1) if condition else None
+        if kind == "database-integration":
+            continuation = re.fullmatch(r"\$\{\{ !cancelled\(\) && \((.+)\) \}\}", expression or "")
+            if continuation:
+                expression = continuation.group(1)
+            elif expression == "${{ !cancelled() }}":
+                require(
+                    match is not None and match.group(1) == "Summarize database integration failures"
+                    and re.search(r"^        id: database_integration_summary$", definition, re.M)
+                    and re.search(r"^        continue-on-error: true$", definition, re.M)
+                    and "GITHUB_STEP_SUMMARY" in definition
+                    and "pytest" not in definition and "tests/" not in definition,
+                    "unreviewed step condition",
+                )
+                expression = None
         group = re.fullmatch(
             r"matrix\.group == '([\w-]+)' && " + re.escape(reuse), expression or ""
         )

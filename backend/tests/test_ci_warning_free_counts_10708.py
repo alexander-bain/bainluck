@@ -5,6 +5,7 @@ import re
 import subprocess
 
 import pytest
+import yaml
 
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
@@ -33,7 +34,8 @@ GATES = (
 
 @pytest.mark.parametrize("gate", GATES)
 def test_real_count_parser_keeps_exact_count_with_or_without_warnings(gate):
-    source = WORKFLOW.read_text()
+    job = yaml.safe_load(WORKFLOW.read_text())["jobs"]["database-integration"]
+    source = "\n".join(step.get("run", "") for step in job["steps"])
     matches = re.findall(rf'grep -qE "([^"]+)" /tmp/{re.escape(gate)}\.txt', source)
     assert len(matches) == 1
     pattern = matches[0]
