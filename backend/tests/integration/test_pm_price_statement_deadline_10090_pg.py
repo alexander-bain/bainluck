@@ -56,6 +56,10 @@ async def preview(monkeypatch, private_redis_socket, rig):  # noqa: F811
     async with rig.engine.begin() as conn:
         await conn.run_sync(upgrade)
     store = AuthorityStore(rig.maker)
+    # #11893: activation is fixture setup, outside the price/preview timing
+    # subject. Allow CI storage jitter, then restore the runtime read budget.
+    control_budget = store.budget_s
+    store.budget_s = 2.0
     server, repl = await client.info('server'), await client.info('replication')
     old = await store.read()
     current = await store.prepare(old, preparing_candidate(
@@ -68,6 +72,7 @@ async def preview(monkeypatch, private_redis_socket, rig):  # noqa: F811
     await controller.initialize(current)
     ready = await controller.ready(current)
     await blend_preview.registry().bind_primary(store)
+    store.budget_s = control_budget
     subscriber = client.pubsub()
     await subscriber.subscribe(*(event_channel(eid) for eid in (1, 2, 3)))
     for _ in range(3):
