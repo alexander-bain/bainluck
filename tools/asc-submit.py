@@ -782,7 +782,7 @@ def self_check() -> int:
     import io
     import tempfile
     import unittest
-    from unittest import mock
+    import unittest.mock as mock
     from urllib.parse import urlsplit
 
     class Response:
