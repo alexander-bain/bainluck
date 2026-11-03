@@ -13,11 +13,10 @@ an operator (`scripts/collection_publication.py`). This module is the one
 automatic decision, taken inside the same transaction as the pass that proved
 the week, through the SAME helper and the same ledger an operator uses.
 
-DARK BY DEFAULT. ``CONTAINER_NFL_AUTO_PUBLISH_ENABLED`` is read at call time and
-is its own switch: the assembly flag (``CONTAINER_COLLECTIONS_ENABLED``) grants
-edges, never publication, and no existing control is a publication policy.
-With it off this module issues no statement; it still reports the harvest's
-verdict, so a pass report shows what WOULD publish before anyone turns it on.
+ENABLED BY DEFAULT (#5341 A4). ``CONTAINER_NFL_AUTO_PUBLISH_ENABLED`` is read at
+call time; an explicit false value disables publication. The assembly flag
+(``CONTAINER_COLLECTIONS_ENABLED``) controls edges, never publication. With
+publication off this module issues no statement and reports the harvest's verdict.
 
 PUBLISH MEANS ALL OF THESE, AND FAILS CLOSED ON EACH:
 
@@ -134,8 +133,8 @@ NO_IDENTITY_SLACK = timedelta(hours=48)
 
 
 def auto_publish_enabled() -> bool:
-    """Read at call time, so it flips without a restart, and off unless set."""
-    return os.environ.get(AUTO_PUBLISH_ENV, "").strip().lower() in _TRUTHY
+    """NFL publication is on by default; an explicit false value stops it."""
+    return os.environ.get(AUTO_PUBLISH_ENV, "true").strip().lower() in _TRUTHY
 
 
 # ---------------------------------------------------------------------------

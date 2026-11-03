@@ -430,11 +430,28 @@ def hourly(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_flag_off_runs_no_collection_and_keeps_the_old_verdict(hourly):
+async def test_flag_off_runs_no_collection_and_keeps_the_old_verdict(hourly, monkeypatch):
+    monkeypatch.setenv(ca.COLLECTIONS_ENABLED_ENV, "false")
     out = await ca._run_assemble_containers(apply=True)
     assert hourly.collections == []
     assert out["collections"] == "disabled"
     assert (out["terminal"], out["members"], out["edges_written"]) == ("complete", 61, 61)
+
+
+@pytest.mark.asyncio
+async def test_default_hourly_pass_runs_nfl_only_and_keeps_partial_truth(hourly):
+    out = await ca._run_assemble_containers(apply=True)
+    assert hourly.collections == ["nfl-2026"]
+    assert out["collections"] == "enabled"
+    assert out["terminal"] == "partial"
+    assert out["edges_written"] == 61 + 5
+
+
+@pytest.mark.parametrize("value", ["", "false", "0", "off", "no", "nope"])
+def test_explicit_assembly_off_stops_both_families(monkeypatch, value):
+    monkeypatch.setenv(ca.COLLECTIONS_ENABLED_ENV, value)
+    assert ca.collections_enabled(nfl=True) is False
+    assert ca.collections_enabled(nfl=False) is False
 
 
 @pytest.mark.asyncio

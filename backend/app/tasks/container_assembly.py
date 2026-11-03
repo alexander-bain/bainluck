@@ -1578,10 +1578,9 @@ class _ContainerRow:
 # the container row it runs against, and one transaction per run. The adapters
 # import this module, so they are imported lazily here.
 
-#: Collections write edges (and receipts) for NFL and MLB on the hourly pass.
-#: Off by default so a merge changes nothing on production until the flag is
-#: set; an explicit ``only=<collection slug>`` dispatch runs one regardless,
-#: because naming it IS the attended step.
+#: NFL collections run hourly by default (#5341 A2); MLB remains opt-in.
+#: An explicit flag controls both families, including the off switch. Naming
+#: ``only=<collection slug>`` still runs that one collection regardless.
 COLLECTIONS_ENABLED_ENV = "CONTAINER_COLLECTIONS_ENABLED"
 
 #: A league collection's kind, from the existing vocabulary. An NFL week is a
@@ -1592,8 +1591,8 @@ MLB_POSTSEASON_KIND = "tournament"
 _NFL_STAGE_ORDER = {"Pre Season": 0, "Regular Season": 1, "Post Season": 2}
 
 
-def collections_enabled() -> bool:
-    return os.environ.get(COLLECTIONS_ENABLED_ENV, "").strip().lower() in {
+def collections_enabled(*, nfl: bool = False) -> bool:
+    return os.environ.get(COLLECTIONS_ENABLED_ENV, "true" if nfl else "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -1878,6 +1877,7 @@ async def _run_assemble_containers(apply: bool = True, only: Optional[str] = Non
     from app.utils.container_tournaments import (
         DECLARED_COLLECTIONS,
         DECLARED_TOURNAMENTS,
+        NflSeasonDeclaration,
     )
 
     started = datetime.now(timezone.utc)
@@ -1886,17 +1886,17 @@ async def _run_assemble_containers(apply: bool = True, only: Optional[str] = Non
         for d in DECLARED_TOURNAMENTS
         if only is None or d.root_slug == only
     ]
-    # League collections (#9217) ride the hourly pass only behind the flag; an
-    # explicit `only=<slug>` runs that one collection regardless.
+    # #5341 A2: NFL weeks run by default; MLB still needs the explicit flag.
+    # An explicit `only=<slug>` runs that one collection regardless.
     if only is not None:
         collections = [c for c in DECLARED_COLLECTIONS if c.root_slug == only]
         collections_state = "requested" if collections else "not_requested"
-    elif collections_enabled():
-        collections = list(DECLARED_COLLECTIONS)
-        collections_state = "enabled"
     else:
-        collections = []
-        collections_state = "disabled"
+        collections = [
+            c for c in DECLARED_COLLECTIONS
+            if collections_enabled(nfl=isinstance(c, NflSeasonDeclaration))
+        ]
+        collections_state = "enabled" if collections else "disabled"
 
     async with get_task_session() as session:
         if not await containers_tables_present(session):
