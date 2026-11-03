@@ -84,10 +84,14 @@ export function buildRoundupCardModel(
     const p = row?.probability;
     const hasMarket = row != null && row.market_id !== undefined && row.market_id !== null;
     const hasEvent = row != null && row.event_id !== undefined && row.event_id !== null;
-    const rowId = hasMarket ? row.market_id : hasEvent ? row.event_id : undefined;
+    const hasOutcome = row != null && row.outcome_id !== undefined && row.outcome_id !== null;
+    const baseId = hasMarket ? row.market_id : hasEvent ? row.event_id : undefined;
+    const rowId = hasOutcome ? row.outcome_id : baseId;
     if (
       !row ||
       hasMarket === hasEvent ||
+      (hasOutcome && !hasMarket) ||
+      !isPositiveInt(baseId) ||
       !isPositiveInt(rowId) ||
       !label ||
       typeof p !== "number" ||
