@@ -196,6 +196,10 @@ async def test_a_plan_built_for_other_sizes_than_configured_never_reaches_the_op
 async def test_relimit_across_512_to_a_v2_cap_of_1024_and_back(recovery, tmp_path, monkeypatch):  # noqa: F811
     """#10090 cap raise: one plan moves sizes AND version; rollback restores v1 and 512."""
     t, r = tool(), recovery
+    # #11903: the plans' sizes and versions are the subject, not the store's deadline. CI run 41565052931
+    # timed out the rollback plan's prepare at the 150 ms control budget, after the 1,024-resident fill.
+    # As #11900 did, a 2 s test-local budget; the deadline controls keep 150 ms.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     server, repl = await r.client.info("server"), await r.client.info("replication")
     primary = (server["run_id"], repl["master_replid"])
     first = await r.prepare(V1)
