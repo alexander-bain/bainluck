@@ -719,10 +719,11 @@ async def test_orm_kalshi_width_truncated_outcome_names_repair_via_ticker(monkey
 
 @pytest.mark.asyncio
 async def test_roundup_feed_wiring_places_card_after_opening_ten_and_dedupes_members(monkeypatch):
-    """Oct 7–8 Discover opening ruling: the assembled round-up card sits after the
-    opening ten (seat 11 / index 10) without changing any card's score, suppresses
-    any standalone member market in the deck so no market appears twice, and is
-    omitted when the producer refuses.
+    """Oct 7–8 Discover opening ruling (#10357 / #11901 / #11902): the assembled
+    round-up card sits in page one's back half (seat >= 11 / index >= 10) without
+    changing any card's score, covered standalone member markets fold into the
+    round-up wherever they sit in the deck (Rule 3, including inside indices 0..9)
+    so no market appears twice, and the deck is untouched when the producer refuses.
     """
     from app.utils.roundup_containers import (
         ROUNDUP_SEAT_FLOOR,
@@ -768,10 +769,11 @@ async def test_roundup_feed_wiring_places_card_after_opening_ten_and_dedupes_mem
     ]
 
     placed = await add_roundup_feed_items(_FakeSession(markets_copy()), base_deck)
-    # Opening ten (indices 0..9) are untouched in identity, order, and score.
+    # When no covered member sits in 0..9, the opening ten (indices 0..9) keep their
+    # identity, order, and score.
     assert [it["data"]["id"] for it in placed[:10]] == [1000 + i for i in range(10)]
     assert [it["score"] for it in placed[:10]] == [float(100 - i) for i in range(10)]
-    # Standalone member 53674 at index 12 was replaced by the round-up at seat 12,
+    # Standalone member 53674 at index 12 was replaced by the round-up at index 12,
     # and no standalone card carries any covered member id.
     roundup_positions = [
         i
@@ -788,6 +790,45 @@ async def test_roundup_feed_wiring_places_card_after_opening_ten_and_dedupes_mem
         not (it.get("type") == "futures" and it.get("data", {}).get("id") == 53674)
         for it in placed
     )
+
+    # Rule 3 (Oct 8 target): a covered member at index 3 (inside indices 0..9) folds
+    # into the round-up wherever it sits, pulling the next dated story into the
+    # opening ten while the round-up card itself sits at index 10 (seat 11).
+    member_at_index_3_deck = [
+        {
+            "type": "futures",
+            "score": float(100 - idx),
+            "_rank_score": float(100 - idx),
+            "reason": f"Why now {idx}",
+            "headline": f"Story {idx}",
+            "data": {"id": 53674 if idx == 3 else 3000 + idx, "name": f"Market {idx}"},
+        }
+        for idx in range(15)
+    ]
+    placed_from_idx_3 = await add_roundup_feed_items(
+        _FakeSession(markets_copy()), member_at_index_3_deck
+    )
+    assert all(
+        not (it.get("type") == "futures" and it.get("data", {}).get("id") == 53674)
+        for it in placed_from_idx_3
+    )
+    assert [it["data"]["id"] for it in placed_from_idx_3[:10]] == [
+        3000,
+        3001,
+        3002,
+        3004,
+        3005,
+        3006,
+        3007,
+        3008,
+        3009,
+        3010,
+    ]
+    assert [
+        i
+        for i, it in enumerate(placed_from_idx_3)
+        if it.get("type") == "bundle" and it.get("data", {}).get("kind") == "roundup"
+    ] == [10]
 
     # When no member is in the deck (tier-4 division markets), the round-up sits at
     # index 10 (seat 11), immediately after the opening ten, inheriting seat 11's score.
@@ -814,5 +855,103 @@ async def test_roundup_feed_wiring_places_card_after_opening_ten_and_dedupes_mem
     unchanged = await add_roundup_feed_items(_FakeSession(broken), clean_deck)
     assert unchanged is clean_deck
     assert insert_roundup_feed_items(clean_deck, []) is clean_deck
+
+
+@pytest.mark.asyncio
+async def test_roundup_feed_wiring_stays_in_back_half_after_opening_seating_11902(
+    monkeypatch,
+):
+    """#11902: when ordinary-live events sit in indices 0..9 of the pre-seating
+    deck, running ``seat_opening`` after ``add_roundup_feed_items`` keeps the
+    round-up in the back half (seat >= 11 / index >= 10) with the opening ten
+    holding the exact same dated stories as ``seat_opening`` without the round-up.
+    """
+    from datetime import timedelta
+
+    from app.utils.discover_opening_seating import APPLIED, seat_opening
+    from app.utils.roundup_containers import (
+        add_roundup_feed_items,
+        reset_roundup_cache_for_tests,
+    )
+
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+    monkeypatch.setenv("NFL_DIVISION_ROUNDUP_ENABLED", "true")
+    reset_roundup_cache_for_tests()
+
+    seating_now = datetime(2026, 11, 3, 4, 8, 0, tzinfo=timezone.utc)
+    kickoff_iso = (seating_now - timedelta(hours=1)).isoformat()
+
+    # 15-card pre-seating deck matching the #11902 specimen: three unexempt
+    # ordinary-live events at indices 2, 5, 8 (score 98) inside 0..9, plus 12
+    # dated stories (7 in 0..9, 5 in 10..14).
+    live_indices = {2, 5, 8}
+    pre_seating_deck: list[dict[str, Any]] = []
+    for idx in range(15):
+        if idx in live_indices:
+            pre_seating_deck.append(
+                {
+                    "type": "event",
+                    "score": 98.0,
+                    "_rank_score": 98.0,
+                    "reason": f"Leading after starting at 44% ({idx})",
+                    "headline": None,
+                    "data": {
+                        "id": 9000 + idx,
+                        "status": "live",
+                        "commence_time": kickoff_iso,
+                        "event_tags": [],
+                        "hero_probability": 0.68,
+                        "win_probability_sources": {"kalshi": {"p": 0.68}},
+                    },
+                }
+            )
+        else:
+            pre_seating_deck.append(
+                {
+                    "type": "futures",
+                    "score": float(100 - idx),
+                    "_rank_score": float(100 - idx),
+                    "reason": f"Dated mover {idx}",
+                    "headline": f"Story {idx}",
+                    "data": {
+                        "id": 4000 + idx,
+                        "name": f"Dated market {idx}",
+                        "top_outcomes": [{"name": "Yes", "probability": 0.52}],
+                        "sources": ["kalshi"],
+                    },
+                }
+            )
+
+    baseline = seat_opening(pre_seating_deck, now=seating_now)
+    assert baseline.status == APPLIED
+
+    for pass_now in (seating_now, None):
+        placed = await add_roundup_feed_items(
+            _FakeSession(markets_copy()),
+            pre_seating_deck,
+            now=pass_now,
+        )
+        seated = seat_opening(placed, now=seating_now)
+        assert seated.status == APPLIED
+
+        roundup_indices = [
+            i
+            for i, it in enumerate(seated.items)
+            if it.get("type") == "bundle" and it.get("data", {}).get("kind") == "roundup"
+        ]
+        assert len(roundup_indices) == 1
+        roundup_idx = roundup_indices[0]
+        roundup_seat = roundup_idx + 1
+        assert roundup_idx >= 10
+        assert roundup_seat >= 11
+
+        # Opening ten (seats 1..10) is unchanged compared to seating without the
+        # round-up, and holds only dated stories (no ordinary-live events, no round-up).
+        assert [it["data"]["id"] for it in seated.items[:10]] == [
+            it["data"]["id"] for it in baseline.items[:10]
+        ]
+        assert all(it.get("type") == "futures" for it in seated.items[:10])
+
 
 

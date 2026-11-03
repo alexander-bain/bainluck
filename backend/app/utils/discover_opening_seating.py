@@ -407,6 +407,17 @@ def _group_members(
     return None, restricted_by
 
 
+def _is_roundup_bundle(card: Any) -> bool:
+    """Standing round-up bundles (#10357 / #11902) have a seat floor of
+    ``OPENING_SEATS`` (index >= 10, seat >= 11) and never fill an opening seat."""
+    return (
+        isinstance(card, dict)
+        and card.get("type") == "bundle"
+        and isinstance(card.get("data"), dict)
+        and card["data"].get("kind") == "roundup"
+    )
+
+
 def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
     """Apply the opening-seat restriction to one finished deck. See the module
     docstring for the rule; ``now`` is the clock the deck was composed at and
@@ -449,8 +460,17 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
             seating.restricted_by = restricted_by
             seating.restricted = bool(restricted_by)
 
-    restricted_in_opening = any(c.restricted for c in cards[:OPENING_SEATS])
-    eligible = [i for i, c in enumerate(cards) if not c.restricted]
+    roundup_in_opening = any(
+        _is_roundup_bundle(items[i]) for i in range(min(OPENING_SEATS, len(items)))
+    )
+    restricted_in_opening = (
+        any(c.restricted for c in cards[:OPENING_SEATS]) or roundup_in_opening
+    )
+    eligible = [
+        i
+        for i, c in enumerate(cards)
+        if not c.restricted and not _is_roundup_bundle(items[i])
+    ]
     # With fewer eligible cards than seats every restricted card necessarily
     # sits in the first seats, so this is "thin supply with something to move".
     sparse = restricted_in_opening and len(eligible) < OPENING_SEATS
