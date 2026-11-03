@@ -4,6 +4,8 @@ Historical record for November 2, 2026, as of 7:19 PM PST (UTC-8).
 The [final evening record on NOW #11852](https://github.com/alexander-bain/bainluck/issues/11852#issuecomment-6594531976)
 is the source for this snapshot. Current priority and status remain on NOW.
 
+The "Final-head CI" column links to CI on each PR's final head before merge.
+
 | PR | Delivered change | Merge commit | Final-head CI |
 | --- | --- | --- | --- |
 | [#11855](https://github.com/alexander-bain/bainluck/pull/11855) | Prepared protection uses `strict: false` and requires all eight backend shards (16 contexts). | `e560296d149122f0e1a4871b7ecb5ac90f7a30ac` | [41562390206](https://github.com/alexander-bain/bainluck/actions/runs/41562390206) |
