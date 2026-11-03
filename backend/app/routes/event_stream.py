@@ -173,7 +173,7 @@ def _in_kalshi_open_contract_bridge(market, now: datetime) -> bool:
     arm off, so it turns this off too: a stream nobody publishes to is a
     connection that only ever heartbeats.
     """
-    from app.tasks.ws_open_contracts import open_contract_prices_enabled
+    from app.tasks.ws_open_contracts import leg_streams, open_contract_prices_enabled
     from app.utils.prediction_market_matching import feeds_win_prob_blend
 
     if market.source != "kalshi" or not open_contract_prices_enabled():
@@ -188,7 +188,8 @@ def _in_kalshi_open_contract_bridge(market, now: datetime) -> bool:
             expires = expires.replace(tzinfo=timezone.utc)
         if expires <= now:
             return False
-    return all(o.is_winner is None for o in market.outcomes)
+    # Midterms 2026-11-03: a RETRACTED leg streams too (`leg_streams`).
+    return all(leg_streams(o.is_winner, o.resolution_source) for o in market.outcomes)
 
 
 def _in_polymarket_open_contract_bridge(market) -> bool:

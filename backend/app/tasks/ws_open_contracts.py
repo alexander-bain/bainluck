@@ -15,7 +15,8 @@ unsettled truth, never a kickoff horizon:
   a plain ``!=`` drops a NULL, as ``ws_slate`` says) and carries no
   ``settled_at``;
 - the market has not passed its ``expiration_time`` (NULL fails open);
-- the outcome has a venue ticker and no ``is_winner``.
+- the outcome has a venue ticker and no ``is_winner`` — or only a RETRACTION
+  (:func:`leg_streams`).
 
 Measured once to size this (production 2026-09-29 04:5xZ): 4,941 such Kalshi
 markets outside the event link, 48,051 tickers, 5,104 of which moved price in
@@ -202,6 +203,44 @@ async def grade_open_contract_leg(session, *, market_id: int, outcome_id: int,
     return graded, resolved
 
 
+def leg_streams_clause():
+    """The leg half of the admission: ungraded, or only RETRACTED.
+
+    Midterms 2026-11-03: 40 of the collection's 50 Kalshi legs (13 open
+    markets, e.g. 108620 "Which party will win the U.S. Senate?") carried
+    ``ungradeable_result / is_winner=false`` and so never streamed — 90–100 min
+    old, 12 of 20 single-source numbers outside the venue's bid–ask. That
+    source is a RETRACTION, not a grade (CAL-P056, ``resolution_authority``):
+    the venue has not called the leg. The tick write already prices it
+    (``kalshi_price_statement._writable`` refuses only tier 3) and leaves the
+    retraction alone, as the 2 h REST poll does (``graded_columns`` is ``{}``
+    on an unanswered market); a real grade overwrites it per leg
+    (:func:`grade_open_contract_leg`). ``is_winner IS FALSE`` is explicit so a
+    crowned leg can never ride in on the source alone.
+    """
+    from sqlalchemy import and_, or_
+
+    from app.models.models import FuturesOutcome
+    from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+
+    return or_(
+        FuturesOutcome.is_winner.is_(None),
+        and_(
+            FuturesOutcome.is_winner.is_(False),
+            FuturesOutcome.resolution_source == RETRACTION_SOURCE,
+        ),
+    )
+
+
+def leg_streams(is_winner, resolution_source) -> bool:
+    """:func:`leg_streams_clause` for a loaded row (the route's mirror)."""
+    from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+
+    return is_winner is None or (
+        is_winner is False and resolution_source == RETRACTION_SOURCE
+    )
+
+
 def kalshi_open_contract_stmt():
     """Every unsettled Kalshi outcome with a ticker:
     (ticker, market_id, outcome_id, market event_id, market ticker).
@@ -236,7 +275,7 @@ def kalshi_open_contract_stmt():
                 FuturesMarket.expiration_time > text("NOW()"),
             ),
             FuturesOutcome.external_id.isnot(None),
-            FuturesOutcome.is_winner.is_(None),
+            leg_streams_clause(),
         )
     )
 
