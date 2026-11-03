@@ -151,16 +151,17 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   const known: CollectionState[] = ["published", "unpublished", "withdrawn", "empty", "unavailable"];
   const state: CollectionState = known.includes(row.state as CollectionState) ? row.state as CollectionState : "unpublished";
   const header = object(row.container);
+  const isRoundup = header?.kind === "roundup";
   const title = (state === "published" || state === "empty") && header?.slug === slug && text(header.name) ? header.name : null;
   const base: CollectionHub = { slug, revision: positive(row.revision) ? row.revision : null, state, title,
     edition: editionLabel(row.edition, slug), sections: [], children: [], members: [], related: {}, note: null, theme: null,
     dek: null, family: null };
   if (state !== "published") {
     const notes = { unpublished: "This collection isn't available yet.", withdrawn: "This collection is no longer available.",
-      empty: "There are no games or questions in this collection right now.", unavailable: "This collection isn't available right now." };
+      empty: isRoundup ? "There are no markets in this collection right now." : "There are no games or questions in this collection right now.", unavailable: "This collection isn't available right now." };
     return { ...base, note: notes[state] };
   }
-  if (!base.revision || !base.edition || !title || !Array.isArray(row.sections)) throw new Error("This collection isn't available right now.");
+  if (!base.revision || (!base.edition && !isRoundup) || !title || !Array.isArray(row.sections)) throw new Error("This collection isn't available right now.");
   // A theme page's `member_count` is this page; the whole collection's count is
   // the snapshot's `counts.shown_count`, the same on every page of a revision.
   const counts = object(row.counts), page = object(row.page);
@@ -188,7 +189,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
     });
     if (section.count !== section.members.length || accepted.length !== section.members.length) partial = true;
     if (accepted.length) sections.push({ key: `${index}:${section.class}`, cls: section.class,
-      title: slug === "midterms-2026" && text(section.title) ? section.title : familyTitles?.[section.class as string]?.title ?? titles[section.class] ?? "More",
+      title: (slug === "midterms-2026" || isRoundup) && text(section.title) ? section.title : familyTitles?.[section.class as string]?.title ?? titles[section.class] ?? "More",
       note: familyTitles?.[section.class as string]?.note ?? null,
       layout: slug === "midterms-2026" && text(section.layout) ? section.layout : undefined,
       members: accepted });
@@ -212,7 +213,7 @@ export function parseCollection(value: unknown, slug: string): CollectionHub {
   return { ...base, members, related, children, theme, family, dek: family ? familyDek[family] ?? null : null,
     subtitle: text(row.subtitle) ? row.subtitle : null, pin: admittedPin,
     sections: sections.map((section) => ({ ...section, members: section.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
-    note: partial ? (slug === "midterms-2026" ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
+    note: partial ? (slug === "midterms-2026" || isRoundup ? "Some markets aren't available right now." : "Some games or questions aren't available right now.") : !members.length && !children.length ? "No markets are available right now." : null };
 }
 
 function relate(members: CollectionMember[]): Record<string, CollectionMember[]> {
