@@ -270,13 +270,15 @@ async def test_container_members_equal_card_rows_from_one_read():
         "name": NFL_DIVISION_ROUNDUP_TITLE,
     }
 
+    from app.utils.roundup_containers import roundup_container_id
+
     rows = feed_item["data"]["roundup"]["rows"]
     assert payload["state"] == "published"
     assert payload["slug"] == NFL_DIVISION_ROUNDUP_SLUG
     assert payload["reason"] is None and payload["edition"] is None
     assert payload["subtitle"] == NFL_DIVISION_ROUNDUP_FOOTER
     assert payload["container"] == {
-        "id": 10357,
+        "id": roundup_container_id(NFL_DIVISION_ROUNDUP_SLUG),
         "slug": NFL_DIVISION_ROUNDUP_SLUG,
         "name": NFL_DIVISION_ROUNDUP_TITLE,
         "kind": "roundup",
@@ -433,3 +435,275 @@ async def test_container_reader_text_says_market_never_question_and_names_no_ven
     assert "question" not in joined.lower()
     for venue in ("Kalshi", "Polymarket", "sportsbook"):
         assert venue.lower() not in joined.lower()
+
+
+# ── Amendment 1: generic RoundupProducer registry and composer ──────────────
+
+
+@pytest.mark.asyncio
+async def test_second_roundup_producer_needs_only_a_registry_entry(monkeypatch):
+    """#10357 §9.6 (Amendment 1): a fake second producer registered in a test proves a
+    second round-up needs only a registry entry: its route serves, its revision and
+    refusal behave, roundup_feed_items(db) includes it only when served, and the NFL
+    entry is untouched.
+    """
+    from fastapi import HTTPException
+
+    from app.routes.containers import get_container
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        RoundupMembers,
+        RoundupProducer,
+        RoundupRefusal,
+        reset_roundup_cache_for_tests,
+        roundup_container_id,
+        roundup_feed_items,
+        roundup_revision,
+    )
+
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+    monkeypatch.setenv("NFL_DIVISION_ROUNDUP_ENABLED", "true")
+    reset_roundup_cache_for_tests()
+
+    state = {
+        "refuse": False,
+        "ids": [9001, 9002, 9003],
+        "lead_prob": 0.62,
+    }
+
+    def fake_produce(_db):
+        if state["refuse"]:
+            return RoundupRefusal([("MVP", "venue_missing")])
+        members = [
+            {
+                "id": mid,
+                "name": f"Award market {mid}",
+                "source": "both",
+                "sources": ["kalshi", "polymarket"],
+                "outcome_count": 3,
+                "top_outcomes": [
+                    {"name": f"Player {mid}", "probability": state["lead_prob"] - idx * 0.05}
+                ],
+                "prices_updated_at": "2026-11-02T15:00:00+00:00",
+            }
+            for idx, mid in enumerate(state["ids"])
+        ]
+        rows = [
+            {
+                "market_id": mid,
+                "label": f"Award {mid}: Player {mid}",
+                "probability": state["lead_prob"] - idx * 0.05,
+                "observed_at": "2026-11-02T15:00:00+00:00",
+            }
+            for idx, mid in enumerate(state["ids"])
+        ]
+        return RoundupMembers(members=members, rows=rows)
+
+    fake_slug = "roundup-nba-award-front-runners"
+    fake_producer = RoundupProducer(
+        fake_slug,
+        "NBA award front-runners",
+        "roundup",
+        "nba",
+        "The 3 closest award races",
+        "Bain Luck blend · the 3 closest of 5 awards",
+        fake_produce,
+    )
+    monkeypatch.setitem(ROUNDUP_PRODUCERS, fake_slug, fake_producer)
+
+    session = _FakeSession(markets_copy())
+
+    # Route serves the fake second producer from its registry entry alone.
+    served = await get_container(slug=fake_slug, db=session)
+    assert served["state"] == "published"
+    assert served["slug"] == fake_slug
+    assert served["container"] == {
+        "id": roundup_container_id(fake_slug),
+        "slug": fake_slug,
+        "name": "NBA award front-runners",
+        "kind": "roundup",
+        "category": "nba",
+        "status": "open",
+        "window_start": None,
+        "window_end": None,
+        "parent_container_id": None,
+    }
+    assert served["subtitle"] == "Bain Luck blend · the 3 closest of 5 awards"
+    assert served["sections"][0]["title"] == "The 3 closest award races"
+    assert [m["id"] for m in served["sections"][0]["members"]] == [9001, 9002, 9003]
+    rev1 = served["revision"]
+    assert rev1 == roundup_revision([9001, 9002, 9003])
+
+    # Prices moving do not change revision; order change does.
+    state["lead_prob"] = 0.68
+    served_nudged = await get_container(slug=fake_slug, db=session)
+    assert served_nudged["revision"] == rev1
+    state["ids"] = [9002, 9001, 9003]
+    served_reordered = await get_container(slug=fake_slug, db=session)
+    assert served_reordered["revision"] != rev1
+
+    # roundup_feed_items(db) includes both producers when both serve.
+    items = await roundup_feed_items(session)
+    slugs = [it["data"]["collection_ref"]["slug"] for it in items]
+    assert slugs == [NFL_DIVISION_ROUNDUP_SLUG, fake_slug]
+
+    # When the fake second producer refuses, its route 404s unavailable and it drops
+    # from roundup_feed_items, while the NFL entry is completely untouched.
+    state["refuse"] = True
+    with pytest.raises(HTTPException) as exc:
+        await get_container(slug=fake_slug, db=session)
+    assert exc.value.status_code == 404
+    assert exc.value.detail == {"state": "unavailable", "slug": fake_slug}
+
+    nfl_served = await get_container(slug=NFL_DIVISION_ROUNDUP_SLUG, db=session)
+    assert nfl_served["state"] == "published"
+    assert nfl_served["slug"] == NFL_DIVISION_ROUNDUP_SLUG
+    assert nfl_served["member_count"] == 4
+
+    items_after_refusal = await roundup_feed_items(session)
+    assert [it["data"]["collection_ref"]["slug"] for it in items_after_refusal] == [
+        NFL_DIVISION_ROUNDUP_SLUG
+    ]
+
+
+def test_compose_roundup_container_is_pure_and_has_no_nfl_names():
+    """#10357 §9.7 (Amendment 1): compose_roundup_container is pure; payload fields
+    come from the producer, members in the given order, and no NFL names appear in the
+    generic code.
+    """
+    import inspect
+
+    from app.utils.roundup_containers import (
+        RoundupMembers,
+        RoundupProducer,
+        compose_roundup_container,
+        compose_roundup_feed_item,
+        evaluate_roundup_producer,
+        roundup_container_id,
+        roundup_feed_items,
+        roundup_revision,
+        serve_roundup,
+    )
+
+    producer = RoundupProducer(
+        slug="roundup-tennis-slam-contenders",
+        name="Grand Slam front-runners",
+        kind="roundup",
+        category="tennis",
+        section_title="The 2 closest draws",
+        footer="Bain Luck blend · the 2 closest of 4 slams",
+        produce=lambda _db: None,
+    )
+    cards = [
+        {"id": 702, "name": "Wimbledon Men's Singles", "top_outcomes": [{"name": "Alcaraz", "probability": 0.42}]},
+        {"id": 701, "name": "US Open Women's Singles", "top_outcomes": [{"name": "Sabalenka", "probability": 0.36}]},
+    ]
+    payload = compose_roundup_container(producer, RoundupMembers(members=cards))
+    assert payload is not None
+    assert payload["slug"] == "roundup-tennis-slam-contenders"
+    assert payload["revision"] == roundup_revision([702, 701])
+    assert payload["subtitle"] == "Bain Luck blend · the 2 closest of 4 slams"
+    assert payload["container"] == {
+        "id": roundup_container_id("roundup-tennis-slam-contenders"),
+        "slug": "roundup-tennis-slam-contenders",
+        "name": "Grand Slam front-runners",
+        "kind": "roundup",
+        "category": "tennis",
+        "status": "open",
+        "window_start": None,
+        "window_end": None,
+        "parent_container_id": None,
+    }
+    sec = payload["sections"][0]
+    assert sec["class"] == "title"
+    assert sec["title"] == "The 2 closest draws"
+    assert sec["count"] == 2
+    assert [m["id"] for m in sec["members"]] == [702, 701]
+    assert [m["card"]["name"] for m in sec["members"]] == [
+        "Wimbledon Men's Singles",
+        "US Open Women's Singles",
+    ]
+
+    for fn in (
+        compose_roundup_container,
+        compose_roundup_feed_item,
+        evaluate_roundup_producer,
+        serve_roundup,
+        roundup_feed_items,
+    ):
+        src = inspect.getsource(fn).lower()
+        assert "nfl" not in src
+        assert "division" not in src
+        assert "front-runners" not in src
+
+
+@pytest.mark.asyncio
+async def test_orm_kalshi_width_truncated_outcome_names_repair_via_ticker(monkeypatch):
+    """ORM FuturesOutcome rows store Kalshi's width-truncated strings ('New York J',
+    'Los Angeles C', 'New York G', 'Los Angeles R') with id-anchored outcome tickers
+    ('KXNFLAFCEAST-27-NYJ', etc.); produce_nfl_division_roundup repairs them via #6479
+    so the ORM path matches the served /api/futures/{id} names.
+    """
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+    monkeypatch.setenv("NFL_DIVISION_ROUNDUP_ENABLED", "true")
+    reset_nfl_division_roundup_cache_for_tests()
+
+    truncations = {
+        ("KXNFLAFCEAST-27", "New York Jets"): ("KXNFLAFCEAST-27-NYJ", "New York J"),
+        ("KXNFLAFCWEST-27", "Los Angeles Chargers"): ("KXNFLAFCWEST-27-LAC", "Los Angeles C"),
+        ("KXNFLNFCEAST-27", "New York Giants"): ("KXNFLNFCEAST-27-NYG", "New York G"),
+        ("KXNFLNFCWEST-27", "Los Angeles Rams"): ("KXNFLNFCWEST-27-LAR", "Los Angeles R"),
+    }
+
+    orm_rows = []
+    for m in markets_copy():
+        outcomes = []
+        for idx, o in enumerate(m["outcomes"]):
+            ext_id, shipped_name = truncations.get(
+                (m["external_id"], o["name"]),
+                (f"{m['external_id']}-{idx}", o["name"]),
+            )
+            outcomes.append(
+                SimpleNamespace(
+                    id=m["market_id"] * 100 + idx,
+                    external_id=ext_id,
+                    name=shipped_name,
+                    current_probability=o["probability"],
+                    current_american_odds=None,
+                    current_yes_bid=None,
+                    current_yes_ask=None,
+                    probability_change_24h=None,
+                    rank=idx + 1,
+                    last_updated=datetime.fromisoformat(o["last_updated"]),
+                    is_winner=False,
+                    resolution_source=None,
+                    volume=None,
+                )
+            )
+        orm_rows.append(
+            SimpleNamespace(
+                id=m["market_id"],
+                source=m["source"],
+                external_id=m["external_id"],
+                name=m["name"],
+                status=m["status"],
+                mutually_exclusive=m["mutually_exclusive"],
+                resolution_date=datetime.fromisoformat(m["resolution_date"]),
+                sport=SimpleNamespace(key="americanfootball_nfl", name="NFL"),
+                category="sports",
+                llm_sport_category="nfl",
+                market_tier=4,
+                market_type="field",
+                updated_at=None,
+                outcomes=outcomes,
+            )
+        )
+
+    feed_item, payload = await nfl_division_roundup(_FakeSession(orm_rows))
+    assert feed_item is not None and payload is not None
+    assert payload["member_count"] == 4
+    assert [m["id"] for m in payload["sections"][0]["members"]] == [53674, 53675, 53673, 53672]
+

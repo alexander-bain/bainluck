@@ -2613,14 +2613,8 @@ NFL_DIVISION_ROUNDUP_COLLECTION_REF: dict[str, str] = {
     "href": NFL_DIVISION_ROUNDUP_HREF,
     "name": NFL_DIVISION_ROUNDUP_TITLE,
 }
-NFL_DIVISION_ROUNDUP_CONTAINER_ID = 10357
 NFL_DIVISION_ROUNDUP_SECTION_TITLE = "The 4 closest races"
 NFL_DIVISION_ROUNDUP_CACHE_TTL_S = 60.0
-_NFL_DIVISION_ROUNDUP_REDIS_KEY = (
-    f"container_read:v1:{NFL_DIVISION_ROUNDUP_SLUG}"
-)
-
-_roundup_local_cache: dict[Any, tuple[float, Optional[dict[str, Any]], Optional[dict[str, Any]]]] = {}
 
 
 def nfl_division_roundup_enabled() -> bool:
@@ -2636,20 +2630,16 @@ def nfl_division_roundup_enabled() -> bool:
 
 
 def nfl_division_roundup_revision(member_ids: Sequence[int]) -> int:
-    """Stable positive integer from the ordered member ids (CRC32 of comma-joined ids).
+    """Stable positive integer from the ordered member ids (CRC32 of comma-joined ids)."""
+    from app.utils.roundup_containers import roundup_revision
 
-    Changes when the four shown divisions or their order change, and only then;
-    prices moving never bump it.
-    """
-    import zlib
-
-    joined = ",".join(str(int(mid)) for mid in member_ids)
-    rev = zlib.crc32(joined.encode("utf-8")) & 0xFFFFFFFF
-    return rev if rev > 0 else 1
+    return roundup_revision(member_ids)
 
 
 def reset_nfl_division_roundup_cache_for_tests() -> None:
-    _roundup_local_cache.clear()
+    from app.utils.roundup_containers import reset_roundup_cache_for_tests
+
+    reset_roundup_cache_for_tests()
 
 
 def assemble_nfl_division_roundup(
@@ -2782,18 +2772,14 @@ def _format_kalshi_roundup_base_card(
     return _format_futures_for_search(market_or_row, withheld_ids)
 
 
-def compose_nfl_division_roundup(
+def _build_nfl_division_roundup_members(
     blends: list[Any],
     refusals: list[Any],
     kalshi_cards: Mapping[int, dict[str, Any]],
     *,
     score: float = 0.0,
-) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
-    """Pure composer returning ``(feed_item, container_payload)`` from one decision.
-
-    If any registered division refuses, or fewer than four blend, or any shown
-    Kalshi card cannot be serialized, returns ``(None, None)``.
-    """
+) -> tuple[Optional[dict[str, Any]], Optional[list[dict[str, Any]]]]:
+    """Build the NFL round-up feed item and ordered container member entries from one decision."""
     from app.utils.container_presentation import MEMBER_MARKET, market_destination
 
     feed_item = assemble_nfl_division_roundup(
@@ -2846,64 +2832,32 @@ def compose_nfl_division_roundup(
                 "event_id": None,
             }
         )
-
-    member_ids = [int(m["id"]) for m in members]
-    revision = nfl_division_roundup_revision(member_ids)
-    container_payload: dict[str, Any] = {
-        "state": "published",
-        "slug": NFL_DIVISION_ROUNDUP_SLUG,
-        "revision": revision,
-        "reason": None,
-        "edition": None,
-        "container": {
-            "id": NFL_DIVISION_ROUNDUP_CONTAINER_ID,
-            "slug": NFL_DIVISION_ROUNDUP_SLUG,
-            "name": NFL_DIVISION_ROUNDUP_TITLE,
-            "kind": "roundup",
-            "category": "nfl",
-            "status": "open",
-            "window_start": None,
-            "window_end": None,
-            "parent_container_id": None,
-        },
-        "subtitle": NFL_DIVISION_ROUNDUP_FOOTER,
-        "sections": [
-            {
-                "class": "title",
-                "title": NFL_DIVISION_ROUNDUP_SECTION_TITLE,
-                "layout": "field",
-                "count": len(members),
-                "members": members,
-            }
-        ],
-        "member_count": len(members),
-        "withheld": [],
-        "withheld_count": 0,
-        "children": [],
-        "assembled": True,
-    }
-    return feed_item, container_payload
+    return feed_item, members
 
 
-async def nfl_division_roundup(
-    db: Any,
+def compose_nfl_division_roundup(
+    blends: list[Any],
+    refusals: list[Any],
+    kalshi_cards: Mapping[int, dict[str, Any]],
     *,
     score: float = 0.0,
-    now: Optional[float] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
-    """One function decides both ``(feed_item, container_payload)`` from one bounded read.
+    """Pure composer returning ``(feed_item, container_payload)`` via the generic composer."""
+    from app.utils.roundup_containers import compose_roundup_container
 
-    Cached for 60 seconds in the read-cache layer so a feed build and a
-    container open share one read. Nothing in the feed path writes. When any
-    registered division refuses, records the refusal to Flow Sentinel as a
-    matching defect and returns ``(None, None)``.
-    """
-    import copy
-    import json
+    feed_item, members = _build_nfl_division_roundup_members(
+        blends, refusals, kalshi_cards, score=score
+    )
+    if feed_item is None or members is None:
+        return None, None
+    return feed_item, compose_roundup_container(NFL_DIVISION_ROUNDUP_PRODUCER, members)
+
+
+async def produce_nfl_division_roundup(db: Any) -> Any:
+    """Produce ``RoundupMembers`` or ``RoundupRefusal`` for the NFL division front-runners round-up."""
     import logging
-    import time
 
-    from app.utils.container_read_cache import container_read_cache_enabled
+    from app.utils.kalshi_display_names import repair_outcome_name_by_ticker
     from app.utils.nfl_division_register import (
         NFL_DIVISION_REGISTER,
         VenueBoard,
@@ -2912,12 +2866,10 @@ async def nfl_division_roundup(
         compose_register,
         register_identities,
     )
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
 
     log = logging.getLogger(__name__)
-    if not nfl_division_roundup_enabled():
-        return None, None
 
-    # Fixture sequence path (used directly by unit tests on captured rows).
     if isinstance(db, (list, tuple)):
         boards = [
             r if isinstance(r, VenueBoard) else board_from_row(r)
@@ -2929,13 +2881,25 @@ async def nfl_division_roundup(
                 "flow_sentinel matching_defect: nfl_division_roundup refused divisions=%s",
                 [(r.division, r.reason) for r in refusals],
             )
-            return None, None
+            return RoundupRefusal(
+                tuple((r.division, r.reason) for r in refusals)
+                or (("register", "incomplete_blends"),)
+            )
         kalshi_cards: dict[int, dict[str, Any]] = {}
         for r in db:
             if isinstance(r, Mapping) and str(r.get("source") or "").lower() == "kalshi":
                 mid = int(r["market_id"])
                 kalshi_cards[mid] = _format_kalshi_roundup_base_card(r)
-        return compose_nfl_division_roundup(blends, refusals, kalshi_cards, score=score)
+        feed_item, members = _build_nfl_division_roundup_members(
+            blends, refusals, kalshi_cards
+        )
+        if feed_item is None or members is None:
+            return RoundupRefusal((("register", "card_serialization_failed"),))
+        return RoundupMembers(
+            members=members,
+            rows=feed_item["data"]["roundup"]["rows"],
+            feed_item=feed_item,
+        )
 
     from sqlalchemy import and_, or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -2943,38 +2907,6 @@ async def nfl_division_roundup(
 
     from app.models import FuturesMarket
     from app.routes.futures import withheld_price_outcome_ids_for_markets
-
-    ts = time.time() if now is None else float(now)
-    use_cache = container_read_cache_enabled()
-    cache_key = "live" if isinstance(db, AsyncSession) else id(db)
-
-    if use_cache:
-        cached = _roundup_local_cache.get(cache_key)
-        if cached is not None and (ts - cached[0]) < NFL_DIVISION_ROUNDUP_CACHE_TTL_S:
-            return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
-        if isinstance(db, AsyncSession):
-            try:
-                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
-
-                client = await get_shared_async_redis()
-                res = await bounded_redis_call(lambda: client.get(_NFL_DIVISION_ROUNDUP_REDIS_KEY))
-                if res.is_ok and res.value:
-                    raw = json.loads(
-                        res.value.decode("utf-8")
-                        if isinstance(res.value, (bytes, bytearray))
-                        else res.value
-                    )
-                    if (
-                        isinstance(raw, dict)
-                        and isinstance(raw.get("built_at"), (int, float))
-                        and (ts - float(raw["built_at"])) < NFL_DIVISION_ROUNDUP_CACHE_TTL_S
-                    ):
-                        fi = raw.get("feed_item")
-                        cp = raw.get("container_payload")
-                        _roundup_local_cache[cache_key] = (float(raw["built_at"]), fi, cp)
-                        return copy.deepcopy(fi), copy.deepcopy(cp)
-            except Exception:  # noqa: BLE001 — cache read fails open
-                log.debug("nfl_division_roundup: shared cache read failed", exc_info=True)
 
     identities = register_identities()
     clauses = [
@@ -3012,7 +2944,13 @@ async def nfl_division_roundup(
                     resolution_date=m.resolution_date,
                     outcomes=tuple(
                         VenueOutcome(
-                            name=str(o.name or ""),
+                            name=(
+                                repair_outcome_name_by_ticker(
+                                    getattr(o, "external_id", None),
+                                    getattr(o, "name", None),
+                                )
+                                or str(o.name or "")
+                            ),
                             probability=(
                                 float(o.current_probability)
                                 if getattr(o, "current_probability", None) is not None
@@ -3032,11 +2970,10 @@ async def nfl_division_roundup(
 
     blends, refusals = compose_register(boards)
     if refusals or len(blends) != len(NFL_DIVISION_REGISTER):
-        log.warning(
-            "flow_sentinel matching_defect: nfl_division_roundup refused divisions=%s",
-            [(r.division, r.reason) for r in refusals],
+        return RoundupRefusal(
+            tuple((r.division, r.reason) for r in refusals)
+            or (("register", "incomplete_blends"),)
         )
-        return None, None
 
     orm_kalshi = [
         by_id[int(b.kalshi_market_id)]
@@ -3052,56 +2989,80 @@ async def nfl_division_roundup(
         k_id = int(b.kalshi_market_id)
         m_row = by_id.get(k_id)
         if m_row is None:
-            return None, None
+            return RoundupRefusal(((b.division, "kalshi_row_missing"),))
         w_ids = withheld.get(k_id)
         if w_ids and not isinstance(m_row, Mapping):
             pair = next((p for p in NFL_DIVISION_REGISTER if p.division == b.division), None)
             reg_names = {c.kalshi_outcome for c in pair.clubs} if pair else set()
             if any(
-                getattr(o, "id", None) in w_ids and getattr(o, "name", None) in reg_names
+                getattr(o, "id", None) in w_ids
+                and (
+                    repair_outcome_name_by_ticker(
+                        getattr(o, "external_id", None),
+                        getattr(o, "name", None),
+                    )
+                    or getattr(o, "name", None)
+                )
+                in reg_names
                 for o in (getattr(m_row, "outcomes", None) or ())
             ):
                 log.warning(
                     "flow_sentinel matching_defect: nfl_division_roundup withheld kalshi price division=%s",
                     b.division,
                 )
-                return None, None
+                return RoundupRefusal(((b.division, "withheld_kalshi_price"),))
         try:
             kalshi_cards[k_id] = _format_kalshi_roundup_base_card(m_row, w_ids)
         except Exception:  # noqa: BLE001
             log.exception("nfl_division_roundup: kalshi market %s card failed", k_id)
-            return None, None
+            return RoundupRefusal(((b.division, "kalshi_card_failed"),))
 
-    feed_item, container_payload = compose_nfl_division_roundup(
-        blends, refusals, kalshi_cards, score=score
+    feed_item, members = _build_nfl_division_roundup_members(
+        blends, refusals, kalshi_cards
     )
-    if feed_item is None or container_payload is None:
-        return None, None
+    if feed_item is None or members is None:
+        return RoundupRefusal((("register", "card_serialization_failed"),))
+    return RoundupMembers(
+        members=members,
+        rows=feed_item["data"]["roundup"]["rows"],
+        feed_item=feed_item,
+    )
 
-    if use_cache:
-        _roundup_local_cache[cache_key] = (ts, copy.deepcopy(feed_item), copy.deepcopy(container_payload))
-        if isinstance(db, AsyncSession):
-            try:
-                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-                encoded = json.dumps(
-                    {
-                        "built_at": ts,
-                        "feed_item": feed_item,
-                        "container_payload": container_payload,
-                    },
-                    separators=(",", ":"),
-                )
-                client = await get_shared_async_redis()
-                await bounded_redis_call(
-                    lambda: client.set(
-                        _NFL_DIVISION_ROUNDUP_REDIS_KEY,
-                        encoded,
-                        ex=int(NFL_DIVISION_ROUNDUP_CACHE_TTL_S),
-                    ),
-                    treat_none_as_miss=False,
-                )
-            except Exception:  # noqa: BLE001 — cache write is best-effort
-                log.debug("nfl_division_roundup: shared cache write failed", exc_info=True)
+def _make_nfl_division_roundup_producer() -> Any:
+    from app.utils.roundup_containers import RoundupProducer, register_roundup_producer
 
+    return register_roundup_producer(
+        RoundupProducer(
+            slug=NFL_DIVISION_ROUNDUP_SLUG,
+            name=NFL_DIVISION_ROUNDUP_TITLE,
+            kind="roundup",
+            category="nfl",
+            section_title=NFL_DIVISION_ROUNDUP_SECTION_TITLE,
+            footer=NFL_DIVISION_ROUNDUP_FOOTER,
+            produce=produce_nfl_division_roundup,
+            tag="NFL",
+            story_key=NFL_DIVISION_ROUNDUP_ID,
+            enabled=nfl_division_roundup_enabled,
+        )
+    )
+
+
+NFL_DIVISION_ROUNDUP_PRODUCER = _make_nfl_division_roundup_producer()
+
+
+async def nfl_division_roundup(
+    db: Any,
+    *,
+    score: float = 0.0,
+    now: Optional[float] = None,
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    """One function decides both ``(feed_item, container_payload)`` via the producer registry."""
+    from app.utils.roundup_containers import evaluate_roundup_producer
+
+    feed_item, container_payload = await evaluate_roundup_producer(
+        NFL_DIVISION_ROUNDUP_PRODUCER, db, now=now
+    )
+    if feed_item is not None and score:
+        feed_item["score"] = float(score)
     return feed_item, container_payload
