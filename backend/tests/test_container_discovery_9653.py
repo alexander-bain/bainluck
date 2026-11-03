@@ -449,3 +449,43 @@ class TestSqlPatternAgreesWithTheAdapters:
             edition = edition_for_slug(slug)
             offered = edition is not None and edition["kind"] in discovery.DISCOVERABLE_EDITIONS
             assert bool(pattern.match(slug)) == offered, slug
+
+
+# ---------------------------------------------------------------------------
+# #11906 — NFL week status comes from the authority's contests, never stale 'scheduled'
+# ---------------------------------------------------------------------------
+
+
+class TestNflWeekAuthorityStatus11906:
+    def test_played_week_whose_games_all_finished_never_serves_scheduled(self):
+        """A played NFL week whose authority games have all finished serves 'final',
+        even when the containers row still holds its bootstrap 'scheduled' status."""
+        row = _as_dict(_row("nfl-2026-week-4", status="scheduled", games=16, questions=0))
+        row["game_statuses"] = ["completed"] * 16
+        card, excluded = discovery.collection_card(row)
+        assert excluded is None
+        assert card["status"] == "final"
+        assert card["status"] != "scheduled"
+
+    @pytest.mark.parametrize(
+        "statuses,expected",
+        [
+            (["completed", "completed", "closed"], "final"),
+            (["completed", "cancelled"], "final"),
+            (["cancelled", "canceled"], "cancelled"),
+            (["live", "scheduled", "scheduled"], "live"),
+            (["completed", "scheduled", "scheduled"], "live"),
+            (["scheduled", "scheduled"], "scheduled"),
+        ],
+    )
+    def test_nfl_week_status_derives_from_authority_member_games(self, statuses, expected):
+        assert discovery.nfl_week_status(statuses, fallback="scheduled") == expected
+
+    def test_discovery_sql_derives_nfl_week_status_from_member_events(self):
+        sql = discovery._discovery_sql(
+            by_slug=False, by_prefix=False, by_season=False, by_events=False
+        )
+        assert "WHEN starts_with(hub.slug, 'nfl-') AND COUNT(DISTINCT ev.id) > 0" in sql
+        assert "THEN 'final'" in sql
+        assert "THEN 'live'" in sql
+        assert "THEN 'cancelled'" in sql
