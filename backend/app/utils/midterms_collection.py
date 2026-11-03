@@ -39,6 +39,7 @@ class MidtermsTwinEntry:
     polymarket_external_id: str | None
     polymarket_name: str | None
     note: str
+    outcome_aliases: tuple[tuple[str, str], ...] = ()
 
 
 # Explicit 14-market twin register for midterms-2026 (#11871), read from production
@@ -133,6 +134,7 @@ MIDTERMS_TWIN_REGISTER: tuple[MidtermsTwinEntry, ...] = (
         polymarket_external_id="57669",
         polymarket_name="South Carolina Senate Election Winner",
         note="paired (Darline Graham / Annie Andrews)",
+        outcome_aliases=(("darline graham nordone", "darline graham"),),
     ),
     MidtermsTwinEntry(
         kalshi_market_id=109081,
@@ -182,7 +184,7 @@ REGISTERED_POLYMARKET_TWIN_IDS: frozenset[int] = frozenset(
 )
 
 
-def outcome_key(name: str) -> str:
+def outcome_key(name: str, entry: MidtermsTwinEntry | None = None) -> str:
     value = re.sub(r"\s*\((?:R|D|I)\)\s*$", "", name, flags=re.I).strip().casefold()
     parties = r"democrat(?:ic|s)?|republicans?|[dr]"
     chambers = {}
@@ -205,8 +207,8 @@ def outcome_key(name: str) -> str:
         return "democratic"
     if value in {"republican", "republicans", "republican party", "gop"}:
         return "republican"
-    if value == "darline graham nordone":
-        return "darline graham"
+    if entry is not None and entry.outcome_aliases:
+        value = dict(entry.outcome_aliases).get(value, value)
     return value
 
 
@@ -237,13 +239,14 @@ def _official_result(card: dict) -> tuple[str, str] | None:
 
 def blend_card(primary: dict, contributors: list[dict]) -> dict:
     card = copy.deepcopy(primary)
-    outcomes = {outcome_key(o["name"]): o for o in card.get("top_outcomes", [])}
+    entry = MIDTERMS_TWIN_BY_KALSHI_ID.get(card.get("id"))
+    outcomes = {outcome_key(o["name"], entry): o for o in card.get("top_outcomes", [])}
     primary_keys = set(outcomes)
     counts = []
     for contributor in contributors:
         dropped = 0
         for outcome in contributor.get("top_outcomes", []):
-            key = outcome_key(outcome["name"])
+            key = outcome_key(outcome["name"], entry)
             if key in primary_keys:
                 continue
             # A contributor-only outcome under 1% (Polymarket's balance-of-power
@@ -270,7 +273,7 @@ def blend_card(primary: dict, contributors: list[dict]) -> dict:
             (
                 o["name"]
                 for o in card["top_outcomes"]
-                if outcome_key(o["name"]) == outcome_key(winner)
+                if outcome_key(o["name"], entry) == outcome_key(winner, entry)
             ),
             winner,
         )
@@ -278,7 +281,7 @@ def blend_card(primary: dict, contributors: list[dict]) -> dict:
         for o in card["top_outcomes"]:
             o.update(
                 probability=None,
-                is_winner=outcome_key(o["name"]) == outcome_key(winner),
+                is_winner=outcome_key(o["name"], entry) == outcome_key(winner, entry),
                 resolution_source=VENUE_SETTLEMENT_SOURCE,
             )
         return card
@@ -288,7 +291,7 @@ def blend_card(primary: dict, contributors: list[dict]) -> dict:
             matches = [
                 o
                 for o in c.get("top_outcomes", [])
-                if outcome_key(o["name"]) == outcome_key(outcome["name"])
+                if outcome_key(o["name"], entry) == outcome_key(outcome["name"], entry)
             ]
             if len(matches) == 1:
                 rows.append(

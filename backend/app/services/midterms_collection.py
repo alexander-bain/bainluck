@@ -1,6 +1,5 @@
 """Bounded live hydration of the reviewed Midterms markets and venue twins."""
 
-import re
 import logging
 from typing import Iterable
 
@@ -9,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FuturesMarket
-from app.utils.cross_source_matching import is_same_question, clean_outcomes
+from app.utils.cross_source_matching import clean_outcomes
 from app.utils.midterms_collection import (
     MARKET_IDS,
     MIDTERMS_TWIN_BY_KALSHI_ID,
@@ -23,28 +22,20 @@ logger = logging.getLogger(__name__)
 def is_midterms_twin(a: FuturesMarket, b: FuturesMarket) -> bool:
     if a.source == b.source:
         return False
-    registered_entry = MIDTERMS_TWIN_BY_KALSHI_ID.get(a.id)
-    is_registered_pair = (
-        registered_entry is not None
-        and registered_entry.polymarket_market_id is not None
-        and registered_entry.polymarket_market_id == b.id
-    )
-    if not is_registered_pair:
-        if re.search(
-            r"margin|turnout|county|first.round|combo|lieutenant|primary",
-            b.name,
-            re.I,
-        ):
-            return False
-        if not is_same_question(a.name, b.name):
-            return False
-    left = {outcome_key(o.name) for o in clean_outcomes(a.outcomes)}
+    entry = MIDTERMS_TWIN_BY_KALSHI_ID.get(a.id)
+    if (
+        entry is None
+        or entry.polymarket_market_id is None
+        or entry.polymarket_market_id != b.id
+    ):
+        return False
+    left = {outcome_key(o.name, entry) for o in clean_outcomes(a.outcomes)}
     right = {
-        outcome_key(o.name)
+        outcome_key(o.name, entry)
         for o in clean_outcomes(b.outcomes)
         if not (
-            outcome_key(o.name) not in left
-            and outcome_key(o.name) == "other"
+            outcome_key(o.name, entry) not in left
+            and outcome_key(o.name, entry) == "other"
             and is_residual({"probability": getattr(o, "current_probability", None)})
         )
     }
@@ -108,25 +99,24 @@ async def load_midterms_cards(
         if m.id == 112905:
             continue
         entry = MIDTERMS_TWIN_BY_KALSHI_ID.get(m.id)
-        matches = []
-        if entry is not None and entry.polymarket_market_id is not None:
+        if entry is None or entry.polymarket_market_id is None:
+            twin_state = "no_twin_found"
+            matched_ids = []
+        else:
             registered = by_polymarket_id.get(entry.polymarket_market_id)
             if registered is not None and is_midterms_twin(m, registered):
-                matches = [registered]
-        if not matches:
-            matches = [c for c in polymarket_pool if is_midterms_twin(m, c)]
-        if len(matches) == 1:
-            twins[m.id] = [matches[0].id]
+                twins[m.id] = [registered.id]
+                twin_state = "matched"
+                matched_ids = [registered.id]
+            else:
+                twin_state = "register_mismatch"
+                matched_ids = [registered.id] if registered is not None else []
         report.append(
             {
                 "market_id": m.id,
                 "name": m.name,
-                "polymarket_twin_ids": [c.id for c in matches],
-                "twin_state": (
-                    "matched"
-                    if len(matches) == 1
-                    else "ambiguous" if matches else "no_twin_found"
-                ),
+                "polymarket_twin_ids": matched_ids,
+                "twin_state": twin_state,
             }
         )
     all_markets = {m.id: m for m in primary}
