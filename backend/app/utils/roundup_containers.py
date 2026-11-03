@@ -237,18 +237,21 @@ def compose_roundup_feed_item(
     members: RoundupMembers,
 ) -> Optional[dict[str, Any]]:
     """Build the Discover feed item for a round-up producer from its produced members."""
-    if members.feed_item is not None:
-        return copy.deepcopy(members.feed_item)
     if not members.members:
-        return None
+        return copy.deepcopy(members.feed_item) if members.feed_item is not None else None
     rows = list(members.rows)
     normalized = [_normalize_member_entry(x) for x in members.members]
     member_ids = [int(m["id"]) for m in normalized]
     item_id = producer.story_key or f"roundup:{producer.slug.removeprefix('roundup-')}"
+    base_score = (
+        float(members.feed_item.get("score", producer.score) or 0.0)
+        if isinstance(members.feed_item, Mapping)
+        else float(producer.score)
+    )
     member_items = [
         {
             "type": "futures",
-            "score": float(producer.score),
+            "score": base_score,
             "reason": str(
                 (
                     rows[idx].get("label")
@@ -270,9 +273,22 @@ def compose_roundup_feed_item(
         for idx, m in enumerate(normalized)
         if isinstance(m.get("card"), Mapping)
     ]
+    collection_ref = {
+        "slug": producer.slug,
+        "href": f"/collections/{producer.slug}",
+        "name": producer.name,
+        "revision": roundup_revision(member_ids),
+        "collection_count": len(member_ids),
+    }
+    if members.feed_item is not None:
+        out = copy.deepcopy(members.feed_item)
+        if isinstance(out.get("data"), dict):
+            out["data"]["items"] = member_items
+            out["data"]["collection_ref"] = collection_ref
+        return out
     return {
         "type": "bundle",
-        "score": float(producer.score),
+        "score": base_score,
         "reason": producer.name,
         "headline": producer.name,
         "context_summary": None,
@@ -285,13 +301,7 @@ def compose_roundup_feed_item(
             "item_count": len(member_ids),
             "member_ids": member_ids,
             "items": member_items,
-            "collection_ref": {
-                "slug": producer.slug,
-                "href": f"/collections/{producer.slug}",
-                "name": producer.name,
-                "revision": roundup_revision(member_ids),
-                "collection_count": len(member_ids),
-            },
+            "collection_ref": collection_ref,
             "roundup": {
                 "kicker": producer.kicker,
                 "tag": producer.tag or producer.category.upper(),
