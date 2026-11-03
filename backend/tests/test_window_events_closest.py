@@ -350,7 +350,9 @@ async def test_reusable_producer_serves_container_and_second_definition_without_
 
 
 @pytest.mark.asyncio
-async def test_row_probability_equals_event_page_hero_through_hydrate_event_cards_and_refuses_books_only():
+async def test_row_probability_equals_event_page_hero_through_hydrate_event_cards_and_refuses_books_only(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """Through ``_hydrate_event_cards`` on a fake session:
     1. Each round-up row probability comes from ``resolve_hero`` (``hero_probability`` /
        ``hero_probability_away`` on the hydrated event card — the same function that
@@ -508,6 +510,27 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
         assert row_403["probability"] == pytest.approx(0.57)
         assert row_403["label"] == "Miami Heat at Milwaukee Bucks: Miami Heat"
 
+        # If any candidate event fails card hydration, produce_window_events_closest
+        # refuses all-or-nothing rather than silently omitting the failed game:
+        monkeypatch.setattr(
+            "app.routes.containers._hydrate_event_cards",
+            lambda _db, _ids: _async_return(
+                (
+                    {k: v for k, v in hydrated_cards.items() if k != 404},
+                    {404: "hydration_error"},
+                )
+            ),
+        )
+        refused_on_hydration_failure = await produce_window_events_closest(
+            defn, fake_db, now=now
+        )
+        assert isinstance(refused_on_hydration_failure, RoundupRefusal)
+        assert refused_on_hydration_failure.reasons == (("window", "hydrate_failed_1"),)
+
+
+async def _async_return(val):
+    return val
+
 
 def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
     """``_extract_blended_leader`` and ``select_closest_window_events`` accept only
@@ -550,3 +573,21 @@ def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
     for row in result.rows:
         assert row["observed_at"] == hero_stamp
         assert row["observed_at"] != odds_stamp
+
+    # Exact 50/50 tie picks the home team as leader (`hp >= ap`):
+    tie_card = _game_card(
+        599,
+        home="Celtics",
+        away="Knicks",
+        home_prob=0.5,
+        away_prob=0.5,
+        hero_source="blend",
+        hero_observed_at=hero_stamp,
+        captured_at=odds_stamp,
+    )
+    assert _extract_blended_leader(tie_card) == (
+        0.5,
+        "Celtics",
+        "Knicks at Celtics: Celtics",
+        hero_stamp,
+    )
