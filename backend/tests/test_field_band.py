@@ -316,6 +316,8 @@ class TestSelectFieldBand:
         assert bubble_card["sources"] == ["kalshi"]
         assert bubble_card["source_count"] == 1
         assert bubble_card["mutually_exclusive"] is False
+        assert bubble_card["outcome_count"] == 10
+        assert bubble_card["discover_card"]["remaining_outcome_count"] == 6
         assert bubble_card["discover_card"]["field_is_a_race"] is False
 
         # Verify bubble outcomes are filtered to [0.20, 0.80] and un-normalized
@@ -351,6 +353,8 @@ class TestSelectFieldBand:
         assert title_card["sources"] == ["kalshi"]
         assert title_card["source_count"] == 1
         assert title_card["mutually_exclusive"] is True
+        assert title_card["outcome_count"] == 20
+        assert title_card["discover_card"]["remaining_outcome_count"] == 16
         assert title_card["discover_card"]["field_is_a_race"] is True
         title_top = title_card["top_outcomes"]
         assert [o["name"] for o in title_top[:4]] == [
