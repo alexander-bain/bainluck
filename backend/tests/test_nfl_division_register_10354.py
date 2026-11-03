@@ -268,7 +268,16 @@ async def test_container_members_equal_card_rows_from_one_read():
         "slug": NFL_DIVISION_ROUNDUP_SLUG,
         "href": NFL_DIVISION_ROUNDUP_HREF,
         "name": NFL_DIVISION_ROUNDUP_TITLE,
+        "revision": payload["revision"],
+        "collection_count": 4,
     }
+    assert len(feed_item["data"]["items"]) == 4
+    assert [it["data"]["id"] for it in feed_item["data"]["items"]] == [
+        53674,
+        53675,
+        53673,
+        53672,
+    ]
 
     from app.utils.roundup_containers import roundup_container_id
 
@@ -706,4 +715,104 @@ async def test_orm_kalshi_width_truncated_outcome_names_repair_via_ticker(monkey
     assert feed_item is not None and payload is not None
     assert payload["member_count"] == 4
     assert [m["id"] for m in payload["sections"][0]["members"]] == [53674, 53675, 53673, 53672]
+
+
+@pytest.mark.asyncio
+async def test_roundup_feed_wiring_places_card_after_opening_ten_and_dedupes_members(monkeypatch):
+    """Oct 7–8 Discover opening ruling: the assembled round-up card sits after the
+    opening ten (seat 11 / index 10) without changing any card's score, suppresses
+    any standalone member market in the deck so no market appears twice, and is
+    omitted when the producer refuses.
+    """
+    from app.utils.roundup_containers import (
+        ROUNDUP_SEAT_FLOOR,
+        add_roundup_feed_items,
+        insert_roundup_feed_items,
+        reset_roundup_cache_for_tests,
+        roundup_feed_enabled,
+    )
+
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "false")
+    monkeypatch.setenv("NFL_DIVISION_ROUNDUP_ENABLED", "true")
+    reset_roundup_cache_for_tests()
+
+    assert ROUNDUP_SEAT_FLOOR == 10
+    assert roundup_feed_enabled(
+        mode="discover",
+        include_events=True,
+        include_futures=True,
+        my_teams_only=False,
+        debug=False,
+    )
+    assert not roundup_feed_enabled(
+        mode="sports",
+        include_events=True,
+        include_futures=True,
+        my_teams_only=False,
+        debug=False,
+    )
+
+    # Build a 15-card Discover deck (10 opening + 5 back-half), including one
+    # standalone member market (53674, Kalshi NFC East) at index 12.
+    base_deck = [
+        {
+            "type": "futures",
+            "score": float(100 - idx),
+            "_rank_score": float(100 - idx),
+            "reason": f"Why now {idx}",
+            "headline": f"Story {idx}",
+            "data": {"id": 53674 if idx == 12 else 1000 + idx, "name": f"Market {idx}"},
+        }
+        for idx in range(15)
+    ]
+
+    placed = await add_roundup_feed_items(_FakeSession(markets_copy()), base_deck)
+    # Opening ten (indices 0..9) are untouched in identity, order, and score.
+    assert [it["data"]["id"] for it in placed[:10]] == [1000 + i for i in range(10)]
+    assert [it["score"] for it in placed[:10]] == [float(100 - i) for i in range(10)]
+    # Standalone member 53674 at index 12 was replaced by the round-up at seat 12,
+    # and no standalone card carries any covered member id.
+    roundup_positions = [
+        i
+        for i, it in enumerate(placed)
+        if it.get("type") == "bundle" and it.get("data", {}).get("kind") == "roundup"
+    ]
+    assert roundup_positions == [12]
+    roundup_card = placed[12]
+    assert roundup_card["data"]["collection_ref"]["slug"] == NFL_DIVISION_ROUNDUP_SLUG
+    assert roundup_card["data"]["collection_ref"]["collection_count"] == 4
+    assert isinstance(roundup_card["data"]["collection_ref"]["revision"], int)
+    assert len(roundup_card["data"]["items"]) == 4
+    assert all(
+        not (it.get("type") == "futures" and it.get("data", {}).get("id") == 53674)
+        for it in placed
+    )
+
+    # When no member is in the deck (tier-4 division markets), the round-up sits at
+    # index 10 (seat 11), immediately after the opening ten, inheriting seat 11's score.
+    clean_deck = [
+        {
+            "type": "futures",
+            "score": float(100 - idx),
+            "_rank_score": float(100 - idx),
+            "reason": f"Why now {idx}",
+            "headline": f"Story {idx}",
+            "data": {"id": 2000 + idx, "name": f"Market {idx}"},
+        }
+        for idx in range(15)
+    ]
+    placed_clean = await add_roundup_feed_items(_FakeSession(markets_copy()), clean_deck)
+    assert [it["data"]["id"] for it in placed_clean[:10]] == [2000 + i for i in range(10)]
+    assert placed_clean[10]["type"] == "bundle"
+    assert placed_clean[10]["data"]["id"] == "roundup:nfl-division-front-runners"
+    assert placed_clean[10]["score"] == 90.0
+
+    # Refusal returns the deck object unchanged.
+    broken = markets_copy()
+    broken.remove(row_for(broken, "polymarket", "232647"))
+    unchanged = await add_roundup_feed_items(_FakeSession(broken), clean_deck)
+    assert unchanged is clean_deck
+    assert insert_roundup_feed_items(clean_deck, []) is clean_deck
+
 

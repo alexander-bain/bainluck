@@ -2797,6 +2797,7 @@ def _build_nfl_division_roundup_members(
 
     by_kalshi_id = {int(b.kalshi_market_id): b for b in blends}
     members: list[dict[str, Any]] = []
+    member_items: list[dict[str, Any]] = []
     for row in rows:
         mid = int(row["market_id"])
         div_blend = by_kalshi_id.get(mid)
@@ -2832,6 +2833,22 @@ def _build_nfl_division_roundup_members(
                 "event_id": None,
             }
         )
+        member_items.append(
+            {
+                "type": "futures",
+                "score": float(score),
+                "reason": str(row.get("label") or NFL_DIVISION_ROUNDUP_TITLE),
+                "headline": str(row.get("label") or NFL_DIVISION_ROUNDUP_TITLE),
+                "data": dict(card),
+            }
+        )
+    member_ids = [int(m["id"]) for m in members]
+    feed_item["data"]["items"] = member_items
+    feed_item["data"]["collection_ref"] = {
+        **NFL_DIVISION_ROUNDUP_COLLECTION_REF,
+        "revision": nfl_division_roundup_revision(member_ids),
+        "collection_count": len(members),
+    }
     return feed_item, members
 
 
