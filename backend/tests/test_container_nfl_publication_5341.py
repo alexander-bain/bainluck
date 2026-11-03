@@ -203,13 +203,15 @@ class _Refuses:
         raise AssertionError("the publication policy issued a statement")
 
 
-@pytest.mark.parametrize("value", [None, "", "false", "0", "off", "no", "nope"])
-def test_the_switch_is_off_unless_set_truthy(monkeypatch, value):
-    if value is None:
-        monkeypatch.delenv(pub.AUTO_PUBLISH_ENV, raising=False)
-    else:
-        monkeypatch.setenv(pub.AUTO_PUBLISH_ENV, value)
+@pytest.mark.parametrize("value", ["", "false", "0", "off", "no", "nope"])
+def test_an_explicit_false_value_stops_publication(monkeypatch, value):
+    monkeypatch.setenv(pub.AUTO_PUBLISH_ENV, value)
     assert pub.auto_publish_enabled() is False
+
+
+def test_nfl_publication_is_enabled_when_unset(monkeypatch):
+    monkeypatch.delenv(pub.AUTO_PUBLISH_ENV, raising=False)
+    assert pub.auto_publish_enabled() is True
 
 
 @pytest.mark.parametrize("value", ["true", "TRUE", " 1 ", "yes", "on"])
@@ -226,7 +228,7 @@ def test_it_is_not_the_assembly_switch():
 
 @pytest.mark.asyncio
 async def test_switch_off_reports_the_harvest_verdict_and_touches_nothing(real, monkeypatch):
-    monkeypatch.delenv(pub.AUTO_PUBLISH_ENV, raising=False)
+    monkeypatch.setenv(pub.AUTO_PUBLISH_ENV, "false")
     report = await pub.publish_complete_week(
         _Refuses(),
         SimpleNamespace(id=7, slug=WEEK_1.slug),
@@ -263,7 +265,7 @@ async def test_a_dry_run_or_a_stand_in_row_touches_nothing(real, monkeypatch, ap
 @pytest.mark.asyncio
 async def test_the_mounted_week_run_carries_the_decision_on_an_unreadable_week(monkeypatch):
     """The task hook runs on the unavailable path too, and still touches nothing."""
-    monkeypatch.delenv(pub.AUTO_PUBLISH_ENV, raising=False)
+    monkeypatch.setenv(pub.AUTO_PUBLISH_ENV, "false")
     report = await run_nfl_week_assembly(
         _Refuses(), SimpleNamespace(id=7, slug=WEEK_1.slug), [], WEEK_1, apply=True
     )

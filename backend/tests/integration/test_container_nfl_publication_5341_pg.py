@@ -99,7 +99,7 @@ async def world(monkeypatch):
     from app.services.database import Base
     from app.utils.container_corrections import UPGRADE_STATEMENTS
 
-    monkeypatch.setenv(FLAG, "true")
+    monkeypatch.delenv(FLAG, raising=False)
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
         # The ledger references `containers`, so it goes first or drop_all wedges.
@@ -267,6 +267,42 @@ async def test_an_unseen_week_publishes_itself_under_its_stable_slug(world):
 
 
 @pytest.mark.asyncio
+async def test_default_hourly_dispatch_assembles_and_publishes_nfl_without_enabling_mlb(
+    world, monkeypatch
+):
+    from app.services import statpal_api
+    from app.tasks import base, container_assembly as ca
+    from app.utils import container_tournaments as declarations
+
+    Session, sport_id = world
+    fixtures = _week_7()
+    events = await _seed(Session, sport_id, _games(fixtures))
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return WEEK_7_NOW
+
+    monkeypatch.delenv(ca.COLLECTIONS_ENABLED_ENV, raising=False)
+    monkeypatch.delenv(FLAG, raising=False)
+    monkeypatch.setattr(ca, "datetime", Clock)
+    monkeypatch.setattr(base, "get_task_session", Session)
+    monkeypatch.setattr(statpal_api, "get_statpal_service", lambda: _Schedule(fixtures))
+    monkeypatch.setattr(declarations, "DECLARED_TOURNAMENTS", ())
+
+    report = await ca._run_assemble_containers(apply=True)
+
+    assert report["collections"] == "enabled"
+    assert report["terminal"] == "complete"
+    assert [run["slug"] for run in report["runs"]] == [WEEK_7]
+    assert report["runs"][0]["publication"]["decision"] == "published"
+    hub_id, state, _ = await _hub(Session, WEEK_7)
+    assert state == "published"
+    assert await _event_edges(Session, hub_id) == set(events.values())
+    assert (await _read(Session, WEEK_7)).state == "published"
+
+
+@pytest.mark.asyncio
 async def test_preseason_and_regular_week_1_stay_two_hubs(world):
     Session, sport_id = world
     pre = _fixture("p101", "Lions", "Browns", _at(8, 7, 23), "Pre Season / Week 1")
@@ -367,7 +403,7 @@ async def test_a_game_the_authority_moved_away_leaves_an_edge_that_withholds(wor
     relabelled = fixtures[:2] + [
         _fixture("s703", "Eagles", "Giants", fixtures[2].start_time, W8)
     ]
-    monkeypatch.setenv(FLAG, "true")
+    monkeypatch.delenv(FLAG, raising=False)
     runs = await _pass(Session, relabelled, WEEK_7_NOW)
 
     publication = runs[WEEK_7]["publication"]
@@ -442,7 +478,7 @@ async def test_a_withdrawn_member_stays_out_and_a_hub_holding_one_waits_for_a_pe
         )
         await session.commit()
 
-    monkeypatch.setenv(FLAG, "true")
+    monkeypatch.delenv(FLAG, raising=False)
     runs = await _pass(Session, fixtures, WEEK_7_NOW)
 
     assert events["s702"] not in await _event_edges(Session, hub_id)
@@ -608,7 +644,7 @@ async def test_with_the_switch_off_a_complete_week_is_assembled_and_never_publis
     Session, sport_id = world
     fixtures = _week_7()
     await _seed(Session, sport_id, _games(fixtures))
-    monkeypatch.delenv(FLAG, raising=False)
+    monkeypatch.setenv(FLAG, "false")
 
     runs = await _pass(Session, fixtures, WEEK_7_NOW)
 
