@@ -214,4 +214,74 @@ describe("app/event/[domain]/[slug]/layout", () => {
     expect(meta.robots).toBeUndefined();
     expect(asText(meta.twitter?.title)).not.toBe(HOME_TITLE);
   });
+
+  it("#11888: a 404 after one 5-minute revalidation window displaces a cached 200 without a purge", async () => {
+    let nowMs = 1_762_100_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+
+    // 1. At t = 0, the concept exists (200) and is cached for the 5-minute window.
+    stubStatus(200, {
+      event: {
+        key: "event:ufc:removed-card-26nov03",
+        slug: "removed-card-26nov03",
+        name: "UFC Removed Card",
+        status: "settled",
+      },
+      primary: {
+        label: "Main Event",
+        competitors: [
+          { name: "Alpha Fighter", probability: 1, won: true },
+          { name: "Beta Fighter", probability: 0, won: false },
+        ],
+      },
+    });
+
+    const firstMeta = await conceptMetadata({
+      params: Promise.resolve({ domain: "ufc", slug: "removed-card-26nov03" }),
+    });
+    expect(asText(firstMeta.title)).toContain("Alpha Fighter won");
+    expect(firstMeta.robots).toBeUndefined();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/event/event%3Aufc%3Aremoved-card-26nov03"),
+      { cache: "no-store" }
+    );
+
+    // 2. Within the same 5-minute window (t + 60s), the cached 200 is served with no new fetch.
+    nowMs += 60_000;
+    stubStatus(404);
+    const cachedMeta = await conceptMetadata({
+      params: Promise.resolve({ domain: "ufc", slug: "removed-card-26nov03" }),
+    });
+    expect(asText(cachedMeta.title)).toContain("Alpha Fighter won");
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    // 3. Once the 5-minute revalidation window expires (t + 300.001s), the API's 404
+    // displaces the cached 200 and serves "This event isn't on Bain Luck" with noindex.
+    nowMs += 240_001;
+    const displacedMeta = await conceptMetadata({
+      params: Promise.resolve({ domain: "ufc", slug: "removed-card-26nov03" }),
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(asText(displacedMeta.title)).toBe("This event isn't on Bain Luck");
+    expect(asText(displacedMeta.openGraph?.title)).toBe(
+      "This event isn't on Bain Luck | Bain Luck"
+    );
+    expect(asText(displacedMeta.twitter?.title)).toBe(
+      "This event isn't on Bain Luck | Bain Luck"
+    );
+    expect(displacedMeta.robots).toEqual({ index: false, follow: true });
+
+    // 4. Subsequent reads inside the new 5-minute window serve the cached 404, not the stale 200.
+    nowMs += 30_000;
+    stubStatus(200, {
+      event: { key: "event:ufc:removed-card-26nov03", name: "Ghost Card" },
+    });
+    const stillNotFound = await conceptMetadata({
+      params: Promise.resolve({ domain: "ufc", slug: "removed-card-26nov03" }),
+    });
+    expect(asText(stillNotFound.title)).toBe("This event isn't on Bain Luck");
+    expect(stillNotFound.robots).toEqual({ index: false, follow: true });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });
