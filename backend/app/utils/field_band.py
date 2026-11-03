@@ -90,9 +90,9 @@ def parse_market_ref(spec: Any) -> tuple[str, Optional[int], Optional[str]]:
         if mid <= 0:
             raise ValueError(f"Market id must be positive: {spec!r}")
         return source, mid, None
-    except ValueError as exc:
+    except ValueError as err:
         if right.isdigit() or right.startswith("-"):
-            raise ValueError(f"Market id must be positive: {spec!r}") from exc
+            raise ValueError(f"Market id must be positive: {spec!r}") from err
         return source, None, right
 
 
