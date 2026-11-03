@@ -9,8 +9,8 @@ B, C, D on NOW #11852).
 
 from __future__ import annotations
 
+import importlib
 import json
-import logging
 import math
 import os
 from dataclasses import dataclass
@@ -20,13 +20,11 @@ from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_EVENT, event_destination
-from app.utils.roundup_containers import (
-    RoundupMembers,
-    RoundupProducer,
-    RoundupRefusal,
-    evaluate_roundup_producer,
-)
 from app.utils.tonights_games import _is_eligible, _parse_dt
+
+
+def _rc() -> Any:
+    return importlib.import_module("app.utils.roundup_containers")
 
 __all__ = [
     "CLOSEST_GAMES_TONIGHT_DEFINITION",
@@ -47,8 +45,6 @@ __all__ = [
     "select_closest_window_events",
     "sports_day_window",
 ]
-
-logger = logging.getLogger(__name__)
 
 PRODUCER_KIND_WINDOW_EVENTS_CLOSEST = "window_events_closest"
 SPORTS_DAY_TZ = ZoneInfo("America/New_York")
@@ -309,7 +305,7 @@ def select_closest_window_events(
 
     total_eligible = len(eligible)
     if total_eligible < required:
-        return RoundupRefusal(
+        return _rc().RoundupRefusal(
             (("window", f"eligible_{total_eligible}_below_minimum_{required}"),)
         )
 
@@ -346,7 +342,7 @@ def select_closest_window_events(
         if footer_template
         else ""
     )
-    return RoundupMembers(members=members, rows=rows, footer=footer)
+    return _rc().RoundupMembers(members=members, rows=rows, footer=footer)
 
 
 CardLoader = Callable[
@@ -360,7 +356,7 @@ async def produce_window_events_closest(
     *,
     now: Optional[datetime] = None,
     load_cards: Optional[CardLoader] = None,
-) -> RoundupMembers | RoundupRefusal:
+) -> Any:
     """Execute a ``window_events_closest`` container definition against ``db``."""
     effective_now = (
         now
@@ -375,7 +371,7 @@ async def produce_window_events_closest(
     try:
         window_start, window_end = resolve_window(rule.get("window"), effective_now)
     except ValueError as err:
-        return RoundupRefusal((("window", str(err)),))
+        return _rc().RoundupRefusal((("window", str(err)),))
 
     count = int(rule.get("count", 4))
     minimum = int(rule.get("minimum", count))
@@ -395,7 +391,7 @@ async def produce_window_events_closest(
         )
 
         if not hasattr(db, "execute") or not callable(db.execute):
-            return RoundupRefusal((("window", "unsupported_session"),))
+            return _rc().RoundupRefusal((("window", "unsupported_session"),))
         res = await db.execute(
             select(Event)
             .where(
@@ -437,13 +433,13 @@ async def produce_window_events_closest(
                     candidate_ids.append(ev_id)
                     events_by_id[ev_id] = row
         if len(candidate_ids) < max(minimum, count):
-            return RoundupRefusal(
+            return _rc().RoundupRefusal(
                 (("window", f"candidates_{len(candidate_ids)}_below_minimum_{max(minimum, count)}"),)
             )
 
         cards_by_id, _failed = await _hydrate_event_cards(db, candidate_ids)
         if _failed:
-            return RoundupRefusal(
+            return _rc().RoundupRefusal(
                 (("window", f"hydrate_failed_{len(_failed)}"),)
             )
         folded_map = (
@@ -501,7 +497,7 @@ def build_window_events_closest_producer(
     enabled: Optional[Callable[[], bool]] = None,
     now_fn: Optional[Callable[[], datetime]] = None,
     load_cards: Optional[CardLoader] = None,
-) -> RoundupProducer:
+) -> Any:
     """Build a ``RoundupProducer`` from a declarative ``window_events_closest`` definition."""
     rule = definition.get("rule")
     if not isinstance(rule, Mapping) or rule.get("producer") != PRODUCER_KIND_WINDOW_EVENTS_CLOSEST:
@@ -526,7 +522,7 @@ def build_window_events_closest_producer(
             frozen_def, db, now=current_now, load_cards=load_cards
         )
 
-    return RoundupProducer(
+    return _rc().RoundupProducer(
         slug=slug,
         name=name,
         kind=kind,
@@ -546,10 +542,11 @@ CLOSEST_GAMES_TONIGHT_DEFINITION: dict[str, Any] = load_container_definition(
     CLOSEST_GAMES_TONIGHT_DEFINITION_PATH
 )
 
-CLOSEST_GAMES_TONIGHT_PRODUCER: RoundupProducer = build_window_events_closest_producer(
+CLOSEST_GAMES_TONIGHT_PRODUCER: Any = build_window_events_closest_producer(
     CLOSEST_GAMES_TONIGHT_DEFINITION,
     enabled=closest_games_tonight_enabled,
 )
+_rc().register_roundup_producer(CLOSEST_GAMES_TONIGHT_PRODUCER)
 
 
 async def closest_games_tonight(
@@ -559,7 +556,7 @@ async def closest_games_tonight(
     now: Optional[float] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Evaluate ``CLOSEST_GAMES_TONIGHT_PRODUCER`` and return ``(feed_item, container_payload)``."""
-    feed_item, container_payload = await evaluate_roundup_producer(
+    feed_item, container_payload = await _rc().evaluate_roundup_producer(
         CLOSEST_GAMES_TONIGHT_PRODUCER, db, now=now
     )
     if feed_item is not None and score:

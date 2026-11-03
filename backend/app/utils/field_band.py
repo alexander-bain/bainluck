@@ -643,7 +643,7 @@ async def _load_markets_from_db(
                     "name": repaired_name,
                     "probability": o.current_probability,
                     "movement": o.probability_change_24h,
-                    "last_updated": o.last_updated,
+                    "last_updated": o.last_updated.isoformat() if o.last_updated else None,
                     "is_winner": getattr(o, "is_winner", None),
                     "resolution_source": getattr(o, "resolution_source", None),
                 }

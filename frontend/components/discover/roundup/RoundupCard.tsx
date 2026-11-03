@@ -75,7 +75,7 @@ export function RoundupCard({
         >
           <span>{model.footer}</span>
           {model.cardMarkObservedAt ? (
-            <PriceAgeMark observedAt={model.cardMarkObservedAt} nowMs={now} cadence="futures" scope="card" />
+            <PriceAgeMark observedAt={model.cardMarkObservedAt} nowMs={now} cadence={model.cadence} scope="card" />
           ) : null}
         </div>
       </Link>
