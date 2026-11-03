@@ -403,6 +403,8 @@ Apple may call during review if they have questions about the gambling angle. Ma
 
 ### Submit
 
+Reusable tool: `python3 tools/asc-submit.py --dry-run` prints the GET-only plan; `--self-check` tests it offline. For an attended release, add `--version VERSION --build BUILD --whats-new-file FILE --review-notes-file FILE --submit`, then Alex types exactly `submit VERSION`; every readiness gate must pass and each request/response is saved to the printed receipts path.
+
 1. In App Store Connect, go to the version page
 2. Click **Add for Review**
 3. Answer any final questions (export compliance should auto-fill from Info.plist)
