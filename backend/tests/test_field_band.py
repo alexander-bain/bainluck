@@ -556,6 +556,31 @@ class TestFieldBandRefusals:
         assert isinstance(thin_second, RoundupRefusal)
         assert thin_second.reasons == (("second_section", "thin_field_8_below_12"),)
 
+    def test_refuses_all_or_nothing_when_any_outcome_price_is_withheld(self) -> None:
+        withheld_spine = select_field_band(
+            [_make_cfp_qualifiers_market(), _make_cfp_title_market()],
+            field_spec="kalshi:227",
+            band=(0.20, 0.80),
+            section_titles=("On the bubble", "Title contenders"),
+            second_section_spec="kalshi:181",
+            normalize=False,
+            withheld_by_market={227: {22705}},
+        )
+        assert isinstance(withheld_spine, RoundupRefusal)
+        assert withheld_spine.reasons == (("field", "spine_withheld_price_22705"),)
+
+        withheld_second = select_field_band(
+            [_make_cfp_qualifiers_market(), _make_cfp_title_market()],
+            field_spec="kalshi:227",
+            band=(0.20, 0.80),
+            section_titles=("On the bubble", "Title contenders"),
+            second_section_spec="kalshi:181",
+            normalize=False,
+            withheld_by_market={181: {18101}},
+        )
+        assert isinstance(withheld_second, RoundupRefusal)
+        assert withheld_second.reasons == (("second_section", "invalid_withheld_price_18101"),)
+
 
 class TestReusableProducerKindAndFeedIntegration:
     """Proves ``field_band`` works for any definition and wires into Discover feed + container route."""

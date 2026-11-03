@@ -177,7 +177,9 @@ def _extract_market_outcomes(
             if isinstance(oid_raw, int) and not isinstance(oid_raw, bool) and oid_raw > 0
             else idx + 1
         )
-        if oid in blocked or oid in seen_outcome_ids:
+        if oid in blocked:
+            return None, f"withheld_price_{oid}"
+        if oid in seen_outcome_ids:
             continue
         if leg_is_graded(raw.get("is_winner"), raw.get("resolution_source")):
             continue
