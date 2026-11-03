@@ -16,7 +16,7 @@
  *   not old (the product never calls a price it cannot date stale).
  */
 import { probabilityParts, type ProbabilityParts } from "@/lib/probabilityDisplay";
-import { FUTURES_STALE_AFTER_MS, oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
+import { FUTURES_STALE_AFTER_MS, SOURCE_STALE_AFTER_MS, oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
 import type { FeedRoundupContract } from "@/lib/types";
 
 /** Over this many characters the headline drops to its long size (R4). */
@@ -26,6 +26,8 @@ export const ROUNDUP_MAX_ROWS = 4;
 
 export interface RoundupRowModel {
   marketId: number;
+  kind: "event" | "market";
+  cadence: "live" | "futures";
   label: string;
   /** The formatter's boundary marker when rounding would claim a boundary; else null. */
   marker: ProbabilityParts["marker"];
@@ -44,6 +46,7 @@ export interface RoundupCardModel {
   footer: string;
   longHeadline: boolean;
   rows: RoundupRowModel[];
+  cadence: "live" | "futures";
   /** The footer's age mark (the "every row old" state), or null. */
   cardMarkObservedAt: string | null;
 }
@@ -78,31 +81,62 @@ export function buildRoundupCardModel(
   }
 
   const seen = new Set<number>();
-  const readable: { row: (typeof served)[number]; label: string; index: number }[] = [];
+  const readable: {
+    row: (typeof served)[number];
+    rowId: number;
+    kind: "event" | "market";
+    cadence: "live" | "futures";
+    label: string;
+    index: number;
+  }[] = [];
   for (const [index, row] of served.entries()) {
     const label = text(row?.label);
     const p = row?.probability;
-    if (!row || !isPositiveInt(row.market_id) || !label || typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) {
+    const hasMarket = row != null && row.market_id !== undefined && row.market_id !== null;
+    const hasEvent = row != null && row.event_id !== undefined && row.event_id !== null;
+    const rowId = hasMarket ? row.market_id : hasEvent ? row.event_id : undefined;
+    if (
+      !row ||
+      hasMarket === hasEvent ||
+      !isPositiveInt(rowId) ||
+      !label ||
+      typeof p !== "number" ||
+      !Number.isFinite(p) ||
+      p < 0 ||
+      p > 1
+    ) {
       return { model: null, refusal: "bad_row" };
     }
-    if (seen.has(row.market_id)) return { model: null, refusal: "duplicate_market" };
-    seen.add(row.market_id);
-    readable.push({ row, label, index });
+    if (seen.has(rowId)) return { model: null, refusal: "duplicate_market" };
+    seen.add(rowId);
+    readable.push({
+      row,
+      rowId,
+      kind: hasEvent ? "event" : "market",
+      cadence: hasEvent ? "live" : "futures",
+      label,
+      index,
+    });
   }
 
   // Highest first; a tie keeps the served order.
   readable.sort((a, b) => b.row.probability - a.row.probability || a.index - b.index);
 
   const stamps = readable.map(({ row }) => (typeof row.observed_at === "string" ? row.observed_at : null));
-  const stale = stamps.map((s) => sourceIsStale(s, nowMs, FUTURES_STALE_AFTER_MS));
+  const stale = readable.map(({ cadence }, i) =>
+    sourceIsStale(stamps[i], nowMs, cadence === "live" ? SOURCE_STALE_AFTER_MS : FUTURES_STALE_AFTER_MS),
+  );
   const allOld = stale.every(Boolean);
+  const cardCadence: "live" | "futures" = readable.some((r) => r.cadence === "live") ? "live" : "futures";
 
-  const rows: RoundupRowModel[] = readable.map(({ row, label }, i) => {
+  const rows: RoundupRowModel[] = readable.map(({ row, rowId, kind, cadence, label }, i) => {
     const parts = probabilityParts(row.probability, {
       rendered: typeof row.rendered_percent === "number" ? row.rendered_percent : undefined,
     });
     return {
-      marketId: row.market_id,
+      marketId: rowId,
+      kind,
+      cadence,
       label,
       marker: parts.marker,
       digits: parts.digits,
@@ -120,6 +154,7 @@ export function buildRoundupCardModel(
       footer,
       longHeadline: headline.length > ROUNDUP_LONG_HEADLINE_CHARS,
       rows,
+      cadence: cardCadence,
       cardMarkObservedAt: allOld ? oldestSourceStamp(stamps) : null,
     },
     refusal: null,

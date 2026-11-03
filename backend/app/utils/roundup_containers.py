@@ -68,6 +68,7 @@ class RoundupMembers:
     members: tuple[dict[str, Any], ...]
     rows: tuple[dict[str, Any], ...] = ()
     feed_item: Optional[dict[str, Any]] = None
+    footer: Optional[str] = None
 
     def __init__(
         self,
@@ -75,10 +76,14 @@ class RoundupMembers:
         rows: Sequence[dict[str, Any]] = (),
         *,
         feed_item: Optional[dict[str, Any]] = None,
+        footer: Optional[str] = None,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
         object.__setattr__(self, "feed_item", feed_item)
+        object.__setattr__(
+            self, "footer", str(footer) if footer is not None else None
+        )
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,8 @@ class RoundupProducer:
     section_title: str
     footer: str
     produce: Callable[[Any], Any]
+    membership: str = "computed-produced"
+    rule: Optional[dict[str, Any]] = None
     tag: Optional[str] = None
     kicker: str = "Round-up"
     story_key: Optional[str] = None
@@ -118,6 +125,8 @@ class RoundupProducer:
         footer: str = "",
         produce: Optional[Callable[[Any], Any]] = None,
         *,
+        membership: str = "computed-produced",
+        rule: Optional[Mapping[str, Any]] = None,
         tag: Optional[str] = None,
         kicker: str = "Round-up",
         story_key: Optional[str] = None,
@@ -133,6 +142,12 @@ class RoundupProducer:
         object.__setattr__(self, "section_title", str(section_title))
         object.__setattr__(self, "footer", str(footer))
         object.__setattr__(self, "produce", produce)
+        object.__setattr__(
+            self, "membership", str(membership or "computed-produced")
+        )
+        object.__setattr__(
+            self, "rule", dict(rule) if isinstance(rule, Mapping) else None
+        )
         object.__setattr__(
             self,
             "tag",
@@ -198,6 +213,11 @@ def compose_roundup_container(
         return None
     normalized = [_normalize_member_entry(m) for m in raw_members]
     member_ids = [int(m["id"]) for m in normalized]
+    subtitle = (
+        members.footer
+        if isinstance(members, RoundupMembers) and members.footer
+        else producer.footer
+    )
     return {
         "state": "published",
         "slug": producer.slug,
@@ -215,7 +235,7 @@ def compose_roundup_container(
             "window_end": None,
             "parent_container_id": None,
         },
-        "subtitle": producer.footer,
+        "subtitle": subtitle,
         "sections": [
             {
                 "class": "title",
@@ -244,6 +264,7 @@ def compose_roundup_feed_item(
     normalized = [_normalize_member_entry(x) for x in members.members]
     member_ids = [int(m["id"]) for m in normalized]
     item_id = producer.story_key or f"roundup:{producer.slug.removeprefix('roundup-')}"
+    footer = members.footer or producer.footer
     base_score = (
         float(members.feed_item.get("score", producer.score) or 0.0)
         if isinstance(members.feed_item, Mapping)
@@ -251,7 +272,7 @@ def compose_roundup_feed_item(
     )
     member_items = [
         {
-            "type": "futures",
+            "type": "event" if m.get("type") == "event" else "futures",
             "score": base_score,
             "reason": str(
                 (
@@ -306,7 +327,7 @@ def compose_roundup_feed_item(
             "roundup": {
                 "kicker": producer.kicker,
                 "tag": producer.tag or producer.category.upper(),
-                "footer": producer.footer,
+                "footer": footer,
                 "rows": rows,
             },
         },
@@ -746,10 +767,17 @@ def register_roundup_producer(producer: RoundupProducer) -> RoundupProducer:
 
 def _register_builtin_producers() -> None:
     import app.utils.discover_bundles as _bundles
+    import app.utils.window_events_closest as _window_closest
 
     producer = getattr(_bundles, "NFL_DIVISION_ROUNDUP_PRODUCER", None)
     if producer is not None:
         register_roundup_producer(producer)
+
+    closest_producer = getattr(
+        _window_closest, "CLOSEST_GAMES_TONIGHT_PRODUCER", None
+    )
+    if closest_producer is not None:
+        register_roundup_producer(closest_producer)
 
 
 _register_builtin_producers()

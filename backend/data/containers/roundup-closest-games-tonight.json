@@ -1,0 +1,21 @@
+{
+  "slug": "roundup-closest-games-tonight",
+  "membership": "time-boxed-tonight",
+  "kind": "roundup",
+  "name": "The closest games tonight",
+  "category": "sports",
+  "tag": "TONIGHT",
+  "section_title": "The 4 closest games",
+  "footer": "Bain Luck blend · the 4 closest of {n} games tonight",
+  "rule": {
+    "producer": "window_events_closest",
+    "window": "sports-day",
+    "eligible": "tonights_games._is_eligible",
+    "select": "lowest_leader_probabilities_highest_first",
+    "count": 4,
+    "minimum": 4,
+    "relation": "exact",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}
