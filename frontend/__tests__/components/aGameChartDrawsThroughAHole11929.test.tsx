@@ -28,6 +28,12 @@
 // a finished match with a 50-minute hole before its result. Rendered through
 // the real component; the assertions read the SVG recharts emitted and drive
 // the real configured tooltip.
+//
+// THE REAL CHART AT 390 px, 15315912 itself (production before, this branch
+// built against the production API after): before, the line was solid only to
+// the hole and a faint dotted connector ran from there to the result; after,
+// one Kalshi line runs through every hole to the result, with no connector and
+// no "no readings" text. Shots linked in #11998's description.
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
