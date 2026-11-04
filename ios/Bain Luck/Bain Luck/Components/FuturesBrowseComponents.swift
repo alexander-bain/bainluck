@@ -375,7 +375,7 @@ private struct FuturesBrowseOutcomeRow: View {
 
             movementIndicator
 
-            Text(outcome.probability.map { formatProbability($0) } ?? "--")
+            Text(outcome.probability.map { formatProbability($0, renderedPercent: outcome.renderedPercent) } ?? "--")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .monospacedDigit()

@@ -1387,7 +1387,7 @@ struct SearchView: View {
                     if let verdict = leader.verdict(in: market) {
                         searchVerdictText(verdict, font: .subheadline)
                     } else {
-                        Text(formatProbability(probability))
+                        Text(formatProbability(probability, renderedPercent: leader.renderedPercent))
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .monospacedDigit()
@@ -1456,7 +1456,7 @@ struct SearchView: View {
                     if let verdict = top.verdict(in: market) {
                         searchVerdictText(verdict, font: .caption)
                     } else if let prob = top.probability {
-                        Text(formatProbability(prob))
+                        Text(formatProbability(prob, renderedPercent: top.renderedPercent))
                             .font(.caption)
                             .fontWeight(.medium)
                             .monospacedDigit()

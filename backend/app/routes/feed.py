@@ -8503,7 +8503,9 @@ def _feed_display_scale(
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
         return 1.0
     return display_probability_divisor(
-        [{"name": getattr(o, "name", ""), "probability": o.current_probability}
+        [{"name": getattr(o, "name", ""), "probability": o.current_probability,
+          "is_winner": getattr(o, "is_winner", None),
+          "resolution_source": getattr(o, "resolution_source", None)}
          for o in all_sorted_outcomes],
         mutually_exclusive=mutually_exclusive,
         field_complete=field_complete, question=question,
@@ -8693,21 +8695,43 @@ def _normalize_feed_probabilities(
     from app.utils.outcome_display import normalize_display_probs
 
     full = [{"id": getattr(o, "id", None), "name": getattr(o, "name", ""),
-             "probability": o.current_probability} for o in all_sorted_outcomes]
+             "probability": o.current_probability,
+             "is_winner": getattr(o, "is_winner", None),
+             "resolution_source": getattr(o, "resolution_source", None)}
+            for o in all_sorted_outcomes]
     normalize_display_probs(full, mutually_exclusive=mutually_exclusive,
                             field_complete=field_complete, question=question)
+    by_id = {o["id"]: o for o in full if o["id"] is not None}
     by_name = {o["name"]: o for o in full}
     scale = _feed_display_scale(all_sorted_outcomes, question,
                                 mutually_exclusive=mutually_exclusive,
                                 field_complete=field_complete)
     for o in top_outcomes:
-        row = by_name.get(o.get("name"))
+        row = by_id.get(o.get("id")) or by_name.get(o.get("name"))
         if row is not None and "rendered_percent" in row:
             o["probability"] = row["probability"]
             o["rendered_percent"] = row["rendered_percent"]
         elif mutually_exclusive is None:
             o["probability"] = _scale_display_probability(o.get("probability"), scale)
     return top_outcomes
+
+
+def _annotate_distribution_allocations(
+    card: dict, outcomes: list, question: str | None, *,
+    mutually_exclusive: bool | None, field_complete: bool,
+) -> None:
+    """Copy the full field's shared whole numbers after classification (#11995)."""
+    rows = _normalize_feed_probabilities(
+        [{"id": o.id, "name": o.name, "probability": o.current_probability} for o in outcomes],
+        outcomes, question, mutually_exclusive=mutually_exclusive,
+        field_complete=field_complete,
+    )
+    by_id = {row["id"]: row.get("rendered_percent") for row in rows}
+    by_label = {_card_outcome_name(o): by_id.get(o.id) for o in outcomes}
+    for row in card.get("distribution_outcomes") or []:
+        percent = by_label.get(row.get("label"))
+        if percent is not None:
+            row["rendered_percent"] = percent
 
 
 # ── THE CARD RULE REACHES DISCOVER (#2088 criterion 3) ──────────────────────────
@@ -13099,6 +13123,9 @@ async def _score_sports_mode_futures(
             mutually_exclusive=_market_exclusivity(market),
             field_complete=not _field_incomplete,
         )
+        _full_field_rendered = bool(top_outcomes_data) and all(
+            o.get("rendered_percent") is not None for o in top_outcomes_data
+        )
         # #2088 criterion 3: the printed percents and the reason they may not total
         # 100. AFTER the scale, so the rule is applied to the displayed basis.
         _card_sum_reason = _apply_card_percents(top_outcomes_data)
@@ -13321,6 +13348,12 @@ async def _score_sports_mode_futures(
             resolution_date=market.resolution_date,
         )
 
+        _annotate_distribution_allocations(
+            discover_card, card_outcomes, market.name,
+            mutually_exclusive=_market_exclusivity(market),
+            field_complete=not _field_incomplete,
+        )
+
         futures_data = {
             "id": market.id,
             "name": display_name,
@@ -13350,6 +13383,7 @@ async def _score_sports_mode_futures(
             # hero stamped 20s and nothing on it said so.
             "price_observed_at": _card_price_observed_at(printed_outcomes),
             "top_outcomes": top_outcomes_data,
+            "full_field_rendered": _full_field_rendered,
             # #2088: served even when null — null is "checked, and they do total
             # 100", which is a different fact from the key being absent (a payload
             # from before this shipped). The client keys its fallback on absence.
@@ -14796,6 +14830,9 @@ async def _score_futures(
                 mutually_exclusive=_market_exclusivity(market),
                 field_complete=not _field_incomplete,
             )
+            _full_field_rendered = bool(top_outcomes_data) and all(
+                o.get("rendered_percent") is not None for o in top_outcomes_data
+            )
             # #2088 criterion 3: the printed percents and the reason they may not
             # total 100. AFTER the scale, so the rule sees the displayed basis.
             _card_sum_reason = _apply_card_percents(top_outcomes_data)
@@ -15316,6 +15353,12 @@ async def _score_futures(
                 resolution_date=market.resolution_date,
             )
 
+            _annotate_distribution_allocations(
+                discover_card, card_outcomes, market.name,
+                mutually_exclusive=_market_exclusivity(market),
+                field_complete=not _field_incomplete,
+            )
+
             futures_data = {
                 "id": market.id,
                 "name": display_name,
@@ -15338,6 +15381,7 @@ async def _score_futures(
                 # not the other is the defect, not half a fix.
                 "price_observed_at": _card_price_observed_at(printed_outcomes),
                 "top_outcomes": top_outcomes_data,
+                "full_field_rendered": _full_field_rendered,
                 # #10090 market previews: the divisor `top_outcomes` was printed
                 # on (`_feed_display_scale`). A venue preview is a RAW price, so
                 # a Discover card overlays one only when this is exactly 1.0;

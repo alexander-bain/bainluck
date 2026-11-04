@@ -7240,12 +7240,16 @@ def _venue_field_squeezable(
 ) -> bool:
     """Whether `/history` squeezes this board — the condition every venue-instant
     field question is asked under (#7954's bypass included)."""
+    from app.routes.playoffs import _ALREADY_PROBABILITY_SOURCES
     from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 
+    unsqueezed_board = not field_complete and (
+        getattr(market, "source", None) in _ALREADY_PROBABILITY_SOURCES
+    )
     return (
         getattr(market, "mutually_exclusive", True) is not False
         and len(charted_outcomes) > 1
-        and field_complete
+        and not unsqueezed_board
         and cumulative_outcome_ladder(
             [{"name": getattr(o, "name", "")} for o in charted_outcomes],
             dates=True, question=getattr(market, "name", None),
@@ -7491,13 +7495,26 @@ def _venue_scale_refusal(
     with each output point retaining its own observation time. A missing peer
     still refuses the column; today's field is never a historical denominator.
     """
-    hole, _columns = _venue_field_columns(
+    hole, columns = _venue_field_columns(
         market, charted_outcomes, venue_by_outcome, field_complete=field_complete
     )
     if hole:
         return hole
-    if _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
+    if field_complete and _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
         return None
+    if columns:
+        # An incomplete field cannot adopt a book's separate vig conversion.
+        # Preserve #7954's closed gate for sources that are not already prices.
+        from app.utils.futures_history_basis import devigged_consensus_by_time
+
+        printed = devigged_consensus_by_time(
+            {at: {market.source: col} for at, col in columns.items()},
+            mutually_exclusive=True, field_complete=False,
+        )
+        for at, column in columns.items():
+            if any(abs(printed.get(at, {}).get(oid, raw + 1.0) - raw) > 5e-5
+                   for oid, raw in column.items()):
+                return "printed_scale_is_not_the_venue_raw_scale"
     # Unsqueezed fields retain the prior raw-scale guard for unrelated book
     # transformations; normalizing a non-exclusive or unknown field is refused.
     for oid in venue_by_outcome:

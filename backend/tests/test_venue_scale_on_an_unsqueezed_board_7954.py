@@ -179,21 +179,8 @@ class TestTheRule:
             "printed_scale_is_not_the_venue_raw_scale"
         )
 
-    def test_a_whole_venue_field_is_still_measured_when_the_squeeze_fires(self):
-        """The capability control: this narrows the rule, it does not delete it.
-
-        "Refuse the completeness test WHEN the squeeze is off" is two clauses,
-        and shipping only the first would hand every squeezing board its venue
-        points unmeasured — the inference #7351 exists to have removed. Here the
-        field is complete, the squeeze fires, and a venue column that does not
-        survive it is refused on its own evidence.
-        """
-        # 🪤 THE SUM IS THE WHOLE FIXTURE and the first draft got it wrong.
-        # Sinner + Alcaraz alone sum to 0.585, the #23 helper declines below its
-        # own trigger, the squeeze IS the identity and this passed while proving
-        # nothing — the same threshold trap #7747's file records hitting at
-        # 1.015. Mensik carries it to 1.325, inside the band and under
-        # `_FIELD_SUM_MAX`, so the squeeze genuinely fires on this column.
+    def test_a_whole_venue_field_uses_its_own_normalized_scale(self):
+        """#11995 converts a complete venue column at its own observation time."""
         charted = [SINNER, ALCARAZ, MENSIK]
         drifted = {
             # A WHOLE column — every charted leg present at the instant, so the
@@ -202,7 +189,14 @@ class TestTheRule:
         }
         assert _refusal(
             field_complete=True, venue_by_outcome=drifted, charted=charted
-        ) == "printed_scale_is_not_the_venue_raw_scale"
+        ) is None
+        printed = futures_route._venue_display_probabilities(
+            _market(), [_outcome(oid) for oid in charted], drifted,
+            field_complete=True,
+        )
+        total = sum(_FIELD[oid] for oid in charted)
+        for oid in charted:
+            assert printed[(oid, _VENUE_AT[0])] == pytest.approx(_FIELD[oid] / total, abs=1e-8)
 
     def test_a_non_exclusive_family_is_unchanged_in_both_modes(self):
         """#199's markets never entered the squeezable branch and still do not."""

@@ -272,6 +272,7 @@ nonisolated struct SearchFuturesMarket: Decodable, Identifiable, Sendable {
 
 /// Top outcome for a futures market search result.
 nonisolated struct SearchFuturesOutcome: Decodable, Identifiable, Sendable {
+    var renderedPercent: Int? = nil
     let id: Int
     let name: String
     let probability: Double?
@@ -359,6 +360,7 @@ nonisolated struct FacetedFuturesMarket: Decodable, Identifiable, Sendable {
 
 /// Outcome row embedded in a faceted futures market.
 nonisolated struct FacetedFuturesOutcome: Decodable, Identifiable, Sendable {
+    var renderedPercent: Int? = nil
     let id: Int
     let name: String
     let probability: Double?

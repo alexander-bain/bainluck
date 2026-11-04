@@ -82,7 +82,7 @@ struct FuturesCardView: View {
             Spacer()
             movementIndicator(outcome.movement)
             if let prob = outcome.probability {
-                Text(formatProbability(prob))
+                Text(formatProbability(prob, renderedPercent: outcome.renderedPercent))
                     .font(.caption)
                     .fontWeight(.semibold)
                     .monospacedDigit()

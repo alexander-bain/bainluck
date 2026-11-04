@@ -366,11 +366,8 @@ def test_V2_the_venues_own_series_never_reached_the_print_and_prices_it_out():
         o["outcome_id"]: {p["timestamp"]: p["probability"] for p in o["history"]}
         for o in _fx("bainluck-history-56947465.json")["outcomes"]
     }
-    saved = _series(_fx("bainluck-history-56947465.json"))
-    mass = sum(points.get(BAD_STAMP, 0) for points in saved.values())
-    # #11995: the point survives the book guard, then shares the full field's
-    # probability basis. The old >1.60 raw-price carve-out is superseded.
-    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == round(PRINT / mass, 8)
+    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == PRINT
+
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +651,10 @@ def test_R3_a_row_with_no_recorded_book_is_left_alone(monkeypatch):
     for one export before anyone claims the chart is repaired."""
     _arun(_seed_served_history(bad_book=(None, None, PRINT)))
     served = _series(_get(f"/api/futures/{MARKET_ID}/history?hours=168&top_n=50", monkeypatch))
-    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == PRINT
+    saved = _series(_fx("bainluck-history-56947465.json"))
+    mass = sum(points.get(BAD_STAMP, 0) for points in saved.values())
+    # The book guard is inert; the surviving complete field still normalizes.
+    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == pytest.approx(PRINT / mass, abs=1e-8)
 
 
 def test_R4_the_timeline_reader_agrees_with_the_chart(monkeypatch):

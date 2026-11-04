@@ -448,6 +448,8 @@ def test_the_specimen_serves_its_dated_day_move(monkeypatch, rail) -> None:
 def test_a_tiny_poll_keeps_the_bank_and_moves_the_answer(monkeypatch) -> None:
     """A 0.05-point poll is far under the floor; the shared A9 would delete the
     bank on it. A9-DG keeps it, and the served move follows the new price."""
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
     run = _drive_specimen(monkeypatch, "live")
     assert run["served"] is not None
 
@@ -927,6 +929,8 @@ def test_r11_a_market_that_leaves_open_loses_its_bank(monkeypatch) -> None:
 
 
 def test_p1_successive_tiny_polls_keep_the_bank(monkeypatch) -> None:
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
     run = _drive_specimen(monkeypatch, "live")
     assert run["served"] is not None
     for price in (0.151, 0.1505):

@@ -46,6 +46,23 @@ final class FuturesDetailSumsTo100_8097Tests: XCTestCase {
         XCTAssertEqual(futuresDetailRenderedPercents(Array(field.reversed())), percentages)
     }
 
+    func testSearchBrowseAndDistributionDecodeTheServerAllocation11995() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let row = Data(#"{"id":1,"name":"Alice","probability":0.225,"rendered_percent":22}"#.utf8)
+        let search = try decoder.decode(SearchFuturesOutcome.self, from: row)
+        let browse = try decoder.decode(FacetedFuturesOutcome.self, from: row)
+        let distribution = try decoder.decode(FeedDiscoverDistributionOutcome.self,
+            from: Data(#"{"label":"Alice","probability":0.225,"rendered_percent":22}"#.utf8))
+        XCTAssertEqual(search.renderedPercent, 22)
+        XCTAssertEqual(browse.renderedPercent, 22)
+        XCTAssertEqual(distribution.renderedPercent, 22)
+        XCTAssertEqual(formatProbability(try XCTUnwrap(search.probability), renderedPercent: search.renderedPercent), "22%")
+        let market = try decoder.decode(FeedFuturesData.self,
+            from: Data(#"{"id":1,"name":"Winner","full_field_rendered":true}"#.utf8))
+        XCTAssertEqual(market.fullFieldRendered, true)
+    }
+
     // MARK: - The defect
 
     func test_theProductionPairPrintsOneHundred() throws {

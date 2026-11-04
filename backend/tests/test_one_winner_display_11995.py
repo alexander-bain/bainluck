@@ -149,3 +149,43 @@ def test_event_row_alias_preserves_ladder_semantics_and_rounding_identity():
     assert {r["outcome_name"]: r["rendered_percent"] for r in rows} == {
         r["name"]: r["rendered_percent"] for r in page
     }
+
+
+def test_distribution_rows_copy_the_same_full_field_allocation_after_classification():
+    from app.routes.feed import _annotate_distribution_allocations
+
+    prices = [0.255, 0.255, 0.25, 0.24]
+    outcomes = [SimpleNamespace(id=i, name=name, external_id=None, current_probability=p)
+                for i, (name, p) in enumerate(zip(["Alice", "Bob", "Casey", "Dani"], prices))]
+    card = {"suggested_format": "outcome_distribution", "field_is_a_race": True,
+            "distribution_outcomes": [{"label": o.name, "probability": o.current_probability} for o in outcomes]}
+    before = deepcopy(card)
+    _annotate_distribution_allocations(card, outcomes, "Winner", mutually_exclusive=True, field_complete=True)
+    assert [r["rendered_percent"] for r in card["distribution_outcomes"]] == [26, 25, 25, 24]
+    assert sum(r["rendered_percent"] for r in card["distribution_outcomes"]) == 100
+    assert card["suggested_format"] == before["suggested_format"]
+    for row, original in zip(card["distribution_outcomes"], before["distribution_outcomes"]):
+        assert {k: v for k, v in row.items() if k != "rendered_percent"} == original
+
+
+def test_feed_divisor_and_allocation_keep_an_authoritative_winner_as_a_result():
+    from app.routes.feed import _feed_display_scale
+
+    outcomes = [
+        SimpleNamespace(id=1, name="Winner", current_probability=1.0, is_winner=True, resolution_source="api_settlement"),
+        SimpleNamespace(id=2, name="Loser", current_probability=0.003, is_winner=False, resolution_source="api_settlement"),
+    ]
+    assert _feed_display_scale(outcomes, mutually_exclusive=True) == 1
+    rows = [{"id": o.id, "name": o.name, "probability": o.current_probability} for o in outcomes]
+    assert _normalize_feed_probabilities(rows, outcomes, mutually_exclusive=True) == rows
+    assert rows[0]["probability"] == 1.0
+    assert all("rendered_percent" not in r for r in rows)
+
+
+def test_feed_allocation_matches_humanized_rows_by_id():
+    outcomes = [SimpleNamespace(id=1, name="Yes", current_probability=0.505),
+                SimpleNamespace(id=2, name="No", current_probability=0.495)]
+    top = [{"id": 1, "name": "Will it happen?", "probability": 0.505},
+           {"id": 2, "name": "It will not happen", "probability": 0.495}]
+    _normalize_feed_probabilities(top, outcomes, mutually_exclusive=True)
+    assert [o["rendered_percent"] for o in top] == [50, 50]

@@ -1888,6 +1888,8 @@ export interface FeedFuturesData {
    */
   price_observed_at?: string | null;
   top_outcomes: FeedFuturesOutcome[];
+  /** #11995: whole percentages were allocated over the complete one-winner field. */
+  full_field_rendered?: boolean;
   /**
    * Why this card's printed percents do not total 100, or null if they do (#2088).
    *

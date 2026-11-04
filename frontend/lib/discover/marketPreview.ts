@@ -81,10 +81,14 @@ export function nextMarketPreviewExpiry(states: MarketPreviews, now: number): nu
 }
 
 type MarketCard = Omit<FeedFuturesData, 'top_outcomes'> & { outcome_observed_at?: Record<string, string | null>; display_scale?: number;
+  discover_card?: { distribution_outcomes?: { rendered_percent?: number | null }[] | null } | null;
   top_outcomes: (FeedFuturesData['top_outcomes'][number] & { price_observed_at?: string | null })[] };
 
 function overlayCard(data: MarketCard, state: MarketPreviewState, now: number): MarketCard {
-  if (data.display_scale !== 1 || data.source !== state.source || marketResolved(data)) return data;
+  if (data.full_field_rendered || data.display_scale !== 1 || data.source !== state.source || marketResolved(data)) return data;
+  // Raw scalar previews cannot replace a server-allocated complete field.
+  const distribution = data.discover_card?.distribution_outcomes;
+  if (distribution?.some(row => row.rendered_percent != null)) return data;
   const committedRows = data.top_outcomes ?? [];
   const admitted = committedRows.map(row => {
     const leg = state.legs[String(row.id)];

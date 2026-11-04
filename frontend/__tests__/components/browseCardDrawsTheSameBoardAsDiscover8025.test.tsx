@@ -393,3 +393,20 @@ describe("planted failures", () => {
     expect(remainderSentence(browseHtml(data))).toBe("Field and 4 more outcomes");
   });
 });
+
+
+it("#11995: both cards print the server's full field allocation, including a tied remainder", () => {
+  const probabilities = [0.255, 0.255, 0.25, 0.24];
+  const percents = [26, 25, 25, 24];
+  const distribution = BRAZIL_BOARD.map((row, i) => ({
+    ...row, probability: probabilities[i], rendered_percent: percents[i],
+  }));
+  const base = brazilData(true);
+  const data = {
+    ...base,
+    top_outcomes: base.top_outcomes.map((row, i) => ({ ...row, probability: probabilities[i], rendered_percent: percents[i] })),
+    discover_card: { ...(base as FeedFuturesData & { discover_card?: Record<string, unknown> }).discover_card, distribution_outcomes: distribution },
+  } as FeedFuturesData;
+  expect(boardPercents(browseHtml(data))).toEqual(["26%", "25%", "25%", "24%"]);
+  expect(boardPercents(discoverHtml(data))).toEqual(["26%", "25%", "25%", "24%"]);
+});
