@@ -39,6 +39,7 @@
     "suggested_format": "outcome_distribution",
     "threshold_points": []
   },
+  "display_scale": 1.0,
   "group_id": "kalshi:netflix-downloads",
   "group_type": null,
   "hook_description": null,
