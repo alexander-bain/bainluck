@@ -2577,10 +2577,16 @@ def submarket_resolution_date(event, market):
     legs were stored as resolving BEFORE they do. A game's legs carry the
     event's own date (Cubs-Red Sox 1058697: identical), so games do not move.
     """
+    from app.utils.sibling_family import normalize_registered_family_market
+
     own = getattr(market, "end_date", None) if market is not None else None
-    if own is not None:
-        return own
-    return getattr(event, "end_date", None)
+    raw_date = own if own is not None else getattr(event, "end_date", None)
+    raw_name = (
+        (getattr(market, "question", None) if market is not None else None)
+        or getattr(event, "title", None)
+    )
+    _, norm_date = normalize_registered_family_market(raw_name, raw_date)
+    return norm_date
 
 
 def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
@@ -3198,7 +3204,12 @@ async def _process_event_batch(
                                 stats.get("resolved_zero_legs_admitted", 0) + 1
                             )
 
+                        from app.utils.sibling_family import (
+                            normalize_registered_family_market,
+                        )
+
                         sub_name = market.question or event.title
+                        sub_name, _ = normalize_registered_family_market(sub_name, None)
                         sub_tier = compute_market_tier(sub_name, category, sport_category=llm_sport_category)
 
                         # #173/#1024: stamp the group matchup title onto every
@@ -3338,6 +3349,8 @@ async def _process_event_batch(
                         # and a leg with no date of its own keeps what it has.
                         if sub_open and getattr(market, "end_date", None) is not None:
                             sub_set["resolution_date"] = market.end_date
+                            if sub_resolution_date is not None:
+                                sub_set["resolution_date"] = sub_resolution_date
                         # #8430: the parent's link, never the parent's ABSENCE of
                         # one. A game container is rejected by the matcher as a
                         # `parent_row`, so for most groups `parent_event_id` is

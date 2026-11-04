@@ -202,6 +202,7 @@ from app.utils.feed_market_quality import (
     has_no_real_price,
     is_locked_near_certain,
     is_lone_midpoint_field,
+    is_placeholder_flat_field,
     is_templated_flat_ladder,
     range_ladder_missing_middle,
 )
@@ -13029,6 +13030,14 @@ async def _score_sports_mode_futures(
             _market_exclusivity(market),
         ):
             continue
+        if is_placeholder_flat_field(
+            [
+                (o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                for o in sorted_outcomes
+            ],
+            _market_exclusivity(market),
+        ):
+            continue
         outcomes_data = []
         leader_name = None
         leader_prob = None
@@ -14767,6 +14776,14 @@ async def _score_futures(
                 _market_exclusivity(market),
             ):
                 continue
+            if is_placeholder_flat_field(
+                [
+                    (o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                    for o in sorted_outcomes
+                ],
+                _market_exclusivity(market),
+            ):
+                continue
 
             # #6552 — completion happens at the print step, never in place.
             display_names = _card_display_names(sorted_outcomes[:10])
@@ -16430,6 +16447,11 @@ async def _score_golf_tournaments(
             field_mass = sum((g.get("probability") or 0) for g in field)
             if field_mass < TOURNAMENT_LEADER_MIN_FIELD_MASS:
                 continue
+        if is_placeholder_flat_field(
+            [(g.get("probability"), None, None) for g in golfers if isinstance(g, dict)],
+            True,
+        ):
+            continue
 
         # Score the tournament
         score = _score_tournament(t, now)
@@ -16515,6 +16537,15 @@ async def _score_golf_tournaments(
                 headline = "This week"
 
         # Build tournament feed item data
+        raw_commence = t.get("commence_time")
+        normalized_commence = raw_commence
+        if isinstance(raw_commence, str) and raw_commence:
+            try:
+                dt = datetime.fromisoformat(raw_commence.replace("Z", "+00:00"))
+                normalized_commence = dt.replace(second=0, microsecond=0).isoformat()
+            except Exception:
+                normalized_commence = raw_commence
+
         data = {
             "key": t.get("key"),
             "name": t.get("name"),
@@ -16527,7 +16558,7 @@ async def _score_golf_tournaments(
             "start_date": t.get("start_date"),
             "end_date": t.get("end_date"),
             "schedule_status": t.get("schedule_status"),
-            "commence_time": t.get("commence_time"),
+            "commence_time": normalized_commence,
             "resolution_date": t.get("resolution_date"),
             # #9212: who won, once ESPN calls the tournament final; None until
             # then. Spelled as this card's own field row spells the golfer, so a
@@ -17549,10 +17580,38 @@ def _drop_duplicate_bout_concepts(items: list[dict]) -> list[dict]:
         best = winner.get(key)
         if best is None or _rank(items[idx]) > _rank(items[best]):
             winner[key] = idx
-    return [
+    survivors = [
         item
         for idx, (item, key) in enumerate(zip(items, keys))
         if key is None or winner[key] == idx
+    ]
+
+    # #11943: also dedupe concept cards sharing the same `(domain, start_date)`
+    # (such as `event:ufc:26nov06` and `event:ufc:26nov07ufcfightnight` both
+    # starting at `2026-11-07T22:00:00+00:00` with different headline bouts).
+    def _start_key(item: dict) -> Optional[tuple[str, str]]:
+        try:
+            d = item.get("data") or {}
+            domain = str(d.get("domain") or "").strip().lower()
+            start_date = str(d.get("start_date") or "").strip()
+            if domain and start_date:
+                return (domain, start_date)
+        except Exception:
+            logger.debug("concept dedup: unreadable start_date", exc_info=True)
+        return None
+
+    start_keys = [_start_key(item) for item in survivors]
+    start_winner: dict[tuple[str, str], int] = {}
+    for idx, skey in enumerate(start_keys):
+        if skey is None:
+            continue
+        best = start_winner.get(skey)
+        if best is None or _rank(survivors[idx]) > _rank(survivors[best]):
+            start_winner[skey] = idx
+    return [
+        item
+        for idx, (item, skey) in enumerate(zip(survivors, start_keys))
+        if skey is None or start_winner[skey] == idx
     ]
 
 

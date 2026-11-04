@@ -1508,9 +1508,14 @@ async def _load_markets_from_db(
             }
             for o in (getattr(m, "outcomes", None) or ())
         ]
+        raw_name = getattr(m, "name", None)
+        raw_res_date = getattr(m, "resolution_date", None)
+        norm_name, norm_res_date = normalize_registered_family_market(
+            raw_name, raw_res_date
+        )
         by_id[mid] = {
             "id": mid,
-            "name": getattr(m, "name", None),
+            "name": norm_name,
             "status": getattr(m, "status", None),
             "source": getattr(m, "source", None),
             "external_id": getattr(m, "external_id", None),
@@ -1524,11 +1529,60 @@ async def _load_markets_from_db(
             "market_tier": getattr(m, "market_tier", None),
             "market_type": getattr(m, "market_type", None),
             "mutually_exclusive": getattr(m, "mutually_exclusive", True),
-            "resolution_date": getattr(m, "resolution_date", None),
+            "resolution_date": norm_res_date,
             "updated_at": getattr(m, "updated_at", None),
             "outcomes": outcomes_list,
         }
     return by_id, {int(k): set(v) for k, v in (withheld or {}).items()}
+
+
+_TIME_PERSON_OF_THE_YEAR_RE = re.compile(
+    r"^\s*Will\s+(?P<subject>.+?)\s+be\s+named\s+TIME(?:'s)?\s+Person\s+of\s+the\s+Year\s+for\s+(?P<year>\d{4})\?\s*$",
+    re.IGNORECASE,
+)
+_ANNOUNCE_PRESIDENTIAL_RUN_RE = re.compile(
+    r"^\s*Will\s+(?P<subject>.+?)\s+announce\s+a\s+(?P<office>Presidential|presidential)\s+run\s+before\s+(?P<year>\d{4})\?\s*$"
+)
+
+
+def normalize_registered_family_market(
+    name: Any,
+    resolution_date: Any,
+) -> tuple[Any, Any]:
+    """Normalize known sibling-family date and capitalization artefacts (#11943).
+
+    * ``TIME Person of the Year <YYYY>`` binaries normalize ``resolution_date`` to
+      ``<YYYY>-12-31T00:00:00Z`` (fixing the 1-of-26 ``2026-12-30T12:00:00Z`` leg).
+    * ``Will <person> announce a Presidential/presidential run before <YYYY>?``
+      binaries normalize ``Presidential run`` -> ``presidential run`` and
+      ``resolution_date`` to ``(<YYYY>-1)-12-31T23:59:00Z`` (fixing the 26
+      ``12:00Z`` vs 7 ``23:59Z`` split and ``Gavin Newsom``'s capital ``P``).
+    """
+    if not isinstance(name, str) or not name.strip():
+        return name, resolution_date
+    m_time = _TIME_PERSON_OF_THE_YEAR_RE.match(name)
+    if m_time is not None:
+        year = int(m_time.group("year"))
+        canon_dt = datetime(year, 12, 31, 0, 0, 0, tzinfo=timezone.utc)
+        return (
+            name,
+            canon_dt.isoformat().replace("+00:00", "Z")
+            if isinstance(resolution_date, str)
+            else canon_dt,
+        )
+    m_run = _ANNOUNCE_PRESIDENTIAL_RUN_RE.match(name)
+    if m_run is not None:
+        subject = m_run.group("subject").strip()
+        year = int(m_run.group("year"))
+        canon_name = f"Will {subject} announce a presidential run before {year}?"
+        canon_dt = datetime(year - 1, 12, 31, 23, 59, 0, tzinfo=timezone.utc)
+        return (
+            canon_name,
+            canon_dt.isoformat().replace("+00:00", "Z")
+            if isinstance(resolution_date, str)
+            else canon_dt,
+        )
+    return name, resolution_date
 
 
 async def produce_sibling_family(
