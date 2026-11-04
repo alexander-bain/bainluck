@@ -68,7 +68,12 @@ def test_revision_id_fits_gotcha_1_chains_on_the_parent_and_is_the_single_head()
     assert len(MIGRATION.revision) <= 32
     assert MIGRATION.down_revision == PARENT
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
-    assert list(script.get_heads()) == [NAME]
+    # One head, and this migration on its chain. Pinning `== [NAME]` failed the
+    # first migration to land after it (#12020's `venue_history_points_11929`)
+    # while the chain was correct; a single head is what the release needs.
+    heads = list(script.get_heads())
+    assert len(heads) == 1, heads
+    assert NAME in [rev.revision for rev in script.iterate_revisions(heads[0], "base")]
 
 
 def test_with_its_parent_it_names_every_production_events_gin_once():

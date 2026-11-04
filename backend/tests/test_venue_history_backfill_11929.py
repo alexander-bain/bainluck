@@ -673,10 +673,16 @@ class TestMigration:
         cwd = os.getcwd()
         os.chdir(BACKEND)
         try:
-            heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
+            script = ScriptDirectory.from_config(Config("alembic.ini"))
+            heads = list(script.get_heads())
+            # One head with this migration on its chain — never `== [ours]`,
+            # which fails the next migration to land (it failed #12020 itself
+            # on the events_fts test).
+            chain = [rev.revision for rev in script.iterate_revisions(heads[0], "base")]
         finally:
             os.chdir(cwd)
-        assert heads == ["venue_history_points_11929"]
+        assert len(heads) == 1, heads
+        assert "venue_history_points_11929" in chain
 
     def test_the_migration_builds_exactly_the_models_tables(self):
         mod = _load_migration()
