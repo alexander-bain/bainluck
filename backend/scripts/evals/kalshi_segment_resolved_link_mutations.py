@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Q048 mutation battery — the segment reconciler must SEE a resolved link.
+"""Extends feed_card_trust_contract (ruling 002).
+
+Q048 mutation battery — the segment reconciler must SEE a resolved link.
 
 A guard suite that passes proves the code runs; it does not prove the code is
 PINNED. Each mutant below is a plausible later edit — and every one of them is a

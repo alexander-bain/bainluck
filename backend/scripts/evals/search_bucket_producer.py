@@ -1,4 +1,6 @@
-"""Produce PER-BUCKET ``GET /api/events/search`` results for ``search_gold_eval.py``.
+"""Extends search_truth_closure_contract (ruling 002).
+
+Produce PER-BUCKET ``GET /api/events/search`` results for ``search_gold_eval.py``.
 
 This is the second producer. ``search_results_producer.py`` fetches
 ``/api/events/typeahead`` and is graded on TOP-1; this one fetches

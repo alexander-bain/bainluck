@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P148 (#2333) mutation battery for the market-page loose index scan.
+"""Extends first_card_client_contract (ruling 002).
+
+LAT-P148 (#2333) mutation battery for the market-page loose index scan.
 
 A green suite proves the code runs; it does not prove the code is PINNED. Every
 mutant below is a plausible later edit — and here that word is unusually

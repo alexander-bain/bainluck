@@ -1,4 +1,6 @@
-"""Produce ranked Search results for ``search_gold_eval.py`` to grade.
+"""Extends search_truth_closure_contract (ruling 002).
+
+Produce ranked Search results for ``search_gold_eval.py`` to grade.
 
 ``search_gold_eval.py`` is a *scorer*: it grades ``{probe_key: [ranked rows]}``
 that someone else fetched. Nothing in the repo fetched them, so no baseline had

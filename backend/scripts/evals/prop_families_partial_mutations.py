@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P145 mutation battery: a branch timeout must not erase the other branches.
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P145 mutation battery: a branch timeout must not erase the other branches.
 
 A guard suite that passes proves the code runs; it does not prove the code is
 PINNED. Each mutant below is a plausible way a later edit could put the defect

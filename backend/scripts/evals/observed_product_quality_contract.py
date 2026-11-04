@@ -1,4 +1,6 @@
-"""Replacement measurement contracts for staleness and interestingness."""
+"""Extends feed_card_trust_contract (ruling 002).
+
+Replacement measurement contracts for staleness and interestingness."""
 
 from __future__ import annotations
 

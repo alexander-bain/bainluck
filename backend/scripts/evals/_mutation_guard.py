@@ -1,4 +1,6 @@
-"""The shared restore guard for every on-disk mutation harness.
+"""Extends eval_registry_contract (ruling 002).
+
+The shared restore guard for every on-disk mutation harness.
 
 WHAT HAPPENED, because the fix is shaped by the specific way it failed
 

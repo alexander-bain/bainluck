@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P126 mutation battery for the `/playoffs/golf` schedule cache + warm.
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P126 mutation battery for the `/playoffs/golf` schedule cache + warm.
 
 A guard suite that passes proves the code runs; it does not prove the code is
 PINNED. Each mutant below is a plausible way a later edit could break this —

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P113 red-first battery — prove each guard fails against a broken fix.
+"""Extends first_card_client_contract (ruling 002).
+
+LAT-P113 red-first battery — prove each guard fails against a broken fix.
 
 Discipline inherited from this lane's prior cycles and applied literally:
 

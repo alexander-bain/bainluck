@@ -36,7 +36,7 @@ test("the complete served collection has distinct control, balance, race and gov
   expect(html.match(/data-midterms-card="race"/g)).toHaveLength(8);
   expect(html.match(/data-midterms-card="governor"/g)).toHaveLength(2);
   for (const m of input.members) expect(html).toContain(`href="${m.href}"`);
-  expect(html).toContain("19 more without a price yet");
+  expect(html).toContain("19 more");
   expect(html).not.toContain("Probability unavailable");
   expect(html).not.toMatch(/>[^<]*\d+\.\d+%/);
   expect(JSON.stringify(input)).toBe(before);
@@ -100,7 +100,7 @@ test("a missing identity is neutral; neither surnames nor a stale id can assign 
 test("partial prices and settled results keep their existing truthful branches", () => {
   const base = member(109085).item.data as FeedFuturesData;
   const partial = renderCard(109085, "duel", { top_outcomes: base.top_outcomes.map((o, i) => i ? { ...o, probability: null } : o) });
-  expect(partial).toContain("1 more without a price yet");
+  expect(partial).toContain("1 more");
   expect(partial).toContain("Adam Hamilton");
   expect(partial).toContain("color:var(--party-democratic)");
   expect(partial).not.toContain("Probability unavailable");

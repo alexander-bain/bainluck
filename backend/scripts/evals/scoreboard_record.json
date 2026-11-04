@@ -1,7 +1,7 @@
 {
   "schema_version": "eval-scoreboard-record/v1",
   "source_sha": "54470c89fdf9a4a00356160465af48e81d375bf0",
-  "recorded_at_pt": "2026-11-03 8:49 PM PT",
+  "recorded_at_pt": "2026-11-03 8:48:47 PM PT",
   "command": "python3 -m pytest tests/evals/ --junitxml=/tmp/codex-evals-baseline.xml -q",
   "suite": {
     "passed": 1285,
@@ -1167,6 +1167,587 @@
         }
       ],
       "last_result": null
+    },
+    "_mutation_guard": {
+      "case_sources": [
+        {
+          "path": "backend/tests/test_mutation_guard.py",
+          "kind": "test_functions",
+          "unit": "shared guard tests (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "browse_single_scan_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/browse_single_scan_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "build_search_gold_registry": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "cache_refresh_behind_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/cache_refresh_behind_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "cold_path_rejected_sample_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/cold_path_rejected_sample_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "duration_sample_window_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/duration_sample_window_mutations.py",
+          "kind": "ast_list",
+          "key": "ADHERENCE_MUTANTS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/duration_sample_window_mutations.py",
+          "kind": "ast_list",
+          "key": "REDIS_MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "event_hero_duel_percent_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+          "kind": "ast_list",
+          "key": "RESOLVER_MUTATIONS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+          "kind": "ast_list",
+          "key": "COMPONENT_MUTATIONS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+          "kind": "ast_list",
+          "key": "VIEW_MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "feed_personalization_roundtrip_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/feed_personalization_roundtrip_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "feed_prewarm_absent_shape_net_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/feed_prewarm_absent_shape_net_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_categories_census_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_categories_census_mutations.py",
+          "kind": "ast_list",
+          "key": "CENSUS_MUTATIONS",
+          "unit": "mutants"
+        },
+        {
+          "path": "backend/scripts/evals/futures_categories_census_mutations.py",
+          "kind": "ast_list",
+          "key": "SERVE_STALE_MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_categories_warm_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_categories_warm_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_detail_sources_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_detail_sources_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_movers_warm_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_movers_warm_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "futures_source_breakdown_loose_scan_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/futures_source_breakdown_loose_scan_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "game_markets_shared_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/game_markets_shared_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "golf_schedule_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/golf_schedule_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "ios_duel_percent_served_pair_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/ios_duel_percent_served_pair_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "kalshi_segment_resolved_link_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/kalshi_segment_resolved_link_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "latest_observation_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/latest_observation_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "league_context_grid_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/league_context_grid_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "league_rails_fence_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/league_rails_fence_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "market_born_duplicate_drain_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/market_born_duplicate_drain_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "offline_rerank_fidelity_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/offline_rerank_fidelity_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "outcome_evidence_class_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/outcome_evidence_class_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "polymarket_leg_label_drain_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/polymarket_leg_label_drain_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "prop_families_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/prop_families_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "prop_families_partial_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/prop_families_partial_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "related_futures_shared_cache_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/related_futures_shared_cache_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "scan_mutation_residue": {
+      "case_sources": [
+        {
+          "path": "backend/tests/test_mutation_guard.py",
+          "kind": "test_functions",
+          "unit": "shared guard tests (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_bucket_producer": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_offline_rerank": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_origin_channel_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_origin_channel_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_results_producer": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_gold_probes.json",
+          "selector": [
+            "probes"
+          ],
+          "unit": "shared gold probes (not independent cases)"
+        }
+      ],
+      "last_result": null
+    },
+    "search_scorer_wiring_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_scorer_wiring_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_stemmer_alias_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_stemmer_alias_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_suggestions_cold_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_suggestions_cold_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_suggestions_mirror_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_suggestions_mirror_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_suggestions_movers_pool_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_suggestions_movers_pool_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_tier_split_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_tier_split_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "search_word_test_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/search_word_test_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "season_market_discovery_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/season_market_discovery_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "tag_counts_group_by_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/tag_counts_group_by_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "tennis_population_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/tennis_population_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_concept_provenance_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_concept_provenance_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_fuzzy_index_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_fuzzy_index_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_outcome_arm_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_outcome_arm_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTANTS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "typeahead_warmer_mutations": {
+      "case_sources": [
+        {
+          "path": "backend/scripts/evals/typeahead_warmer_mutations.py",
+          "kind": "ast_list",
+          "key": "MUTATIONS",
+          "unit": "mutants"
+        }
+      ],
+      "last_result": null
+    },
+    "staged_calibration_convergence_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/staged_calibration_convergence_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_staged_calibration_convergence_contract.py"
+        ]
+      }
+    },
+    "observed_product_quality_contract": {
+      "case_sources": [
+        {
+          "path": "backend/tests/evals/fixtures/observed_product_quality_contract.json",
+          "selector": [
+            "cases"
+          ],
+          "unit": "fixture rows"
+        }
+      ],
+      "last_result": {
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0,
+        "test_files": [
+          "backend/tests/evals/test_observed_product_quality_contract.py"
+        ]
+      }
     }
   },
   "pre_ratification": [
@@ -1670,12 +2251,13 @@
     "needles": 602,
     "targets": 51,
     "scope": "all tracked files: 5,060,510 broad checks",
-    "recorded_at_pt": "2026-11-03 8:49 PM PT",
+    "recorded_at_pt": "2026-11-03 8:50:23 PM PT",
     "broad_checks": 5060510,
     "disk_free_batteries": 4,
     "command": "python3 scripts/evals/scan_mutation_residue.py --all-tracked",
     "short_replacements_excluded": 133,
     "preexisting_literals": 52,
-    "files_scanned": 10790
+    "files_scanned": 10790,
+    "source_sha": "54470c89fdf9a4a00356160465af48e81d375bf0"
   }
 }

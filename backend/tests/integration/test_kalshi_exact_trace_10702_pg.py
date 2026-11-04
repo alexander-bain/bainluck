@@ -220,6 +220,17 @@ async def test_existing_full_path_and_outer_rollback_marks(
         task, "SUBSCRIPTION_REFRESH_SECONDS", 2.5 if repeat_race else 0.4
     )
     monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", 0.02)
+    # The recovery's optional reads and its ACK settlement carry a 0.25 s
+    # production budget. On a slow runner the settlement timed out ("normal ACK
+    # settlement retained"), so the recovery sweep republished the price-free
+    # control as a third, `reconcile_only` frame (master CI 41786720907). This
+    # case counts frames, not budgets, so the budget is floored at 2 s here.
+    real_optional_db = LiveBlendRefresher._optional_db
+
+    async def roomy_optional_db(self, kind, budget_s, body, key=None, gate=None):
+        return await real_optional_db(self, kind, max(budget_s, 2.0), body, key, gate)
+
+    monkeypatch.setattr(LiveBlendRefresher, "_optional_db", roomy_optional_db)
     # d1a2bcb366: an unchanged routine refresh no longer recycles the run.
     # These sockets never acknowledge a subscription, so the first routine
     # refresh rebuilds them — ending the run where the old timer recycle did.

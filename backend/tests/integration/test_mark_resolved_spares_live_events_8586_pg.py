@@ -95,7 +95,9 @@ async def _event(session, *, status, commence):
     ).scalar()
 
 
-async def _market(session, *, ext, event_id, resolution_date=PAST_DATE):
+async def _market(
+    session, *, ext, event_id, resolution_date=PAST_DATE, source="kalshi"
+):
     """`market_metadata` is CAST: an untyped NULL into jsonb fails inference."""
     return (
         await session.execute(
@@ -104,7 +106,7 @@ async def _market(session, *, ext, event_id, resolution_date=PAST_DATE):
                     (name, source, category, mutually_exclusive, status,
                      external_id, event_id, resolution_date, market_metadata)
                 VALUES
-                    (:name, 'kalshi', 'game_prop', TRUE, 'open',
+                    (:name, :source, 'game_prop', TRUE, 'open',
                      :ext, :event_id, :rd, CAST(:metadata AS jsonb))
                 RETURNING id
                 """),
@@ -114,6 +116,7 @@ async def _market(session, *, ext, event_id, resolution_date=PAST_DATE):
                 "event_id": event_id,
                 "rd": resolution_date,
                 "metadata": None,
+                "source": source,
             },
         )
     ).scalar()
@@ -137,9 +140,12 @@ async def _run(session):
     return stats
 
 
-async def test_a_live_match_keeps_its_market_open(pg_session):
+@pytest.mark.parametrize("source", ["kalshi", "odds_api"])
+async def test_a_live_match_keeps_its_market_open(pg_session, source):
     live = await _event(pg_session, status="live", commence=PAST_DATE)
-    m = await _market(pg_session, ext="KXATPMATCH-26SEP25MEDROY", event_id=live)
+    m = await _market(
+        pg_session, ext="KXATPMATCH-26SEP25MEDROY", event_id=live, source=source
+    )
 
     await _run(pg_session)
 
@@ -149,20 +155,23 @@ async def test_a_live_match_keeps_its_market_open(pg_session):
     )
 
 
-async def test_an_unstarted_match_keeps_its_market_open(pg_session):
+@pytest.mark.parametrize("source", ["kalshi", "odds_api"])
+async def test_an_unstarted_match_keeps_its_market_open(pg_session, source):
     """Andreeva–Fernandez was resolved before it began (starts 10:30Z)."""
     ahead = await _event(
         pg_session, status="scheduled", commence=NOW + timedelta(hours=2, minutes=15)
     )
-    m = await _market(pg_session, ext="KXWTAMATCH-26SEP25ANDFER", event_id=ahead)
+    m = await _market(
+        pg_session, ext="KXWTAMATCH-26SEP25ANDFER", event_id=ahead, source=source
+    )
 
     await _run(pg_session)
 
     assert await _status(pg_session, m) == "open"
 
 
-async def test_the_controls_still_resolve(pg_session):
-    """The belt must not strand what the task exists to clean up (gotcha #33).
+async def test_kalshi_waits_for_venue_evidence_after_the_stored_date(pg_session):
+    """#11947: a passed date never supplies a Kalshi settlement.
 
     * a finished event — same market, event `completed`;
     * a stale `scheduled` event whose start has PASSED — differs from the
@@ -180,17 +189,40 @@ async def test_the_controls_still_resolve(pg_session):
 
     stats = await _run(pg_session)
 
-    assert await _status(pg_session, m_done) == "resolved"
-    assert await _status(pg_session, m_stale) == "resolved"
-    assert await _status(pg_session, m_free) == "resolved"
-    assert stats["marked_resolved"] == 3, stats
+    for market_id in (m_done, m_stale, m_free):
+        row = (
+            await pg_session.execute(
+                text(
+                    "SELECT status, settled_at, market_metadata "
+                    "FROM futures_markets WHERE id = :id"
+                ),
+                {"id": market_id},
+            )
+        ).one()
+        assert tuple(row) == ("open", None, None)
+    assert stats["marked_resolved"] == 0, stats
+    assert stats["marked_resolved_without_winner_proof"] == 0, stats
 
 
-async def test_the_date_screen_is_unchanged(pg_session):
+@pytest.mark.parametrize("source", ["odds_api", "polymarket"])
+async def test_other_sources_keep_the_existing_date_transition(pg_session, source):
+    market_id = await _market(
+        pg_session, ext="DATED-CONTROL", event_id=None, source=source
+    )
+
+    stats = await _run(pg_session)
+
+    assert await _status(pg_session, market_id) == "resolved"
+    assert stats["marked_resolved"] == 1, stats
+
+
+@pytest.mark.parametrize("source", ["kalshi", "odds_api"])
+async def test_the_date_screen_is_unchanged(pg_session, source):
     """A future date on a finished event stays open, as before."""
     done = await _event(pg_session, status="completed", commence=PAST_DATE)
     m = await _market(
-        pg_session, ext="KXATPMATCH-LATER", event_id=done, resolution_date=FUTURE_DATE
+        pg_session, ext="KXATPMATCH-LATER", event_id=done,
+        resolution_date=FUTURE_DATE, source=source,
     )
 
     await _run(pg_session)

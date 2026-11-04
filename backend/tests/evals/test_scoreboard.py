@@ -30,7 +30,7 @@ def test_cli_is_offline_and_fits_one_screen(monkeypatch):
     assert plain.stdout.rstrip() == scoreboard.render(board)
 
 
-def test_counts_and_pinned_results_come_from_their_files():
+def test_counts_and_pinned_results_come_from_their_files(tmp_path):
     board = scoreboard.build_scoreboard()
     baseline = json.loads((scoreboard.REPO / "backend/tests/fixtures/matching_golden_baseline.json").read_text())
     assert board["golden"] == {
@@ -54,6 +54,9 @@ def test_counts_and_pinned_results_come_from_their_files():
                 assert member["cases"] == sum(scoreboard._count(scoreboard.REPO, s) for s in member["case_sources"])
     record = json.loads((scoreboard.REPO / scoreboard.EVALS / "scoreboard_record.json").read_text())
     assert board["mutation_residue"] == record["mutation_residue"]
+    # event_hero_duel_percent_mutations grows its resolver table with +=.
+    (tmp_path / "cases.py").write_text("MUTANTS = [1, 2]\nMUTANTS += [3]\n")
+    assert scoreboard._count(tmp_path, {"path": "cases.py", "kind": "ast_list", "key": "MUTANTS"}) == 3
 
 
 def test_uncomfortable_results_print_without_becoming_a_gate(monkeypatch, capsys):
@@ -77,14 +80,25 @@ def test_new_and_legacy_names_are_counted_visibly(tmp_path):
     shutil.copytree(source / "backend/scripts/evals", tmp_path / "backend/scripts/evals")
     shutil.copytree(source / "backend/tests/evals", tmp_path / "backend/tests/evals")
     shutil.copytree(source / "backend/tests/fixtures", tmp_path / "backend/tests/fixtures")
+    shutil.copy2(source / "backend/tests/test_mutation_guard.py", tmp_path / "backend/tests/test_mutation_guard.py")
     evals = tmp_path / scoreboard.EVALS
     (evals / "unregistered_canary.py").write_text("# unregistered\n")
     (evals / "legacy_canary.py").write_text("# reviewed legacy\n")
     path = evals / "eval_registry.json"
     registry = json.loads(path.read_text())
+    # A second member reading exactly the same sample does not double the
+    # family's case count. This is the four Search adapters' real shape.
+    original = scoreboard.build_scoreboard()
+    canonical = registry["domains"][0]["canonical"]
+    registry["domains"][0]["members"].append({"name": "shared_corpus_canary", "relation": "extends", "target": canonical})
+    record_path = evals / "scoreboard_record.json"
+    record = json.loads(record_path.read_text())
+    record["artifacts"]["shared_corpus_canary"] = record["artifacts"][canonical]
+    record_path.write_text(json.dumps(record))
     registry.setdefault("legacy", []).append({"name": "legacy_canary", "reason": "test disposition"})
     path.write_text(json.dumps(registry))
     board = scoreboard.build_scoreboard(tmp_path)
+    assert board["families"][0]["cases"] == original["families"][0]["cases"]
     assert "unregistered_canary" in board["registry"]["unregistered_names"]
     assert "legacy_canary" in board["registry"]["legacy_names"]
     assert "legacy_canary" not in board["registry"]["unregistered_names"]

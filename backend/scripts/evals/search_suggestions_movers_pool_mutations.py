@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P151 (#2285) mutation battery for the search-suggestions movers pool.
+"""Extends search_truth_closure_contract (ruling 002).
+
+LAT-P151 (#2285) mutation battery for the search-suggestions movers pool.
 
 A green suite proves the code runs; it does not prove the code is PINNED. Every
 mutant below is a plausible later edit, and on this change most of them read as

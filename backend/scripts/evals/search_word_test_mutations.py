@@ -1,4 +1,6 @@
-"""LAT-P035/LAT-P037 — mutation harness for the futures word test and its gates.
+"""Extends search_truth_closure_contract (ruling 002).
+
+LAT-P035/LAT-P037 — mutation harness for the futures word test and its gates.
 
 LAT-P037 EXTENDED THIS, and the reason is the harness's own argument turned on
 itself. LAT-P035 shipped 13/13 killed and was reverted anyway (`e22576db`),
