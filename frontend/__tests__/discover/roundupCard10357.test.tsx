@@ -145,6 +145,32 @@ describe("#10357 round-up model", () => {
         },
         "duplicate_market",
       ],
+      [
+        "an event_id row with outcome_id",
+        {
+          ...base(),
+          rows: [
+            { event_id: 303, outcome_id: 1, label: "Heat at Bucks: Bucks", probability: 0.6 } as unknown as FeedRoundupContract["rows"][number],
+            { event_id: 304, label: "Suns at Lakers: Lakers", probability: 0.56 },
+            { event_id: 301, label: "Knicks at Celtics: Celtics", probability: 0.52 },
+            { event_id: 305, label: "Devils at Rangers: Rangers", probability: 0.51 },
+          ],
+        },
+        "bad_row",
+      ],
+      [
+        "the same field_band outcome twice",
+        {
+          ...base(),
+          rows: [
+            { market_id: 227, outcome_id: 22705, label: "Penn State", probability: 0.795 },
+            { market_id: 227, outcome_id: 22705, label: "Notre Dame", probability: 0.68 },
+            { market_id: 227, outcome_id: 22707, label: "Alabama", probability: 0.64 },
+            { market_id: 227, outcome_id: 22708, label: "Miami", probability: 0.6 },
+          ],
+        },
+        "duplicate_market",
+      ],
     ])("%s", (_name, contract, refusal) => {
       const res = buildRoundupCardModel("NFL division front-runners", contract as FeedRoundupContract | null, NOW_MS);
       expect(res.model).toBeNull();
@@ -188,6 +214,44 @@ describe("#10357 round-up model", () => {
       "Round-up SPORTS The closest games tonight 61 % Bucks at Celtics: Celtics 58 % Timberwolves at Nuggets: Nuggets 54 % Devils at Rangers: Devils 51 % Suns at Lakers: Lakers Bain Luck blend · the 4 closest of 7 games tonight",
     );
     expect(html).toMatch(/<a href="\/collections\/roundup-closest-games-tonight"[^>]*data-testid="roundup-card"/);
+  });
+
+  it("admits field_band rows ('College Football Playoff picture') sharing one spine market_id with distinct outcome_ids without normalizing to 100", () => {
+    const cfpContract: FeedRoundupContract = {
+      kicker: "Round-up",
+      tag: "NCAAF",
+      footer: "Chance to make the 12-team field · teams between 20% and 80%",
+      rows: [
+        { market_id: 227, outcome_id: 22705, label: "Penn State", probability: 0.795, observed_at: "2026-10-06T20:30:00Z" },
+        { market_id: 227, outcome_id: 22706, label: "Notre Dame", probability: 0.68, observed_at: "2026-10-06T20:30:00Z" },
+        { market_id: 227, outcome_id: 22707, label: "Alabama", probability: 0.64, observed_at: "2026-10-06T20:30:00Z" },
+        { market_id: 227, outcome_id: 22708, label: "Miami", probability: 0.60, observed_at: "2026-10-06T20:30:00Z" },
+      ],
+    };
+    const { model, refusal } = buildRoundupCardModel("College Football Playoff picture", cfpContract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.cadence).toBe("futures");
+    expect(model!.rows.map((r) => r.marketId)).toEqual([22705, 22706, 22707, 22708]);
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "80% Penn State",
+      "68% Notre Dame",
+      "64% Alabama",
+      "60% Miami",
+    ]);
+
+    const html = render(cfpContract, {
+      title: "College Football Playoff picture",
+      ref: {
+        slug: "roundup-cfp-picture",
+        name: "College Football Playoff picture",
+        revision: 382910412,
+        collection_count: 2,
+      },
+    });
+    expect(stripTags(html)).toBe(
+      "Round-up NCAAF College Football Playoff picture 80 % Penn State 68 % Notre Dame 64 % Alabama 60 % Miami Chance to make the 12-team field · teams between 20% and 80%",
+    );
+    expect(html).toMatch(/<a href="\/collections\/roundup-cfp-picture"[^>]*data-testid="roundup-card"/);
   });
 
   it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {

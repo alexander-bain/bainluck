@@ -2216,21 +2216,23 @@ export interface FeedBundleData {
 }
 
 // #10357 — a round-up card ("NFL division front-runners", "The closest games
-// tonight"). Every number is the server's Bain Luck blend; the client orders,
-// formats and ages, never computes. Each row keys on `market_id` (futures
-// round-up) or `event_id` (game round-up), never both.
+// tonight", "College Football Playoff picture"). Every number is the server's
+// served probability; the client orders, formats and ages, never computes. Each
+// row keys on `market_id` (optionally with `outcome_id` for a `field_band`
+// round-up whose rows are outcomes of one field market) or `event_id` (game
+// round-up), never both `market_id` and `event_id`.
 export type FeedRoundupRow = {
-  /** "NFC East: Cowboys" — the division or game, then its leader. */
+  /** "NFC East: Cowboys" — the division, game, or outcome label. */
   label: string;
-  /** The leader's blended probability, a fraction in [0, 1]. */
+  /** The row's probability, a fraction in [0, 1]. */
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
   rendered_percent?: number | null;
-  /** The OLDEST contributing price behind this row's blend. */
+  /** The OLDEST contributing price behind this row. */
   observed_at?: string | null;
 } & (
-  | { market_id: number; event_id?: never }
-  | { event_id: number; market_id?: never }
+  | { market_id: number; outcome_id?: number; event_id?: never }
+  | { event_id: number; market_id?: never; outcome_id?: never }
 );
 
 export interface FeedRoundupContract {

@@ -69,6 +69,8 @@ class RoundupMembers:
     rows: tuple[dict[str, Any], ...] = ()
     feed_item: Optional[dict[str, Any]] = None
     footer: Optional[str] = None
+    sections: tuple[dict[str, Any], ...] = ()
+    revision_ids: tuple[int, ...] = ()
 
     def __init__(
         self,
@@ -77,12 +79,18 @@ class RoundupMembers:
         *,
         feed_item: Optional[dict[str, Any]] = None,
         footer: Optional[str] = None,
+        sections: Sequence[dict[str, Any]] = (),
+        revision_ids: Sequence[int] = (),
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
         object.__setattr__(self, "feed_item", feed_item)
         object.__setattr__(
             self, "footer", str(footer) if footer is not None else None
+        )
+        object.__setattr__(self, "sections", tuple(sections))
+        object.__setattr__(
+            self, "revision_ids", tuple(int(rid) for rid in revision_ids)
         )
 
 
@@ -107,6 +115,7 @@ class RoundupProducer:
     section_title: str
     footer: str
     produce: Callable[[Any], Any]
+    section_titles: tuple[str, ...] = ()
     membership: str = "computed-produced"
     rule: Optional[dict[str, Any]] = None
     tag: Optional[str] = None
@@ -121,7 +130,7 @@ class RoundupProducer:
         name: str,
         kind: str = "roundup",
         category: str = "",
-        section_title: str = "",
+        section_title: str | Sequence[str] = "",
         footer: str = "",
         produce: Optional[Callable[[Any], Any]] = None,
         *,
@@ -135,11 +144,18 @@ class RoundupProducer:
     ) -> None:
         if produce is None:
             raise TypeError("RoundupProducer requires a 'produce' callable")
+        if isinstance(section_title, (list, tuple)):
+            titles_tuple = tuple(str(t) for t in section_title if str(t))
+            primary_title = titles_tuple[0] if titles_tuple else ""
+        else:
+            primary_title = str(section_title)
+            titles_tuple = (primary_title,) if primary_title else ()
         object.__setattr__(self, "slug", str(slug))
         object.__setattr__(self, "name", str(name))
         object.__setattr__(self, "kind", str(kind or "roundup"))
         object.__setattr__(self, "category", str(category))
-        object.__setattr__(self, "section_title", str(section_title))
+        object.__setattr__(self, "section_title", primary_title)
+        object.__setattr__(self, "section_titles", titles_tuple)
         object.__setattr__(self, "footer", str(footer))
         object.__setattr__(self, "produce", produce)
         object.__setattr__(
@@ -201,6 +217,20 @@ def _normalize_member_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_section_entry(
+    section: Mapping[str, Any], default_title: str
+) -> dict[str, Any]:
+    raw_sec_members = section.get("members") or ()
+    norm_members = [_normalize_member_entry(m) for m in raw_sec_members]
+    return {
+        "class": str(section.get("class") or "title"),
+        "title": str(section.get("title") or default_title),
+        "layout": str(section.get("layout") or "field"),
+        "count": len(norm_members),
+        "members": norm_members,
+    }
+
+
 def compose_roundup_container(
     producer: RoundupProducer,
     members: RoundupMembers | Sequence[Mapping[str, Any]],
@@ -213,15 +243,37 @@ def compose_roundup_container(
         return None
     normalized = [_normalize_member_entry(m) for m in raw_members]
     member_ids = [int(m["id"]) for m in normalized]
+    rev_ids = (
+        list(members.revision_ids)
+        if isinstance(members, RoundupMembers) and members.revision_ids
+        else member_ids
+    )
     subtitle = (
         members.footer
         if isinstance(members, RoundupMembers) and members.footer
         else producer.footer
     )
+    if isinstance(members, RoundupMembers) and members.sections:
+        sections = [
+            _normalize_section_entry(sec, producer.section_title)
+            for sec in members.sections
+        ]
+        total_members = sum(len(sec["members"]) for sec in sections)
+    else:
+        sections = [
+            {
+                "class": "title",
+                "title": producer.section_title,
+                "layout": "field",
+                "count": len(normalized),
+                "members": normalized,
+            }
+        ]
+        total_members = len(normalized)
     return {
         "state": "published",
         "slug": producer.slug,
-        "revision": roundup_revision(member_ids),
+        "revision": roundup_revision(rev_ids),
         "reason": None,
         "edition": None,
         "container": {
@@ -236,16 +288,8 @@ def compose_roundup_container(
             "parent_container_id": None,
         },
         "subtitle": subtitle,
-        "sections": [
-            {
-                "class": "title",
-                "title": producer.section_title,
-                "layout": "field",
-                "count": len(normalized),
-                "members": normalized,
-            }
-        ],
-        "member_count": len(normalized),
+        "sections": sections,
+        "member_count": total_members,
         "withheld": [],
         "withheld_count": 0,
         "children": [],
@@ -263,6 +307,7 @@ def compose_roundup_feed_item(
     rows = list(members.rows)
     normalized = [_normalize_member_entry(x) for x in members.members]
     member_ids = [int(m["id"]) for m in normalized]
+    rev_ids = list(members.revision_ids) if members.revision_ids else member_ids
     item_id = producer.story_key or f"roundup:{producer.slug.removeprefix('roundup-')}"
     footer = members.footer or producer.footer
     base_score = (
@@ -299,7 +344,7 @@ def compose_roundup_feed_item(
         "slug": producer.slug,
         "href": f"/collections/{producer.slug}",
         "name": producer.name,
-        "revision": roundup_revision(member_ids),
+        "revision": roundup_revision(rev_ids),
         "collection_count": len(member_ids),
     }
     if members.feed_item is not None:
@@ -767,6 +812,7 @@ def register_roundup_producer(producer: RoundupProducer) -> RoundupProducer:
 
 def _register_builtin_producers() -> None:
     import app.utils.discover_bundles as _bundles
+    import app.utils.field_band as _field_band
     import app.utils.window_events_closest as _window_closest
 
     producer = getattr(_bundles, "NFL_DIVISION_ROUNDUP_PRODUCER", None)
@@ -778,6 +824,10 @@ def _register_builtin_producers() -> None:
     )
     if closest_producer is not None:
         register_roundup_producer(closest_producer)
+
+    cfp_producer = getattr(_field_band, "CFP_PICTURE_PRODUCER", None)
+    if cfp_producer is not None:
+        register_roundup_producer(cfp_producer)
 
 
 _register_builtin_producers()
