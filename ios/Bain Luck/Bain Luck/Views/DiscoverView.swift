@@ -1005,7 +1005,9 @@ struct DiscoverView: View {
         // market, its rank and its swipe handling are untouched.
         let isGuessSlot = ReleaseSurfaces.insertsInlineGuessSlot(at: idx)
         Group {
-            switch gi {
+            // #10090: the card draws its admitted preview; the visibility hooks
+            // below keep reading the committed group.
+            switch previewed(gi) {
             case .group(let title, let items, let kind, let theme, let sharedQuestion, let collectionRef):
                 // #1773: group cards were the largest of three
                 // archetypes rendered with NO swipe wrapper at all
@@ -1272,6 +1274,19 @@ struct DiscoverView: View {
             if idx == Self.prefetchTriggerIndex(pageCount: pageGrouped.count, lookahead: 5) {
                 Task { await vm.loadMoreIfNeeded() }
             }
+        }
+    }
+
+    /// #10090 — `gi` as drawn: each card with its admitted venue move overlaid
+    /// (`DiscoverViewModel.previewed`). Never fed back into the presentation memo.
+    private func previewed(_ gi: DiscoverGroupedItem) -> DiscoverGroupedItem {
+        guard !vm.cardPreviews.isEmpty else { return gi }
+        switch gi {
+        case .single(let item):
+            return .single(vm.previewed(item))
+        case .group(let title, let items, let kind, let theme, let sharedQuestion, let collectionRef):
+            return .group(title: title, items: items.map { vm.previewed($0) }, kind: kind, theme: theme,
+                          sharedQuestion: sharedQuestion, collectionRef: collectionRef)
         }
     }
 

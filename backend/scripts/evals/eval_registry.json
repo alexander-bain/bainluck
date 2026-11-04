@@ -11,6 +11,11 @@
           "name": "eval_bite_rate_audit",
           "relation": "extends",
           "target": "eval_registry_contract"
+        },
+        {
+          "name": "scoreboard",
+          "relation": "extends",
+          "target": "eval_registry_contract"
         }
       ]
     },
