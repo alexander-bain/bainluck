@@ -73,8 +73,14 @@ def consumer_rig(monkeypatch):
               feed=feed, bound=bound, values=values)
 
 
+# Every wait in this file is for something that SHOULD happen (an entry, an
+# attempt, a send, a frame); none asserts an absence. 0.5 s was 3x the 0.18 s
+# these cases take, and master CI 41790061135 (shard 8) still timed out
+# [unknown-stamp] at the first publish. 5 s only adds room on a loaded runner.
+LIVENESS_S = 5.0
+
 async def until(predicate):
-    async with asyncio.timeout(.5):
+    async with asyncio.timeout(LIVENESS_S):
         while not predicate():
             await asyncio.sleep(.001)
 
@@ -90,7 +96,7 @@ async def warm(rig):
 async def start_unrelated(rig):
     rig.ns['price_buffer'][900] = .7
     task = asyncio.create_task(rig.ns['flush_prices'](time.monotonic()))
-    await asyncio.wait_for(rig.entered.wait(), .5)
+    await asyncio.wait_for(rig.entered.wait(), LIVENESS_S)
     return task
 
 
@@ -130,7 +136,7 @@ async def test_capacity_retry_keeps_frozen_input_and_does_not_need_a_new_tick(mo
             return result
 
         rig.r.preview_accepted_observations = observe
-        await asyncio.wait_for(attempted.wait(), .5)
+        await asyncio.wait_for(attempted.wait(), LIVENESS_S)
         assert rig.boundary.observation_pending == frozen
         assert not _blends(rig.frames)
         rig.bound[0] += 10
@@ -166,7 +172,7 @@ async def test_send_time_recheck_refuses_related_work(monkeypatch, transition):
     rig.r._publish_previews = publish
     try:
         await rig.feed()
-        await asyncio.wait_for(checkout.wait(), .5)
+        await asyncio.wait_for(checkout.wait(), LIVENESS_S)
         if transition in ('changed', 'a-b-a'):
             await rig.feed({101: .8})
             if transition == 'a-b-a':
@@ -182,7 +188,7 @@ async def test_send_time_recheck_refuses_related_work(monkeypatch, transition):
             owner.task = NS(done=lambda: False)
             owner.events = {1} if transition == 'stamp' else None
         send.set()
-        await asyncio.wait_for(sent.wait(), .5)
+        await asyncio.wait_for(sent.wait(), LIVENESS_S)
         assert not _blends(rig.frames)
     finally:
         owner = rig.boundary.stamp_owner(rig.r)
@@ -209,7 +215,7 @@ async def test_cancel_joins_observation_and_restores_frozen_work(monkeypatch):
     task = await start_unrelated(rig)
     await rig.feed()
     frozen = dict(rig.boundary.observation_pending)
-    await asyncio.wait_for(entered.wait(), .5)
+    await asyncio.wait_for(entered.wait(), LIVENESS_S)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -253,7 +259,7 @@ async def test_false_retry_never_overwrites_newer_arrival(monkeypatch):
     rig.r.preview_accepted_observations = unavailable
     try:
         await rig.feed()
-        await asyncio.wait_for(entered.wait(), .5)
+        await asyncio.wait_for(entered.wait(), LIVENESS_S)
         old = dict(rig.ns['input_marks'])
         rig.bound[0] += .1
         await rig.feed()
