@@ -594,6 +594,9 @@ class _KalshiPriceOwner:
         self.beside_written: set[int] = set()
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
+        # #11929: the run's chart-point writer (`utils/stream_history_points`),
+        # installed by the consumer; None writes no history point.
+        self.stream_history = None
         # #10090: the run's one blend refresh. It may outlive the flush that
         # started it, so the next flush's committed cohort joins it
         # (`admit_fresh`) instead of that flush waiting for it to return. With
@@ -1532,6 +1535,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         "kalshi", lambda: blend_refresher._client(),
         refused=lambda market_id: market_id in prices.settled_market_ids,
     )
+    # #11929: chart history points from the committed flush (never from the
+    # preview above). Off unless `STREAM_HISTORY_POINTS` names this venue; the
+    # run's settled markets are refused, as the preview refuses them.
+    from app.utils.stream_history_points import StreamHistoryPoints
+
+    stream_history = prices.stream_history = StreamHistoryPoints(
+        "kalshi", refused_market=lambda market_id: market_id in prices.settled_market_ids,
+    )
+    blend_refresher.stream_history = stream_history
     # #10090: when this arm is the named preview source, claim its display
     # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
     if getattr(blend_refresher, "preview", False):
@@ -2406,6 +2418,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090 the preview graph cache: the rows the UPDATE returned,
                 # handed to the refresher only once this phase has committed.
                 returned_rows: list = []
+                # #11929: this phase's chart points, written in its transaction.
+                history_plan = None
                 written_observations: dict = {}
                 primary_observations: dict = {}
                 phase_clock = None
@@ -2642,6 +2656,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                         rerank_market_fields_stmt(sorted(reranked_markets))
                                     )
                                 ).rowcount
+                        # #11929 — bounded chart history from the committed
+                        # write: the rows this UPDATE returned, at the values
+                        # it wrote, one INSERT in this same transaction. Never
+                        # from a preview; memory advances only after COMMIT.
+                        history = getattr(prices, "stream_history", None)
+                        if getattr(history, "enabled", False) is True and returned_rows:
+                            history_plan = history.plan(returned_rows, phase)
+                            await history.write(session, history_plan)
                     if not flush_counted and beside is None:
                         stats["flushes"] += 1
                         flush_counted = True
@@ -2769,6 +2791,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         continue
                     return False
 
+                # #11929: the phase's transaction committed; its chart points
+                # are stored, so their legs' memory advances now.
+                if history_plan is not None:
+                    prices.stream_history.committed(history_plan)
                 if skipped_phase:
                     # #10090: counted, never logged per flush. Still buffered
                     # and unfinished; no cooldown, so the next flush retries it
@@ -3423,6 +3449,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 preview = getattr(blend_refresher, "market_preview", None)
                 if preview is not None:
                     preview.refuse_outcome(outcome_id)
+                # #11929: nor does it take another chart point (reached
+                # through the refresher, as the preview is).
+                history = getattr(blend_refresher, "stream_history", None)
+                if history is not None:
+                    history.refuse_outcome(outcome_id)
                 # #10090: and no held quote outlives it (no phase will carry
                 # this leg again to release it). The grade advanced
                 # `last_updated`, so the overlay already refuses it meanwhile.
@@ -3899,7 +3930,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
                 "resnapshots=%d quote_priority=%d probe_refused=%d "
-                "bundled_refused=%d parked=%d skipped_locked=%d | %s",
+                "bundled_refused=%d parked=%d history_points=%d "
+                "history_capped=%d history_skipped=%d history_refused=%d "
+                "history_errors=%d skipped_locked=%d | %s",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -3924,6 +3957,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # then the refused pairs parked until an input changes.
                 blend.get("bundled_refused", 0),
                 len(getattr(blend_refresher, "_book_refused", ())),
+                # #11929: chart points the flush wrote; due legs the per-market
+                # cap held for a later minute; ticks not due (under a point,
+                # inside 5 min); settled/graded refusals; failed inserts.
+                # Cumulative for the run, like `updates`.
+                stream_history.stats["history_points"],
+                stream_history.stats["history_capped"],
+                stream_history.stats["history_skipped"],
+                stream_history.stats["history_refused"],
+                stream_history.stats["history_errors"],
                 # #10090: price rows a row lock elsewhere held back (with their
                 # unit) while the rest of their phase committed.
                 stats.get("price_rows_skipped_locked", 0),
