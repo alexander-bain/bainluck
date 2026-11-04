@@ -312,6 +312,58 @@ describe("#10357 round-up model", () => {
     expect(html).toMatch(/<a href="\/collections\/by-december-31"[^>]*data-testid="roundup-card"/);
   });
 
+  it("admits sibling_family cards ('Will it snow by November 15?' and 'Will they be featured on GTA VI: The Album?') with the two-part count_line ('Showing X of Y … · No number yet: …')", () => {
+    const snowContract: FeedRoundupContract = {
+      kicker: "SNOW · NOV 15",
+      tag: null,
+      count_line: "Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh",
+      footer: "Each city is its own market. They don't add up to 100%.",
+      rows: [
+        { market_id: 60087431, label: "Indianapolis", probability: 0.485, rendered_percent: 49, observed_at: FRESH },
+        { market_id: 60087427, label: "Buffalo", probability: 0.45, rendered_percent: 45, observed_at: FRESH },
+        { market_id: 60087426, label: "Boston", probability: 0.38, rendered_percent: 38, observed_at: FRESH },
+        { market_id: 60087435, label: "Salt Lake City", probability: 0.34, rendered_percent: 34, observed_at: FRESH },
+        { market_id: 60084869, label: "Kansas City", probability: 0.255, rendered_percent: 26, observed_at: FRESH },
+      ],
+    };
+    const { model, refusal } = buildRoundupCardModel("Will it snow by November 15?", snowContract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.kicker).toBe("SNOW · NOV 15");
+    expect(model!.tag).toBeNull();
+    expect(model!.countLine).toBe("Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh");
+    expect(model!.countLine!.split(" · ")).toEqual([
+      "Showing 5 of 10 cities",
+      "No number yet: Detroit, Minneapolis, Pittsburgh",
+    ]);
+    expect(model!.footer).toBe("Each city is its own market. They don't add up to 100%.");
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "49% Indianapolis",
+      "45% Buffalo",
+      "38% Boston",
+      "34% Salt Lake City",
+      "26% Kansas City",
+    ]);
+
+    const html = render(snowContract, {
+      title: "Will it snow by November 15?",
+      ref: {
+        slug: "snow-first-flakes-2026",
+        name: "Will it snow by November 15?",
+        revision: 71829301,
+        collection_count: 27,
+      },
+    });
+    const plain = stripTags(html).replace(/&#x27;/g, "'");
+    expect(plain).toBe(
+      "SNOW · NOV 15 Will it snow by November 15? 49 % Indianapolis 45 % Buffalo 38 % Boston 34 % Salt Lake City 26 % Kansas City Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh Each city is its own market. They don't add up to 100%.",
+    );
+    expect(plain).not.toMatch(/\b(kalshi|polymarket|sportsbooks?|blend|question|questions)\b/i);
+    expect(html).toContain(
+      'data-testid="roundup-count-line">Showing 5 of 10 cities · No number yet: Detroit, Minneapolis, Pittsburgh</div>',
+    );
+    expect(html).toMatch(/<a href="\/collections\/snow-first-flakes-2026"[^>]*data-testid="roundup-card"/);
+  });
+
   it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {
     const twoHoursOld = "2026-10-06T19:41:00Z";
     const eventContract: FeedRoundupContract = {

@@ -70,6 +70,8 @@ class RoundupMembers:
     feed_item: Optional[dict[str, Any]] = None
     footer: Optional[str] = None
     count_line: Optional[str] = None
+    title: Optional[str] = None
+    kicker: Optional[str] = None
     sections: tuple[dict[str, Any], ...] = ()
     revision_ids: tuple[int, ...] = ()
 
@@ -81,6 +83,8 @@ class RoundupMembers:
         feed_item: Optional[dict[str, Any]] = None,
         footer: Optional[str] = None,
         count_line: Optional[str] = None,
+        title: Optional[str] = None,
+        kicker: Optional[str] = None,
         sections: Sequence[dict[str, Any]] = (),
         revision_ids: Sequence[int] = (),
     ) -> None:
@@ -92,6 +96,12 @@ class RoundupMembers:
         )
         object.__setattr__(
             self, "count_line", str(count_line) if count_line is not None else None
+        )
+        object.__setattr__(
+            self, "title", str(title) if title is not None else None
+        )
+        object.__setattr__(
+            self, "kicker", str(kicker) if kicker is not None else None
         )
         object.__setattr__(self, "sections", tuple(sections))
         object.__setattr__(
@@ -258,6 +268,11 @@ def compose_roundup_container(
         if isinstance(members, RoundupMembers) and members.footer
         else producer.footer
     )
+    container_name = (
+        members.title
+        if isinstance(members, RoundupMembers) and members.title
+        else producer.name
+    )
     if isinstance(members, RoundupMembers) and members.sections:
         sections = [
             _normalize_section_entry(sec, producer.section_title)
@@ -284,7 +299,7 @@ def compose_roundup_container(
         "container": {
             "id": roundup_container_id(producer.slug),
             "slug": producer.slug,
-            "name": producer.name,
+            "name": container_name,
             "kind": producer.kind,
             "category": producer.category,
             "status": "open",
@@ -315,6 +330,8 @@ def compose_roundup_feed_item(
     rev_ids = list(members.revision_ids) if members.revision_ids else member_ids
     item_id = producer.story_key or f"roundup:{producer.slug.removeprefix('roundup-')}"
     footer = members.footer or producer.footer
+    effective_title = members.title or producer.name
+    effective_kicker = members.kicker or producer.kicker
     base_score = (
         float(members.feed_item.get("score", producer.score) or 0.0)
         if isinstance(members.feed_item, Mapping)
@@ -330,7 +347,7 @@ def compose_roundup_feed_item(
                     if idx < len(rows) and isinstance(rows[idx], Mapping)
                     else None
                 )
-                or producer.name
+                or effective_title
             ),
             "headline": str(
                 (
@@ -338,7 +355,7 @@ def compose_roundup_feed_item(
                     if idx < len(rows) and isinstance(rows[idx], Mapping)
                     else None
                 )
-                or producer.name
+                or effective_title
             ),
             "data": dict(m["card"]),
         }
@@ -348,7 +365,7 @@ def compose_roundup_feed_item(
     collection_ref = {
         "slug": producer.slug,
         "href": f"/collections/{producer.slug}",
-        "name": producer.name,
+        "name": effective_title,
         "revision": roundup_revision(rev_ids),
         "collection_count": len(member_ids),
     }
@@ -362,7 +379,7 @@ def compose_roundup_feed_item(
         producer.tag if producer.tag is not None else producer.category.upper()
     ) or None
     roundup_contract: dict[str, Any] = {
-        "kicker": producer.kicker,
+        "kicker": effective_kicker,
         "tag": tag_value,
         "footer": footer,
         "rows": rows,
@@ -372,12 +389,12 @@ def compose_roundup_feed_item(
     return {
         "type": "bundle",
         "score": base_score,
-        "reason": producer.name,
-        "headline": producer.name,
+        "reason": effective_title,
+        "headline": effective_title,
         "context_summary": None,
         "data": {
             "id": item_id,
-            "title": producer.name,
+            "title": effective_title,
             "kind": producer.kind,
             "story_key": item_id,
             "shared_question": None,
@@ -825,6 +842,7 @@ def _register_builtin_producers() -> None:
     import app.utils.discover_bundles as _bundles
     import app.utils.field_band as _field_band
     import app.utils.same_deadline_board as _same_deadline
+    import app.utils.sibling_family as _sibling_family
     import app.utils.window_events_closest as _window_closest
 
     producer = getattr(_bundles, "NFL_DIVISION_ROUNDUP_PRODUCER", None)
@@ -848,6 +866,18 @@ def _register_builtin_producers() -> None:
     dec31_producer = getattr(_same_deadline, "BY_DECEMBER_31_PRODUCER", None)
     if dec31_producer is not None:
         register_roundup_producer(dec31_producer)
+
+    gta_producer = getattr(
+        _sibling_family, "GTA_VI_ALBUM_FEATURES_PRODUCER", None
+    )
+    if gta_producer is not None:
+        register_roundup_producer(gta_producer)
+
+    snow_producer = getattr(
+        _sibling_family, "SNOW_FIRST_FLAKES_2026_PRODUCER", None
+    )
+    if snow_producer is not None:
+        register_roundup_producer(snow_producer)
 
 
 _register_builtin_producers()
