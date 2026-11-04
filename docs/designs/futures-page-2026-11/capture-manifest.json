@@ -1,0 +1,152 @@
+{
+  "deployment": "https://bainluck-1no21ut75-alexander-bain.vercel.app",
+  "commit": "d32237d61f",
+  "capturedAt": "2026-11-04T03:28:53.650Z",
+  "consoleErrors": [],
+  "screenshots": [
+    {
+      "case": "duel",
+      "path": "109085",
+      "chart": true,
+      "scroll": 390,
+      "title": "Kansas Senate winner",
+      "width": 390,
+      "file": "duel-390.jpg"
+    },
+    {
+      "case": "field",
+      "path": "108629",
+      "chart": true,
+      "scroll": 390,
+      "title": "Closest Governor race in 2026",
+      "width": 390,
+      "file": "field-390.jpg"
+    },
+    {
+      "case": "quantity",
+      "path": "65536371",
+      "chart": false,
+      "scroll": 390,
+      "title": "Snow in Denver in Dec 2026",
+      "width": 390,
+      "file": "quantity-390.jpg"
+    },
+    {
+      "case": "participation",
+      "path": "227",
+      "chart": true,
+      "scroll": 390,
+      "title": "College Football Playoff Qualifiers",
+      "width": 390,
+      "file": "participation-390.jpg"
+    },
+    {
+      "case": "one-leg",
+      "path": "109918",
+      "chart": true,
+      "scroll": 390,
+      "title": "Will Democrats sweep all swing state Governor races",
+      "width": 390,
+      "file": "one-leg-390.jpg"
+    },
+    {
+      "case": "settled-today",
+      "path": "108645",
+      "chart": true,
+      "scroll": 390,
+      "title": "Georgia Governor winner",
+      "width": 390,
+      "file": "settled-today-390.jpg"
+    },
+    {
+      "case": "one-leg-open",
+      "path": "109918?state=open",
+      "chart": true,
+      "scroll": 390,
+      "title": "Will Democrats sweep all swing state Governor races",
+      "width": 390,
+      "file": "one-leg-open-390.jpg"
+    },
+    {
+      "case": "one-leg-settled",
+      "path": "109918?state=settled",
+      "chart": true,
+      "scroll": 390,
+      "title": "Will Democrats sweep all swing state Governor races",
+      "width": 390,
+      "file": "one-leg-settled-390.jpg"
+    },
+    {
+      "case": "duel",
+      "path": "109085",
+      "chart": true,
+      "scroll": 1280,
+      "title": "Kansas Senate winner",
+      "width": 1280,
+      "file": "duel-1280.jpg"
+    },
+    {
+      "case": "field",
+      "path": "108629",
+      "chart": true,
+      "scroll": 1280,
+      "title": "Closest Governor race in 2026",
+      "width": 1280,
+      "file": "field-1280.jpg"
+    },
+    {
+      "case": "quantity",
+      "path": "65536371",
+      "chart": false,
+      "scroll": 1280,
+      "title": "Snow in Denver in Dec 2026",
+      "width": 1280,
+      "file": "quantity-1280.jpg"
+    },
+    {
+      "case": "participation",
+      "path": "227",
+      "chart": true,
+      "scroll": 1280,
+      "title": "College Football Playoff Qualifiers",
+      "width": 1280,
+      "file": "participation-1280.jpg"
+    },
+    {
+      "case": "one-leg",
+      "path": "109918",
+      "chart": true,
+      "scroll": 1280,
+      "title": "Will Democrats sweep all swing state Governor races",
+      "width": 1280,
+      "file": "one-leg-1280.jpg"
+    },
+    {
+      "case": "settled-today",
+      "path": "108645",
+      "chart": true,
+      "scroll": 1280,
+      "title": "Georgia Governor winner",
+      "width": 1280,
+      "file": "settled-today-1280.jpg"
+    },
+    {
+      "case": "one-leg-open",
+      "path": "109918?state=open",
+      "chart": true,
+      "scroll": 1280,
+      "title": "Will Democrats sweep all swing state Governor races",
+      "width": 1280,
+      "file": "one-leg-open-1280.jpg"
+    },
+    {
+      "case": "one-leg-settled",
+      "path": "109918?state=settled",
+      "chart": true,
+      "scroll": 1280,
+      "title": "Will Democrats sweep all swing state Governor races",
+      "width": 1280,
+      "file": "one-leg-settled-1280.jpg"
+    }
+  ]
+}
