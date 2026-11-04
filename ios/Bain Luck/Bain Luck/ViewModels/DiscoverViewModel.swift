@@ -219,7 +219,11 @@ nonisolated enum DiscoverOpeningEditionOption {
 
 final class DiscoverViewModel: ObservableObject {
     @Published private(set) var items: [FeedItem] = [] {
-        didSet { itemsVersion &+= 1 }
+        didSet {
+            itemsVersion &+= 1
+            // #10090: an adopted revision is the preview reader's membership.
+            if !eventPreviewViews.isEmpty { adoptPreviewMemberships() }
+        }
     }
 
     /// Monotonic version bumped on every `items` reassignment (L2-202 / C42 P2).
@@ -481,6 +485,20 @@ final class DiscoverViewModel: ObservableObject {
     private var marketPriceIDs: [Int] = []
     private var eventPriceStreams: [Int: LiveStreamController] = [:]
 
+    /// #10090 — what a card in view shows of its venue's move at arrival: the
+    /// streamed game cards' shown blend previews and the held markets' admitted
+    /// legs. Never part of `items` (the committed store, which the price book,
+    /// adoption and the feed cache read): the view lays it over the card it
+    /// draws (`previewed(_:)`). Empty when the server sends no preview.
+    @Published private(set) var cardPreviews = DiscoverCardPreviews()
+    /// #10090 — one v3 reader per streamed game card (`DiscoverEventPreview`).
+    private var eventPreviewViews: [Int: DiscoverEventPreview] = [:]
+    /// #10090 — the held markets' preview states (`DiscoverMarketPreview`).
+    private var marketPreviewStates: [Int: DiscoverMarketPreviewState] = [:]
+    /// Monotonic, like the event page's `previewNow`; injectable for tests.
+    private let previewNow: () -> TimeInterval
+    private var previewExpiry: Task<Void, Never>?
+
 
     /// First useful deck: request the 20 cards initially displayed by Discover.
     /// Ranking still happens on the server; the existing cursor and short-page
@@ -525,6 +543,9 @@ final class DiscoverViewModel: ObservableObject {
             priceRequestPending = false
             marketPriceStreams.forEach { $0.stop() }; marketPriceStreams = []; marketPriceIDs = []
             eventPriceStreams.values.forEach { $0.stop() }; eventPriceStreams = [:]
+            // #10090: no socket vouches for any preview now.
+            eventPreviewViews = [:]; marketPreviewStates = [:]
+            publishPreviews()
             return
         }
         guard priceClient != nil else { return }
@@ -558,9 +579,14 @@ final class DiscoverViewModel: ObservableObject {
         if markets != marketPriceIDs {
             marketPriceStreams.forEach { $0.stop() }; marketPriceStreams = []
             marketPriceIDs = markets
+            // #10090: a market out of view drops its preview with its stream.
+            let held = Set(markets)
+            dropMarketPreviews(marketPreviewStates.keys.filter { !held.contains($0) })
             for start in stride(from: 0, to: markets.count, by: 50) {
                 let subscription = MarketStreamSubscription(makeHandle: makePriceMarketHandle,
-                    onInvalidate: { [weak self] _ in self?.requestPriceRefresh() })
+                    onInvalidate: { [weak self] _ in self?.requestPriceRefresh() },
+                    onPreview: { [weak self] frame in self?.receiveMarketPreview(frame) },
+                    onPreviewReset: { [weak self] ids in self?.dropMarketPreviews(ids) })
                 marketPriceStreams.append(subscription)
                 subscription.start(ids: Array(markets[start..<min(start + 50, markets.count)]))
             }
@@ -572,25 +598,139 @@ final class DiscoverViewModel: ObservableObject {
         for id in Array(eventPriceStreams.keys) where !events.contains(id) {
             eventPriceStreams.removeValue(forKey: id)?.stop()
         }
-        for id in events where eventPriceStreams[id] == nil || eventPriceStreams[id]?.state.stopped == true {
-            eventPriceStreams[id]?.stop()
-            let factory = makePriceEventHandle
-            let stream = LiveStreamController(open: {
-                if let factory { return try factory(id) }
-                let transport = try LiveEventStreamTransport(eventId: id)
-                transport.connect()
-                return transport
-            }, now: { Date().timeIntervalSince1970 }, onFrame: { [weak self] _ in
-                self?.requestPriceRefresh()
-            }, onDeliveringChange: { [weak self] _ in
-                self?.requestPriceRefresh()
-            })
-            eventPriceStreams[id] = stream
-            stream.start()
+        // #10090: a card out of view drops its reader, and its preview, with its stream.
+        for id in Array(eventPreviewViews.keys) where !events.contains(id) {
+            eventPreviewViews.removeValue(forKey: id)
         }
+        for id in events where eventPriceStreams[id] == nil || eventPriceStreams[id]?.state.stopped == true {
+            openEventPriceStream(id)
+        }
+        publishPreviews()
         // New visible cards reconcile from REST too; opening a socket does not
         // claim that the stale feed-cache body was a current quote.
         requestPriceRefresh()
+    }
+
+    /// One visible game card's stream. #10090: it opts into authority-v3, the
+    /// only protocol the preview producer reaches, and wires the card's reader
+    /// exactly as the event page wires its own (`DiscoverEventPreview`). The
+    /// card's revision is adopted as membership first, so the v3 open that
+    /// follows is admitted.
+    @MainActor
+    private func openEventPriceStream(_ id: Int) {
+        eventPriceStreams.removeValue(forKey: id)?.stop()
+        var view = eventPreviewViews[id] ?? DiscoverEventPreview()
+        _ = view.adoptMembership(of: previewCard(id))
+        eventPreviewViews[id] = view
+        let factory = makePriceEventHandle
+        let stream = LiveStreamController(open: {
+            if let factory { return try factory(id) }
+            let transport = try LiveEventStreamTransport(eventId: id, authorityPreviews: true)
+            transport.connect()
+            return transport
+        }, now: { Date().timeIntervalSince1970 }, onFrame: { [weak self] frame in
+            self?.requestPriceRefresh()
+            self?.updateEventPreview(id) { view, card, now in view.frame(frame, eventId: id, card: card, now: now) }
+        }, onDeliveringChange: { [weak self] delivering in
+            self?.requestPriceRefresh()
+            if !delivering { self?.updateEventPreview(id) { view, _, _ in view.handover = nil } }
+        }, onReconcile: { [weak self] control in
+            self?.updateEventPreview(id) { view, _, _ in view.reconcile(control, eventId: id) }
+        }, onPreviewFloor: { [weak self] raw in
+            self?.updateEventPreview(id) { view, card, now in view.floorControl(raw, eventId: id, card: card, now: now) }
+        }, onPreviewInvalidate: { [weak self] in
+            self?.updateEventPreview(id) { view, _, _ in view.invalidate() }
+        }, onPreviewOpenV3: { [weak self] raw in
+            self?.updateEventPreview(id) { view, _, _ in view.open(raw, eventId: id) }
+        }, onPreviewV3: { [weak self] raw, receivedAt in
+            // The wait between assembly and this handler comes out of its lifetime.
+            let waited = receivedAt.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0
+            self?.updateEventPreview(id) { view, _, now in view.preview(raw, eventId: id, now: now - waited) }
+        }, onPreviewReset: { [weak self] in
+            self?.updateEventPreview(id) { view, _, _ in view.reset() }
+        })
+        eventPriceStreams[id] = stream
+        stream.start()
+    }
+
+    // MARK: - #10090 card previews
+
+    /// `item` as the screen draws it: its admitted preview overlaid, or `item`
+    /// itself. Never written back into `items`.
+    @MainActor
+    func previewed(_ item: FeedItem) -> FeedItem { cardPreviews.overlay(item) }
+
+    @MainActor
+    private func previewCard(_ id: Int) -> FeedEventData? {
+        DiscoverPriceRefresh.leaves(items).lazy.compactMap(\.event).first { $0.id == id }
+    }
+
+    /// Apply `change` to a streamed card's reader; publish only what is shown.
+    @MainActor
+    private func updateEventPreview(_ id: Int,
+                                    _ change: (inout DiscoverEventPreview, FeedEventData?, TimeInterval) -> Void) {
+        guard var view = eventPreviewViews[id] else { return }
+        change(&view, previewCard(id), previewNow())
+        eventPreviewViews[id] = view
+        publishPreviews()
+    }
+
+    /// Every streamed card re-adopts its revision; a changed membership closes
+    /// and reopens that card's stream, as on the event page.
+    @MainActor
+    private func adoptPreviewMemberships() {
+        var reopen: [Int] = []
+        for (id, var view) in eventPreviewViews {
+            if view.adoptMembership(of: previewCard(id)) { reopen.append(id) }
+            eventPreviewViews[id] = view
+        }
+        for id in reopen where eventPriceStreams[id] != nil { openEventPriceStream(id) }
+        publishPreviews()
+    }
+
+    @MainActor
+    private func receiveMarketPreview(_ frame: DiscoverMarketPreviewFrame) {
+        guard marketPriceIDs.contains(frame.marketId) else { return }
+        let next = DiscoverMarketPreview.apply(marketPreviewStates, frame, receivedAt: previewNow())
+        guard next != marketPreviewStates else { return }
+        marketPreviewStates = next
+        publishPreviews()
+    }
+
+    @MainActor
+    private func dropMarketPreviews(_ ids: [Int]) {
+        let next = DiscoverMarketPreview.drop(marketPreviewStates, ids)
+        guard next != marketPreviewStates else { return }
+        marketPreviewStates = next
+        publishPreviews()
+    }
+
+    /// Publishes the shown previews when they change, and re-renders once when
+    /// the next one's lifetime ends, so an expired provisional value gives way
+    /// to the committed one without a frame.
+    @MainActor
+    private func publishPreviews() {
+        var shown = DiscoverCardPreviews(events: eventPreviewViews.compactMapValues(\.shown),
+                                         markets: marketPreviewStates, now: cardPreviews.now)
+        guard shown.events != cardPreviews.events || shown.markets != cardPreviews.markets else { return }
+        shown.now = previewNow()
+        cardPreviews = shown
+        schedulePreviewExpiry()
+    }
+
+    @MainActor
+    private func schedulePreviewExpiry() {
+        previewExpiry?.cancel()
+        previewExpiry = nil
+        guard let due = cardPreviews.nextExpiry else { return }
+        // Capped at a minute: the producer's ttl ceiling.
+        let wait = min(max(0, due - previewNow()), 60)
+        previewExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 1_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.cardPreviews.now = self.previewNow()
+            self.schedulePreviewExpiry()
+        }
     }
 
     @MainActor
@@ -671,6 +811,7 @@ final class DiscoverViewModel: ObservableObject {
         priceClient: DiscoverPriceCardsProviding? = nil,
         makePriceMarketHandle: MarketStreamSubscription.Factory? = nil,
         makePriceEventHandle: (@MainActor (Int) throws -> LiveStreamHandle)? = nil,
+        previewNow: (() -> TimeInterval)? = nil,
         lastGood: DiscoverLastGoodReading? = APIClient.shared,
         telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)? = { AnalyticsService.trackDiscoverFeedCache($0) },
         retryBudget: TimeInterval = 6,
@@ -682,6 +823,7 @@ final class DiscoverViewModel: ObservableObject {
         self.priceClient = priceClient ?? (client as? DiscoverPriceCardsProviding)
         self.makePriceMarketHandle = makePriceMarketHandle
         self.makePriceEventHandle = makePriceEventHandle
+        self.previewNow = previewNow ?? { ProcessInfo.processInfo.systemUptime }
         self.lastGood = lastGood
         self.telemetry = telemetry
         self.retryBudget = retryBudget
