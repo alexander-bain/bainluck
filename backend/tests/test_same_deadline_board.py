@@ -316,7 +316,7 @@ class TestDeadlineFramingAndMemberRule:
                 deadline_phrase="by December 31",
                 year=2026,
             )
-            == "Banksy create a new mural or street artwork"
+            == "Will Banksy create a new mural or street artwork?"
         )
         assert (
             strip_deadline_framing(
@@ -324,7 +324,7 @@ class TestDeadlineFramingAndMemberRule:
                 deadline_phrase="by November 30",
                 year=2026,
             )
-            == "A 7.0+ earthquake occur worldwide"
+            == "Will a 7.0+ earthquake occur worldwide?"
         )
 
     @pytest.mark.parametrize(
@@ -389,7 +389,7 @@ class TestLiveDefinitionsMakeCardsToday:
         assert [r["label"] for r in outcome.rows] == [
             "Next Claude Opus (5.6+) released",
             "Trump meets with Putin",
-            "Banksy create a new mural or street artwork",
+            "Will Banksy create a new mural or street artwork?",
             "Pete Hegseth out as Secretary of Defense",
             "SCOTUS accepts sports event contract case",
         ]
@@ -467,11 +467,11 @@ class TestLiveDefinitionsMakeCardsToday:
             63889649,
         ]
         assert [r["label"] for r in outcome.rows] == [
-            "Anthropic IPO",
+            "Will Anthropic IPO?",
             "Trump meets with Putin",
-            "A 7.0+ earthquake occur worldwide",
+            "Will a 7.0+ earthquake occur worldwide?",
             "Next Claude Opus (5.6+) released",
-            "Valve add sticker trade-ups",
+            "Will Valve add sticker trade-ups?",
         ]
         assert [m["id"] for m in outcome.members] == [
             61341170,
@@ -481,6 +481,86 @@ class TestLiveDefinitionsMakeCardsToday:
             63889649,
             66907859,
         ]
+
+    @pytest.mark.asyncio
+    async def test_pool_market_not_in_candidates_makes_the_board(self) -> None:
+        # Take only the first 4 priority candidates from December 31 and add two pool markets
+        # whose IDs are NOT in BY_DECEMBER_31_DEFINITION["rule"]["candidates"].
+        pool_market_science = _make_binary_market(
+            990001,
+            "Will NASA Artemis II launch by December 31, 2026?",
+            0.64,
+            category="science",
+            resolution_date="2026-12-31T23:59:00+00:00",
+            market_type="container_member",
+        )
+        pool_market_sports = _make_binary_market(
+            990002,
+            "FIFA confirms 2030 World Cup final venue by December 31?",
+            0.31,
+            category="soccer",
+            resolution_date="2026-12-31T23:59:00+00:00",
+            market_type="unshaped",
+        )
+        priority_subset = _live_december_31_markets()[:4]
+
+        class _FakeScalars:
+            def __init__(self, rows: list[Any]) -> None:
+                self._rows = rows
+
+            def unique(self) -> "_FakeScalars":
+                return self
+
+            def all(self) -> list[Any]:
+                return list(self._rows)
+
+        class _FakeResult:
+            def __init__(self, *, pairs: list[tuple[int, str]] | None = None, rows: list[Any] | None = None) -> None:
+                self._pairs = pairs or []
+                self._rows = rows or []
+
+            def all(self) -> list[tuple[int, str]]:
+                return list(self._pairs)
+
+            def scalars(self) -> _FakeScalars:
+                return _FakeScalars(self._rows)
+
+        all_pool_markets = priority_subset + [pool_market_science, pool_market_sports]
+
+        class _FakeDb:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def execute(self, _stmt: Any) -> _FakeResult:
+                self.calls += 1
+                if self.calls == 1:
+                    # Pool scan returns (id, name) pairs including the two non-candidate pool markets
+                    return _FakeResult(
+                        pairs=[(int(m["id"]), str(m["name"])) for m in all_pool_markets]
+                    )
+                # Hydration returns full market mappings for matched IDs
+                return _FakeResult(rows=all_pool_markets)
+
+        fake_db = _FakeDb()
+        outcome = await produce_same_deadline_board(
+            fake_db,
+            definition=BY_DECEMBER_31_DEFINITION,
+            now=FIXED_NOW,
+        )
+        assert fake_db.calls == 2
+        assert isinstance(outcome, RoundupMembers)
+        selected_ids = [m["id"] for m in outcome.members]
+        assert 990001 in selected_ids
+        assert 990002 in selected_ids
+        # Ordered highest probability first across priority + pool members
+        assert [r["market_id"] for r in outcome.rows] == [
+            62162058,  # 88.5%
+            27594137,  # 83.0%
+            990001,    # 64.0% (pool market, not in candidates!)
+            30587891,  # 47.0%
+            8422080,   # 40.0%
+        ]
+        assert outcome.rows[2]["label"] == "Will NASA Artemis II launch?"
 
 
 class TestRefusalRules:

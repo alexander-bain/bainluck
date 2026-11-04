@@ -274,7 +274,7 @@ describe("#10357 round-up model", () => {
       rows: [
         { market_id: 62162058, label: "Next Claude Opus (5.6+) released", probability: 0.885, observed_at: FRESH },
         { market_id: 27594137, label: "Trump meets with Putin", probability: 0.83, observed_at: FRESH },
-        { market_id: 30587891, label: "Banksy create a new mural or street artwork", probability: 0.47, observed_at: FRESH },
+        { market_id: 30587891, label: "Will Banksy create a new mural or street artwork?", probability: 0.47, observed_at: FRESH },
         { market_id: 8422080, label: "Pete Hegseth out as Secretary of Defense", probability: 0.40, observed_at: FRESH },
         { market_id: 13791228, label: "SCOTUS accepts sports event contract case", probability: 0.205, observed_at: FRESH },
       ],
@@ -288,7 +288,7 @@ describe("#10357 round-up model", () => {
     expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
       "89% Next Claude Opus (5.6+) released",
       "83% Trump meets with Putin",
-      "47% Banksy create a new mural or street artwork",
+      "47% Will Banksy create a new mural or street artwork?",
       "40% Pete Hegseth out as Secretary of Defense",
       "21% SCOTUS accepts sports event contract case",
     ]);
@@ -304,7 +304,7 @@ describe("#10357 round-up model", () => {
     });
     const plain = stripTags(html);
     expect(plain).toBe(
-      "SAME DEADLINE By December 31 89 % Next Claude Opus (5.6+) released 83 % Trump meets with Putin 47 % Banksy create a new mural or street artwork 40 % Pete Hegseth out as Secretary of Defense 21 % SCOTUS accepts sports event contract case Showing 5 of 6 Separate markets that settle by the same day.",
+      "SAME DEADLINE By December 31 89 % Next Claude Opus (5.6+) released 83 % Trump meets with Putin 47 % Will Banksy create a new mural or street artwork? 40 % Pete Hegseth out as Secretary of Defense 21 % SCOTUS accepts sports event contract case Showing 5 of 6 Separate markets that settle by the same day.",
     );
     expect(plain).not.toMatch(/\b(kalshi|polymarket|sportsbooks?|blend|question|questions)\b/i);
     expect(html).toContain('data-testid="roundup-count-line">Showing 5 of 6</div>');

@@ -18,7 +18,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as dtime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
@@ -320,12 +320,14 @@ def strip_deadline_framing(
     deadline_phrase: str,
     year: Optional[int] = None,
 ) -> Optional[str]:
-    """Verify ``title`` ends with ``deadline_phrase`` (optionally ``, <year>``) and return the market's own words with ``"Will … by <date>?"`` dropped.
+    """Verify ``title`` ends with ``deadline_phrase`` (optionally ``, <year>``) and return the market's own words with the deadline phrase dropped.
 
-    Returns ``None`` if the title does not carry the board's exact deadline
-    wording (e.g. uses ``"on December 31"``, ``"in 2026"``, ``"before 2027"``,
-    or a different date/year). Never rewrites words inside the market's terms
-    (ruling 145 item 3).
+    When ``title`` starts with ``"Will"``, preserves ``"Will …?"`` so the row
+    remains grammatical without conjugating inside the market's terms (ruling
+    145 item 3); titles without ``"Will"`` remain statements with the trailing
+    ``"?"`` dropped. Returns ``None`` if the title does not carry the board's
+    exact deadline wording (e.g. uses ``"on December 31"``, ``"in 2026"``,
+    ``"before 2027"``, or a different date/year).
     """
     cleaned = str(title or "").strip()
     if not cleaned:
@@ -348,20 +350,19 @@ def strip_deadline_framing(
         return None
 
     body = match.group("body").strip().rstrip("?").strip()
-    if not body:
+    if not body or "__" in body:
         return None
 
     if _OTHER_DEADLINE_PREPOSITION_RE.search(body):
         return None
 
     had_will = bool(match.group("will"))
-    if (
-        had_will
-        and len(body) >= 2
-        and "a" <= body[0] <= "z"
-        and not ("A" <= body[1] <= "Z")
-    ):
-        body = body[0].upper() + body[1:]
+    if had_will:
+        will_token = match.group("will").strip()
+        return f"{will_token} {body}?"
+
+    if re.match(r"^(?:who|which|what|where|when|how\s+many|how\s+much)\b", body, re.IGNORECASE):
+        return None
 
     return body
 
@@ -467,7 +468,11 @@ def _derive_subject_tokens(market: Mapping[str, Any], label: str) -> frozenset[s
         return frozenset(str(x).strip().lower() for x in explicit if str(x).strip())
 
     # Extract leading/proper-noun subject tokens before the predicate, plus any capitalized named entities.
-    words = re.findall(r"[A-Za-z0-9.+-]+", label)
+    words = [
+        w
+        for w in re.findall(r"[A-Za-z0-9.+-]+", label)
+        if w.lower() != "will"
+    ]
     subjects: set[str] = set()
     for idx, w in enumerate(words):
         cleaned = w.strip(".,()+-").lower()
@@ -487,10 +492,10 @@ def _derive_subject_tokens(market: Mapping[str, Any], label: str) -> frozenset[s
 
 def _effective_category(market: Mapping[str, Any]) -> str:
     llm_cat = str(market.get("llm_sport_category") or "").strip().lower()
-    if llm_cat and llm_cat not in {"other", "general", "unknown", "futures"}:
+    if llm_cat and llm_cat not in {"other", "general", "unknown", "futures", "game_prop"}:
         return llm_cat
     cat = str(market.get("category") or "").strip().lower()
-    if cat and cat not in {"other", "general", "unknown", "futures"}:
+    if cat and cat not in {"other", "general", "unknown", "futures", "game_prop"}:
         return cat
     sport = str(market.get("sport") or "").strip().lower()
     if sport:
@@ -572,7 +577,7 @@ def _classify_candidate(
         return None, "stored_date_mismatch"
 
     mtype = str(market.get("market_type") or "yes_no").strip().lower()
-    if mtype not in {"yes_no", "binary", ""}:
+    if mtype not in {"yes_no", "binary", "container_member", "unshaped", ""}:
         return None, f"non_binary_market_type:{mtype}"
 
     raw_outcomes = market.get("outcomes")
@@ -738,12 +743,18 @@ def _build_binary_member_card(item: _QualifiedDeadlineMarket) -> dict[str, Any]:
 
     resolution_date = _iso_utc(base.get("resolution_date"))
     updated_at = _iso_utc(base.get("updated_at")) or item.observed_at
+    raw_cat = str(base.get("category") or "").strip()
+    card_category = (
+        item.category
+        if not raw_cat or raw_cat.lower() in {"game_prop", "other", "general", "unknown", "futures"}
+        else raw_cat
+    )
     return {
         "id": item.market_id,
         "name": str(base.get("name") or "").strip(),
         "sport": base.get("sport"),
         "sport_name": base.get("sport_name"),
-        "category": base.get("category") or item.category,
+        "category": card_category,
         "llm_sport_category": base.get("llm_sport_category") or item.category,
         "market_tier": int(base.get("market_tier") or 2),
         "market_type_label": base.get("market_type_label") or "Yes / No",
@@ -1018,9 +1029,7 @@ def _orm_market_to_dict(m: Any) -> Optional[dict[str, Any]]:
                 "name": repaired_name,
                 "probability": o.current_probability,
                 "movement": o.probability_change_24h,
-                "last_updated": (
-                    o.last_updated.isoformat() if o.last_updated else None
-                ),
+                "last_updated": o.last_updated.isoformat() if o.last_updated else None,
                 "is_winner": getattr(o, "is_winner", None),
                 "resolution_source": getattr(o, "resolution_source", None),
             }
@@ -1052,8 +1061,10 @@ async def _load_markets_from_db(
     db: Any,
     candidate_ids: Sequence[int],
     deadline_phrase: str,
+    *,
+    deadline_date: Optional[date] = None,
 ) -> tuple[dict[int, dict[str, Any]], dict[int, set[int]]]:
-    """Query ORM ``FuturesMarket`` rows by candidate IDs (with ILIKE fallback) and convert to mappings."""
+    """Load the open deadline pool (``resolution_date`` within ``deadline_date``, capped at 300 newest-priced first) plus priority ``candidate_ids``."""
     if isinstance(db, (list, tuple)):
         mapped_seq: dict[int, dict[str, Any]] = {}
         for item in db:
@@ -1065,9 +1076,9 @@ async def _load_markets_from_db(
     if not hasattr(db, "execute") or not callable(db.execute):
         return {}, {}
 
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload
 
     from app.models import FuturesMarket
     from app.routes.futures import withheld_price_outcome_ids_for_markets
@@ -1078,38 +1089,80 @@ async def _load_markets_from_db(
         if isinstance(mid, int) and not isinstance(mid, bool) and mid > 0
     ]
 
-    orm_rows: list[Any] = []
-    if clean_ids:
+    target_ids: list[int] = list(clean_ids)
+    seen_ids: set[int] = set(clean_ids)
+    preloaded_rows: list[Any] = []
+
+    if deadline_date is not None:
+        utc_start = datetime.combine(deadline_date, dtime.min, tzinfo=timezone.utc)
+        et_end = datetime.combine(
+            deadline_date, dtime.max, tzinfo=_ET_ZONE
+        ).astimezone(timezone.utc)
+        res_pool = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.name)
+            .where(
+                FuturesMarket.status == "open",
+                FuturesMarket.event_id.is_(None),
+                FuturesMarket.resolution_date.is_not(None),
+                FuturesMarket.resolution_date >= utc_start,
+                FuturesMarket.resolution_date <= et_end,
+                or_(
+                    FuturesMarket.market_type.is_(None),
+                    FuturesMarket.market_type.in_(
+                        ("yes_no", "binary", "container_member", "unshaped")
+                    ),
+                ),
+            )
+            .order_by(
+                FuturesMarket.updated_at.desc().nullslast(),
+                FuturesMarket.id.desc(),
+            )
+            .limit(300)
+        )
+        pool_items: list[Any] = []
+        if hasattr(res_pool, "all") and callable(res_pool.all):
+            pool_items = list(res_pool.all())
+        elif hasattr(res_pool, "scalars") and callable(res_pool.scalars):
+            pool_items = list(res_pool.scalars().all())
+
+        for item in pool_items:
+            if hasattr(item, "outcomes") or isinstance(item, Mapping):
+                preloaded_rows.append(item)
+                continue
+            try:
+                mid = int(item[0])
+                mname = str(item[1] or "")
+            except (IndexError, TypeError, ValueError):
+                continue
+            if mid in seen_ids or mid <= 0:
+                continue
+            if (
+                strip_deadline_framing(
+                    mname,
+                    deadline_phrase=deadline_phrase,
+                    year=deadline_date.year,
+                )
+                is not None
+            ):
+                seen_ids.add(mid)
+                target_ids.append(mid)
+
+    hydrate_ids = target_ids[:40]
+    orm_rows: list[Any] = list(preloaded_rows)
+    if hydrate_ids:
         res = await db.execute(
             select(FuturesMarket)
             .options(
-                selectinload(FuturesMarket.sport),
-                selectinload(FuturesMarket.outcomes),
+                joinedload(FuturesMarket.sport),
+                joinedload(FuturesMarket.outcomes),
             )
-            .where(FuturesMarket.id.in_(clean_ids))
-            .order_by(FuturesMarket.id)
+            .where(FuturesMarket.id.in_(hydrate_ids))
         )
-        orm_rows = list(res.scalars().all()) if hasattr(res, "scalars") else []
-
-    if not clean_ids and deadline_phrase and isinstance(db, AsyncSession):
-        res_fallback = await db.execute(
-            select(FuturesMarket)
-            .options(
-                selectinload(FuturesMarket.sport),
-                selectinload(FuturesMarket.outcomes),
-            )
-            .where(
-                FuturesMarket.status == "open",
-                FuturesMarket.name.ilike(f"%{deadline_phrase}%"),
-            )
-            .order_by(FuturesMarket.id)
-            .limit(80)
-        )
-        orm_rows = (
-            list(res_fallback.scalars().all())
-            if hasattr(res_fallback, "scalars")
-            else []
-        )
+        if hasattr(res, "scalars") and callable(res.scalars):
+            scalars_obj = res.scalars()
+            if hasattr(scalars_obj, "unique") and callable(scalars_obj.unique):
+                scalars_obj = scalars_obj.unique()
+            orm_rows.extend(list(scalars_obj.all()))
 
     if not orm_rows:
         return {}, {}
@@ -1171,8 +1224,15 @@ async def produce_same_deadline_board(
         if cid is not None:
             candidate_ids.append(cid)
 
-    loader = load_markets if load_markets is not None else _load_markets_from_db
-    loaded = loader(db, candidate_ids, deadline_phrase)
+    if load_markets is not None:
+        loaded = load_markets(db, candidate_ids, deadline_phrase)
+    else:
+        loaded = _load_markets_from_db(
+            db,
+            candidate_ids,
+            deadline_phrase,
+            deadline_date=deadline_date,
+        )
     if inspect.isawaitable(loaded):
         loaded = await loaded
     markets_map, withheld_map = loaded

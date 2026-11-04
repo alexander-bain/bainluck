@@ -50,7 +50,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ROUNDUP_CACHE_TTL_S = 60.0
-ROUNDUP_READ_BUDGET_SECONDS = 1.5
+ROUNDUP_READ_BUDGET_SECONDS = 0.5
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
