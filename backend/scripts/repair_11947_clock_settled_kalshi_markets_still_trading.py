@@ -33,6 +33,8 @@ from sqlalchemy import bindparam, text
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.utils.agent_origin import tagged  # noqa: E402
+
 BACKUP_TABLE = "bak_11947_clock_settlement"
 PUBLIC_API = "https://api.elections.kalshi.com/trade-api/v2"
 PAGE_SIZE = 1000
@@ -282,7 +284,9 @@ async def run(*, apply=False, census_only=False, only_ids=None):
         async with httpx.AsyncClient(base_url=PUBLIC_API, timeout=10.0) as client:
 
             async def read_market(ticker):
-                response = await client.get("/markets/" + quote(ticker, safe=""))
+                response = await client.get(
+                    "/markets/" + quote(ticker, safe=""), headers=tagged(PUBLIC_API)
+                )
                 if response.status_code == 404:
                     return None
                 response.raise_for_status()
