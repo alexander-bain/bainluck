@@ -11,7 +11,6 @@ import { anchorScrollLeft, edgeOverflowFor, seriesMovementMarks } from "@/lib/ch
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness, venueBankGapFloorMs } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
-import { holeIsLabelled, placeGapLabels } from "@/lib/chartGapLabels";
 import {
   settlementResultWord,
   splitSettlementPoints,
@@ -524,49 +523,6 @@ export function FuturesChart({
     ? combinedLinePoints(plottedOutcomes)
     : null;
 
-  // #3659: the solid stroke touches only real observations. Any gap wider than
-  // THIS outcome's own cadence is a hole — same threshold that writes the note
-  // under the plot, so the line and the caption can never describe different
-  // intervals. A series with no hole yields exactly one run, byte-identical to
-  // what the inline expression produced before, and no holes at all.
-  // #11929: a line carrying the venue's bank is broken only past the bank's own
-  // 12 h joint. Computed here rather than inside the JSX map (a plain call below
-  // the early returns, like `combinedPoints`) because cause C labels holes
-  // across ALL displayed lines at once, and needs every line's holes first.
-  const outcomePaths = displayedOutcomes.map((_, idx) => {
-    const points = plottedOutcomes[idx].history
-      .filter((p) => p.probability !== null)
-      .map((p) => {
-        const t = new Date(p.timestamp).getTime();
-        return { t, x: xScale(t), y: yScale(p.probability!) };
-      });
-    return {
-      points,
-      path: chartSeriesPath(points, {
-        step: !!stepInterpolation,
-        gapFloorMs: venueBankGapFloorMs(plottedOutcomes[idx].history),
-      }),
-    };
-  });
-
-  // #11929 cause C: a full chart names each hole in the caption's own sentence
-  // instead of drawing a connector across it (`lib/chartGapLabels.ts`). `mini`
-  // has no room for a sentence — it keeps its faint bridge, as its caption is
-  // suppressed for the same reason.
-  const gapLabels = mini
-    ? []
-    : placeGapLabels(
-        outcomePaths.flatMap((o) => o.path.holes),
-        {
-          left: padding.left,
-          right: chartWidth - padding.right,
-          top: padding.top,
-          bottom: padding.top + innerHeight,
-        },
-        // Fable 9ee16863: a label may not cover another line's readings.
-        outcomePaths.map((o) => ({ points: o.points, holes: o.path.holes })),
-      );
-
   // #10955 / #11158: where each graded leg's result is marked. A leg with real
   // history carries it at its OWN last real x/y — an annotation of that point,
   // never a new sample at the settlement stamp or at 0/100 on the axis. A leg
@@ -867,7 +823,12 @@ export function FuturesChart({
 
             {/* Lines */}
             {displayedOutcomes.map((outcome, idx) => {
-              const { points, path } = outcomePaths[idx];
+              const points = plottedOutcomes[idx].history
+                .filter((p) => p.probability !== null)
+                .map((p) => {
+                  const t = new Date(p.timestamp).getTime();
+                  return { t, x: xScale(t), y: yScale(p.probability!) };
+                });
 
               // #6331: ONE observation is still an observation. This read `< 2`,
               // so a series with a single real point drew nothing at all — while
@@ -885,8 +846,19 @@ export function FuturesChart({
               // returns null now.
               if (points.length === 0) return null;
 
-              // Split into runs / holes / lone dots above (`outcomePaths`).
-              const { runs, bridges, dots } = path;
+              // #3659: the solid stroke touches only real observations. Any gap
+              // wider than THIS outcome's own cadence is handed to a faint
+              // dotted bridge instead — same threshold that writes the note
+              // under the plot, so the line and the caption can never describe
+              // different intervals. A series with no hole yields exactly one
+              // run, byte-identical to what this expression produced inline
+              // before, and no bridges at all.
+              // #11929: a line carrying the venue's bank is broken only past the
+              // bank's own 12 h joint; bridges never slope (`chartSeriesPath`).
+              const { runs, bridges, dots } = chartSeriesPath(points, {
+                step: !!stepInterpolation,
+                gapFloorMs: venueBankGapFloorMs(plottedOutcomes[idx].history),
+              });
 
               // L2-149: highlight/eliminated line weighting. When one outcome is
               // highlighted (leaderboard or chart hover), it thickens and the rest
@@ -910,13 +882,9 @@ export function FuturesChart({
               // <path> with exactly the attributes it emitted before, so the
               // six surfaces that plot healthy series see no markup change at
               // all. Bridges render first so the solid runs paint over them.
-              // #11929 cause C: a full chart names a hole with a label instead
-              // of a connector (`gapLabels`). A hole too narrow for its sentence
-              // gets no label (a label never covers readings), so it keeps the
-              // faint bridge, as `mini` does: no hole is left unexplained.
               return (
                 <Fragment key={outcome.outcome_id}>
-                  {bridges.map((d, b) => (mini || !holeIsLabelled(path.holes[b], gapLabels)) && (
+                  {bridges.map((d, b) => (
                     <path
                       key={`gap-${b}`}
                       d={d}
@@ -988,37 +956,6 @@ export function FuturesChart({
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
-            )}
-
-            {/* #11929 cause C: each hole carries the caption's own sentence
-                (`gapNote`) in the caption's own tokens — `text-xs`,
-                `text-text-muted` as a fill — over the stretch it names, where
-                the dotted connector used to be. Drawn after the lines so it
-                reads over them; the halo is the card's own surface token, so a
-                label overlapping a neighbouring line stays legible. Not a hover
-                target. Absent on every chart with no hole. */}
-            {gapLabels.length > 0 && (
-              <g data-testid="futures-chart-gap-labels" className="pointer-events-none select-none">
-                {gapLabels.map((g) => (
-                  <text
-                    key={`gap-label-${g.fromT}-${g.toT}`}
-                    data-testid="futures-chart-gap-label"
-                    data-gap-from={new Date(g.fromT).toISOString()}
-                    data-gap-to={new Date(g.toT).toISOString()}
-                    data-gap-from-x={g.fromX}
-                    data-gap-to-x={g.toX}
-                    x={g.x}
-                    y={g.y}
-                    textAnchor="middle"
-                    className="text-xs fill-text-muted stroke-surface-card"
-                    strokeWidth={3}
-                    strokeLinejoin="round"
-                    paintOrder="stroke"
-                  >
-                    {g.text}
-                  </text>
-                ))}
-              </g>
             )}
 
             {/* #10955 / #11158: result marks. Distinct from the recorded-dot
