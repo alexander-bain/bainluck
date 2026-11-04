@@ -1,5 +1,18 @@
-// #7878 (web half), the tooltip arm — a minute inside a hole says "no
-// readings", and the one prop that lets it say so is guarded.
+// #7878 (web half), the tooltip arm — SUPERSEDED for interior holes by #11929.
+//
+// #11929 — ALEX'S RULING (2026-11-04 12:09 PT): "A solid line through
+// unobserved time … no bridge, no dotted treatment, no label … nothing on the
+// chart calls the reader's attention to a gap." The tooltip's interior-hole
+// note ("no readings 1:14 AM – 2:28 AM") was such a label, and it is gone: a
+// minute inside the specimen's 73.6-minute hole is now an ordinary minute of
+// the line — chartData carries the 08:14 reading through it and the card
+// quotes that number, with no note. `filterNull={false}` is still needed and
+// still guarded, for the one note that remains: a live line past its STALE
+// RIGHT EDGE ("last reading …, none since") is null there, and recharts'
+// default would render no card at all. The CONTROL arm now proves that on a
+// stalled live line instead of on the interior hole.
+//
+// THE ORIGINAL #7878 TEXT (the hole half is history):
 //
 // WHY THIS FILE EXISTS, AND WHY IT IS SEPARATE. The sibling suite
 // (`chartStopsDrawingAcrossAHoleNobodyObserved7878`) reads the SVG recharts
@@ -160,7 +173,7 @@ afterAll(() => {
   console.error = realConsoleError;
 });
 
-describe("#7878 — the tooltip speaks inside a hole", () => {
+describe("#7878 / #11929 — the tooltip names no hole, and speaks past a stale edge", () => {
   test("the chart asks recharts for null entries, because the default would render no card at all there", () => {
     renderSpecimen();
     // Not `!== true`: the point is that the chart states it, so a refactor that
@@ -168,24 +181,27 @@ describe("#7878 — the tooltip speaks inside a hole", () => {
     expect(mockRecorded.tooltip?.filterNull).toBe(false);
   });
 
-  test("a minute inside the hole reports the interval that bounds it, and quotes no price", () => {
+  test("#11929: a minute inside the hole is an ordinary minute — it carries the last reading, and the card quotes it with no note", () => {
     const labelFormat = renderSpecimen();
     const bucket = bucketInsideHole();
-    // The series IS null at this minute — that is what the fix withdrew — so
-    // this is the payload recharts delivers with `filterNull={false}`.
-    const html = renderCard(bucket.time, [
-      { value: null, name: "Kalshi", color: KALSHI_GREEN, dataKey: KALSHI_KEY },
-    ]);
-
-    // Both ends of the hole, in the axis's own label format — the times the
-    // reader is looking at on the ticks. Named in full so a rule that reported
-    // SOME interval here could not pass by accident.
-    expect(html).toContain(
-      `no readings ${atAxisClock(HOLE.fromIso, labelFormat)} – ${atAxisClock(HOLE.toIso, labelFormat)}`,
+    // The carry was NOT withdrawn: the bucket holds the value at the hole's
+    // first reading, exactly as any minute between two readings does.
+    const atHoleStart = mockRecorded.data.find(
+      (d) => Math.floor(Date.parse(d.timestamp) / 60_000) === Math.floor(Date.parse(HOLE.fromIso) / 60_000),
     );
-    expect(html).toContain("Kalshi");
-    // A hole never carries a number: no percentage anywhere on the card.
-    expect(html).not.toMatch(/\d+(\.\d+)?%/);
+    expect(typeof atHoleStart?.[KALSHI_KEY]).toBe("number");
+    expect(bucket[KALSHI_KEY]).toBe(atHoleStart![KALSHI_KEY]);
+    const html = renderCard(bucket.time, [
+      { value: bucket[KALSHI_KEY] as number, name: "Kalshi", color: KALSHI_GREEN, dataKey: KALSHI_KEY },
+    ]);
+    expect(html).toMatch(/\d+(\.\d+)?%/);
+    // Nothing names the stretch: no note, no bounding times, no "none since".
+    expect(html).not.toContain("chart-gap-note");
+    expect(html).not.toMatch(/no readings|No numbers for|none since/i);
+    expect(html).not.toContain(`${atAxisClock(HOLE.fromIso, labelFormat)} – ${atAxisClock(HOLE.toIso, labelFormat)}`);
+    // Even handed a null entry, a minute inside an INTERIOR hole gets no note
+    // (the card has nothing to say, so there is no card).
+    expect(renderCard(bucket.time, [{ value: null, name: "Kalshi", color: KALSHI_GREEN, dataKey: KALSHI_KEY }])).toBe("");
   });
 
   test("the same card at a minute the source DID report shows the number and no note", () => {
@@ -201,14 +217,73 @@ describe("#7878 — the tooltip speaks inside a hole", () => {
     expect(html).not.toContain("no readings");
   });
 
-  test("CONTROL — on recharts' default the hole's card does not exist, which is the silence the prop removes", () => {
-    renderSpecimen();
-    const bucket = bucketInsideHole();
+  test("a minute past a STALE RIGHT EDGE says how old the last reading is, and quotes no price", () => {
+    const { labelFormat, lastReadingIso } = renderStalled();
+    const bucket = bucketPastStaleEdge(lastReadingIso);
+    expect(bucket[KALSHI_KEY] ?? null).toBeNull();
+    const html = renderCard(bucket.time, [
+      { value: null, name: "Kalshi", color: KALSHI_GREEN, dataKey: KALSHI_KEY },
+    ]);
+    expect(html).toContain(`last reading ${atAxisClock(lastReadingIso, labelFormat)}, none since`);
+    expect(html).toContain("Kalshi");
+    expect(html).not.toMatch(/\d+(\.\d+)?%/);
+  });
+
+  test("CONTROL — on recharts' default the stale edge's card does not exist, which is the silence the prop removes", () => {
+    const { lastReadingIso } = renderStalled();
+    const bucket = bucketPastStaleEdge(lastReadingIso);
     // `filterNull: true` drops the null entry; recharts then hands `content` an
     // EMPTY payload, and `CustomTooltip`'s first guard returns no card. This is
-    // the state the reader was in before the fix, reproduced through the real
-    // component — so the arm above is asserting a difference that exists.
+    // the state the reader would be in without the prop, reproduced through
+    // the real component — so the arm above asserts a difference that exists.
     const html = renderCard(bucket.time, []);
     expect(html).toBe("");
   });
 });
+
+// ── Constructed (labelled): a stalled live line — 15316479's shape ──────────
+// Five real readings two minutes apart from the start, then nothing for 3h17m,
+// then the backend's synthetic `live_edge` point at "now" (#920).
+const STALL_COMMENCE = Date.UTC(2026, 8, 21, 18, 0, 0); // fixed anchor — never Date.now()
+
+function renderStalled(): { labelFormat: string; lastReadingIso: string } {
+  mockRecorded.tooltip = null;
+  mockRecorded.data = [];
+  const commenceIso = new Date(STALL_COMMENCE).toISOString();
+  const at = (s: number) => new Date(STALL_COMMENCE + s * 1000).toISOString();
+  const kalshi = [
+    ...[141, 260, 380, 500, 619].map((s) => ({ timestamp: at(s), home_probability: 0.6, away_probability: 0.4 })),
+    { timestamp: at(12_437), home_probability: 0.6, away_probability: 0.4, live_edge: true },
+  ];
+  const history = {
+    event_id: 1, home_team: "Home", away_team: "Away", commence_time: commenceIso, status: "live",
+    history: [], win_prob_history: { kalshi }, win_prob_sources: KALSHI_META,
+  } as unknown as EventHistoryResponse;
+  const domain = computeSharedChartDomain(history, "live", "live", commenceIso, "tennis_wta");
+  expect(domain).not.toBeNull();
+  renderToStaticMarkup(
+    <OddsChart
+      history={[]}
+      homeTeam="Home"
+      awayTeam="Away"
+      isLive
+      winProbSources={KALSHI_META}
+      winProbHistory={{ kalshi }}
+      commenceTime={commenceIso}
+      eventStatus="live"
+      externalTimeRange="live"
+      chartStartTime={domain!.start}
+      chartEndTime={domain!.end}
+      sharedTicks={domain!.ticks}
+      chartLabelFormat={domain!.labelFormat}
+    />,
+  );
+  return { labelFormat: domain!.labelFormat, lastReadingIso: at(619) };
+}
+
+function bucketPastStaleEdge(lastReadingIso: string): ChartDatum {
+  const last = Date.parse(lastReadingIso);
+  const past = mockRecorded.data.filter((d) => Date.parse(d.timestamp) > last + 60_000);
+  expect(past.length).toBeGreaterThan(60);
+  return past[Math.floor(past.length / 2)];
+}

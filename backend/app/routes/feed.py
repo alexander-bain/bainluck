@@ -202,6 +202,7 @@ from app.utils.feed_market_quality import (
     has_no_real_price,
     is_locked_near_certain,
     is_lone_midpoint_field,
+    is_placeholder_flat_field,
     is_templated_flat_ladder,
     range_ladder_missing_middle,
 )
@@ -12761,6 +12762,14 @@ async def _score_sports_mode_futures(
             _market_exclusivity(market),
         ):
             continue
+        if is_placeholder_flat_field(
+            [
+                (o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                for o in sorted_outcomes
+            ],
+            _market_exclusivity(market),
+        ):
+            continue
         outcomes_data = []
         leader_name = None
         leader_prob = None
@@ -14499,6 +14508,14 @@ async def _score_futures(
                 _market_exclusivity(market),
             ):
                 continue
+            if is_placeholder_flat_field(
+                [
+                    (o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                    for o in sorted_outcomes
+                ],
+                _market_exclusivity(market),
+            ):
+                continue
 
             # #6552 — completion happens at the print step, never in place.
             display_names = _card_display_names(sorted_outcomes[:10])
@@ -16162,6 +16179,11 @@ async def _score_golf_tournaments(
             field_mass = sum((g.get("probability") or 0) for g in field)
             if field_mass < TOURNAMENT_LEADER_MIN_FIELD_MASS:
                 continue
+        if is_placeholder_flat_field(
+            [(g.get("probability"), None, None) for g in golfers if isinstance(g, dict)],
+            True,
+        ):
+            continue
 
         # Score the tournament
         score = _score_tournament(t, now)
@@ -16247,6 +16269,15 @@ async def _score_golf_tournaments(
                 headline = "This week"
 
         # Build tournament feed item data
+        raw_commence = t.get("commence_time")
+        normalized_commence = raw_commence
+        if isinstance(raw_commence, str) and raw_commence:
+            try:
+                dt = datetime.fromisoformat(raw_commence.replace("Z", "+00:00"))
+                normalized_commence = dt.replace(second=0, microsecond=0).isoformat()
+            except Exception:
+                normalized_commence = raw_commence
+
         data = {
             "key": t.get("key"),
             "name": t.get("name"),
@@ -16259,7 +16290,7 @@ async def _score_golf_tournaments(
             "start_date": t.get("start_date"),
             "end_date": t.get("end_date"),
             "schedule_status": t.get("schedule_status"),
-            "commence_time": t.get("commence_time"),
+            "commence_time": normalized_commence,
             "resolution_date": t.get("resolution_date"),
             # #9212: who won, once ESPN calls the tournament final; None until
             # then. Spelled as this card's own field row spells the golfer, so a
@@ -17281,10 +17312,52 @@ def _drop_duplicate_bout_concepts(items: list[dict]) -> list[dict]:
         best = winner.get(key)
         if best is None or _rank(items[idx]) > _rank(items[best]):
             winner[key] = idx
-    return [
+    survivors = [
         item
         for idx, (item, key) in enumerate(zip(items, keys))
         if key is None or winner[key] == idx
+    ]
+
+    # #11943: also dedupe concept cards sharing the same `(domain, sport_label, start_date)`
+    # when `start_date` is a full ISO timestamp and their key date tokens sit on the
+    # same or adjacent UTC calendar day (such as `event:ufc:26nov06` and
+    # `event:ufc:26nov07ufcfightnight` both starting at `2026-11-07T22:00:00+00:00`).
+    def _start_info(item: dict) -> Optional[tuple[str, str, str, date]]:
+        try:
+            d = item.get("data") or {}
+            domain = str(d.get("domain") or "").strip().lower()
+            sport_label = str(d.get("sport_label") or "").strip().lower()
+            start_date = str(d.get("start_date") or "").strip()
+            token = str(d.get("key") or "").rsplit(":", 1)[-1]
+            if domain and "T" in start_date and len(token) >= 7:
+                key_day = datetime.strptime(token[:7].lower(), "%y%b%d").date()
+                return (domain, sport_label, start_date, key_day)
+        except Exception:
+            logger.debug("concept dedup: unreadable start_date", exc_info=True)
+        return None
+
+    infos = [_start_info(item) for item in survivors]
+    dropped_indices: set[int] = set()
+    for idx_a, info_a in enumerate(infos):
+        if info_a is None or idx_a in dropped_indices:
+            continue
+        dom_a, label_a, start_a, day_a = info_a
+        for idx_b in range(idx_a + 1, len(infos)):
+            info_b = infos[idx_b]
+            if info_b is None or idx_b in dropped_indices:
+                continue
+            dom_b, label_b, start_b, day_b = info_b
+            if (dom_a, label_a, start_a) != (dom_b, label_b, start_b):
+                continue
+            if abs((day_a - day_b).days) > 1:
+                continue
+            if _rank(survivors[idx_b]) > _rank(survivors[idx_a]):
+                dropped_indices.add(idx_a)
+                break
+            else:
+                dropped_indices.add(idx_b)
+    return [
+        item for idx, item in enumerate(survivors) if idx not in dropped_indices
     ]
 
 

@@ -3646,7 +3646,8 @@ def _log_stats_line(
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
         "| %s | %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
-        "lock_timeouts=%d history_points=%d history_capped=%d history_skipped=%d "
+        "lock_timeouts=%d history_points=%d history_keepalive=%d "
+        "history_keepalive_errors=%d history_capped=%d history_skipped=%d "
         "history_refused=%d history_errors=%d skipped_locked=%d repeats_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
@@ -3688,6 +3689,10 @@ def _log_stats_line(
         # held for a later minute; ticks not due (under a point, inside 5 min);
         # settled/graded refusals; failed inserts. Cumulative for the run.
         stats.get("history_points", 0),
+        # #11929 keep-alive: points for live legs whose price sat still 15
+        # min, and failed keep-alive passes. Cumulative for the run.
+        stats.get("history_keepalive", 0),
+        stats.get("history_keepalive_errors", 0),
         stats.get("history_capped", 0),
         stats.get("history_skipped", 0),
         stats.get("history_refused", 0),
@@ -7615,6 +7620,40 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 stamped=blend["stamped"],
                 no_reading=blend["no_reading"],
             )
+            # #11929 keep-alive: its own session and transaction, after the
+            # minute line, outside every flush. Failures are counted inside.
+            history = getattr(blend_refresher, "stream_history", None)
+            if getattr(history, "keepalive", False) is True:
+                try:
+                    await history.keepalive_pass(get_task_session, keepalive_legs())
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    history.stats["history_keepalive_errors"] += 1
+                    logger.warning("Polymarket WS: keep-alive pass failed", exc_info=True)
+
+    def keepalive_legs():
+        """#11929: (outcome_id, market_id) of every leg a CONNECTED socket
+        carries now. Game tokens on connected shards only
+        (`connected_asset_ids`); open-contract tokens, their mirrored legs and
+        binary complements while an open socket is connected. Copied first: the maps
+        are replaced in place by a catalog refresh."""
+        legs = []
+        connected = getattr(ws, "connected_asset_ids", None)
+        game = list(asset_to_outcome.items())
+        if callable(connected):
+            live_tokens = connected()
+            legs.extend(oid for token, oid in game if token in live_tokens)
+        elif getattr(ws, "is_connected", False):
+            legs.extend(oid for _token, oid in game)
+        if any(getattr(s, "is_connected", False) for s in open_sockets):
+            legs.extend(list(open_asset_to_outcome.values()))
+            legs.extend(
+                oid for pairs in list(open_asset_mirrors.values()) for oid, _mid in pairs
+            )
+        # #9733: a tick on a leg also prices its binary's other leg.
+        complements = dict(open_complement_of)
+        legs.extend([complements[oid] for oid in legs if oid in complements])
+        markets = market_by_outcome
+        return [(oid, markets[oid]) for oid in legs if oid in markets]
 
     flush_task = asyncio.create_task(flush_loop(), name="polymarket-flush-loop")
     prop_task = asyncio.create_task(prop_loop(), name="polymarket-prop-flush-loop")

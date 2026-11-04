@@ -2723,7 +2723,11 @@ def _build_tournament_entry(
         "tour_label": TOUR_DISPLAY_NAMES.get(tour) if tour else None,
         "order": order_idx,
         "sort_date": latest_resolution.isoformat() if is_tour_event and latest_resolution else None,
-        "commence_time": earliest_commence.isoformat() if earliest_commence else None,
+        "commence_time": (
+            earliest_commence.replace(second=0, microsecond=0).isoformat()
+            if earliest_commence
+            else None
+        ),
         "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
         "market_ids": market_ids,
         "market_sources": market_sources,
