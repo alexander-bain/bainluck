@@ -151,6 +151,10 @@ class HeldEventCache:
     it already has. A failed read keeps the last good set until ``stale_s``,
     then the answer is empty, and empty means no preference (today's order).
     A process forked while a read was in flight starts its own.
+
+    The same read also keeps the held MARKET ids (:meth:`market_ids`), for the
+    market previews (`utils/market_preview`): one PUBSUB read per process
+    serves both, never one per tick.
     """
 
     def __init__(
@@ -169,6 +173,7 @@ class HeldEventCache:
         self._start = start or self._start_thread
         self._lock = threading.Lock()
         self._ids: frozenset = frozenset()
+        self._markets: frozenset = frozenset()
         self._read_at: float | None = None
         self._attempt_at = -math.inf
         self._reading_pid: int | None = None
@@ -180,6 +185,15 @@ class HeldEventCache:
         threading.Thread(target=target, name="reader-held-events", daemon=True).start()
 
     def event_ids(self) -> frozenset:
+        return self._current()[0]
+
+    def market_ids(self) -> frozenset:
+        """#10090 market previews: the market ids a reader holds, same read and
+        same rules as :meth:`event_ids` (never blocks; stale or unread is empty,
+        and empty publishes nothing)."""
+        return self._current()[1]
+
+    def _current(self) -> tuple[frozenset, frozenset]:
         now = self._clock()
         with self._lock:
             pid = os.getpid()
@@ -190,7 +204,7 @@ class HeldEventCache:
                 self._attempt_at = now
                 self._reading_pid = pid
             fresh = self._read_at is not None and now - self._read_at <= self._stale_s
-            ids = self._ids if fresh else frozenset()
+            ids = (self._ids, self._markets) if fresh else (frozenset(), frozenset())
         if start:
             try:
                 self._start(self._run)
@@ -201,7 +215,9 @@ class HeldEventCache:
 
     def _run(self) -> None:
         try:
-            ids = frozenset(self._read().event_ids)
+            presence = self._read()
+            ids = frozenset(presence.event_ids)
+            markets = frozenset(presence.market_ids)
         except Exception as exc:  # noqa: BLE001 — the last good set stands until stale
             with self._lock:
                 self._reading_pid = None
@@ -214,6 +230,7 @@ class HeldEventCache:
         with self._lock:
             self._reading_pid = None
             self._ids = ids
+            self._markets = markets
             self._read_at = self._clock()
             self.reads += 1
 

@@ -46,6 +46,14 @@ here also reaches heavy. Each row says whether heavy runs the code it governs.
 | `COLLECTIONS_ENABLED` | `true` (set Nov 2, 11:25 AM PT, after the publication) | The Midterms 2026 collection page and its Discover/Politics pin (#11853). | Switch (a feature gate, not a speed setting) | no (web) |
 | `CONTAINER_COLLECTIONS_ENABLED` | `true` (set Nov 2 with it) | The Midterms gate's second half; also the hourly NFL-week / MLB-postseason assembly pass, which writes membership and never publishes. | Switch | no (the pass runs on bainluck's background queue) |
 
+## Settings added since the freeze
+
+Each came with its own PR, against this page and the code.
+
+| Var | Production value | What it does | Decision | Heavy |
+| --- | --- | --- | --- | --- |
+| `MARKET_PREVIEW_PUBLISH` | unset (on) | A Discover futures/prop card in view shows its venue's move at arrival: the Kalshi and Polymarket sockets publish a held market's buffered price on `live:market:<id>` as a provisional `market_preview` frame (`backend/app/utils/market_preview.py`), before the flush writes it. Held markets only (`PUBSUB CHANNELS`, read in the background every 2 s), change-only, at most one frame per market per 250 ms, never a settled or graded leg; no database read or write. A Polymarket open contract the admission cannot pair (`markets_unpaired`) gets none. | Switch: default on; `0` turns it off at the next worker-ws restart (the committed invalidation and re-read are unchanged either way) | no (worker-ws) |
+
 **Do not make `BUSY_DB_DEFER_HEAVY_SCANS` a code default:** it would start deferring the resolved-market sweep on `bainluck-heavy`, which has never run it, and settled results would wait up to 14 hours.
 
 ## Live settings older than Oct 28, unchanged

@@ -16,6 +16,7 @@ import {
 } from '@/lib/authorityPreview';
 import { overlayBlendPreview, type BlendPreviewState } from '@/lib/blendPreview';
 import { parseFoldRevision } from '@/lib/foldRevision';
+import { useMarketPreviews } from './useMarketPreviews';
 import { useMarketStream } from './useMarketStream';
 
 /**
@@ -138,10 +139,14 @@ export function useDiscoverPriceStream(groups: DiscoverGroupedItem[], principal:
 
   const visibleSignature = leaves.map(priceKey).sort().join(',');
   useEffect(() => { invalidate(); }, [visibleSignature, invalidate, principal]);
+  const streamedMarkets = leaves.filter(item => item.type === 'futures' && !marketResolved(item.data as FeedFuturesData))
+    .map(item => (item.data as FeedFuturesData).id);
+  // #10090: a futures card in view shows its venue's move at arrival.
+  const marketPreviews = useMarketPreviews(streamedMarkets);
   useMarketStream({
-    marketIds: leaves.filter(item => item.type === 'futures' && !marketResolved(item.data as FeedFuturesData))
-      .map(item => (item.data as FeedFuturesData).id),
+    marketIds: streamedMarkets,
     enabled: true, onInvalidate: invalidate,
+    onPreview: marketPreviews.onPreview, onPreviewReset: marketPreviews.onPreviewReset,
   });
 
   const liveEvents = leaves.filter(item => item.type === 'event' && ['live', 'scheduled', 'suspended'].includes((item.data as FeedEventData).status))
@@ -238,6 +243,6 @@ export function useDiscoverPriceStream(groups: DiscoverGroupedItem[], principal:
 
   // The price book, the dispatcher and adoption all keep reading `projected`:
   // a preview is never a committed price.
-  const items = useMemo(() => overlayPreviews(projected, previews), [projected, previews]);
+  const items = useMemo(() => marketPreviews.overlay(overlayPreviews(projected, previews)), [marketPreviews, projected, previews]);
   return { items, setPriceVisibility };
 }

@@ -48,6 +48,11 @@ function orderClock(next: ReturnType<typeof clock>, prior: NonNullable<ReturnTyp
   return next.seconds === prior.seconds ? (next.fraction > prior.fraction ? 1 : next.fraction < prior.fraction ? -1 : 0)
     : next.seconds > prior.seconds ? 1 : -1;
 }
+/** #10090: order two observation stamps at sub-millisecond fidelity; null when either is undatable. */
+export function observationOrder(next: string | null | undefined, prior: string | null | undefined): number | null {
+  const a = clock(next), b = clock(prior);
+  return a && b ? orderClock(a, b) : null;
+}
 
 function marketClocks(data: MarketQuote): Record<string, string | null> {
   const clocks = { ...data.outcome_observed_at };

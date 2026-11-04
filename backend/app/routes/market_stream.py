@@ -1,8 +1,12 @@
 """One bounded SSE connection for the markets a reader currently has visible.
 
-This is an invalidation transport. It never supplies prices or infers sports
-state: clients re-read authoritative REST, including its normalized fields and
-settlement. All database work ends before the first streamed byte.
+This is an invalidation transport. It never supplies committed prices or infers
+sports state: clients re-read authoritative REST, including its normalized fields
+and settlement. All database work ends before the first streamed byte.
+
+#10090: it also forwards a held market's PROVISIONAL venue move
+(``market_preview`` events, `utils/market_preview`), which a client may show
+until the committed re-read replaces it; never a settlement, never stored.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from sqlalchemy import exists, func, select
 from app.models import FuturesMarket, FuturesOutcome
 from app.services.database import async_session_maker
 from app.utils.live_push import MAX_FRAME_AGE_S, sse_encode
+from app.utils.market_preview import PREVIEW_FRAME_TYPE, parse_market_preview
 from app.utils.market_quote_push import SOURCES, market_channel, parse_market_frame
 from app.utils.settledness import ASSIGNED_SETTLED_STATUSES
 
@@ -162,6 +167,19 @@ async def _stream(ids: list[int], unavailable: list[int], request: Request):
                         if frame["terminal"]:
                             settled.append(mid)
                             subscriptions.remove(mid)
+                elif (preview := parse_market_preview(raw)) is not None and (
+                    preview["market_id"] == mid
+                ):
+                    # #10090: a provisional venue move (`utils/market_preview`),
+                    # its own event so an invalidation-only client ignores it.
+                    # Past its ttl it is no longer worth showing. It is not a
+                    # liveness signal: the heartbeat contract is unchanged.
+                    age = (
+                        datetime.now(timezone.utc)
+                        - datetime.fromisoformat(preview["published_at"])
+                    ).total_seconds()
+                    if -5 <= age <= preview["ttl_ms"] / 1000:
+                        yield sse_encode(json.dumps(preview), event=PREVIEW_FRAME_TYPE)
                 # Even malformed traffic must not starve the named heartbeat.
             if now - last_beat >= HEARTBEAT_INTERVAL_S:
                 yield sse_encode(

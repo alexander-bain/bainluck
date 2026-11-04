@@ -15540,6 +15540,11 @@ async def _score_futures(
                 # not the other is the defect, not half a fix.
                 "price_observed_at": _card_price_observed_at(printed_outcomes),
                 "top_outcomes": top_outcomes_data,
+                # #10090 market previews: the divisor `top_outcomes` was printed
+                # on (`_feed_display_scale`). A venue preview is a RAW price, so
+                # a Discover card overlays one only when this is exactly 1.0;
+                # absent (an older payload) overlays nothing.
+                "display_scale": _display_scale,
                 # #2088: served even when null — see the note on the other
                 # serializer. Null means "checked"; absent means "pre-#2088 build".
                 "card_sum_reason": _card_sum_reason,

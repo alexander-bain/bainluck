@@ -1,10 +1,15 @@
 import type { StreamHandle } from './liveStreamController';
+import { parseMarketPreview, type MarketPreviewFrame } from './discover/marketPreview';
 
 export interface MarketStreamDependencies {
   marketIds: number[];
   open: (ids: number[]) => StreamHandle;
   now: () => number;
   onInvalidate: (ids: number[]) => void;
+  /** #10090: a provisional venue move for one of this connection's markets. */
+  onPreview?: (frame: MarketPreviewFrame) => void;
+  /** #10090: this connection ended; its markets' previews are no longer fenced. */
+  onPreviewReset?: (ids: number[]) => void;
 }
 
 function payload(event: unknown): Record<string, unknown> | null {
@@ -28,7 +33,15 @@ export function createMarketStreamController(deps: MarketStreamDependencies) {
   let lastWire = 0;
   let retryAt: number | null = null;
 
-  const retire = () => { generation++; handle?.close(); handle = null; };
+  let connected: number[] = [];
+  const retire = () => {
+    generation++;
+    handle?.close();
+    handle = null;
+    // #10090: a preview's seq is fenced per connection; a new one starts clean.
+    if (connected.length) deps.onPreviewReset?.(connected);
+    connected = [];
+  };
   const recycle = (delay: number) => {
     retire();
     retryAt = deps.now() + delay;
@@ -43,6 +56,7 @@ export function createMarketStreamController(deps: MarketStreamDependencies) {
     try { next = deps.open(active); }
     catch { recycle(60_000); return; }
     handle = next;
+    connected = active;
     lastWire = deps.now();
     let recoveryGeneration = 0;
     const current = () => !stopped && epoch === generation && handle === next;
@@ -72,6 +86,13 @@ export function createMarketStreamController(deps: MarketStreamDependencies) {
       lastWire = deps.now();
       deps.onInvalidate([frame.market_id]);
       if (frame.terminal) terminal.add(frame.market_id);
+    });
+    next.addEventListener('market_preview', event => {
+      if (!current() || !deps.onPreview) return;
+      const frame = parseMarketPreview(event);
+      if (!frame || !active.includes(frame.market_id) || terminal.has(frame.market_id)) return;
+      lastWire = deps.now();
+      deps.onPreview(frame);
     });
     next.addEventListener('reconnect', () => {
       if (!current()) return;

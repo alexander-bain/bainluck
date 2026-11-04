@@ -4513,6 +4513,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     from app.utils.reader_presence import held_event_cache
     blend_refresher.reader_held = held_event_cache().event_ids
     tail_receipts.reader_held = held_event_cache().event_ids
+    # #10090 market previews: a held market's buffered price, published at
+    # arrival on its `live:market:<id>` channel (`utils/market_preview`). No
+    # database work: market ids come from `market_by_outcome` (this run's map),
+    # Redis is the refresher's client; `handle_resolved` refuses its market.
+    # Reached through the refresher, like `held_quotes`: no new name.
+    from app.utils.market_preview import MarketPreviewPublisher
+
+    blend_refresher.market_preview = MarketPreviewPublisher(
+        "polymarket", lambda: blend_refresher._client(),
+    )
     # #10090 decision J: `confirmed_at` for this venue's events. A buffered
     # withdrawal whose book prices a published leg out is a pending change
     # (the rule `flush_withdrawals` applies to the stored price).
@@ -7034,6 +7044,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 note_withdrawn = getattr(blend_refresher, "note_receipt_withdrawn", None)
                 if note_withdrawn is not None:
                     note_withdrawn([oid for oid, _bid, _ask in legs])
+                # #10090 market previews: nor does an unsent preview of it.
+                preview = getattr(blend_refresher, "market_preview", None)
+                if preview is not None:
+                    preview.forget(oid for oid, _bid, _ask in legs)
                 wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
                 if wake_outcomes is not None:
                     wake_outcomes(
@@ -7070,9 +7084,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if input_generation != routing_generation:
                 return
             priced = with_complements(targets, prob, open_complement_of)
+            preview = getattr(blend_refresher, "market_preview", None)
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "price", msg)
+                # #10090: to a held market's readers now (no I/O here).
+                if preview is not None:
+                    preview.note(market_by_outcome.get(outcome_id), outcome_id, leg_prob)
             if repeat_skip_s > 0:
                 for outcome_id, _leg_prob in priced:
                     leg_writes[outcome_id] = next(leg_write_counter)
@@ -7293,9 +7311,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if input_generation != routing_generation:
                 return
             priced = with_complements(targets, prob, open_complement_of)
+            preview = getattr(blend_refresher, "market_preview", None)
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "trade", msg)
+                # #10090: to a held market's readers now (no I/O here).
+                if preview is not None:
+                    preview.note(market_by_outcome.get(outcome_id), outcome_id, leg_prob)
                 if repeat_skip_s > 0:
                     leg_writes[outcome_id] = next(leg_write_counter)
             wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
@@ -7336,6 +7358,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         market_id = condition_to_market.get(condition_id)
         if not market_id:
             return
+        # #10090: a resolving market is never previewed again (before the
+        # venue read, so no later tick in its last window goes out).
+        preview = getattr(blend_refresher, "market_preview", None)
+        if preview is not None:
+            preview.refuse_market(market_id)
         task = asyncio.create_task(_settle_resolution(
             msg, condition_id, market_id,
             list(outcomes_by_market.get(market_id, [])), dict(asset_to_outcome),
