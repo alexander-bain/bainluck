@@ -1,6 +1,18 @@
 // #7878 (web consumer of the producer contract) — through the REAL component,
 // on a REAL production payload that carries `evidence_contract`.
 //
+// #11929 — ALEX'S RULING (2026-11-04 12:09 PT) SUPERSEDES the interior-hole
+// contract the MLB arm used to pin ("lifts at each of its five unproven
+// stretches, bridged by a faint connector"): "A solid line through unobserved
+// time. A hole between two observations is drawn like any other segment of
+// that line … no bridge, no dotted treatment, no label." The contract still
+// classifies those five stretches as UNKNOWN (lib-level suite
+// chartEvidenceContract7878), but the chart now draws them as ordinary
+// segments: one pen-down, no connector, with or without the contract. On this
+// finished game nothing else changes — there is no stale edge to caption.
+//
+// THE ORIGINAL TEXT (the "line must lift" half is history):
+//
 // The pre-contract chart judged holes by a cadence heuristic with a 10-minute
 // floor, so a source that went quiet for six minutes in-game was still drawn
 // as one solid line. Codex's card-B decision set G = 300s as the display
@@ -107,12 +119,17 @@ describe("#7878 — 15318166 (Mets @ Rangers, completed) with the served contrac
     }
   });
 
-  test("contract: the MLB line lifts at each of its five unproven stretches, bridged by a faint connector", () => {
+  test("#11929 — contract: the MLB line's five unproven stretches are drawn as ordinary segments — one pen-down, no connector, no note", () => {
     const html = render(SPECIMEN.evidence_contract);
     const mlb = solid(html, MLB);
     expect(mlb).toBeDefined();
-    expect(penDowns(mlb!.d)).toBe(6);
-    expect(connector(html, MLB)).toBeDefined();
+    expect(penDowns(mlb!.d)).toBe(1);
+    expect(connector(html, MLB)).toBeUndefined();
+    expect(html).not.toContain("recharts-gap-connector");
+    expect(html).not.toMatch(/no readings|No numbers for/i);
+    // Identical to the no-contract control: the contract no longer changes
+    // how an interior stretch is drawn.
+    expect(mlb!.d).toBe(solid(render(undefined), MLB)!.d);
   });
 
   test("contract: Kalshi, whose in-game readings are never more than G apart, stays ONE solid line", () => {
