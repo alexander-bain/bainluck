@@ -50,7 +50,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
@@ -655,7 +655,8 @@ def _check_member_coherence(
             try:
                 above_rungs.append((float(num_str), prob))
             except ValueError:
-                pass
+                # Non-numeric threshold rung token; skip rung comparison.
+                continue
             continue
 
         m_below = _BELOW_RUNG_RE.match(oname)
@@ -664,7 +665,8 @@ def _check_member_coherence(
             try:
                 below_rungs.append((float(num_str), prob))
             except ValueError:
-                pass
+                # Non-numeric threshold rung token; skip rung comparison.
+                continue
 
     if len(above_rungs) >= 2:
         above_rungs.sort(key=lambda pair: pair[0])
@@ -823,6 +825,14 @@ def _build_member_card(member: _SiblingMember) -> dict[str, Any]:
         prices_ts = member.observed_at
     elif member.is_graded and member.settled_winner:
         yes_won = member.settled_winner.lower() == "yes"
+        graded_source = next(
+            (
+                o.get("resolution_source")
+                for o in (base.get("outcomes") or ())
+                if isinstance(o, Mapping) and o.get("resolution_source")
+            ),
+            None,
+        )
         top_outcomes = [
             {
                 "id": member.outcome_id,
@@ -833,7 +843,7 @@ def _build_member_card(member: _SiblingMember) -> dict[str, Any]:
                 "rank": 1 if yes_won else 2,
                 "movement": None,
                 "is_winner": yes_won,
-                "resolution_source": "api_settlement",
+                "resolution_source": graded_source,
             },
             {
                 "id": member.outcome_id + 1,
@@ -844,7 +854,7 @@ def _build_member_card(member: _SiblingMember) -> dict[str, Any]:
                 "rank": 2 if yes_won else 1,
                 "movement": None,
                 "is_winner": not yes_won,
-                "resolution_source": "api_settlement",
+                "resolution_source": graded_source,
             },
         ]
         status_str = "resolved"
@@ -923,6 +933,12 @@ def select_sibling_family(
     withheld_by_market: Optional[Mapping[int, set[int]]] = None,
 ) -> Any:
     """Pure selector for ``sibling_family`` (§1.3).
+
+    The sibling template is discovered structurally from the candidate titles
+    via ``detect_sibling_template_pair`` and ``fold_template_key`` (Ruling 145:
+    the template is found from the markets' own words, not supplied by hand).
+    When ``template`` is passed from a stored definition, it acts as a declared
+    expectation checked against the structurally detected family key.
 
     Returns ``RoundupMembers`` when the sibling family passes every check, or
     ``RoundupRefusal`` with structured reasons when any check fails.
@@ -1370,18 +1386,35 @@ async def _load_markets_from_db(
     group_id: Optional[str] = None,
     candidate_ids: Sequence[int] = (),
 ) -> tuple[dict[int, dict[str, Any]], dict[int, set[int]]]:
-    """Load candidate ``FuturesMarket`` rows and their withheld outcome IDs in constant queries."""
+    """Load candidate ``FuturesMarket`` rows and their withheld outcome IDs in constant queries.
+
+    ``candidates`` are queried as a union (SQL ``OR``) with ``group_id``, not a
+    restriction, so any new sibling market the venue adds under ``group_id``
+    joins the family automatically without listing IDs by hand.
+    """
+    if not hasattr(db, "execute") or not callable(db.execute):
+        return {}, {}
+
     from sqlalchemy import or_, select
+    from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import selectinload
 
     from app.models import FuturesMarket
     from app.routes.futures import withheld_price_outcome_ids_for_markets
 
+    clean_group_id = str(group_id).strip() if group_id else None
+    clean_candidate_ids = [
+        int(x)
+        for x in candidate_ids
+        if isinstance(x, int) and not isinstance(x, bool) and int(x) > 0
+    ]
+    candidate_id_set = set(clean_candidate_ids)
+
     filters = []
-    if group_id:
-        filters.append(FuturesMarket.group_id == str(group_id).strip())
-    if candidate_ids:
-        filters.append(FuturesMarket.id.in_([int(x) for x in candidate_ids]))
+    if clean_group_id:
+        filters.append(FuturesMarket.group_id == clean_group_id)
+    if clean_candidate_ids:
+        filters.append(FuturesMarket.id.in_(clean_candidate_ids))
     if not filters:
         return {}, {}
 
@@ -1394,13 +1427,63 @@ async def _load_markets_from_db(
         .where(or_(*filters) if len(filters) > 1 else filters[0])
         .order_by(FuturesMarket.id.asc())
     )
-    rows = (await db.execute(stmt)).scalars().all()
+    res = await db.execute(stmt)
+    if not hasattr(res, "scalars") or not callable(res.scalars):
+        return {}, {}
+    scalars_obj = res.scalars()
+    if not hasattr(scalars_obj, "all") or not callable(scalars_obj.all):
+        return {}, {}
+    rows = list(scalars_obj.all())
     if not rows:
         return {}, {}
 
-    withheld = await withheld_price_outcome_ids_for_markets(db, rows)
+    orm_rows = [
+        m
+        for m in rows
+        if not isinstance(m, Mapping)
+        and isinstance(getattr(m, "id", None), int)
+        and not isinstance(getattr(m, "id", None), bool)
+    ]
+    withheld: dict[int, set[int]] = {}
+    if isinstance(db, AsyncSession) and orm_rows:
+        withheld = await withheld_price_outcome_ids_for_markets(db, orm_rows)
+
     by_id: dict[int, dict[str, Any]] = {}
     for m in rows:
+        if isinstance(m, Mapping):
+            raw_id = m.get("id")
+            if (
+                not isinstance(raw_id, int)
+                or isinstance(raw_id, bool)
+                or raw_id <= 0
+                or "outcomes" not in m
+            ):
+                continue
+            mid = int(raw_id)
+            row_gid = str(m.get("group_id") or "").strip() or None
+            if (
+                (clean_group_id or candidate_id_set)
+                and row_gid != clean_group_id
+                and mid not in candidate_id_set
+            ):
+                continue
+            entry = dict(m)
+            entry["id"] = mid
+            by_id[mid] = entry
+            continue
+
+        raw_mid = getattr(m, "id", None)
+        if not isinstance(raw_mid, int) or isinstance(raw_mid, bool) or raw_mid <= 0:
+            continue
+        mid = int(raw_mid)
+        row_gid = str(getattr(m, "group_id", None) or "").strip() or None
+        if (
+            (clean_group_id or candidate_id_set)
+            and row_gid != clean_group_id
+            and mid not in candidate_id_set
+        ):
+            continue
+
         outcomes_list = [
             {
                 "id": int(o.id),
@@ -1425,18 +1508,18 @@ async def _load_markets_from_db(
             }
             for o in (getattr(m, "outcomes", None) or ())
         ]
-        by_id[int(m.id)] = {
-            "id": int(m.id),
-            "name": m.name,
-            "status": m.status,
-            "source": m.source,
+        by_id[mid] = {
+            "id": mid,
+            "name": getattr(m, "name", None),
+            "status": getattr(m, "status", None),
+            "source": getattr(m, "source", None),
             "external_id": getattr(m, "external_id", None),
             "group_id": getattr(m, "group_id", None),
             "sport": m.sport.key if getattr(m, "sport", None) is not None else None,
             "sport_name": (
                 m.sport.name if getattr(m, "sport", None) is not None else None
             ),
-            "category": m.category,
+            "category": getattr(m, "category", None),
             "llm_sport_category": getattr(m, "llm_sport_category", None),
             "market_tier": getattr(m, "market_tier", None),
             "market_type": getattr(m, "market_type", None),

@@ -655,3 +655,27 @@ class TestLiveDefinitionsAndDecisionA:
         )
         assert len(members.members) == 13
 
+    @pytest.mark.asyncio
+    async def test_db_loader_tolerates_none_and_unrelated_fake_session_rows(self) -> None:
+        """Fake test sessions passed by ``roundup_feed_items(None)`` or unrelated
+        fixture sessions cleanly refuse instead of raising ``AttributeError``.
+        """
+        refusal_none = await snow_first_flakes_2026(None, now=NOW_NOV_3)
+        assert isinstance(refusal_none, RoundupRefusal)
+
+        class _FakeScalars:
+            def all(self) -> list[dict[str, Any]]:
+                return [{"team": "BUF", "win_prob": 0.55}]
+
+        class _FakeResult:
+            def scalars(self) -> _FakeScalars:
+                return _FakeScalars()
+
+        class _FakeSession:
+            async def execute(self, _stmt: Any) -> _FakeResult:
+                return _FakeResult()
+
+        refusal_fake = await snow_first_flakes_2026(_FakeSession(), now=NOW_NOV_3)
+        assert isinstance(refusal_fake, RoundupRefusal)
+
+
