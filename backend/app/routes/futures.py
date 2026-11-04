@@ -11423,11 +11423,7 @@ def _format_market_detail(
             getattr(market, "name", "") or "",
         )
     )
-    if (
-        lead_outcome_id is None
-        and market.status not in NOT_LIVE_STATUSES
-        and not ladder_treatment_refused
-    ):
+    if lead_outcome_id is None and market.status not in NOT_LIVE_STATUSES:
         from app.utils.ladder_headline import ladder_headline_outcome_id
 
         lead_outcome_id = ladder_headline_outcome_id(outcomes, market.name)

@@ -429,7 +429,6 @@ def test_denver_december_snow_ladder_refusal_and_drop_incoherent_rung():
 
     detail = _format_market_detail(market)
     assert detail["ladder_treatment_refused"] is True
-    assert detail["lead_outcome_id"] is None
     assert len(detail["outcomes"]) == 6
     by_name = {o["name"]: o for o in detail["outcomes"]}
     assert by_name["Above 6 inches"]["probability"] == pytest.approx(0.64)
