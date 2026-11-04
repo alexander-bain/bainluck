@@ -26,7 +26,7 @@ export interface DiscoverCollectionEntry {
   slug: string;
   name: string;
   href: string;
-  /** "16 games · 40 questions" — empty parts are left out. */
+  /** "16 games · 40 markets" — empty parts are left out. */
   subtitle: string;
 }
 
@@ -89,8 +89,8 @@ export function admitCollection(item: FeedItem | null | undefined): DiscoverColl
   if (typeof slug !== "string" || slug !== canonicalSlug(card.edition)) return null;
 
   const games = card.game_count;
-  const questions = card.question_count;
-  if (!isCount(games) || !isCount(questions) || games + questions === 0) return null;
+  const markets = card.question_count;
+  if (!isCount(games) || !isCount(markets) || games + markets === 0) return null;
 
   const href = `/collections/${slug}`;
   const dest = card.destination;
@@ -98,7 +98,7 @@ export function admitCollection(item: FeedItem | null | undefined): DiscoverColl
 
   const parts: string[] = [];
   if (games > 0) parts.push(plural(games, "game"));
-  if (questions > 0) parts.push(plural(questions, "question"));
+  if (markets > 0) parts.push(plural(markets, "market"));
   return { slug, name, href, subtitle: parts.join(" · ") };
 }
 
