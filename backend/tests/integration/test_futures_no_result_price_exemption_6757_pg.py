@@ -450,24 +450,27 @@ class TestS_GenuinelySettled:
         contradicted the verdict the ladder beside it already printed — the same
         defect two golfers who missed the BMW PGA cut showed at 84%.
 
-        The two siblings are the arm's short-circuits, and they are controls
-        rather than decoration: a winner already drawn at its win and a loser
-        whose book already collapsed to zero both END where they should, so
-        neither gains a second point. A freeze that appended unconditionally
-        would draw a flat tail nobody observed on both.
+        The two siblings are controls: a winner already drawn at its win and a
+        loser whose book already collapsed to zero keep their observed journey
+        whole and gain exactly one settlement point at their result. Since
+        #10955 that point is the RESULT and never drawn, and the legend's
+        Won/Lost reads it (#11929: skipping it on a converged line lost both).
         """
         client, ids = seeded
-        drawn = _drawn(await _history(client, ids["S"]["market"]))
+        history = await _history(client, ids["S"]["market"])
+        drawn = _drawn(history)
+        observed = _observed(history)
         stale = drawn[_label("settled loser, stale empty book")]
         assert stale[-1] == 0.0, (
             "a leg graded `api_settlement` / is_winner False must end at the "
             "loss; it ended at the stale empty-book midpoint"
         )
         assert len(stale) == 4, "the terminal point is APPENDED — nothing is dropped"
-        for name in ("settled winner", "settled loser, book collapsed"):
-            assert (
-                len(drawn[_label(name)]) == 3
-            ), f"{name!r} already ends at its result and must gain no second point"
+        for name, result in (("settled winner", 1.0), ("settled loser, book collapsed", 0.0)):
+            assert len(observed[_label(name)]) == 3, f"{name!r}: the observed journey is whole"
+            assert drawn[_label(name)] == observed[_label(name)] + [result], (
+                f"{name!r} already ends at its result and carries exactly one result point"
+            )
 
     async def test_adjacent_terminal_sources_keep_current_behaviour(self, seeded):
         """PINNED, NOT RULED. ``did_not_play`` / ``all_losers`` are not retractions.

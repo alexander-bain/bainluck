@@ -413,7 +413,12 @@ class TestTheEndpointServesIt:
         dropped point may not be counted (gotcha #53: an absence and a fact must
         not share a shape)."""
         before = await self._serve(*self._board())
-        drawn = sum(len(o["history"]) for o in before["outcomes"])
+        # A settlement point is the RESULT, never drawn (#10955), so it is not
+        # a drawn point; every converged graded leg now carries one.
+        drawn = sum(
+            1 for o in before["outcomes"] for p in o["history"]
+            if p.get("bookmaker") != "settlement"
+        )
         assert before["total_data_points"] == drawn
 
         monkeypatch.setattr("app.routes.futures._GRADE_RETURN_MIN", 10_000)
