@@ -114,6 +114,8 @@ interface QuantityGroupProps {
    * same ladder, roomier label track. Queue L2-119.
    */
   wideLabels?: boolean;
+  /** Copy for a null, ungraded rung; omitted callers keep the dash. */
+  missingPriceLabel?: string;
 }
 
 // #9576 — the rows' boundary rule, not a bare round: a still-trading 0.995
@@ -138,6 +140,7 @@ export default function QuantityGroup({
   bare = false,
   maxRungs,
   wideLabels = false,
+  missingPriceLabel,
 }: QuantityGroupProps) {
   if (!rungs || rungs.length === 0) return null;
 
@@ -311,6 +314,9 @@ export default function QuantityGroup({
           // aria-label keeps its `{label}: {pct}` prefix — hooks address rungs
           // by it — with the verdict appended.
           const rungVerdict = rung.verdict ?? null;
+          const missingPriceText = rung.probability == null && rungVerdict == null
+            ? missingPriceLabel : undefined;
+          const probabilityText = missingPriceText ?? pct(rung.probability);
           // #8562 — a tinted rung (the leader, or a graded one) is inset with
           // `px-2 -mx-2`. At `w-full` that padding came out of its CONTENT box,
           // so the leader's label and track were 16px shorter than its
@@ -409,7 +415,7 @@ export default function QuantityGroup({
                     : "",
                 interactive ? "transition-colors hover:bg-surface-elevated/60 rounded-lg" : "",
               ].join(" ")}
-              aria-label={`${rung.label}: ${pct(rung.probability)}${rungVerdict === "won" ? ", Won" : rungVerdict === "lost" ? ", Lost" : ""}`}
+              aria-label={`${rung.label}: ${probabilityText}${rungVerdict === "won" ? ", Won" : rungVerdict === "lost" ? ", Lost" : ""}`}
             >
               {stackMove ? (
                 <span style={{ width: stackedCellWidth }} className="shrink-0 flex flex-col gap-0.5">
@@ -472,7 +478,9 @@ export default function QuantityGroup({
                   rung keeps today's number, verdict or no verdict around it. */}
               <span
                 className={[
-                  "w-10 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums",
+                  missingPriceText
+                    ? "shrink-0 whitespace-nowrap text-right text-xs font-medium"
+                    : "w-10 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums",
                   rungVerdict === "won"
                     ? "text-accent-brand"
                     : rungVerdict === "lost"
@@ -482,7 +490,7 @@ export default function QuantityGroup({
                         : "text-text-primary",
                 ].join(" ")}
               >
-                {pct(rung.probability)}
+                {probabilityText}
                 {rungVerdict != null && (
                   <span
                     className={`block text-[10px] font-medium ${

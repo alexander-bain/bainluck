@@ -130,6 +130,37 @@ describe("QuantityGroup", () => {
     );
     expect(html).toContain("—");
   });
+
+  test("explicit missing-price copy appears in the row and its accessible label", () => {
+    const html = renderToStaticMarkup(
+      <QuantityGroup
+        rungs={[{ key: "round-1", label: "1", probability: null }]}
+        missingPriceLabel="No current price"
+      />,
+    );
+    expect(html).toContain('aria-label="1: No current price"');
+    expect(html).toContain(">No current price</span>");
+    expect(html).not.toContain("w-10 shrink-0 text-right");
+  });
+
+  test("missing-price copy never replaces zero, a genuine quote or a settled result", () => {
+    const html = renderToStaticMarkup(
+      <QuantityGroup
+        rungs={[
+          { key: "zero", label: "zero", probability: 0 },
+          { key: "priced", label: "priced", probability: 0.21 },
+          { key: "winner", label: "winner", probability: 1, verdict: "won" },
+          { key: "loser", label: "loser", probability: 0, verdict: "lost" },
+        ]}
+        missingPriceLabel="No current price"
+      />,
+    );
+    expect(html).not.toContain("No current price");
+    expect(html).toContain('aria-label="zero: 0%"');
+    expect(html).toContain('aria-label="priced: 21%"');
+    expect(html).toContain('aria-label="winner: 100%, Won"');
+    expect(html).toContain('aria-label="loser: 0%, Lost"');
+  });
 });
 
 describe("buildThresholdRungs", () => {

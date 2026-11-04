@@ -421,3 +421,52 @@ describe("#4568 — the QUANTITY LADDER on /futures/108555", () => {
     expect(html).not.toContain("More outcomes");
   });
 });
+
+describe("#11980 — missing prices on the real numeric detail branch", () => {
+  function alaskaRounds(probability = 0.21) {
+    const market = starlinkIpo();
+    return {
+      ...market,
+      id: 34277584,
+      name: "Alaska Senate election: number of rounds",
+      mutually_exclusive: true,
+      outcome_count: 3,
+      outcomes: [
+        { ...market.outcomes[0], id: 152597195, name: "2", probability: null },
+        { ...market.outcomes[0], id: 152597196, name: "3", probability },
+        { ...market.outcomes[0], id: 152597197, name: "1", probability: null },
+      ],
+    };
+  }
+
+  it("says No current price on both folded Alaska legs, with the live third leg intact", () => {
+    const { beforeFold, insideFold } = splitAtLadderFold(render(alaskaRounds(), "34277584"));
+    expect(insideFold).toContain('aria-label="1: No current price"');
+    expect(insideFold).toContain('aria-label="2: No current price"');
+    expect(insideFold.match(/>No current price<\/span>/g)).toHaveLength(2);
+    expect(beforeFold).toContain('aria-label="3: 21%"');
+    expect(beforeFold).not.toContain("No current price");
+  });
+
+  it("keeps a genuine zero in the priced list", () => {
+    const { beforeFold, insideFold } = splitAtLadderFold(render(alaskaRounds(0), "34277584"));
+    expect(beforeFold).toContain('aria-label="3: 0%"');
+    expect(insideFold).toContain("More outcomes (2)");
+  });
+
+  it("does not call a resolved date ladder's missing result a current price", () => {
+    const market = starlinkIpo();
+    const resolved = {
+      ...market,
+      status: "resolved",
+      outcomes: market.outcomes.map((o, i) => ({
+        ...o,
+        is_winner: i === 0 ? true : null,
+        resolution_source: i === 0 ? "api_settlement" : null,
+      })),
+    };
+    const html = render(resolved, "108555");
+    expect(html).toContain(LADDER_FOLD_MARKER);
+    expect(html).not.toContain("No current price");
+  });
+});

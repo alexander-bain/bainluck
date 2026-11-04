@@ -1545,6 +1545,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               <QuantityGroup
                 rungs={numberlessRungs}
                 wideLabels={ladderNeedsWideLabels(numberlessRungs)}
+                missingPriceLabel={!isResolved ? "No current price" : undefined}
               />
             </details>
           )}
