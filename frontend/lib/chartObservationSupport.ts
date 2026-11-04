@@ -46,9 +46,11 @@
  * thresholds so the two surfaces agree about the same payload.
  *
  * WHAT THE CONSUMER DOES WITH THE VERDICT (in `OddsChart`):
- *   - interior unsupported interval: the solid line stops at the last
- *     observation and resumes at the next; a faint dashed CONNECTOR joins the
- *     two, explained on hover as missing observations, never as a price;
+ *   - interior unsupported interval: SUPERSEDED by #11929 (Alex, 2026-11-04
+ *     12:09 PT — "a solid line through unobserved time … no bridge, no dotted
+ *     treatment, no label"). The line is drawn through it like any other
+ *     segment (the forward-fill carries to the next observation); no
+ *     connector, no tooltip note. The verdict is still computed but unread;
  *   - trailing unsupported interval: the solid line ends at the last
  *     observation, nothing is drawn after it, and the chart says how old that
  *     reading is;

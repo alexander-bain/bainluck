@@ -1,5 +1,20 @@
-// #7878 (web half) — the win-probability chart stops drawing a line across an
-// interval nobody observed, and stops extending a stalled line to "now".
+// #7878 (web half) — the win-probability chart stops extending a stalled line
+// to "now". Its INTERIOR-hole half is SUPERSEDED by #11929.
+//
+// #11929 — ALEX'S RULING (2026-11-04 12:09 PT) SUPERSEDES THE INTERIOR-HOLE
+// CONTRACT THIS FILE USED TO PIN: "A solid line through unobserved time. A
+// hole between two observations is drawn like any other segment of that line
+// (the chart's normal interpolation): no bridge, no dotted treatment, no
+// label … nothing on the chart calls the reader's attention to a gap." (11:38
+// AM: "the gaps themselves are the bug.") So on the same saved specimen the
+// Kalshi line is now ONE pen-down through both observations that bound the
+// 73.6-minute hole — the forward-fill carries 36% across it and the line
+// steps to 42% on the next observation's minute, exactly as it does between
+// any two adjacent readings — and no dashed connector is drawn. What #7878
+// built for the RIGHT edge is unchanged: a stalled live line still ends on its
+// last reading and still says how old it is. The controls below are kept.
+//
+// THE ORIGINAL #7878 TEXT, kept for the trailing half and as history:
 //
 // THE DEFECT, in the renderer's own terms: `OddsChart` seeds every minute of
 // the domain and forward-fills every plotted key through the seeded minutes
@@ -148,44 +163,48 @@ describe("#7878 — the saved specimen 15315912 (a 73.6-minute interior hole)", 
     expect(pts.length - 81).toBe(118);
   });
 
-  test("Since Start: the solid Kalshi line is lifted at the hole and a dashed connector spans exactly it", () => {
-    const html = renderSpecimen("live");
+  /**
+   * #11929 — the line is one pen-down with a vertex at EVERY drawn minute
+   * (consecutive vertices one category step apart — no minute of the hole is
+   * skipped), and across the hole it does what it does between any two
+   * adjacent readings: the 08:14 reading (36%) is carried flat through the
+   * hole's ~74 minutes and the line steps to the 09:28 reading (42%, higher
+   * on the plot) on that reading's own minute.
+   */
+  function expectDrawnThroughTheHole(range: "all" | "live") {
+    const html = renderSpecimen(range);
     const solid = kalshiSolid(html);
     expect(solid).toBeDefined();
     const runs = subpaths(solid!.d);
-    // BASE: one sub-path — the pen never lifts, the hole is drawn as a line.
-    expect(runs.length).toBe(2);
-    const [before, after] = runs;
-    expect(before.length).toBeGreaterThan(10);
-    expect(after.length).toBeGreaterThan(100);
-    const lastBefore = before[before.length - 1];
-    const firstAfter = after[0];
-    // The hole is 73.6 of the ~391 drawn minutes: a visible break, not a hairline.
-    expect(firstAfter[0] - lastBefore[0]).toBeGreaterThan(40);
+    expect(runs.length).toBe(1);
+    const run = runs[0];
+    const step = run[1][0] - run[0][0];
+    for (let i = 1; i < run.length; i++) expect(Math.abs(run[i][0] - run[i - 1][0] - step)).toBeLessThan(0.01);
+    // The series runs to the domain's last minute (no trailing interval), so
+    // a vertex's minute is read from the right: the last vertex IS domain.end.
+    const domain = computeSharedChartDomain(SPECIMEN, range, SPECIMEN.status, SPECIMEN.commence_time, "tennis_wta")!;
+    const minute = (iso: string) => Math.floor(Date.parse(iso) / 60_000);
+    const idx = (iso: string) => run.length - 1 - (minute(domain.end) - minute(iso));
+    const i0 = idx(SPECIMEN_HOLE.fromIso);
+    const i1 = idx(SPECIMEN_HOLE.toIso);
+    expect(i1 - i0).toBe(74);
+    expect(i0).toBeGreaterThan(0);
+    // Carried flat through every minute of the hole …
+    for (let i = i0; i < i1; i++) expect(run[i][1]).toBe(run[i0][1]);
+    // … and the line reaches the next reading on its own minute, higher.
+    expect(run[i1][1]).toBeLessThan(run[i0][1]);
+    // No connector, no second path, no sentence about the stretch.
+    expect(curves(html).some(isConnector)).toBe(false);
+    expect(html).not.toContain("recharts-gap-connector");
+    expect(html).not.toMatch(/no readings|No numbers for/i);
+  }
 
-    // The connector starts where the solid line stopped and ends where it
-    // resumed — in x AND in y — so it carries the eye and nothing else.
-    const connector = kalshiConnector(html);
-    expect(connector).toBeDefined();
-    const bridge = subpaths(connector!.d);
-    expect(bridge.length).toBe(1);
-    const c0 = bridge[0][0];
-    const c1 = bridge[0][bridge[0].length - 1];
-    expect(Math.abs(c0[0] - lastBefore[0])).toBeLessThan(0.75);
-    expect(Math.abs(c0[1] - lastBefore[1])).toBeLessThan(0.75);
-    expect(Math.abs(c1[0] - firstAfter[0])).toBeLessThan(0.75);
-    expect(Math.abs(c1[1] - firstAfter[1])).toBeLessThan(0.75);
-    // Faint, dashed, thinner than the line it bridges.
-    expect(connector!.width).toBeLessThan(solid!.width);
-    expect(/stroke-opacity="0\.[0-6]/.test(connector!.tag)).toBe(true);
+  test("Since Start: the Kalshi line is ONE line through the hole, with no connector (#11929)", () => {
+    expectDrawnThroughTheHole("live");
   });
 
-  test("All: the same hole is still a break in the 28-hour window", () => {
-    const html = renderSpecimen("all");
-    const solid = kalshiSolid(html);
-    expect(solid).toBeDefined();
-    expect(subpaths(solid!.d).length).toBe(2);
-    expect(kalshiConnector(html)).toBeDefined();
+  test("All: the same hole is an ordinary segment of the line in the 28-hour window (#11929)", () => {
+    expectDrawnThroughTheHole("all");
   });
 
   test("no stale-edge caption: the specimen's series runs to the chart's right edge", () => {
@@ -398,9 +417,9 @@ describe("#7878 — CONTROLS: the lines that must NOT break", () => {
 
   test("a completed match keeps its settled endpoint: the terminal point is drawn, not withdrawn", () => {
     // 20 readings a minute apart, then the backend's terminal `final` point
-    // 50 minutes later at the result (a real endpoint — the outcome). The
-    // interval into it is unobserved, so it is bridged dashed; the endpoint
-    // itself stays on the solid path.
+    // 50 minutes later at the result (a real endpoint — the outcome). #11929:
+    // the unobserved interval into it is drawn like any other segment, so the
+    // line is ONE pen-down that reaches the endpoint, with no connector.
     const settled = [
       ...series(Array.from({ length: 20 }, (_, i) => i * 60), (i) => 0.6 + i * 0.01),
       { ...series([20 * 60 + 3_000], 1.0)[0], game_state: { final: true } },
@@ -413,9 +432,13 @@ describe("#7878 — CONTROLS: the lines that must NOT break", () => {
     });
     const solid = kalshiSolid(html);
     const runs = subpaths(solid!.d);
-    expect(runs.length).toBe(2);
-    // The far run is the one settled point; recharts still emits its sub-path.
-    expect(runs[1].length).toBeGreaterThanOrEqual(1);
-    expect(kalshiConnector(html)).toBeDefined();
+    expect(runs.length).toBe(1);
+    // The run ends on the settled point: 100%, the top of the plot, at the
+    // right-most vertex.
+    const last = runs[0][runs[0].length - 1];
+    expect(last[1]).toBe(Math.min(...runs[0].map((p) => p[1])));
+    expect(last[0]).toBe(Math.max(...runs[0].map((p) => p[0])));
+    expect(kalshiConnector(html)).toBeUndefined();
+    expect(html).not.toContain('data-testid="chart-stale-edges"');
   });
 });
