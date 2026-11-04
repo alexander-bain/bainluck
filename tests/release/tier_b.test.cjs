@@ -136,9 +136,11 @@ const openPRs=()=>Array.from({length:74},(_,i)=>({number:i+1,state:'open',user:{
 
 for (const [eventName,payload] of [
   ['pull_request_target',{pull_request:{number:1}}],
+  ['pull_request_review',{action:'submitted',pull_request:{number:1}}],
+  ['pull_request_review',{action:'dismissed',pull_request:{number:1}}],
   ['repository_dispatch',{client_payload:{pull_number:1}}],
   ['workflow_dispatch',{inputs:{pull_number:'1'}}],
-]) test(`${eventName} evaluates only its PR, even with 74 open PRs`,async()=>{
+]) test(`${eventName} ${payload.action || ''} evaluates only its PR, even with 74 open PRs`,async()=>{
   const {evaluate}=require(file);
   const {github,calls,created}=policyClient(openPRs());
   await evaluate(github,{repo,eventName,payload});
@@ -204,6 +206,8 @@ test('membership churn retries once, then fails every observed head',async()=>{
 
 test('the workflow uses a half-hour sweep and keeps per-PR events from coalescing each other',()=>{
   const workflow=fs.readFileSync(path.resolve(__dirname,'../../.github/workflows/tier-b.yml'),'utf8');
+  assert.match(workflow,/pull_request_review:\n\s+types: \[submitted, dismissed\]/);
+  assert.match(workflow,/ref: \$\{\{ github.event.repository.default_branch \}\}/);
   assert.match(workflow,/cron: '\*\/30 \* \* \* \*'/);
   assert.match(workflow,/cancel-in-progress: false/);
   assert.ok(workflow.includes("github.event.pull_request.number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));

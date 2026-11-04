@@ -6,8 +6,9 @@ name: Tier-B review policy
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited]
-  # GitHub has no pull_request_target review event. Reviewed default-branch
-  # code observes submitted/dismissed reviews without running privileged PR code.
+  pull_request_review:
+    types: [submitted, dismissed]
+  # Every event uses the evaluator checked out from the default branch below.
   schedule:
     - cron: '*/30 * * * *'
   repository_dispatch:
