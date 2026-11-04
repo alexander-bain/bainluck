@@ -1610,7 +1610,25 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
 
     if _resolve_within_one_cycle(data, other):
         title = _expand_shared_month_abbreviations(title, other_stripped)
+        m_stop = _TENNIS_TOUR_STOP_RE.match(title)
+        if m_stop is not None:
+            tour = m_stop.group("tour")
+            stop = m_stop.group("stop").strip()
+            tail = m_stop.group("tail").strip()
+            other_low = other_stripped.lower()
+            if (
+                tour.lower() in other_low
+                and stop.lower() in other_low
+                and "tennis:" not in other_low
+            ):
+                title = f"{tour} {stop} {tail}"
     return _CEREMONY_PLURAL_RE.sub(lambda m: m.group(1), title)
+
+
+_TENNIS_TOUR_STOP_RE = re.compile(
+    r"^\s*(?P<tour>WTA|ATP)\s+Tennis:\s*(?P<stop>[^,]+?),\s*(?P<country>[^,]+?)(?:,|\s+)\s*(?P<tail>Winner\b.*)$",
+    re.IGNORECASE,
+)
 
 
 def _dedupe_same_question_members(
