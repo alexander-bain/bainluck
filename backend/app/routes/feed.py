@@ -3027,8 +3027,22 @@ def apply_discover_display_chain(
             )
     _tick("live_first_page")
 
+    ladder_refused_count = sum(
+        1
+        for it in items
+        if it.get("_ladder_refused_group_head")
+        or (
+            not it.get("_ladder_refused")
+            and it.get("type") == "futures"
+            and ((it.get("data") or {}).get("discover_card") or {}).get(
+                "ladder_treatment_refused"
+            )
+        )
+    )
+
     return items, {
         "reviewed_filtered_count": reviewed_filtered_count,
+        "ladder_refused": ladder_refused_count,
         # None = the pass never ran (a non-Discover surface); a zero `seated`
         # means it ran and found nothing to seat. Opposite facts (gotcha #53).
         "final_seating": final_seating_meta,
@@ -15715,6 +15729,13 @@ async def _score_futures(
                 # list, so it would be a weaker oracle than the one the server used.
                 "_quality_ladder_or_bucket": quality.is_ladder_or_bucket,
             }
+            if ladder_refused:
+                item["_refused_ladder_leg_ages"] = {
+                    _card_outcome_name(o): (
+                        ts.isoformat() if (ts := _outcome_observed_at(o)) else None
+                    )
+                    for o in card_outcomes
+                }
             if runtime_filters["checks"].get("deadline_family_q8_saved") or (
                 _locked_near_certain
                 and runtime_filters["checks"].get(

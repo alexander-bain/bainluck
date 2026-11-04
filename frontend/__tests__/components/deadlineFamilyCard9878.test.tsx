@@ -1220,4 +1220,48 @@ describe("Alex's Oct 29 ruling: whole numbers on Discover cards", () => {
     expect(html).toContain("Down 7 points since yesterday");
     expect(html).not.toMatch(/\d\.\d\s*(pts|points)/);
   });
+
+  test("#11942: refuses cumulative deadline family when earlier date prints higher than later date beyond whole-number rounding", () => {
+    const oct31Reversed = makeFeedItemFromContract(
+      makeOct31Contract({
+        yes_probability: 0.9,
+        yes_rendered_percent: 90,
+        no_probability: 0.1,
+      }),
+    );
+    const dec31Lower = makeFeedItemFromContract(
+      makeDec31Contract({
+        yes_probability: 0.815,
+        yes_rendered_percent: 82,
+        no_probability: 0.185,
+      }),
+    );
+    const reversed = validateAndBuildDeadlineFamilyCardModel(
+      { items: [oct31Reversed, dec31Lower] },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    );
+    expect(reversed.model).toBeNull();
+    expect(reversed.rejectionReason).toBe("ladder_refused");
+
+    const oct31RoundingTie = makeFeedItemFromContract(
+      makeOct31Contract({
+        yes_probability: 0.816,
+        yes_rendered_percent: 82,
+        no_probability: 0.184,
+      }),
+    );
+    const dec31RoundingTie = makeFeedItemFromContract(
+      makeDec31Contract({
+        yes_probability: 0.815,
+        yes_rendered_percent: 82,
+        no_probability: 0.185,
+      }),
+    );
+    const withinRounding = validateAndBuildDeadlineFamilyCardModel(
+      { items: [oct31RoundingTie, dec31RoundingTie] },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    );
+    expect(withinRounding.rejectionReason).toBeNull();
+    expect(withinRounding.model).not.toBeNull();
+  });
 });

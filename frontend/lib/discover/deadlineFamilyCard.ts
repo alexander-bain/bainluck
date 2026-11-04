@@ -1069,6 +1069,20 @@ export function validateAndBuildDeadlineFamilyCardModel(
     selectionBadgeText = "Resolved";
   } else {
     familyState = "open";
+    let runningPct: number | null = null;
+    for (const m of ascending) {
+      if (m.settlementState !== "open" || m.yesRenderedPercent == null) continue;
+      if (runningPct !== null && m.yesRenderedPercent < runningPct) {
+        return {
+          model: null,
+          rejectionReason: "ladder_refused",
+        };
+      }
+      runningPct =
+        runningPct === null
+          ? m.yesRenderedPercent
+          : Math.max(runningPct, m.yesRenderedPercent);
+    }
     // Only genuinely `open` members (never `trading_closed` or `resolved`) are eligible for representative selection.
     const eligibleOpenPriced = ascending.filter(
       (m) =>

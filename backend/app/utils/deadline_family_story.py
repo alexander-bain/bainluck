@@ -2470,6 +2470,18 @@ def verify_and_select_deadline_family(
         family_state = "settled"
     else:
         family_state = "open"
+        running_pct: int | None = None
+        for m in ascending:
+            if m["settlement"]["state"] != "open":
+                continue
+            pct = m.get("yes_rendered_percent")
+            if pct is None:
+                continue
+            pct_int = int(pct)
+            if running_pct is not None and pct_int < running_pct:
+                return None, "ladder_refused"
+            running_pct = pct_int if running_pct is None else max(running_pct, pct_int)
+
         # Filter to open, priced members that are eligible (excluding `deadline_passed`,
         # `trading_closed`, and `resolved`, and applying Q8 for >=97% members)
         eligible_open_priced = [
