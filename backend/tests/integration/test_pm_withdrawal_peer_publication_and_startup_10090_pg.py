@@ -231,7 +231,9 @@ async def default_preview_redis(monkeypatch, real_redis, consumer, rig):
     from pathlib import Path
     from uuid import uuid4
     import runpy
-    from app.services.dnpl_authority import AuthorityStore, preparing_candidate
+    from app.services.dnpl_authority import (
+        AuthorityStore, AuthorityWriteUncertain, preparing_candidate,
+    )
     from app.services.dnpl_activation import ActivationController
     from app.utils import blend_preview
 
@@ -264,11 +266,26 @@ async def default_preview_redis(monkeypatch, real_redis, consumer, rig):
     store = AuthorityStore(rig.maker)
     server, repl = await client.info('server'), await client.info('replication')
     old = await store.read()
-    current = await store.prepare(old, preparing_candidate(
+    candidate = preparing_candidate(
         old, namespace=uuid4(), operation_id=uuid4(), redis_run_id=server['run_id'],
         redis_master_replid=repl['master_replid'],
         policy_fingerprint=blend_preview.registry().policy.fingerprint,
-    ))
+    )
+    try:
+        current = await store.prepare(old, candidate)
+    except AuthorityWriteUncertain:
+        # #11939: run 41756300234 attempt 1 errored here in setup — the store's
+        # 100ms server statement timeout on a loaded runner. Resolve it the way
+        # the error says (exact primary readback, never a blind retry): if the
+        # candidate landed, use it; if the old authority still stands, the write
+        # never applied and preparing it again is a first write, not a retry.
+        found = await store.read()
+        if found == candidate:
+            current = found
+        elif found == old:
+            current = await store.prepare(old, candidate)
+        else:
+            raise
     controller = ActivationController(store, client)
     await controller.arm(current)
     await controller.initialize(current)

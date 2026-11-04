@@ -523,6 +523,12 @@ async def test_operator_plan_real_lifecycle_stops_without_replaying(
     )
 
     budgets = OperatorBudgets(1000, 5000) if remote_budget else OperatorBudgets()
+    if not remote_budget:
+        # #11939: run 41746363779 attempt 2 hit AuthorityWriteUncertain from the
+        # local store's 150ms deadline on the readback at the end (a loaded
+        # runner). The local-budget case checks the plan's lifecycle, not that
+        # deadline, so widen it as #11916 did for its siblings in this file.
+        monkeypatch.setattr(r.store, "budget_s", 2.0)
     if remote_budget:
         import asyncio
         from contextlib import asynccontextmanager
