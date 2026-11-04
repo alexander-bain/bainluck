@@ -80,10 +80,13 @@ class _FakeRedis:
         self.store.pop(key, None)
 
 
-#: The #2005 reading, from the issue body: 81,643 xids of held horizon, and a
-#: transaction that had been open for the better part of two days.
-INCIDENT_XMIN = 81_643
-INCIDENT_XACT_S = 40 * 3600
+#: The #2005 shape: a horizon held for the better part of two days (~40 h). The
+#: issue body's reading was 81,643 xids at that era's 0.57 xid/s; the same 40 h
+#: at today's measured rate is what the incident would read now (#11988 ruling
+#: A, 2026-11-04: thresholds in hours, converted at the measured rate).
+INCIDENT_HOLD_S = 40 * 3600
+INCIDENT_XMIN = round(INCIDENT_HOLD_S * watchdog.VACUUM_XID_RATE_PER_S)
+INCIDENT_XACT_S = INCIDENT_HOLD_S
 
 #: The healthy reading, measured ten minutes after the backend was killed.
 HEALTHY_XMIN = 372
@@ -224,6 +227,30 @@ class TestSignalsAreJudgedIndependently:
         status, _ = watchdog.classify_vacuum_signals(None, 2_000, None)
         assert status == "warn"
 
+    def test_the_xid_thresholds_are_2005s_hours_at_the_measured_rate(self):
+        """#11988, Alex ruled A (2026-11-04 3:30 PM PT): same hours as #2005.
+        #2006's 10,000 / 50,000 were ~4.9 h / ~24 h at 0.57 xid/s; at the
+        measured 57.7 xid/s they were 2.9 and 14 MINUTES."""
+        rate = watchdog.VACUUM_XID_RATE_PER_S
+        assert 50 <= rate <= 60, "re-measure before moving the rate"
+        warn_h = watchdog.VACUUM_XMIN_WARN / rate / 3600
+        page_h = watchdog.VACUUM_XMIN_PAGE / rate / 3600
+        assert abs(warn_h - watchdog.VACUUM_XMIN_WARN_HOURS) < 0.25
+        assert abs(page_h - watchdog.VACUUM_XMIN_PAGE_HOURS) < 0.25
+        assert watchdog.VACUUM_XMIN_PAGE_HOURS == 24.0
+        assert watchdog.VACUUM_XMIN_WARN_HOURS == 4.9
+
+    def test_todays_long_reads_do_not_warn_and_a_2005_hold_pages(self):
+        """The longest ordinary read seen on Nov 4 — the duplicate-link scan at
+        902 s — is ok; #11988's worst 9-minute sample (16,189) is ok; a 40-hour
+        hold pages, and a 6-hour hold warns."""
+        rate = watchdog.VACUUM_XID_RATE_PER_S
+        classify = watchdog.classify_vacuum_signals
+        assert classify(round(902 * rate), None, None)[0] == "ok"
+        assert classify(16_189, None, None)[0] == "ok"
+        assert classify(round(6 * 3600 * rate), None, None)[0] == "warn"
+        assert classify(INCIDENT_XMIN, None, None)[0] == "page"
+
     def test_the_wall_clock_warn_clears_the_longest_legitimate_holder(self):
         """The issue proposes 15 min; the calibration beats cancel at 17–22 min.
 
@@ -252,7 +279,7 @@ class TestTheScheduledCallerAlarms:
         assert result["status"] == "page"
         assert result["alerted"] is True
         assert len(rig.sentry) == 1
-        assert "81643" in rig.sentry[0].replace(",", "")
+        assert str(INCIDENT_XMIN) in rig.sentry[0].replace(",", "")
         assert "1685421" in rig.sentry[0]
         # The filing rail was reached — and, with no token, said so rather than
         # calling out. The action name is the proof the real function ran.
@@ -283,7 +310,7 @@ class TestTheScheduledCallerAlarms:
     def test_a_warn_alarms_but_does_not_file_an_issue(self, rig):
         """Proportionality: an auto-filed issue per warn is how a board stops
         being read. The Sentry event still goes."""
-        result = rig.run(xmin_age=20_000, xact_age_s=12, worst_dead_pct=3.0)
+        result = rig.run(xmin_age=2_000_000, xact_age_s=12, worst_dead_pct=3.0)
 
         assert result["status"] == "warn"
         assert result["alerted"] is True
