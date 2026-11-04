@@ -31,7 +31,7 @@
  *
  * The sentence is ~250 viewBox units wide and a hole on a week-long window can
  * be 70. Labels are placed longest-hole first, each centred on its stretch (and
- * kept inside the plot), above the lines it explains, then below them, then in
+ * inside its own hole — see below), above the lines it explains, then below them, then in
  * the plot's top and bottom bands; a label that fits nowhere without touching
  * one already placed is left out. The line still breaks there, and the caption
  * under the plot still names the largest hole, so nothing is left unconfessed —
@@ -42,6 +42,18 @@
  * break — on the US Open board's 44-day window a 7 h hole is 5 units of 730 —
  * and a 250-unit sentence centred on it points at nothing a reader can find. It
  * stays a break in the line, unlabelled.
+ *
+ * ═══ A LABEL SITS INSIDE ITS OWN HOLE, OR NOT AT ALL ═══
+ *
+ * Production 2026-11-04, 390 px, after C shipped: Denver December snow's 3-day
+ * hole at the right edge was narrower than its sentence, so centring-then-
+ * clamping slid "No numbers for 3 days in this stretch" left over a week of
+ * real readings, and on 108629 a label was clamped onto the y-axis. A sentence
+ * that says "no numbers" over numbers is a false statement. So a label is
+ * placed only where its whole width fits between the hole's two bracketing
+ * observations; a hole too narrow for its sentence keeps B's faint
+ * hold-then-riser bridge (`holeIsLabelled` tells the chart which), so no hole
+ * is ever left unexplained and no label ever covers data.
  *
  * Pure and total, like the two modules it reads: no clock, no DOM, every input
  * produces an answer, because the caller is a render path.
@@ -183,7 +195,9 @@ export function placeGapLabels(
     if (!(s.toX - s.fromX >= minHoleWidth)) continue;
     const text = gapNote(s.ms);
     const w = gapLabelWidth(text);
-    const x = clamp((s.fromX + s.toX) / 2, frame.left + w / 2, frame.right - w / 2);
+    // Inside its own hole or not at all: never slid over real readings.
+    if (w + 2 * LABEL_GAP_UNITS > s.toX - s.fromX) continue;
+    const x = (s.fromX + s.toX) / 2;
     const candidates = [
       s.minY - ABOVE_LINE_UNITS,
       s.maxY + ABOVE_LINE_UNITS + ASCENT_UNITS,
@@ -220,4 +234,19 @@ export function placeGapLabels(
   }
 
   return placed.map((p) => p.label).sort((a, b) => a.fromT - b.fromT);
+}
+
+/**
+ * Does a placed label stand for this hole? The same "one stretch" test that
+ * grouped the holes, so a hole sharing a labelled stretch is covered by it. A
+ * hole no label stands for keeps its faint bridge (`FuturesChart`).
+ */
+export function holeIsLabelled(hole: ChartHole, labels: readonly GapLabel[]): boolean {
+  const from = hole.from.t;
+  const to = hole.to.t;
+  return labels.some((l) => {
+    const inter = Math.min(l.toT, to) - Math.max(l.fromT, from);
+    const union = Math.max(l.toT, to) - Math.min(l.fromT, from);
+    return union > 0 && inter > 0 && inter / union >= SAME_STRETCH_OVERLAP;
+  });
 }

@@ -80,7 +80,7 @@ function seriesPaths(html: string): DrawnPath[] {
 }
 const bridges = (html: string) => seriesPaths(html).filter((p) => p.dash === "1 5");
 const dots = (html: string) => html.match(/<circle[^>]*\br="3"[^>]*>/g) ?? [];
-/** #11929 C: a full chart names each hole instead of bridging it. */
+/** #11929 C: a full chart names a hole wide enough for its sentence; a narrower one keeps its bridge. */
 const gapLabels = (html: string) =>
   html.match(/<text[^>]*data-testid="futures-chart-gap-label"[^>]*>/g) ?? [];
 const solidRuns = (html: string) => seriesPaths(html).filter((p) => p.dash === null);
@@ -98,11 +98,13 @@ describe("#11929 FuturesChart — the venue's bank draws as one line", () => {
   });
 
   test("control: the same instants as captures keep today's 2 h rule and still break", () => {
-    // #11929 C: broken, and labelled rather than bridged.
+    // #11929 C: broken. Every hole here is a 2–8 h joint, at most 35 units on
+    // a week — far narrower than its ~250-unit sentence — so none is labelled
+    // (a label never covers readings) and each keeps its faint bridge.
     const html = render(bankLine(null));
     expect(solidRuns(html).length).toBeGreaterThan(5);
-    expect(gapLabels(html).length).toBeGreaterThan(0);
-    expect(bridges(html)).toHaveLength(0);
+    expect(gapLabels(html)).toHaveLength(0);
+    expect(bridges(html)).toHaveLength(solidRuns(html).length - 1);
   });
 
   test("the caption breaks where the line does — no hole claimed across a bank joint", () => {
@@ -116,10 +118,11 @@ describe("#11929 FuturesChart — the venue's bank draws as one line", () => {
       return t < START + 40 * HOUR || t > START + 70 * HOUR; // ~30 h with nothing
     });
     const html = render(holed);
-    // #11929 C: two strokes and one label over the hole — no connector.
+    // #11929 C: two strokes. ~30 h on a week is ~130 units, too narrow for its
+    // sentence, so no label — the hole keeps its one faint bridge.
     expect(solidRuns(html)).toHaveLength(2);
-    expect(gapLabels(html)).toHaveLength(1);
-    expect(bridges(html)).toHaveLength(0);
+    expect(gapLabels(html)).toHaveLength(0);
+    expect(bridges(html)).toHaveLength(1);
     expect(html).toContain('data-series-state="gapped"');
   });
 
