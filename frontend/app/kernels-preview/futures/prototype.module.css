@@ -1,0 +1,6 @@
+.prototype { color: var(--text-primary); }
+.heroNumber [data-hero-digits] { font-family: var(--font-jetbrains-mono), monospace; font-size: 64px; letter-spacing: -0.065em; line-height: 1; }
+.heroNumber [data-hero-digits] + span { margin-left: 4px; }
+.chartFrame { min-height: 260px; width: 100%; }
+.prototype [data-testid="futures-chart-tooltip"] span.font-mono::after { content: " ⓘ"; color: var(--text-muted); font: 11px sans-serif; }
+@media (min-width: 640px) { .heroNumber [data-hero-digits] { font-size: 76px; } }

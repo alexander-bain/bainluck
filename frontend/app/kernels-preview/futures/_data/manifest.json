@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-11-04T02:33:38.785457+00:00",
+  "requests": [
+    "/api/futures/109085?representation=verified_title",
+    "/api/futures/109085/history?hours=8760&range=full&top_n=8",
+    "/api/futures/108629?representation=verified_title",
+    "/api/futures/108629/history?hours=8760&range=full&top_n=8",
+    "/api/futures/65536371?representation=verified_title",
+    "/api/futures/65536371/history?hours=8760&range=full&top_n=6",
+    "/api/futures/227?representation=verified_title",
+    "/api/futures/227/history?hours=8760&range=full&top_n=8",
+    "/api/futures/109918?representation=verified_title",
+    "/api/futures/109918/history?hours=8760&range=full&top_n=8",
+    "/api/futures/108645?representation=verified_title",
+    "/api/futures/108645/history?hours=8760&range=full&top_n=8",
+    "/api/containers/midterms-2026",
+    "/api/containers/roundup-cfp-picture",
+    "/api/weather/featured"
+  ],
+  "settled_today": {
+    "market_id": 108645,
+    "settled_at": "2026-11-04T02:27:31.841490+00:00",
+    "source": "futures_markets.settled_at, read-only admin db-query",
+    "grade": "api_settlement",
+    "day_pt": "2026-11-03"
+  }
+}
