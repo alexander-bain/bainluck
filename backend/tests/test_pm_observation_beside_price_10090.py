@@ -79,6 +79,7 @@ def consumer_rig(monkeypatch):
 # [unknown-stamp] at the first publish. 5 s only adds room on a loaded runner.
 LIVENESS_S = 5.0
 
+
 async def until(predicate):
     async with asyncio.timeout(LIVENESS_S):
         while not predicate():
