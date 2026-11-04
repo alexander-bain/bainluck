@@ -25,3 +25,18 @@ Read [SOURCE-CHECKS](SOURCE-CHECKS.md), [ADOPTION-MAP](ADOPTION-MAP.json), [sour
 Taste calls: **G** searchable full-field sheet, or inline expansion — **recommend sheet, shown**. **H** full journey, or recent week — **recommend full journey, shown**. Prior A–F are retired by the atlas grammar.
 
 Verification: build and typecheck pass with the existing 65-error baseline unchanged; 33 targeted frontend checks and four backend startup checks pass. Render/interaction checks and final hosted receipts are retained alongside the screenshots. Native compile/render/VoiceOver/device/TestFlight were not run and are not claimed.
+
+## Hosted screenshot index
+
+| Example | Phone · 390px | Wide · 1280px | Atlas-left composite |
+|---|---|---|---|
+| Kansas duel | [phone](screenshots/duel-390.jpg) | [wide](screenshots/duel-1280.jpg) | [comparison](screenshots/duel-comparison.png) |
+| Governor field | [phone](screenshots/field-390.jpg) | [wide](screenshots/field-1280.jpg) | [comparison](screenshots/field-comparison.png) |
+| Denver thresholds | [phone](screenshots/ladder-390.jpg) | [wide](screenshots/ladder-1280.jpg) | [comparison](screenshots/ladder-comparison.png) |
+| CFP qualification | [phone](screenshots/participation-390.jpg) | [wide](screenshots/participation-1280.jpg) | [comparison](screenshots/participation-comparison.png) |
+| One-leg result | [phone](screenshots/one-leg-390.jpg) | [wide](screenshots/one-leg-1280.jpg) | [comparison](screenshots/one-leg-comparison.png) |
+| Georgia settled | [phone](screenshots/settled-390.jpg) | [wide](screenshots/settled-1280.jpg) | [comparison](screenshots/settled-comparison.png) |
+
+One-leg [archived open phone](screenshots/one-leg-open-390.jpg), [open wide](screenshots/one-leg-open-1280.jpg), [No recent price phone](screenshots/one-leg-missing-390.jpg), [missing wide](screenshots/one-leg-missing-1280.jpg), and [last-quote sheet](screenshots/one-leg-missing-details-390.jpg) preserve the extra states.
+
+[Hosted receipt](HOSTED-RECEIPT.json) names the deployed code commit, passing gates and production-file identity. The hosted render, journey, field, qualification and dialog/console JSON files record the actual checks. [Screenshot manifest](screenshot-manifest.json) pins dimensions and hashes. Browser console warnings/errors: none observed. Exact observation, blank-gap refusal, all 24/54 outcomes, enlarged text, Escape and return-focus were exercised. The final protected preview is linked in the single NOW comment; its deployment-scoped capability is not stored in the repository.

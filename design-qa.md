@@ -6,6 +6,6 @@ Initial captures exposed two evidence presentation issues: unselected threshold 
 
 The latest phone comparisons preserve headline/chance hierarchy, quiet plot height, 0–100 domain, unsmoothed segments, gaps, fine card borders, type rhythm, meaningful marks and details access. Different actual market data and the brief's whole-number/attribution overrides are labelled; they are not treated as pixel-identical content. Kansas's absent blended path is an honest data refusal. Qualification's priced band extends the atlas's no-trades specimen using its independent-field grammar.
 
-No remaining P0/P1/P2 visual issues in the six phone comparisons. Wide and final hosted state receipts are recorded in the study after capture. New futures native adapters remain outside browser QA.
+No remaining P0/P1/P2 visual issues in the six phone comparisons. Final 1280px captures and hosted interaction receipts are recorded in the study. All six pages have no horizontal overflow at either width; the SVG viewBox matches the measured 1048px wide plot. Exact observation/blank-gap behavior, all 24/54 outcomes, enlarged text and native dialog Escape/focus return were verified. Browser console warnings/errors: none observed. New futures native adapters remain outside browser QA.
 
 final result: passed
