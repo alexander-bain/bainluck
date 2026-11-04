@@ -9,7 +9,7 @@ import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import { anchorScrollLeft, edgeOverflowFor, seriesMovementMarks } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
-import { seriesFreshness } from "@/lib/seriesFreshness";
+import { seriesFreshness, venueBankGapFloorMs } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
 import {
   settlementResultWord,
@@ -461,12 +461,14 @@ export function FuturesChart({
   // #6542: `settled` is handed over so a decided board stops reporting how long
   // ago its last number arrived — of course it is old; the question is answered.
   // The hole warning is unaffected (see the `stale` branch in `seriesFreshness`).
+  // #11929: a chart carrying the venue's bank holds its caption to the bank's
+  // joint, the floor its lines below are broken at.
   const freshness = seriesFreshness(
     plottedOutcomes.flatMap((o) =>
       o.history.filter((p) => p.probability !== null).map((p) => p.timestamp),
     ),
     undefined,
-    { settled },
+    { settled, gapFloorMs: venueBankGapFloorMs(plottedOutcomes.flatMap((o) => o.history)) },
   );
   // #683 — a plain call beside `freshness`, over the same drawn outcomes.
   const archiveNote = archiveChartNote(plottedOutcomes);
@@ -851,8 +853,11 @@ export function FuturesChart({
               // different intervals. A series with no hole yields exactly one
               // run, byte-identical to what this expression produced inline
               // before, and no bridges at all.
+              // #11929: a line carrying the venue's bank is broken only past the
+              // bank's own 12 h joint; bridges never slope (`chartSeriesPath`).
               const { runs, bridges, dots } = chartSeriesPath(points, {
                 step: !!stepInterpolation,
+                gapFloorMs: venueBankGapFloorMs(plottedOutcomes[idx].history),
               });
 
               // L2-149: highlight/eliminated line weighting. When one outcome is

@@ -1341,7 +1341,8 @@ export interface FuturesHistoryPoint {
   bookmaker: string;
   /** #683 — present only on a point recovered from Kalshi's archive
    *  (`"kalshi_archive"`). Such a point is an interval: `timestamp` is its
-   *  close, `interval_start` its open. Live points carry none of these. */
+   *  close, `interval_start` its open. Live points carry none of these.
+   *  #7351 — `"venue_history"` on a point from the venue's history bank. */
   provenance?: string;
   interval_start?: string;
   period_minutes?: number;
@@ -1405,6 +1406,15 @@ export interface FuturesHistoryResponse {
   auto_extended?: boolean;
   /** True if fewer than 10 total data points (very sparse) */
   sparse?: boolean;
+  /** #11929 — present only when a line longer than the chart's plot was served as
+   *  the last real observation per `bucket_seconds` slice. Not read by the chart. */
+  resolution?: {
+    bucket_seconds: number;
+    max_points_per_line: number;
+    lines_thinned: number;
+    points_before: number;
+    points_served: number;
+  } | null;
   /** #683 — the server's account of what the Kalshi archive served, present only
    *  when the archive store answered. Metadata: the chart labels archive points
    *  from the points themselves (`lib/archiveHistory.ts`), never from this block. */

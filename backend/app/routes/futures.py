@@ -9903,6 +9903,31 @@ async def get_futures_history(
         settle_basis=_settle_basis,
     )
 
+    # #11929: a line longer than the chart can draw is served at the chart's
+    # resolution — the last real observation per slice, first point and
+    # settlement marks kept (`app/utils/history_resolution`). After every rule
+    # above, so nothing withheld comes back; a line that fits is untouched.
+    from app.utils.history_resolution import thin_history_to_resolution
+
+    _resolution = thin_history_to_resolution(
+        outcome_history, window_hours=actual_hours, now=datetime.now(timezone.utc)
+    )
+    if _resolution is not None:
+        total_data_points = sum(len(e["history"]) for e in outcome_history.values())
+        # The venue/archive blocks below count what is SERVED.
+        _kept = {
+            (oid, p.get("timestamp"))
+            for oid, e in outcome_history.items() for p in e["history"]
+        }
+        venue_rows_served = [
+            r for r in venue_rows_served
+            if (r.outcome_id, r.captured_at.isoformat()) in _kept
+        ]
+        archive_rows_served = [
+            r for r in archive_rows_served
+            if (r.outcome_id, r.captured_at.isoformat()) in _kept
+        ]
+
     response: dict = {
         "market_id": market_id,
         "market_name": market.name,
@@ -9924,6 +9949,9 @@ async def get_futures_history(
         response["auto_extended"] = True
     if total_data_points < 10:
         response["sparse"] = True
+    # #11929 — additive, and only when a line was thinned.
+    if _resolution is not None:
+        response["resolution"] = _resolution
     # #7351 — additive, and only on a market whose venue publishes history.
     if venue.applicable:
         response["venue_history"] = venue.describe(
