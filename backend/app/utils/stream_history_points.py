@@ -848,10 +848,13 @@ class StreamHistoryPoints:
         self._seeded.intersection_update(self._live)
         holder: list[KeepalivePlan] = []
         try:
-            return await asyncio.wait_for(
-                self._keepalive_pass(session_factory, population, now, holder),
-                timeout_s,
-            )
+            # `asyncio.timeout`, never `wait_for`: on Python 3.11 (production's
+            # runtime) `wait_for` swallows a cancellation that lands in the same
+            # loop turn as its inner pass finishing, so a cancelled stats loop
+            # kept spinning — CI hung on exactly that (#11992 at 3ab28eb5).
+            # `timeout` runs the pass in THIS task: a cancel always propagates.
+            async with asyncio.timeout(timeout_s):
+                return await self._keepalive_pass(session_factory, population, now, holder)
         except Exception:  # noqa: BLE001 — a chart point never costs a price
             self.stats["history_keepalive_errors"] += 1
             if holder:

@@ -343,6 +343,40 @@ class TestCommitAndFailure:
         assert h.stats["history_keepalive_errors"] == 1
         assert h._reserved == {} and h.last_point[1][1] == T0 - timedelta(hours=1)
 
+    async def test_a_cancel_always_reaches_the_caller(self):
+        """#11992 at 3ab28eb5 hung CI for an hour: on Python 3.11 (production's
+        runtime) `asyncio.wait_for` swallowed a cancellation that landed in the
+        same loop turn as the pass finishing, so a cancelled stats loop ran
+        passes forever. A loop of instant passes — failing and writing — must
+        stop on its first cancel, whichever loop turn that cancel lands in."""
+        swallowed = []
+        for turns in range(1, 41):
+            h = pointed(history(), 1, T0 - timedelta(hours=1))
+
+            async def stats_loop(h=h):
+                n = 0
+                while True:
+                    n += 1
+                    db = FakeDB({1: 0.42}, fail="open" if n % 2 else None)
+                    await h.keepalive_pass(db, [(1, 9)], now=at(60 * n))
+                    await asyncio.sleep(0)  # the rig's minute: `_fast_minute`
+
+            task = asyncio.create_task(stats_loop())
+            for _ in range(turns):
+                await asyncio.sleep(0)
+            task.cancel()
+            for _ in range(5):
+                await asyncio.sleep(0)
+            if not task.done():
+                swallowed.append(turns)
+                task.cancel()
+                while not task.done():
+                    task.cancel()
+                    await asyncio.sleep(0)
+            else:
+                assert task.cancelled()
+        assert swallowed == [], f"cancel swallowed after {swallowed} loop turns"
+
     async def test_a_failed_keepalive_never_touches_a_price_flush(self):
         """Same writer, same leg, same minute: the keep-alive fails, the move
         point from the flush still plans its full room, writes and commits."""
