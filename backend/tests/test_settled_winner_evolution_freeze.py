@@ -139,7 +139,12 @@ class TestApplySettledWinnerFreeze:
                     "eliminated": False, "eliminated_at": None}}
         before = len(oh[100]["history"])
         _apply_settled_winner_freeze(market, oh, {100: "Spain"})
-        assert len(oh[100]["history"]) == before  # no duplicate terminal
+        # A converged line still carries its result point (#10955: a result,
+        # never drawn), exactly once: a second pass adds no duplicate terminal.
+        assert len(oh[100]["history"]) == before + 1
+        assert oh[100]["history"][-1]["bookmaker"] == "settlement"
+        _apply_settled_winner_freeze(market, oh, {100: "Spain"})
+        assert len(oh[100]["history"]) == before + 1
 
     def test_no_winner_is_noop(self):
         champ = _make_outcome(100, "Spain", prob=0.5, is_winner=False)
