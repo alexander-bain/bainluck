@@ -13383,7 +13383,7 @@ async def _score_sports_mode_futures(
             # hero stamped 20s and nothing on it said so.
             "price_observed_at": _card_price_observed_at(printed_outcomes),
             "top_outcomes": top_outcomes_data,
-            "full_field_rendered": _full_field_rendered,
+            **({"full_field_rendered": True} if _full_field_rendered else {}),
             # #2088: served even when null — null is "checked, and they do total
             # 100", which is a different fact from the key being absent (a payload
             # from before this shipped). The client keys its fallback on absence.
@@ -15381,7 +15381,7 @@ async def _score_futures(
                 # not the other is the defect, not half a fix.
                 "price_observed_at": _card_price_observed_at(printed_outcomes),
                 "top_outcomes": top_outcomes_data,
-                "full_field_rendered": _full_field_rendered,
+                **({"full_field_rendered": True} if _full_field_rendered else {}),
                 # #10090 market previews: the divisor `top_outcomes` was printed
                 # on (`_feed_display_scale`). A venue preview is a RAW price, so
                 # a Discover card overlays one only when this is exactly 1.0;
