@@ -444,6 +444,51 @@ async def test_the_reopen_uses_the_latest_fresh_close_across_all_stored_legs(db)
     )
 
 
+@pytest.mark.parametrize(
+    "other_record, verdict",
+    [
+        ({"close_time": "2028-11-03T15:00:00Z"}, "close_time_refreshed"),
+        ({"close_time": "2026-11-03T15:00:00Z"}, "venue_close_time_not_future"),
+        ({"result": "no"}, "venue_result_present_or_missing"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_date_only_checks_every_owned_election_leg_before_changing_its_cutoff(
+    db, other_record, verdict
+):
+    db.connection.execute(
+        text(
+            "INSERT INTO futures_outcomes VALUES "
+            "(1601727,109918,'Another','OTHER',FALSE,'ungradeable_result',.2,'old')"
+        )
+    )
+    db.connection.commit()
+    original = legacy_reopen(db)
+    before = await repair.snapshot(db, 109918)
+
+    async def record(ticker):
+        return {**trading(ticker), **(other_record if ticker == "OTHER" else {})}
+
+    read = AsyncMock(side_effect=record)
+    result = await repair.repair_market(
+        db, 109918, read, apply=True, refresh_close_time=True
+    )
+    assert result["verdict"] == verdict
+    assert [call.args[0] for call in read.await_args_list] == ["SWEEP", "OTHER"]
+    after = await repair.snapshot(db, 109918)
+    assert after[1] == before[1]  # Both supported prices and their clocks survive.
+    banked = await repair.read_backup(db, 109918)
+    if verdict == "close_time_refreshed":
+        assert repair.instant(after[0]["resolution_date"]) == datetime(
+            2028, 11, 3, 15, tzinfo=timezone.utc
+        )
+        assert banked["market"] == original["market"]
+        assert banked["legs"] == original["legs"]
+    else:
+        assert after == before
+        assert banked == original
+
+
 @pytest.mark.asyncio
 async def test_a_concurrent_cutoff_change_is_not_overwritten(db):
     legacy_reopen(db)
