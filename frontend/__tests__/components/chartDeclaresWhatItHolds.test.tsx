@@ -10,6 +10,11 @@
  * cadence is marked, AND a current one is not* — so every case below is a pair.
  * A chart that always wears a note has moved the problem, not fixed it.
  *
+ * #11929 (Alex, 2026-11-04 12:09 PM PT) superseded the HOLE half of this: "a
+ * solid line through unobserved time … the caption's 'No numbers for N hours'
+ * sentence goes with it". Only the trailing "Last number …" age (a line behind
+ * NOW) is still declared; an interior hole is never captioned.
+ *
  * Fixtures are the two production shapes measured 2026-09-06 ~19:1xZ:
  *   • futures 16630403 — 1.00h median cadence, newest point 5.6h old.
  *   • /api/politics presidential — 8h median cadence, ≈220h hole, 0.6h old.
@@ -69,18 +74,21 @@ describe("FuturesChart", () => {
     expect(html).not.toContain("Last number");
   });
 
-  it("marks a 14-day hole inside an up-to-date hourly run", () => {
-    // The case every newest-point threshold passes: current at the right edge,
-    // and mostly interpolation behind it.
+  it("says nothing about a 14-day hole inside an up-to-date hourly run (#11929)", () => {
+    // Was: "marks a 14-day hole …" — `gapped`, "No numbers for 15 days in this
+    // stretch". Superseded by Alex, 2026-11-04 12:09 PM PT (#11929): "a solid
+    // line through unobserved time … the caption's 'No numbers for N hours'
+    // sentence goes with it — nothing on the chart calls the reader's attention
+    // to a gap." Same fixture: current at the right edge, a 345.6h hole behind
+    // it — so no caption at all, and the line is one stroke through the hole.
     const holed = [...hourly(60, 345.6 * HOUR + 59 * HOUR), ...hourly(60, 0)];
     const html = renderToStaticMarkup(<FuturesChart historyData={outcome(holed)} />);
 
-    expect(html).toContain('data-series-state="gapped"');
-    // 345.6h is 14.4 days. This read "14 days" until #7491 — understating the
-    // hole, and so our own coverage gap, by ~10h. It now rounds up: a sentence
-    // confessing missing data is wrong in the direction that costs us, not the
-    // one that flatters us. The 14-day FIXTURE is unchanged; only the rounding.
-    expect(html).toContain("No numbers for 15 days in this stretch");
+    expect(html).not.toContain('data-testid="futures-chart-freshness"');
+    expect(html).not.toContain('data-series-state="gapped"');
+    expect(html).not.toContain("No numbers for");
+    expect(html).not.toContain('stroke-dasharray="1 5"');
+    expect(html.match(/<path[^>]*\bd="M [^"]*"[^>]*>/g) ?? []).toHaveLength(1);
   });
 
   it("does not fire on a single skipped beat", () => {

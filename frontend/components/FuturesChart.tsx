@@ -9,7 +9,7 @@ import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import { anchorScrollLeft, edgeOverflowFor, seriesMovementMarks } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
-import { seriesFreshness, venueBankGapFloorMs } from "@/lib/seriesFreshness";
+import { NEVER_A_HOLE_MS, seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
 import {
   settlementResultWord,
@@ -461,14 +461,13 @@ export function FuturesChart({
   // #6542: `settled` is handed over so a decided board stops reporting how long
   // ago its last number arrived — of course it is old; the question is answered.
   // The hole warning is unaffected (see the `stale` branch in `seriesFreshness`).
-  // #11929: a chart carrying the venue's bank holds its caption to the bank's
-  // joint, the floor its lines below are broken at.
+  // #11929 (Alex, Nov 4 12:09 PM): no caption names a hole; see NEVER_A_HOLE_MS.
   const freshness = seriesFreshness(
     plottedOutcomes.flatMap((o) =>
       o.history.filter((p) => p.probability !== null).map((p) => p.timestamp),
     ),
     undefined,
-    { settled, gapFloorMs: venueBankGapFloorMs(plottedOutcomes.flatMap((o) => o.history)) },
+    { settled, gapFloorMs: NEVER_A_HOLE_MS },
   );
   // #683 — a plain call beside `freshness`, over the same drawn outcomes.
   const archiveNote = archiveChartNote(plottedOutcomes);
@@ -846,18 +845,15 @@ export function FuturesChart({
               // returns null now.
               if (points.length === 0) return null;
 
-              // #3659: the solid stroke touches only real observations. Any gap
-              // wider than THIS outcome's own cadence is handed to a faint
-              // dotted bridge instead — same threshold that writes the note
-              // under the plot, so the line and the caption can never describe
-              // different intervals. A series with no hole yields exactly one
-              // run, byte-identical to what this expression produced inline
-              // before, and no bridges at all.
-              // #11929: a line carrying the venue's bank is broken only past the
-              // bank's own 12 h joint; bridges never slope (`chartSeriesPath`).
+              // #11929 (Alex, Nov 4 12:09 PM) supersedes #3659's hole contract:
+              // "a solid line through unobserved time" — a hole is drawn like
+              // any other segment of the line (linear, or step under
+              // `stepInterpolation`), so with NEVER_A_HOLE_MS every series is
+              // one run and `bridges` is always empty. A lone single point is
+              // still a run of one, marked by `dots` (#6331).
               const { runs, bridges, dots } = chartSeriesPath(points, {
                 step: !!stepInterpolation,
-                gapFloorMs: venueBankGapFloorMs(plottedOutcomes[idx].history),
+                gapFloorMs: NEVER_A_HOLE_MS,
               });
 
               // L2-149: highlight/eliminated line weighting. When one outcome is
