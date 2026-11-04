@@ -119,13 +119,13 @@ describe("#9905 admission", () => {
       slug: "nfl-2026-week-5",
       name: "NFL 2026 · Week 5",
       href: "/collections/nfl-2026-week-5",
-      subtitle: "16 games · 40 questions",
+      subtitle: "16 games · 40 markets",
     });
   });
 
   it("admits the MLB postseason and the preseason / postseason NFL weeks", () => {
     expect(admitCollection(collection({}, "mlb-2026-postseason"))?.href).toBe("/collections/mlb-2026-postseason");
-    expect(admitCollection(collection({}, "mlb-2026-postseason"))?.subtitle).toBe("4 games · 1 question");
+    expect(admitCollection(collection({}, "mlb-2026-postseason"))?.subtitle).toBe("4 games · 1 market");
     for (const [stage, slug] of [
       ["Pre Season", "nfl-2026-preseason-week-2"],
       ["Post Season", "nfl-2026-postseason-week-1"],
@@ -138,7 +138,7 @@ describe("#9905 admission", () => {
 
   it("leaves out an empty half of the subtitle", () => {
     expect(admitCollection(collection({ question_count: 0 }))?.subtitle).toBe("16 games");
-    expect(admitCollection(collection({ game_count: 0, question_count: 1 }))?.subtitle).toBe("1 question");
+    expect(admitCollection(collection({ game_count: 0, question_count: 1 }))?.subtitle).toBe("1 market");
   });
 
   const refusals: [string, Record<string, unknown>][] = [
@@ -270,7 +270,7 @@ describe("#9905 the card", () => {
     expect(html.match(/<a /g)).toHaveLength(1);
     expect(html).toContain('href="/collections/nfl-2026-week-5"');
     expect(html).toContain("NFL 2026 · Week 5");
-    expect(html).toContain("16 games · 40 questions");
+    expect(html).toContain("16 games · 40 markets");
     expect(html).toContain('data-testid="discover-collection-card"');
   });
 
@@ -279,7 +279,7 @@ describe("#9905 the card", () => {
     expect(html).not.toMatch(/<button/);
     // The reader-visible text nodes only (attributes carry the slug for probes).
     const text = [...html.matchAll(/>([^<]+)</g)].map((m) => m[1]).join(" | ");
-    expect(text).toBe("Collection | NFL 2026 · Week 5 | 16 games · 40 questions");
+    expect(text).toBe("Collection | NFL 2026 · Week 5 | 16 games · 40 markets");
     expect(text).not.toMatch(/like this|matched|slug|published|revision/i);
   });
 
