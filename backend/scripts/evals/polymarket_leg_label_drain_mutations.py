@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Q499 mutation battery for the side-less-price drain.
+"""Extends feed_card_trust_contract (ruling 002).
+
+Q499 mutation battery for the side-less-price drain.
 
 A green suite proves the code runs; it does not prove the code is PINNED. Every
 mutant here is a plausible later edit, and three of them read as improvements:

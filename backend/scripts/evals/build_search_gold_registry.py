@@ -1,4 +1,6 @@
-"""Build the gold-query Search probe registry from Alex's approved gold set.
+"""Extends search_truth_closure_contract (ruling 002).
+
+Build the gold-query Search probe registry from Alex's approved gold set.
 
 Queue 313. The gold set (`.claude/handoff/gold_queries_draft.md`, approved-with-
 edits by Alex 2026-07-22) is 74 raw / **71 unique** queries: a COVERAGE half of

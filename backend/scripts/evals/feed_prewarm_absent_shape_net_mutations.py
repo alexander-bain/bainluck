@@ -1,4 +1,6 @@
-"""Mutation coverage for the absent-shape net on the feed warm rail (LAT-P112).
+"""Extends cache_failure_resilience (ruling 002).
+
+Mutation coverage for the absent-shape net on the feed warm rail (LAT-P112).
 
 WHY THIS HARNESS AND NOT JUST THE TESTS. Every failure mode of a warm rail is
 SILENT in both directions, and this net adds a third silence on top of the two

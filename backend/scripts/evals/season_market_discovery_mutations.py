@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P144 mutation battery for the season-market discovery cache (P136-1).
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P144 mutation battery for the season-market discovery cache (P136-1).
 
 A guard suite that passes proves the code runs; it does not prove the code is
 PINNED. Each mutant below is a plausible way this change could be broken by a

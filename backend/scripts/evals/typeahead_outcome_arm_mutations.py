@@ -1,4 +1,6 @@
-"""LAT-P143 — the clause that changes no result and costs 13 seconds.
+"""Extends first_card_client_contract (ruling 002).
+
+LAT-P143 — the clause that changes no result and costs 13 seconds.
 
 WHAT A MUTANT PROVES HERE
 -------------------------

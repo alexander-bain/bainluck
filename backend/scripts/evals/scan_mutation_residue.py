@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Scan a working tree for mutants an eval harness left behind.
+"""Extends eval_registry_contract (ruling 002).
+
+Scan a working tree for mutants an eval harness left behind.
 
 `bcdcd95f` carried mutation **M3** of `typeahead_warmer_mutations.py` as an
 edit nobody made: the harness died at exit 143 between writing the mutant and

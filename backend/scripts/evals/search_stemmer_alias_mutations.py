@@ -1,4 +1,6 @@
-"""LAT-P036 — mutation harness for the stemmer synonym, the alias tier and the
+"""Extends search_truth_closure_contract (ruling 002).
+
+LAT-P036 — mutation harness for the stemmer synonym, the alias tier and the
 wrong-league guard.
 
 A green suite proves the code works on the paths the suite walks. It does not

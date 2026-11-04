@@ -1,4 +1,6 @@
-"""LAT-P118 — the suppression-that-suppresses-nothing mutation class.
+"""Extends search_truth_closure_contract (ruling 002).
+
+LAT-P118 — the suppression-that-suppresses-nothing mutation class.
 
 WHAT A MUTANT PROVES HERE
 -------------------------

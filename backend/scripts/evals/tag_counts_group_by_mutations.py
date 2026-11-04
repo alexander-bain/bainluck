@@ -1,4 +1,6 @@
-"""LAT-P114 (#2267) — mutants for "a GROUP BY alias that a column shadows".
+"""Extends discover_lead_order_contract (ruling 002).
+
+LAT-P114 (#2267) — mutants for "a GROUP BY alias that a column shadows".
 
 WHAT THIS PROVES
 ----------------

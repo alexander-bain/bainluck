@@ -1,4 +1,6 @@
-"""LAT-P123 — mutants for "the page scan and the count scan are the same scan".
+"""Extends first_card_client_contract (ruling 002).
+
+LAT-P123 — mutants for "the page scan and the count scan are the same scan".
 
 WHAT THIS PROVES
 ----------------

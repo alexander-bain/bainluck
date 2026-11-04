@@ -1,4 +1,6 @@
-"""LAT-P120 (#2279) — the served-duel-pair mutation class, on all six surfaces.
+"""Extends feed_card_trust_contract (ruling 002).
+
+LAT-P120 (#2279) — the served-duel-pair mutation class, on all six surfaces.
 
 The stem says `ios_` because that is where the issue pointed and where the
 `SHAPES` key now lives; the battery covers the two WEB surfaces as well, because
