@@ -17586,32 +17586,46 @@ def _drop_duplicate_bout_concepts(items: list[dict]) -> list[dict]:
         if key is None or winner[key] == idx
     ]
 
-    # #11943: also dedupe concept cards sharing the same `(domain, start_date)`
-    # (such as `event:ufc:26nov06` and `event:ufc:26nov07ufcfightnight` both
-    # starting at `2026-11-07T22:00:00+00:00` with different headline bouts).
-    def _start_key(item: dict) -> Optional[tuple[str, str]]:
+    # #11943: also dedupe concept cards sharing the same `(domain, sport_label, start_date)`
+    # when `start_date` is a full ISO timestamp and their key date tokens sit on the
+    # same or adjacent UTC calendar day (such as `event:ufc:26nov06` and
+    # `event:ufc:26nov07ufcfightnight` both starting at `2026-11-07T22:00:00+00:00`).
+    def _start_info(item: dict) -> Optional[tuple[str, str, str, date]]:
         try:
             d = item.get("data") or {}
             domain = str(d.get("domain") or "").strip().lower()
+            sport_label = str(d.get("sport_label") or "").strip().lower()
             start_date = str(d.get("start_date") or "").strip()
-            if domain and start_date:
-                return (domain, start_date)
+            token = str(d.get("key") or "").rsplit(":", 1)[-1]
+            if domain and "T" in start_date and len(token) >= 7:
+                key_day = datetime.strptime(token[:7].lower(), "%y%b%d").date()
+                return (domain, sport_label, start_date, key_day)
         except Exception:
             logger.debug("concept dedup: unreadable start_date", exc_info=True)
         return None
 
-    start_keys = [_start_key(item) for item in survivors]
-    start_winner: dict[tuple[str, str], int] = {}
-    for idx, skey in enumerate(start_keys):
-        if skey is None:
+    infos = [_start_info(item) for item in survivors]
+    dropped_indices: set[int] = set()
+    for idx_a, info_a in enumerate(infos):
+        if info_a is None or idx_a in dropped_indices:
             continue
-        best = start_winner.get(skey)
-        if best is None or _rank(survivors[idx]) > _rank(survivors[best]):
-            start_winner[skey] = idx
+        dom_a, label_a, start_a, day_a = info_a
+        for idx_b in range(idx_a + 1, len(infos)):
+            info_b = infos[idx_b]
+            if info_b is None or idx_b in dropped_indices:
+                continue
+            dom_b, label_b, start_b, day_b = info_b
+            if (dom_a, label_a, start_a) != (dom_b, label_b, start_b):
+                continue
+            if abs((day_a - day_b).days) > 1:
+                continue
+            if _rank(survivors[idx_b]) > _rank(survivors[idx_a]):
+                dropped_indices.add(idx_a)
+                break
+            else:
+                dropped_indices.add(idx_b)
     return [
-        item
-        for idx, (item, skey) in enumerate(zip(survivors, start_keys))
-        if skey is None or start_winner[skey] == idx
+        item for idx, item in enumerate(survivors) if idx not in dropped_indices
     ]
 
 

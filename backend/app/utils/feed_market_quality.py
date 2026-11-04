@@ -1212,23 +1212,29 @@ def is_placeholder_flat_field(
     mutually_exclusive: "bool | None",
 ) -> bool:
     """True when a mutually-exclusive field's leading three priced legs are identical
-    placeholders whose probabilities sum above 100% (#11943).
+    unquoted placeholders whose probabilities sum above 100% (#11943).
 
     On 2026-11-03, ``TOTO Japan Classic Winner`` (``68977820``) printed three players
     at ``50%`` each (``150%`` across the top three) because Polymarket stored ``0.5``
     placeholders with ``current_yes_bid = None`` / ``current_yes_ask = None``. Genuine
     co-favorite fields (such as WTA Chennai at ``9.5%`` / ``9.5%`` / ``9.5%`` = ``28.5%``)
-    sum well below ``1.0`` across their top three legs and are spared.
+    or three-way fields with live order-book quotes are spared.
     """
     if mutually_exclusive is not True or len(outcomes) < 3:
         return False
-    priced = [float(p) for p, _bid, _ask in outcomes if p is not None and float(p) > 0]
+    priced = [
+        (float(p), bid, ask)
+        for p, bid, ask in outcomes
+        if p is not None and float(p) > 0
+    ]
     if len(priced) < 3:
         return False
-    leading = sorted(priced, reverse=True)[:3]
-    if len({round(p, 4) for p in leading}) != 1:
+    leading = sorted(priced, key=lambda x: x[0], reverse=True)[:3]
+    if len({round(p, 4) for p, _bid, _ask in leading}) != 1:
         return False
-    return sum(leading) > 1.0
+    if not all(bid is None and ask is None for _p, bid, ask in leading):
+        return False
+    return sum(p for p, _bid, _ask in leading) > 1.0
 
 
 # #1004: unresolved markets whose leader is pinned at a dead extreme render as a

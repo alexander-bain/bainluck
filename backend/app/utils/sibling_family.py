@@ -1551,6 +1551,8 @@ def normalize_registered_family_market(
 ) -> tuple[Any, Any]:
     """Normalize known sibling-family date and capitalization artefacts (#11943).
 
+    Every normalization moves a cutoff later or not at all, never earlier, so no leg
+    can be clock-settled sooner than its venue states:
     * ``TIME Person of the Year <YYYY>`` binaries normalize ``resolution_date`` to
       ``<YYYY>-12-31T00:00:00Z`` (fixing the 1-of-26 ``2026-12-30T12:00:00Z`` leg).
     * ``Will <person> announce a Presidential/presidential run before <YYYY>?``

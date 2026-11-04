@@ -157,6 +157,14 @@ def test_toto_japan_classic_50_50_50_placeholder_field_refused_while_co_favorite
     ]
     assert is_placeholder_flat_field(wta_chennai_outcomes, True) is False
 
+    # A three-way field at 34/34/34 (sum 1.02) with order-book quotes present is spared.
+    quoted_three_way = [
+        (0.34, 0.33, 0.35),
+        (0.34, 0.33, 0.35),
+        (0.34, 0.33, 0.35),
+    ]
+    assert is_placeholder_flat_field(quoted_three_way, True) is False
+
 
 def test_golf_tournament_commence_time_truncated_to_whole_minutes():
     market = SimpleNamespace(
