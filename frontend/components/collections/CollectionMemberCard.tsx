@@ -47,13 +47,14 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
   const availableOutcomes = unpriced.length ? outcomes?.filter(outcome => outcome.probability != null || outcomeRowVerdict(outcome, false) !== null)
     .sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1)) : outcomes;
   const hasVerdict = outcomes?.some((outcome) => outcomeRowVerdict(outcome, resolved) !== null) ?? false;
-  const shownOutcomes = presentation === "field" && !resolved && !hasVerdict
+  const fieldPreview = presentation === "field" || (presentation === "auto" && (market?.outcome_count ?? 0) > 2);
+  const shownOutcomes = fieldPreview && !resolved && !hasVerdict
     ? availableOutcomes?.slice(0, 5) : availableOutcomes;
   const moreCount = Math.max(unpriced.length, (market?.outcome_count ?? 0) - (shownOutcomes?.length ?? 0));
   const missingPrices = !!market && (!outcomes?.length || (presentation && outcomes.length < market.outcome_count) || outcomes.some((outcome) => outcome.probability == null));
   const winner = (market as (FeedFuturesData & { settled_winner?: string }) | null)?.settled_winner;
   if (presentation && market && !resolved && !hasVerdict && !missingPrices) {
-    return <MidtermsMarketCard market={market} presentation={presentation} />;
+    return <MidtermsMarketCard market={market} presentation={fieldPreview ? "field" : presentation} />;
   }
   // The existing sports card owns game lifecycle and probabilities. A missing
   // price or served result uses the existing verdict/format rule, never nil -> 0%.

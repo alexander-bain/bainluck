@@ -20,7 +20,7 @@ const member = (patch: Record<string, unknown> = {}): CollectionMember => ({
 });
 
 describe("#11872: absence of a price is one note, not a wall of unavailable rows", () => {
-  test("#11948: a fully priced field keeps 91% and a neutral 19-more preview", () => {
+  test.each(["auto", "field"])("#11948: a fully priced field keeps 91% and a neutral 19-more preview (%s)", (presentation) => {
     const prices = [0.91, 0.1205, 0.115, 0.095, 0.0905];
     const rows = Array.from({ length: 24 }, (_, index) => ({
       id: index + 1, name: index === 0 ? "Nebraska" : `State ${index}`,
@@ -28,7 +28,7 @@ describe("#11872: absence of a price is one note, not a wall of unavailable rows
     }));
     const html = renderToStaticMarkup(<CollectionMemberCard member={member({
       status: "open", outcome_count: 24, top_outcomes: rows,
-    })} presentation="field" />);
+    })} presentation={presentation} />);
     expect(html).toContain("Nebraska");
     expect(html).toContain("91%");
     expect(html).not.toContain("68%");
