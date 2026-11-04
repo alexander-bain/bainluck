@@ -5,7 +5,8 @@ not prove PostgreSQL lock scheduling.
 """
 
 import json
-from unittest.mock import AsyncMock
+from contextlib import asynccontextmanager
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 from sqlalchemy import text
@@ -363,3 +364,29 @@ def test_cli_withdrawal_defaults_to_dry_run(monkeypatch):
         repair.main()
     assert exited.value.code == 0
     run.assert_awaited_once_with(apply=False, only_ids={MID})
+
+
+@pytest.mark.parametrize(
+    "verdict, exit_code",
+    [
+        ("withdrawn", 0),
+        ("nothing_to_withdraw", 0),
+        ("venue_not_trading", 1),
+        ("concurrent_drift", 1),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_refused_withdrawal_is_not_reported_as_a_successful_run(
+    quote_db, monkeypatch, verdict, exit_code
+):
+    from app.tasks import base
+
+    @asynccontextmanager
+    async def session(**kwargs):
+        yield quote_db
+
+    monkeypatch.setattr(base, "get_task_session", session)
+    operation = AsyncMock(return_value={"id": MID, "verdict": verdict})
+    monkeypatch.setattr(repair, "withdraw_refused_quotes", operation)
+    assert await repair.run_quote_withdrawal(only_ids={MID}) == exit_code
+    operation.assert_awaited_once_with(quote_db, MID, ANY, apply=False)
