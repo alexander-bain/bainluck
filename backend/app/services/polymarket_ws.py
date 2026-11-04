@@ -1316,6 +1316,14 @@ class PolymarketWebSocket:
         """
         return bool(self._shards_connected)
 
+    def connected_asset_ids(self) -> set[str]:
+        """#11929 keep-alive: the subscribed ids on shards connected now. A
+        disconnected shard's ids are not being read, so they get no point."""
+        out: set[str] = set()
+        for shard in list(self._shards_connected):
+            out.update(self._shard_ids.get(shard) or ())
+        return out
+
     def _served_by_shard(self) -> dict[int, set[str]]:
         """Per shard, the SUBSCRIBED ids the venue has actually sent a frame for.
 
