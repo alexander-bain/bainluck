@@ -118,9 +118,6 @@ interface FuturesChartProps {
   onToggleOutcome?: (id: number) => void;
   mini?: boolean;
   height?: number;
-  /** Preview opt-in: fit the complete timeline to its card at the requested
-   * height. Existing callers retain the horizontally scrollable plot. */
-  fitToContainer?: boolean;
   showLegend?: boolean;
   showAxes?: boolean;
   goldTheme?: boolean;
@@ -243,7 +240,6 @@ export function FuturesChart({
   onToggleOutcome,
   mini = false,
   height,
-  fitToContainer = false,
   showLegend,
   showAxes,
   goldTheme = false,
@@ -363,7 +359,6 @@ export function FuturesChart({
   // These hooks sit above the displayedOutcomes early return to keep hook order
   // stable.
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [edgeOverflow, setEdgeOverflow] = useState({ left: false, right: false });
 
   // #10955 (327): the hover callout measures itself against the plot's visible
@@ -375,18 +370,6 @@ export function FuturesChart({
     if (!el) return;
     setEdgeOverflow(edgeOverflowFor(el));
   }, []);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!fitToContainer || mini || !el) return;
-    const measure = () => {
-      if (el.clientWidth > 0) setContainerWidth(el.clientWidth);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [fitToContainer, mini, displayedOutcomes.length]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -498,7 +481,7 @@ export function FuturesChart({
   const isZoomed = canZoom && zoomed;
   maxProb = resolveYAxisMax({ dataMax, fixedYAxis, zoomed, allowZoom, mini, fieldCeiling });
 
-  const chartWidth = mini ? MINI_CHART_WIDTH : fitToContainer ? (containerWidth ?? FULL_CHART_WIDTH) : FULL_CHART_WIDTH;
+  const chartWidth = mini ? MINI_CHART_WIDTH : FULL_CHART_WIDTH;
   const effectiveHeight = height ?? (mini ? 80 : 200);
   const padding = mini ? MINI_PADDING : FULL_PADDING;
   const innerWidth = chartWidth - padding.left - padding.right;
@@ -701,7 +684,7 @@ export function FuturesChart({
           <svg
             ref={svgRef}
             viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
-            className={mini || fitToContainer ? "w-full" : "w-full min-w-[600px]"}
+            className={mini ? "w-full" : "w-full min-w-[600px]"}
             style={{
               // Honor the caller's requested height (L2-149): the old hard 250px
               // non-mini cap silently shrank taller surfaces (event-concept charts

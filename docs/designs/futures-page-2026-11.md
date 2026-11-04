@@ -1,38 +1,29 @@
-# Futures page — November 2026 · Iteration 2
+# Futures joins the event-page atlas · iteration 3
 
-**FORMATTING / TRUTH. Ship:** Event Details and futures read as one product. Branch `design/futures-page-proto`; six production captures under `/kernels-preview/futures/[id]`. [Preview and comparisons](futures-page-2026-11/iteration-2/README.md). Captured Nov 3, **6:33 PM PT**; dated snapshots. No production route, API, stream, Midterms or round-up changes; no PR to master.
+PILLARS: FORMATTING / TRUTH / DISCOVER. SHIP: six real futures markets read as members of the prepared event atlas. **Prototype only**, on `design/futures-page-proto`, under `/kernels-preview/futures/[id]`. Iterations 1–2 are retired. The futures family accompanies atlas adoption; nothing changes the production route, API, native app or release ownership.
 
-**Reuse decides the design.** The references are `live-game-detail-v2.html`, shipped `app/events/[id]/page.tsx`, and `EventDetailView.swift`. Gone: the standalone oversized numeral, desktop sidebar and top review panel. Adopted: paired identity hero, native typography, 12px card rhythm, chart card and below-chart rail. The actual shipped app width governs desktop; the HTML’s 680px canvas is a demonstration width.
+**The atlas supplies the design.** `atlas-v6/COMPONENT-CONTRACT.md` governs hierarchy, marks and interaction. v473 identifies the prepared browser/native compositions. The headline joins the lead chance, name, state and scheduled resolution. The wide, quiet journey follows immediately. Hollow means opening, solid means recorded, and a connector means change in points. Check/cross plus Won/Lost carries settlement. Whole numbers, fixed 0–100, unsmoothed segments, blank gaps and attribution-only venues follow this brief where later studies differ.
 
-| Futures block | Actual web component / composition | Actual SwiftUI mapping |
-|---|---|---|
-| Frame, back link, status/date | Game page’s inline `space-y-3`, hero frame and meta strip | `EventDetailView.contentView`, `heroSection(_:)`, `heroStatusBadge(_:)` |
-| Duel answer / 56px identities | `EventHeroProbabilityPair`; game hero’s identity boxes | `heroSection(_:)`, `heroValue(away:)`, `nflPairedSide`, `nflPairedCenter` |
-| Winner / final outcomes | `SettledOutcomeHero`, `SettledMark`, `outcomeRowVerdict` | Final branches of `heroSection(_:)` / `nflPairedSide` |
-| Field / participation band | Actual `EventLeaderboard`, three / six rows plus disclosure | New adapter using `EvolutionLeaderboardHeader` / `EvolutionLeaderboardRow` in `EvolutionChartView.swift` |
-| Quantity strip | New body following `FinishPositionLadder` / `PlacementGrid` grammar | New adapter following `EventDetailView.nbaLadders` and `LadderCardView` |
-| Chart card / controls | Game card frame, `ChartRangeChips`, `ChartFullscreenDialog`; actual `FuturesChart` from event `WinnerEvolutionChart` / `SettledPathChart` | `chartHeaderBar(_:)`; actual `OddsChartView` in `contentView`, its `selectedRange` binding; futures-data adapter |
-| Age / quiet ⓘ | Actual `PriceAgeMark`; reserved source marks, no sheet | `PriceAgeMarkView`; future disclosure maps to `probabilityDetails` / `FreshnessRevealView` |
-| Bigger Picture | Actual `MatchupsRail`, opt-in market links; below-chart rail/grid | Actual `RelatedFuturesView` called from `contentView`; related-data adapter |
+The body adapts existing atlas primitives: the two-sided comparison dial; named leaders reaching the full field; the independent qualification band; and the unconnected quantity-threshold profile. The original one-leg predicate stays one supplied side. Native-style sheets retain exact observations, independent clocks, full supplied rules and original identities. The quiet ⓘ remains reserved for #11920; no source-method sheet is built. The native composition map is a source-selection extension, **not app integration**.
 
-**New shape bodies.** Field shares remain full-field shares: top three and **21 more**. Participation bars stay independent. Quantity thresholds ascend. One leg never acquires a No. Non-duel heroes use population/period context opposite the leader. Initials occupy native identity boxes where participant artwork is absent. Bottom review controls label state studies; assumed grades never enter history. Native mappings identify existing primitives and required adapters; no native build is claimed.
+**New work is the futures binding.** Stored `market_type` dispatches the body. Stored field + `mutually_exclusive:false` chooses independent participation. A narrow Denver adapter retains the six original “Above N inches” thresholds. Related-market links reuse captured production collections. Preview-scoped layout and components keep production files unchanged; the earlier shared chart/rail opt-ins are removed.
 
-**Number contract.** Blend only; attribution-only venue names; whole numbers; no gambling formats. Raw chart segments, fixed **0–100** domain, real gaps/results. Game `OddsChart` auto-scales; the shared event-composition `FuturesChart` honors this brief inside the same card. A default-off fit option keeps the entire timeline and requested height at 390px; other callers retain their geometry. Probabilities, results, counts and tooltips reserve ⓘ for #11920; dates/ticks/control labels remain labels. Age labels use the reader’s clock consistently. No source sheet or live EKG on frozen captures.
-
-| Capture | Boundary the design preserves |
+| Real example | What the design preserves |
 |---|---|
-| 109085 · Kansas Senate | Existing registered-twin container supplies the blend by outcome ID. History is single-venue, explicitly attributed; blended history is missing. |
-| 108629 · closest Governor race | All 24 legs retained; expanding never normalizes the displayed shares. |
-| 65536371 · Denver snow | Six thresholds, five isolated readings: honest empty chart. Served 4/6-inch chances remain 60/64%. Structured threshold bounds are absent. |
-| 227 · CFP qualifiers | Stored `field` + `mutually_exclusive:false` selects an independent band; classification unchanged. Dedicated participation relation absent. |
-| 109918 · one leg | Resolved, `ungradeable_result`: “Result unavailable,” historical 58%, no asserted loss. Open/settled versions are labelled studies. |
-| 108645 · Georgia Governor | `api_settlement`: Keisha Lance Bottoms won; Rick Jackson lost. Grade time Nov 3, **6:27 PM PT**, found from grades; absent from detail, retained separately in capture. |
+| 109085 · Kansas Senate | Served two-venue blend, independently rounded **97% / 2%**. No blended opening/history is supplied, so neither is fabricated. |
+| 108629 · closest Governor race | Three named leaders, **21 more**, all 24 original shares reachable. |
+| 65536371 · Denver snow | Six independent thresholds; 4/6-inch quotes stay **60% / 64%**. Five isolated history observations across the family. No density, smoothing or reported snowfall invented. |
+| 227 · CFP qualifiers | All 54 teams; independent chances never sum to a forced 100%. |
+| 109918 · one leg | Real archived open quote **58%**. Later API `api_settlement` confirms Yes won; settled opening is **38%**. Open/missing-price studies are explicitly labelled. |
+| 108645 · Georgia Governor | Authoritative winner, opening **56%**, retained last observation **96%**. Settled Nov 3 at **6:27 PM PT**, the original capture-day grades specimen. |
 
-The settled hero’s legacy authority type lists only score/tournament. The preview bridge retains runtime `market` provenance; a production port needs an honest type extension. No API field was added.
+Missing current-price eligibility, blended opening/history, opening clocks, structured threshold bounds and most full venue rules remain payload gaps, named in SOURCE-CHECKS. Dated “Recorded” captures are not advertised as live. “No recent price” removes current marks; last quotes remain in details. A settlement row never enters the historical series or inspection.
 
-**Taste calls.** Old **A–D retired**: event hierarchy, independent semantics, settled language and below-chart placement settle them.
+**Taste calls within the atlas grammar:**
 
-- **E — non-duel opposite slot:** population/period context (**recommend; shown**) or an empty slot. Context gives the paired composition meaning without implying another probability.
-- **F — missing history:** event-sized chart frame with an explicit empty state (**recommend; shown**) or a compact notice. The frame preserves the same reading sequence through a data gap.
+- **G — reaching the full field:** searchable native sheet (**recommend; shown**) versus inline expansion below the three leaders. The sheet keeps the overview compact while every name remains reachable.
+- **H — initial journey window:** full recorded journey (**recommend; shown**) versus a recent-week default with an All action. A long-lived future should reveal its actual gaps and complete recorded context.
 
-Evidence: real recent event left, hosted futures right; **390px and 1280px per half**, all six plus both one-leg studies.
+A–F are retired: the atlas now decides hierarchy, result language, independent semantics, marks and below-headline chart placement.
+
+Evidence and exact source/native mappings: [futures study](../../artifacts/discovery-containers-release-plan/event-page-design-20261011/futures-page-20261103/README.md). Phone/wide captures and per-example atlas-left/futures-right composites are retained there. Build, TypeScript baseline, 33 focused frontend checks and four backend startup checks pass. Native binding, device accessibility and TestFlight remain outside this prototype delivery.

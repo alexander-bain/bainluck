@@ -1,13 +1,11 @@
-# Futures preview · Iteration 2 review
+# Futures atlas prototype · iteration 3 design QA
 
-Ready for Alex’s design review. The first pass was rejected for insufficient similarity to Event Details; this record supersedes the earlier pass-level visual verdict.
+Source: atlas-v6 contract and actual v471 local software-phone previews selected by v473. Target: built Next.js preview at /kernels-preview/futures/[id]. This retires iterations 1–2's shipped-page comparison. Six matched family composites are retained in the new futures atlas study.
 
-Rendered code: `2629efea23`. Deployment: `https://bainluck-bvmat1i4o-alexander-bain.vercel.app`. Captures: Nov 3, 9:31 PM PT. [Design note and actual web/SwiftUI mapping](docs/designs/futures-page-2026-11.md). [Side-by-side evidence](docs/designs/futures-page-2026-11/iteration-2/README.md).
+Initial captures exposed two evidence presentation issues: unselected threshold dots looked hollow (incorrectly implying opening), and explicit screenshot y=0 clipped scrolled captures back to the page top. The dots are now solid, and scrolled evidence uses viewport screenshots. New captures were opened together with the atlas references in the same composites.
 
-The reference images are actual production Event Details pages: live UNLV–Northern Arizona and the recent Canucks–Ducks final. Six market examples are paired at 390px and 1280px per half, with four additional one-leg state-study pairs. Source screenshots are unchanged; labels/dividers are outside their pixels. The hosted futures captures have no privacy overlay or Vercel toolbar. The native page’s existing tenths/auto-scaled axis is visible as a reference; futures follows the requested whole-number, fixed-axis rules.
+The latest phone comparisons preserve headline/chance hierarchy, quiet plot height, 0–100 domain, unsmoothed segments, gaps, fine card borders, type rhythm, meaningful marks and details access. Different actual market data and the brief's whole-number/attribution overrides are labelled; they are not treated as pixel-identical content. Kansas's absent blended path is an honest data refusal. Qualification's priced band extends the atlas's no-trades specimen using its independent-field grammar.
 
-Compared shared shell, hero typography/identity boxes, card spacing, section headings, range chips, chart frame and Bigger Picture rail. The shapes change their own body. Settled Georgia names the winner and uses actual Won/Lost marks. A retracted one-leg grade remains unavailable. Missing histories stay explicit.
+No remaining P0/P1/P2 visual issues in the six phone comparisons. Wide and final hosted state receipts are recorded in the study after capture. New futures native adapters remain outside browser QA.
 
-Build passed; typecheck matches baseline 65 with zero new errors; 12 focused tests and 4 startup checks passed. All 16 futures viewports render without document overflow or final-preview console errors. Field expansion reaches all 24 legs, threshold selection updates the answer, ranges work, fullscreen Escape restores focus, and a related card reaches its market. The age-stamp timezone mismatch was reproduced with a UTC server and Pacific browser and fixed in this preview; age labels now share the reader clock.
-
-This is prototype review evidence, not Alex’s approval, a production release, or an independent cert. No PR to master was opened. Taste calls E/F remain in the note; A–D are retired. Earlier captures remain archived under `docs/designs/futures-page-2026-11/`.
+final result: passed

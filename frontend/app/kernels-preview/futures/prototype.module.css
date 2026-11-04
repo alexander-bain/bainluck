@@ -1,39 +1,163 @@
-.prototype {
-  color: var(--text-primary);
-}
-/* Preserve native hero typography; only reserve the requested source mark. */
-.pairedValues
-  :global([data-testid="event-hero-probability"] > span.ml-0\.5)::after {
-  content: " ⓘ";
-  font: 10px sans-serif;
-  color: var(--text-muted);
-}
-.nativeLeaderboard :global(section) {
-  box-shadow: none;
-}
-.nativeLeaderboard :global(#leaderboard > div:first-child > div) {
-  display: none;
-}
-.nativeLeaderboard :global(.font-mono.font-semibold)::after {
-  content: " ⓘ";
-  font: 10px sans-serif;
-  color: var(--text-muted);
-}
-.rangeChips :global(button[aria-pressed="true"]) {
-  background: var(--text-primary);
-  color: var(--surface-card);
-}
-.relatedRail :global(h2) {
-  font-size: 13px;
-}
-.relatedRail :global(.font-mono)::after {
-  content: " ⓘ";
-  font: 10px sans-serif;
-  color: var(--text-muted);
-}
-.prototype
-  :global([data-testid="futures-chart-tooltip"] span.font-mono)::after {
-  content: " ⓘ";
-  font: 10px sans-serif;
-  color: var(--text-muted);
+/* Preview-only adaptation of atlas-v6 and binary-side-comparison. All color
+   aliases resolve to the host design tokens; no production chrome is edited. */
+:global(body):has(.prototype) { background: var(--surface-card); }
+:global(body):has(.prototype) :global(.min-h-screen) { background: var(--surface-card); }
+:global(body):has(.prototype) :global(.min-h-screen > header),
+:global(body):has(.prototype) :global(.min-h-screen > footer),
+:global(body):has(.prototype) :global(nav.fixed) { display: none; }
+:global(body):has(.prototype) :global(main) { padding: 0; }
+:global(body):has(.prototype) :global(main > div) { max-width: none; padding: 0; }
+.prototype { background: var(--surface-card); color: var(--text-primary); font-family: var(--font-sans); font-size: 14px; line-height: 1.45; --identity: var(--series-1); }
+.prototype button, .sheet button { font: inherit; cursor: pointer; }
+.prototype button:disabled { cursor: default; opacity: .35; }
+.prototype button:focus-visible, .prototype a:focus-visible, .sheet button:focus-visible, .sheet input:focus-visible { outline: 2px solid var(--series-1); outline-offset: 3px; }
+.canvas { max-width: 1120px; padding: 0 20px 40px; margin: auto; }
+.brandBar { height: 82px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { font-weight: 800; font-size: 26px; letter-spacing: -1.4px; }
+.brand span { color: var(--series-1); }
+.brandBar > div { display: flex; gap: 8px; align-items: center; }
+.textButton { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px !important; color: var(--text-secondary-strong); border-radius: 8px; }
+.iconButton { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 10px; }
+.textButton:hover, .iconButton:hover { background: var(--surface-elevated); }
+.back { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin: 0 0 22px; }
+.back a { display: flex; gap: 5px; align-items: center; min-height: 30px; }
+.eyebrow { font-size: 10px; color: var(--text-secondary); letter-spacing: .07em; text-transform: uppercase; line-height: 1.5; }
+.headline { padding-bottom: 12px; }
+.headlineLead { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; margin-top: 8px; }
+.headlineChance { font-size: 38px; color: var(--identity); line-height: 1.15; font-weight: 750; letter-spacing: -1.2px; }
+.headlineLead > span { font-size: 21px; font-weight: 650; letter-spacing: -.45px; }
+.headlineLead > .result { font-size: 30px; }
+.headlineLead > .result svg:first-child { width: 25px; height: 25px; }
+.headline h1 { font-size: 20px; font-weight: 650; line-height: 1.25; letter-spacing: -.4px; margin: 7px 0; }
+.headlineContext { display: flex; flex-wrap: wrap; gap: 2px 20px; font-size: 11px; color: var(--text-secondary-strong); }
+.noPrice { font-size: 25px; font-weight: 650; letter-spacing: -.6px; }
+.chance { display: inline-flex; align-items: baseline; white-space: nowrap; gap: 4px; font-variant-numeric: tabular-nums; }
+.sourceMark { color: var(--text-muted); flex-shrink: 0; align-self: center; display: inline-block; vertical-align: middle; }
+.journey { margin: 8px 0 24px; }
+.sectionHeading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.sectionHeading h2 { font-size: 15px; font-weight: 650; letter-spacing: -.3px; }
+.journeyReading { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: 2px 0 3px; min-height: 47px; }
+.journeyReading > div { display: grid; gap: 2px; }
+.journeyReading strong { font-weight: 600; font-size: 13px; }
+.journeyReading > strong { color: var(--identity); font-size: 27px; font-weight: 700; }
+.journeyReading > div span { font-size: 11px; color: var(--text-secondary); }
+.plot { position: relative; width: 100%; }
+.plot > svg { display: block; touch-action: pan-y; }
+.gridLine { stroke: var(--surface-border); stroke-width: .75; }
+.axis { fill: var(--text-secondary); font-size: 10px; font-family: var(--font-sans); }
+.journeyLine { fill: none; stroke: var(--identity); stroke-width: 2; stroke-linejoin: miter; stroke-linecap: round; }
+.recordedDot { fill: var(--identity); stroke: var(--surface-card); stroke-width: 1.5; }
+.firstObservation { fill: var(--identity); stroke: var(--surface-card); stroke-width: 1; }
+.crosshair { stroke: var(--text-muted); stroke-width: .7; stroke-dasharray: 2 3; }
+.emptyPlot { position: absolute; inset: 45% 15% auto; text-align: center; font-size: 12px; color: var(--text-secondary); background: var(--surface-card); padding: 8px; }
+.observationControls { display: flex; align-items: center; gap: 12px; }
+.observationControls button { border: 1px solid var(--surface-border); width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex-shrink: 0; }
+.observationControls input { accent-color: var(--identity); width: 100%; height: 44px; min-width: 0; }
+.note { font-size: 11px; line-height: 1.5; color: var(--text-secondary); margin: 8px 0 0; }
+.storiesHeader { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--surface-border); margin-bottom: 12px; padding-top: 6px; }
+.storiesHeader h2 { font-size: 14px; font-weight: 650; }
+.storyGrid { display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start; }
+.storyCard { border: 1px solid var(--surface-border); border-radius: 18px; padding: 16px; min-width: 0; }
+.storyCard h3, .related h3 { font-size: 21px; font-weight: 650; letter-spacing: -.5px; line-height: 1.15; margin: 4px 0 8px; }
+.storyCard .sectionHeading { margin-top: 1px; }
+.binaryDial { min-width: 0; }
+.sideChoices { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 17px; }
+.sideChoices button, .studyChoices button { border: 1px solid var(--surface-border); border-radius: 22px; min-height: 44px; padding: 8px 13px; font-size: 12px; }
+.sideChoices button[aria-pressed="true"], .studyChoices button[aria-pressed="true"] { border-color: var(--identity); color: var(--identity); background: color-mix(in srgb, var(--identity) 5%, var(--surface-card)); }
+.dialComparison { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.dialComparison > div { display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; gap: 3px; }
+.dialComparison > div > span { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary-strong); }
+.dialComparison > div > strong { display: flex; justify-content: center; align-items: center; color: var(--identity); font-size: 26px; line-height: 1.2; letter-spacing: -.6px; min-height: 34px; overflow-wrap: anywhere; }
+.dialComparison > div > strong:has(.result) { color: var(--text-primary); }
+.dialComparison > div > strong:not(:has(.chance)):not(:has(.result)) { color: var(--text-secondary); font-size: 17px; font-weight: 500; }
+.dialComparison small { color: var(--text-secondary); font-size: 10px; }
+.dial { display: block; width: 240px; max-width: 100%; margin: 14px auto 0; overflow: visible; }
+.dialTrack { stroke: var(--surface-border); fill: none; stroke-width: 2; }
+.dialTick { fill: var(--text-muted); }
+.dialChange { stroke: var(--identity); fill: none; stroke-width: 3; }
+.openingDot { fill: var(--surface-card); stroke: var(--identity); stroke-width: 2; }
+.dialSummary { fill: var(--text-primary); font-size: 23px; font-weight: 650; }
+.result { display: inline-flex; gap: 6px; align-items: center; color: var(--text-primary); font-weight: 650; white-space: nowrap; }
+.lost { color: var(--text-secondary); }
+.markKey { display: flex; flex-wrap: wrap; gap: 5px 13px; font-size: 10px; color: var(--text-secondary); margin: 10px 0; }
+.markKey span { display: flex; align-items: center; gap: 5px; }
+.hollowKey, .solidKey { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--identity); }
+.hollowKey { background: var(--surface-card); }
+.solidKey { background: var(--identity); }
+.fieldRows { margin-top: 10px; }
+.fieldRow { display: block; width: 100%; border-radius: 10px; padding: 10px 10px 6px; margin: 3px 0; border: 1px solid transparent; text-align: left; }
+.fieldRow[aria-pressed="true"] { border-color: var(--surface-border); background: color-mix(in srgb, var(--identity) 3%, var(--surface-card)); }
+.fieldRow > div { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; }
+.fieldRow strong { font-size: 14px; font-weight: 600; }
+.fieldRow > div > span { color: var(--identity); font-size: 19px; font-weight: 650; }
+.movement { width: 100%; height: 25px; }
+.railTrack { stroke: var(--surface-border); stroke-width: .5; }
+.railChange { stroke: var(--identity); stroke-width: 1.5; }
+.moreButton { border-top: 1px solid var(--surface-border); display: flex; justify-content: center; align-items: center; width: 100%; gap: 7px; min-height: 44px; margin-top: 8px; font-size: 12px !important; }
+.detailAction { display: flex; align-items: center; justify-content: space-between; font-size: 12px !important; width: 100%; border-top: 1px solid var(--surface-border); margin-top: 14px; padding-top: 4px; min-height: 44px; color: var(--text-secondary-strong); }
+.selectedReading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
+.selectedReading > div { display: grid; }
+.selectedReading > div > span { font-size: 11px; color: var(--text-secondary); }
+.selectedReading > strong { font-size: 28px; color: var(--identity); }
+.thresholdPlot { display: block; width: 100%; height: auto; margin: 12px 0 4px; }
+.thresholdDot { fill: var(--identity); stroke: var(--surface-card); stroke-width: 1.5; opacity: .65; }
+.thresholdChoices { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 3px; }
+.thresholdChoices button { min-height: 44px; border: 1px solid var(--surface-border); border-radius: 10px; font-size: 11px; display: flex; gap: 2px; align-items: center; justify-content: center; }
+.thresholdChoices button[aria-pressed="true"] { border-color: var(--identity); color: var(--identity); }
+.related h3 { margin-bottom: 15px; }
+.relatedCard { border-top: 1px solid var(--surface-border); padding: 14px 0; display: flex; justify-content: space-between; gap: 16px; align-items: center; min-height: 74px; }
+.relatedCard > div { display: grid; gap: 4px; }
+.relatedCard strong { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.relatedCard > div > span { color: var(--text-secondary); font-size: 11px; }
+.relatedCard > span { font-weight: 650; font-size: 21px; color: var(--series-1); flex-shrink: 0; }
+.relatedCard:hover strong { text-decoration: underline; }
+.attribution { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; color: var(--text-secondary); font-size: 10px; border-top: 1px solid var(--surface-border); margin-top: 26px; padding-top: 6px; }
+.reviewTools { border-top: 1px solid var(--surface-border); margin-top: 26px; padding-top: 18px; font-size: 11px; color: var(--text-secondary-strong); }
+.reviewTools nav { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.reviewTools nav a { padding: 9px; min-height: 40px; display: inline-flex; align-items: center; border: 1px solid var(--surface-border); border-radius: 8px; }
+.reviewTools nav a[aria-current="page"] { color: var(--series-1); border-color: var(--series-1); }
+.reviewTools > label { display: flex; gap: 8px; align-items: center; min-height: 44px; }
+.reviewTools input { accent-color: var(--series-1); }
+.reviewTools p { margin-top: 10px; font-size: 10px; }
+.studyChoices { display: flex; flex-wrap: wrap; gap: 7px; }
+.sheet { color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--surface-border); border-radius: 22px 22px 0 0; padding: 0; position: fixed; inset: auto 0 0; width: 100%; max-width: 100%; max-height: 88dvh; margin: 0; font: 14px/1.5 var(--font-sans); overflow: auto; }
+.sheet::backdrop { background: color-mix(in srgb, var(--text-primary) 30%, transparent); }
+.sheetHandle { width: 34px; height: 4px; border-radius: 3px; background: var(--surface-border); margin: 9px auto 0; }
+.sheetHeader { display: flex; justify-content: space-between; gap: 12px; align-items: center; position: sticky; top: 0; background: var(--surface-card); padding: 8px 18px; border-bottom: 1px solid var(--surface-border); z-index: 1; }
+.sheetHeader h2 { font-size: 20px; font-weight: 650; letter-spacing: -.4px; }
+.sheetContent { padding: 15px 20px 32px; }
+.predicate { font-size: 17px; font-weight: 600; margin-bottom: 17px; }
+.evidence > div { padding: 12px 0; border-bottom: 1px solid var(--surface-border); }
+.evidence dt { font-size: 11px; color: var(--text-secondary); margin-bottom: 5px; }
+.evidence dd { font-size: 15px; overflow-wrap: anywhere; }
+.evidence small { display: block; font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+.searchLabel { display: grid; gap: 7px; font-size: 12px; }
+.searchLabel input { padding: 10px 12px; border: 1px solid var(--surface-border); border-radius: 10px; height: 44px; font-size: 16px; }
+.catalogRow { padding: 10px 0; min-height: 52px; border-bottom: 1px solid var(--surface-border); width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
+.catalogRow[aria-pressed="true"] { color: var(--series-1); }
+.large { font-size: 17px; }
+.large .headline h1 { font-size: 25px; }
+.large .headlineChance { font-size: 44px; }
+.large .note, .large .headlineContext, .large .journeyReading > div span { font-size: 14px; }
+.large .storyCard h3 { font-size: 26px; }
+.large .fieldRow strong { font-size: 18px; }
+.large .fieldRow > div > span { font-size: 25px; }
+.large .storyGrid { grid-template-columns: 1fr; }
+@media (min-width: 760px) {
+  .canvas { padding: 0 36px 50px; }
+  .brandBar { height: 88px; }
+  .back { margin-bottom: 24px; }
+  .headline h1 { font-size: 24px; }
+  .headlineLead > span { font-size: 25px; }
+  .headlineChance { font-size: 44px; }
+  .headlineContext { font-size: 12px; }
+  .journey { margin-top: 15px; }
+  .plot svg { height: 265px; }
+  .journeyReading > strong { font-size: 32px; }
+  .storyGrid { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 32px; }
+  .storyCard { padding: 20px; }
+  .sheet { inset: 50% auto auto 50%; transform: translate(-50%,-50%); width: 560px; max-width: calc(100vw - 60px); max-height: 84dvh; border-radius: 20px; }
+  .sheetHandle { display: none; }
+  .sheetHeader { padding: 12px 22px; }
+  .sheetContent { padding: 18px 24px 32px; }
 }

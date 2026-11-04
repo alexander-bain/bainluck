@@ -1,674 +1,170 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
+
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronDown, Info, Maximize2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, XCircle, ChevronDown, Info, X } from "lucide-react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
-import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
-import EventLeaderboard from "@/components/event/EventLeaderboard";
-import MatchupsRail from "@/components/event/MatchupsRail";
-import ChartRangeChips from "@/components/event/ChartRangeChips";
-import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
-import { SettledMark } from "@/components/SettledOutcomeMark";
-import {
-  availableRanges,
-  windowOutcomeHistory,
-  type ChartRangeKey,
-} from "@/lib/chartWindow";
-import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
-import type { SettledOutcome } from "@/lib/eventOutcome";
-import type { EventConceptChild, FuturesOutcome } from "@/lib/types";
-import {
-  bodyKind,
-  CASES,
-  datePT,
-  payloadVerdict,
-  percentText,
-  rankedOutcomes,
-  type PrototypeData,
-  type StudyState,
-} from "./_model";
+import type { FuturesOutcome } from "@/lib/types";
+import AtlasJourney, { Chance, SourceMark } from "./AtlasJourney";
+import { bodyKind, CASES, datePT, observations, openingFor, payloadVerdict, percentText, rankedOutcomes, snowThreshold, validProbability, type Observation, type PrototypeData, type StudyState } from "./_model";
 import styles from "./prototype.module.css";
 
-// The shared mark's exact stamp uses the reader's timezone. Keep that text
-// out of server HTML, as with the shared history kernel below.
-const PriceAgeMark = dynamic(
-  () => import("@/components/event/PriceAgeMark").then((m) => m.PriceAgeMark),
-  { ssr: false },
-);
+type Verdict = "won" | "lost" | null;
+type Sheet = "details" | "field" | null;
+const BLUE = "var(--series-1)";
+const TEAL = "rgb(var(--color-source-mlb))";
+const COLORS = [BLUE, TEAL, "var(--series-4)"];
+const attribution = (sources: string[]) => sources.map((s) => ({ kalshi: "Kalshi", polymarket: "Polymarket" }[s] ?? s)).join(" · ");
 
-// Event composition's fixed-domain winner/settled journey kernel. OddsChart's
-// automatic Y scale conflicts with this prototype's explicit 0–100 requirement.
-const FuturesChart = dynamic(
-  () => import("@/components/FuturesChart").then((m) => m.FuturesChart),
-  {
-    ssr: false,
-    loading: () => (
-      <div
-        className="h-[380px] animate-pulse bg-surface-elevated"
-        aria-label="Loading probability history"
-      />
-    ),
-  },
-);
-function SourceMark() {
-  return (
-    <span
-      role="img"
-      aria-label="Source information reserved"
-      className="inline-flex shrink-0 text-text-muted"
-      title="Source information"
-    >
-      <Info size={11} strokeWidth={1.5} />
-    </span>
-  );
+function Result({ verdict }: { verdict: Exclude<Verdict, null> }) {
+  const Icon = verdict === "won" ? CheckCircle2 : XCircle;
+  return <span className={`${styles.result} ${verdict === "lost" ? styles.lost : ""}`}><Icon size={17} strokeWidth={1.6} />{verdict === "won" ? "Won" : "Lost"}<SourceMark /></span>;
 }
-function Value({
-  outcome,
-  verdict,
-  historical = false,
-}: {
-  outcome: FuturesOutcome;
-  verdict: "won" | "lost" | null;
-  historical?: boolean;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      {historical && (
-        <span className="text-[10px] text-text-muted">Last recorded</span>
-      )}
-      {verdict ? (
-        <SettledMark won={verdict === "won"} />
-      ) : (
-        <span className="font-mono text-sm font-semibold tabular-nums">
-          {percentText(outcome.probability)}
-        </span>
-      )}
-      <SourceMark />
-    </span>
-  );
+function MarkKey() {
+  return <div className={styles.markKey}><span><i className={styles.hollowKey} />Opening</span><span><i className={styles.solidKey} />Recorded</span><span>Connector · change in points</span></div>;
 }
-function Identity({
-  name,
-  verdict,
-}: {
-  name: string;
-  verdict?: "won" | "lost" | null;
-}) {
-  const initials = name
-    .replace(/[^\p{L}\p{N}\s]/gu, "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w[0])
-    .slice(0, 3)
-    .join("");
-  return (
-    <div className="flex min-w-0 flex-1 flex-col items-center text-center">
-      <div
-        className="mb-1.5 flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-surface-elevated text-sm font-extrabold text-text-secondary"
-        aria-hidden
-      >
-        {initials}
-      </div>
-      <span className="max-w-[110px] text-xs font-semibold leading-snug text-text-primary">
-        {name}
-      </span>
-      {verdict && (
-        <span className="mt-2">
-          <SettledMark won={verdict === "won"} />
-        </span>
-      )}
+function Movement({ opening, recorded, color, name }: { opening: number | null; recorded: number | null; color: string; name: string }) {
+  const x = (p: number) => 5 + p * 90;
+  return <svg className={styles.movement} viewBox="0 0 100 20" role="img" aria-label={`${name}. Opening ${opening == null ? "unavailable" : percentText(opening)}. Recorded ${recorded == null ? "unavailable" : percentText(recorded)}.`} style={{ "--identity": color } as CSSProperties}>
+    <line x1="5" x2="95" y1="10" y2="10" className={styles.railTrack} />
+    {opening != null && recorded != null && <line x1={x(opening)} x2={x(recorded)} y1="10" y2="10" className={styles.railChange} />}
+    {opening != null && <circle cx={x(opening)} cy="10" r="3.5" className={styles.openingDot} />}
+    {recorded != null && <circle cx={x(recorded)} cy="10" r="3.5" className={styles.recordedDot} />}
+  </svg>;
+}
+
+// Adapted from the atlas's binary-side-comparison study. Values are independent;
+// selecting the other named side never manufactures its complement.
+function BinaryDial({ rows, selected, opening, recorded, verdict, choose }: { rows: FuturesOutcome[]; selected: FuturesOutcome; opening: number | null; recorded: number | null; verdict: Verdict; choose: (id: number) => void }) {
+  const point = (p: number) => ({ x: 150 + 112 * Math.cos(Math.PI * (1 - p)), y: 138 - 112 * Math.sin(Math.PI * (1 - p)) });
+  const start = opening == null ? null : point(opening);
+  const end = recorded == null ? null : point(recorded);
+  const change = opening != null && recorded != null ? Math.round((recorded - opening) * 100) : null;
+  return <div className={styles.binaryDial}>
+    <div className={styles.sideChoices} role="group" aria-label="Named outcomes">{rows.map((row) => <button key={row.id} aria-pressed={selected.id === row.id} onClick={() => choose(row.id)}>{row.name}</button>)}</div>
+    <div className={styles.dialComparison}>
+      <div><span><i className={styles.hollowKey} />Opening</span><strong>{opening == null ? "Unavailable" : <Chance value={opening} />}</strong><small>Opening clock not supplied</small></div>
+      <div><span>{verdict ? "Result" : <><i className={styles.solidKey} />Recorded</>}</span><strong>{verdict ? <Result verdict={verdict} /> : recorded == null ? "No recent price" : <Chance value={recorded} />}</strong><small>{verdict ? "Confirmed grade" : selected.name}</small></div>
     </div>
-  );
+    <svg viewBox="0 0 300 173" role="img" aria-label={`${selected.name}. Hollow is opening; solid is recorded; connector is change in points. Zero to 100 percent.`} className={styles.dial}>
+      <path d="M38 138 A112 112 0 0 1 262 138" className={styles.dialTrack} />
+      {[0,.5,1].map((p) => { const pt = point(p); return <circle key={p} cx={pt.x} cy={pt.y} r="2" className={styles.dialTick} />; })}
+      {start && end && change !== 0 && <path d={`M${start.x} ${start.y} A112 112 0 0 ${recorded! > opening! ? 1 : 0} ${end.x} ${end.y}`} className={styles.dialChange} />}
+      {start && <circle cx={start.x} cy={start.y} r="6" className={styles.openingDot} />}
+      {end && <circle cx={end.x} cy={end.y} r="5" className={styles.recordedDot} />}
+      <text x="150" y="96" textAnchor="middle" className={styles.dialSummary}>{verdict ? verdict === "won" ? "Won" : "Lost" : change == null ? "—" : `${change > 0 ? "+" : ""}${change} pp`}</text>
+      {!verdict && change != null && <Info x={198} y={84} size={11} strokeWidth={1.5} className={styles.sourceMark} aria-label="Source information reserved" />}
+      <text x="150" y="117" textAnchor="middle" className={styles.axis}>{verdict ? "Confirmed result" : change == null ? "Opening blend unavailable" : "since opening"}</text>
+      <text x="38" y="161" textAnchor="middle" className={styles.axis}>0%</text><text x="150" y="14" textAnchor="middle" className={styles.axis}>50%</text><text x="262" y="161" textAnchor="middle" className={styles.axis}>100%</text>
+    </svg>
+  </div>;
 }
-function Attribution({ sources }: { sources: string[] }) {
-  const names: Record<string, string> = {
-    kalshi: "Kalshi",
-    polymarket: "Polymarket",
-    odds_api: "Sportsbooks",
-  };
-  return (
-    <span className="text-[10px] text-text-muted">
-      {sources.map((s) => names[s] ?? s).join(" · ")}
-    </span>
-  );
-}
-export default function Prototype({
-  data,
-  initialStudy = "payload",
-}: {
-  data: PrototypeData;
-  initialStudy?: StudyState;
-}) {
+
+export default function Prototype({ data, initialStudy = "payload", initialMissing = false }: { data: PrototypeData; initialStudy?: StudyState; initialMissing?: boolean }) {
   usePageTracking({ pageType: "futures_detail", pageTitle: data.detail.name });
   useScrollDepth({ pageType: "futures_detail" });
   useEngagementTime({ pageType: "futures_detail" });
-  const { detail, history, sources } = data;
+  const [study, setStudy] = useState<StudyState>(initialStudy);
+  const [missing, setMissing] = useState(initialMissing);
+  const [large, setLarge] = useState(false);
+  const isOneLeg = data.detail.id === 109918;
+  const detail = isOneLeg && study !== "open" && data.finalDetail ? data.finalDetail : data.detail;
   const shape = bodyKind(detail);
   const ranked = useMemo(() => rankedOutcomes(detail), [detail]);
-  const thresholds = useMemo(
-    () =>
-      [...detail.outcomes].sort(
-        (a, b) =>
-          parseFloat(a.name.replace(/[^\d.]/g, "")) -
-          parseFloat(b.name.replace(/[^\d.]/g, "")),
-      ),
-    [detail.outcomes],
-  );
-  const [selectedId, setSelectedId] = useState(ranked[0].id);
-  const [expanded, setExpanded] = useState(false);
-  const [study, setStudy] = useState<StudyState>(initialStudy);
-  const [range, setRange] = useState<ChartRangeKey>(
-    initialStudy === "settled" ||
-      (initialStudy === "payload" && detail.status === "resolved")
-      ? "all"
-      : "1W",
-  );
-  const [fullscreen, setFullscreen] = useState(false);
-  const openerRef = useRef<HTMLButtonElement>(null);
-  const selected =
-    detail.outcomes.find((o) => o.id === selectedId) ?? ranked[0];
-  const actualWinner = detail.outcomes.find(
-    (o) => payloadVerdict(detail, o) === "won",
-  );
-  const isStudy = study !== "payload";
-  const resolved =
-    study === "settled" ||
-    (study === "payload" && detail.status === "resolved");
-  const lead = resolved && !isStudy ? (actualWinner ?? selected) : selected;
-  const hasResult = resolved && (study === "settled" || !!actualWinner);
-  const verdictFor = (o: FuturesOutcome): "won" | "lost" | null => {
-    if (study === "open") return null;
-    if (study === "settled") {
-      if (shape === "participation")
-        return ranked.indexOf(o) < 12 ? "won" : "lost";
-      if (shape === "quantity")
-        return thresholds.indexOf(o) <= thresholds.indexOf(selected)
-          ? "won"
-          : "lost";
-      return o.id === selectedId ? "won" : "lost";
-    }
-    return payloadVerdict(detail, o);
-  };
-  const pair = renderedDuelPercents(
-    ranked[0]?.probability,
-    ranked[1]?.probability,
-  );
-  const category = CASES.find((c) => c.id === detail.id)!.category;
-  const ranges = useMemo(() => availableRanges(history, false), [history]);
-  const effectiveRange = ranges.some((r) => r.key === range) ? range : "all";
-  const windowed = useMemo(
-    () => windowOutcomeHistory(history, effectiveRange),
-    [history, effectiveRange],
-  );
-  const focusedId =
-    resolved && actualWinner && !isStudy ? actualWinner.id : selectedId;
-  const chartSelection = useMemo(() => new Set([focusedId]), [focusedId]);
-  const hasPath = windowed.some(
-    (s) =>
-      s.outcome_id === focusedId &&
-      new Set(
-        s.history
-          .filter((p) => p.probability != null && p.bookmaker !== "settlement")
-          .map((p) => p.timestamp),
-      ).size >= 2,
-  );
-  const unknown = resolved && !hasResult;
-  const shownRows = expanded
-    ? ranked
-    : ranked.slice(0, shape === "participation" ? 6 : 3);
-  const heroOutcome: SettledOutcome | null = hasResult
-    ? {
-        winnerName: lead.name,
-        winnerSide: null,
-        resultLine: null,
-        resultExplanation: null,
-        resultKind: null,
-        // Preview-only bridge: runtime provenance stays "market". The shared hero's
-        // legacy type only lists score/tournament; no API or production type changes.
-        authority: "market" as SettledOutcome["authority"],
-      }
-    : null;
-  const chart = hasPath ? (
-    <FuturesChart
-      historyData={windowed}
-      selectedOutcomes={chartSelection}
-      fixedYAxis
-      fieldCeiling={false}
-      allowZoom={false}
-      stepInterpolation={false}
-      showCombinedProbability={false}
-      height={fullscreen ? 520 : 380}
-      fitToContainer
-      greenTheme
-      showLegend={false}
-      showAxes
-      settled={resolved && !isStudy}
-      marketName={detail.name}
-    />
-  ) : (
-    <div
-      className="flex h-[380px] flex-col items-center justify-center gap-2 text-center"
-      role="status"
-    >
-      <Info size={18} className="text-text-muted" />
-      <p className="text-sm text-text-secondary">Not enough recorded history</p>
-      <p className="max-w-[250px] text-xs leading-relaxed text-text-muted">
-        A path needs more than one reading. Current threshold probabilities are
-        shown above.
-      </p>
-    </div>
-  );
-  const railItems: EventConceptChild[] = data.related.map((m) => ({
-    market_id: m.id,
-    market_name: m.name,
-    settled:
-      m.status === "resolved" &&
-      !!m.outcomes?.some((o) =>
-        payloadVerdict({ status: "resolved" } as PrototypeData["detail"], o),
-      ),
-    graded_winner: m.outcomes?.find(
-      (o) =>
-        payloadVerdict({ status: m.status } as PrototypeData["detail"], o) ===
-        "won",
-    )?.name,
-    outcomes: [{ name: m.lead, probability: m.probability }],
-  }));
-  return (
-    <div
-      className={`${styles.prototype} space-y-3`}
-      data-testid="futures-event-grammar"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link
-          href="/discover"
-          className="inline-flex items-center gap-1 text-sm text-text-secondary hover:text-text-primary"
-        >
-          <ChevronLeft size={14} />
-          Back to Discover
-        </Link>
-        <span className="text-[10px] text-text-muted">
-          Snapshot · {datePT(data.capturedAt, true)}
-          {isStudy ? ` · ${study} layout study` : ""}
-        </span>
-      </div>
-      <section
-        aria-label="Market overview"
-        className="overflow-hidden rounded-card bg-surface-card shadow-card"
-        data-testid="event-style-market-hero"
-      >
-        <div className="flex items-center justify-between gap-3 border-b border-surface-border/30 px-4 py-2 sm:px-5">
-          <span
-            className={`inline-flex items-center gap-1.5 text-[10px] font-semibold ${resolved ? "text-text-muted" : "text-accent-brand"}`}
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${resolved ? "bg-text-muted/50" : "bg-accent-brand"}`}
-            />
-            {resolved ? "Final" : "Open"}
-            <span className="font-normal text-text-muted">· {category}</span>
-          </span>
-          <span className="text-[10px] text-text-muted">
-            {resolved
-              ? data.settledAt && !isStudy
-                ? datePT(data.settledAt, true)
-                : "Final state"
-              : detail.resolution_date
-                ? `Closes ${datePT(detail.resolution_date)}`
-                : ""}
-          </span>
-        </div>
-        <div className="px-5 py-4 sm:px-6 sm:py-5">
-          <h1 className="mb-4 text-center text-[13px] font-semibold leading-snug text-text-primary">
-            {detail.name.replace(/\?$/, "")}
-          </h1>
-          <div className="flex items-stretch justify-between">
-            <Identity
-              name={
-                shape === "duel"
-                  ? ranked[0].name
-                  : shape === "quantity"
-                    ? "Denver"
-                    : lead.name
-              }
-              verdict={
-                resolved && shape === "duel" ? verdictFor(ranked[0]) : null
-              }
-            />
-            <div
-              className={`${styles.pairedValues} flex min-w-0 shrink-0 flex-col items-center justify-center px-2 sm:px-4`}
-            >
-              {resolved ? (
-                <div className="flex items-start gap-1.5">
-                  <div>
-                    <SettledOutcomeHero
-                      outcome={heroOutcome}
-                      hasNumericScore={false}
-                      winnerPregameProb={null}
-                    />
-                    {unknown && (
-                      <p className="mt-1 max-w-[170px] text-center text-sm font-semibold text-text-primary">
-                        Result unavailable
-                      </p>
-                    )}
-                  </div>
-                  <SourceMark />
-                </div>
-              ) : (
-                <EventHeroProbabilityPair
-                  homeProb={lead.probability}
-                  awayProb={shape === "duel" ? ranked[1].probability : null}
-                  homePct={
-                    shape === "duel"
-                      ? pair[0]
-                      : renderedPercent(lead.probability)
-                  }
-                  awayPct={shape === "duel" ? pair[1] : null}
-                  awayWithheld={shape !== "duel"}
-                  animate={false}
-                />
-              )}
-              {!resolved && shape !== "duel" && (
-                <span className="mt-1 text-[11px] text-text-secondary">
-                  {shape === "participation"
-                    ? "to qualify"
-                    : shape === "quantity"
-                      ? selected.name
-                      : shape === "field"
-                        ? "leads the field"
-                        : "Yes"}
-                </span>
-              )}
-              <div className="mt-2">
-                <Attribution sources={sources} />
-              </div>
-            </div>
-            {shape === "duel" ? (
-              <Identity
-                name={ranked[1].name}
-                verdict={resolved ? verdictFor(ranked[1]) : null}
-              />
-            ) : (
-              <div className="flex min-w-0 flex-1 flex-col items-center justify-center text-center">
-                <span className="inline-flex items-center gap-1.5 text-2xl font-bold tabular-nums text-text-primary">
-                  {shape === "quantity" ? "Dec" : detail.outcomes.length}
-                  {shape !== "quantity" && <SourceMark />}
-                </span>
-                <span className="mt-1 text-[10px] text-text-muted">
-                  {shape === "quantity"
-                    ? "2026"
-                    : shape === "participation"
-                      ? "teams"
-                      : shape === "field"
-                        ? "states"
-                        : "outcome"}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
+  const [selectedId, setSelectedId] = useState(() => shape === "quantity" ? detail.outcomes.find((r) => snowThreshold(detail, r) === 6)?.id ?? ranked[0].id : ranked[0].id);
+  const selected = detail.outcomes.find((row) => row.id === selectedId) ?? ranked[0];
+  const verdictFor = (row: FuturesOutcome): Verdict => study === "open" ? null : payloadVerdict(detail, row);
+  const winner = detail.outcomes.find((row) => verdictFor(row) === "won");
+  const settled = !!winner;
+  const lead = winner ?? selected;
+  const verdict = verdictFor(selected);
+  const color = COLORS[Math.max(0, ranked.findIndex((r) => r.id === selected.id)) % COLORS.length];
+  const opening = openingFor(data, selected);
+  const recorded = settled || missing || !validProbability(selected.probability) ? null : selected.probability;
+  const [sheet, setSheet] = useState<Sheet>(null);
+  const [query, setQuery] = useState("");
+  const [inspected, setInspected] = useState<Observation | null>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const latest = data.sources.length > 1 ? undefined : observations(data.history, selected.id).at(-1);
+  const rows = ranked.filter((row) => row.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  useEffect(() => {
+    const el = dialog.current;
+    if (sheet && el && !el.open) el.showModal();
+    if (!sheet && el?.open) el.close();
+  }, [sheet]);
+  function choose(id: number) { setSelectedId(id); setInspected(null); }
+  function openDetails(point: Observation | null = null) { setInspected(point); setSheet("details"); }
+  const title = detail.name.replace(/\?$/, "");
+  const shown = shape === "field" ? ranked.slice(0, 3) : ranked.slice(0, 6);
+  const deadline = detail.resolution_date ?? detail.commence_time;
+  const capture = isOneLeg && study !== "open" && data.finalCapturedAt ? data.finalCapturedAt : data.capturedAt;
+  const bodyTitle = shape === "quantity" ? "Snowfall thresholds" : shape === "participation" ? "A place in the playoff" : shape === "field" ? "The leading states" : shape === "unshaped" ? "One market, one supplied side" : "Two sides of the race";
+  return <div data-atlas-futures data-shape={shape} className={`${styles.prototype} ${large ? styles.large : ""}`} style={{ "--identity": color } as CSSProperties}>
+    <div className={styles.canvas}>
+      <header className={styles.brandBar}><Link href="/kernels-preview/futures/109085" className={styles.brand}>Bain Luck<span>.</span></Link><div><button className={styles.textButton} aria-pressed={large} onClick={() => setLarge(!large)}>Aa Larger</button><button className={styles.iconButton} aria-label="Market details" onClick={() => openDetails()}><Info size={16} /></button></div></header>
+      <nav className={styles.back}><Link href="/"><ArrowLeft size={14} />Discover</Link><span>Futures · atlas study</span></nav>
+      <section className={styles.headline} aria-label="Market headline">
+        <div className={styles.eyebrow}>{CASES.find((c) => c.id === detail.id)?.category} · {settled ? "Settled" : "Recorded archive"}</div>
+        <div className={styles.headlineLead}>{settled ? <Result verdict="won" /> : missing || !validProbability(lead.probability) ? <strong className={styles.noPrice}>No recent price</strong> : <strong className={styles.headlineChance}><Chance value={lead.probability} /></strong>}<span>{lead.name}</span></div>
+        <h1>{title}</h1>
+        <div className={styles.headlineContext}>{settled ? <><span>{openingFor(data, lead) == null ? "Opening chance unavailable" : <>Opening chance <Chance value={openingFor(data, lead)} /></>}</span><span>{data.settledAt ? `Settled ${datePT(data.settledAt, true)}` : "Confirmed result"}</span></> : <><span>{study === "open" ? "Open-state study · archived quote" : `Recorded ${datePT(data.capturedAt, true)}`}</span><span>{deadline ? `Scheduled resolution ${datePT(deadline, true)}` : "Resolution time not supplied"}</span></>}</div>
       </section>
-      {(shape === "field" || shape === "participation") && (
-        <section
-          aria-label={
-            shape === "field"
-              ? "Full-field probabilities"
-              : "Independent qualification band"
-          }
-          className="overflow-hidden rounded-card bg-surface-card shadow-card"
-        >
-          {shape === "participation" && (
-            <p className="px-4 pt-4 text-xs text-text-secondary sm:px-6">
-              Independent chances · these do not add to 100%. Several teams can
-              qualify.
-            </p>
-          )}
-          {resolved ? (
-            <div className="px-4 py-3 sm:px-6">
-              <h2 className="mb-3 text-[13px] font-semibold text-text-primary">
-                Final outcomes
-              </h2>
-              {shownRows.map((o) => (
-                <div
-                  key={o.id}
-                  className="flex items-center justify-between border-b border-surface-border/40 py-2.5"
-                >
-                  <span className="text-sm">{o.name}</span>
-                  <Value outcome={o} verdict={verdictFor(o)} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className={styles.nativeLeaderboard}>
-              <EventLeaderboard
-                key={`${detail.id}-${expanded}`}
-                label={shape === "field" ? "The field" : "Chance to qualify"}
-                competitors={shownRows.map((o) => ({
-                  name: o.name,
-                  probability: o.probability,
-                }))}
-                initialView="full"
-                showSparkline={false}
-                live={false}
-              />
-            </div>
-          )}
-          {(ranked.length > shownRows.length || expanded) && (
-            <button
-              type="button"
-              onClick={() => setExpanded(!expanded)}
-              aria-expanded={expanded}
-              className="flex w-full items-center justify-center gap-1.5 border-t border-surface-border/40 py-3 text-xs font-medium text-text-secondary hover:bg-surface-elevated"
-            >
-              {expanded
-                ? "Show fewer"
-                : `${ranked.length - shownRows.length} more`}
-              <ChevronDown size={12} className={expanded ? "rotate-180" : ""} />
-            </button>
-          )}
+      <AtlasJourney data={data} selectedId={selected.id} name={selected.name} color={color} result={verdict} onDetails={openDetails} />
+      <div className={styles.storiesHeader}><h2>Market story</h2><button className={styles.textButton} onClick={() => { setSheet("field"); }}>All outcomes · {detail.outcomes.length}<SourceMark /></button></div>
+      <div className={styles.storyGrid}>
+        <section className={`${styles.storyCard} ${shape === "quantity" ? styles.ladderCard : ""}`} aria-label={bodyTitle}>
+          <div className={styles.eyebrow}>{shape === "participation" ? "Independent qualification chances" : shape === "quantity" ? "December 2026 · inches" : settled ? "Opening → result" : "Opening → recorded"}</div>
+          <div className={styles.sectionHeading}><h3>{bodyTitle}</h3><button className={styles.iconButton} aria-label="Selected outcome details" onClick={() => openDetails()}><Info size={16} /></button></div>
+          {shape === "duel" || shape === "unshaped" ? <>
+            <BinaryDial rows={ranked} selected={selected} opening={opening} recorded={recorded} verdict={verdict} choose={choose} />
+            {data.sources.length > 1 && <p className={styles.note}>A blended opening is not supplied. Each named side keeps its served chance.</p>}
+          </> : shape === "quantity" ? <>
+            <div className={styles.selectedReading}><div><strong>{selected.name}</strong><span>{missing || !validProbability(selected.probability) ? "No recent price" : "Recorded chance"}</span></div><strong>{missing || !validProbability(selected.probability) ? "—" : <Chance value={selected.probability} />}</strong></div>
+            <svg viewBox="0 0 332 194" className={styles.thresholdPlot} role="img" aria-label="Chance above each snowfall threshold. Independent points, no distribution inferred.">
+              {[0,.5,1].map((p) => <g key={p}><line x1="30" x2="312" y1={160 - p * 142} y2={160 - p * 142} className={styles.gridLine} /><text x="24" y={164 - p * 142} textAnchor="end" className={styles.axis}>{p * 100}%</text></g>)}
+              {[...detail.outcomes].sort((a,b) => (snowThreshold(detail,a) ?? 0) - (snowThreshold(detail,b) ?? 0)).map((row) => { const threshold = snowThreshold(detail,row); if (threshold == null) return null; const x = 30 + threshold / 12 * 282; return <g key={row.id}>
+                <text x={x} y="184" textAnchor="middle" className={styles.axis}>{threshold}</text>
+                {!missing && validProbability(row.probability) && <circle cx={x} cy={160 - row.probability * 142} r={row.id === selected.id ? 6 : 4} className={row.id === selected.id ? styles.recordedDot : styles.thresholdDot} />}
+              </g>; })}
+            </svg>
+            <div className={styles.thresholdChoices} role="group" aria-label="Snowfall thresholds">{[...detail.outcomes].sort((a,b) => (snowThreshold(detail,a) ?? 0) - (snowThreshold(detail,b) ?? 0)).map((row) => <button key={row.id} aria-pressed={row.id === selected.id} onClick={() => choose(row.id)}>{snowThreshold(detail,row)} in<SourceMark /></button>)}</div>
+            <p className={styles.note}>Above each threshold · no interval chances are inferred. Opening chance and reported snowfall are not supplied.</p>
+          </> : <>
+            <MarkKey />
+            <div className={styles.fieldRows}>{shown.map((row, i) => <button key={row.id} className={styles.fieldRow} aria-pressed={row.id === selected.id} onClick={() => choose(row.id)} style={{ "--identity": COLORS[i % COLORS.length] } as CSSProperties}>
+              <div><strong>{row.name}</strong><span>{verdictFor(row) ? <Result verdict={verdictFor(row)!} /> : missing || !validProbability(row.probability) ? "No recent price" : <Chance value={row.probability} />}</span></div>
+              <Movement name={row.name} opening={openingFor(data,row)} recorded={missing || settled ? null : row.probability} color={COLORS[i % COLORS.length]} />
+            </button>)}</div>
+            <button className={styles.moreButton} onClick={() => { setSheet("field"); }}>{detail.outcomes.length - shown.length} more<SourceMark /><ChevronDown size={15} /></button>
+            <p className={styles.note}>{shape === "participation" ? "Each team can qualify. These chances do not add to 100%." : "Full-field shares. The leading states keep their own chances."}</p>
+          </>}
+          <button className={styles.detailAction} onClick={() => openDetails()}>Market details <ArrowRight size={15} /></button>
         </section>
-      )}
-      {shape === "quantity" && (
-        <section
-          className="overflow-hidden rounded-card bg-surface-card shadow-card"
-          aria-label="Snowfall ladder"
-        >
-          <div className="px-4 py-3 sm:px-5">
-            <h2 className="text-[13px] font-semibold text-text-primary">
-              Snowfall thresholds
-            </h2>
-          </div>
-          <div className="overflow-x-auto px-4 pb-4 sm:px-5">
-            <div className="grid min-w-[570px] grid-cols-6 divide-x divide-surface-border/50">
-              {thresholds.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  onClick={() => setSelectedId(o.id)}
-                  aria-pressed={selectedId === o.id}
-                  className={`px-3 py-3 text-center ${selectedId === o.id ? "rounded-md bg-surface-elevated" : "hover:bg-surface-elevated/50"}`}
-                >
-                  <span className="mb-2 block text-[10px] text-text-muted">
-                    {o.name}
-                  </span>
-                  <Value outcome={o} verdict={verdictFor(o)} />
-                </button>
-              ))}
-            </div>
-          </div>
-          <p className="border-t border-surface-border/30 px-4 py-2.5 text-[11px] text-text-muted sm:px-5">
-            Thresholds overlap; they are not shares of one total.
-          </p>
-        </section>
-      )}
-      {shape === "unshaped" && (
-        <section
-          className="overflow-hidden rounded-card bg-surface-card shadow-card"
-          aria-label="One recorded outcome"
-        >
-          <div className="flex items-center justify-between px-4 py-3 sm:px-5">
-            <h2 className="text-[13px] font-semibold text-text-primary">
-              The outcome
-            </h2>
-            <span className="text-[10px] text-text-muted">1 outcome</span>
-          </div>
-          <div className="flex items-center justify-between border-t border-surface-border/30 px-4 py-3 sm:px-5">
-            <span className="text-sm text-text-primary">Yes</span>
-            <Value
-              outcome={ranked[0]}
-              verdict={verdictFor(ranked[0])}
-              historical={unknown}
-            />
-          </div>
-          <p className="px-4 pb-3 text-[11px] text-text-muted sm:px-5">
-            One recorded outcome.
-          </p>
-        </section>
-      )}
-      <section
-        className="overflow-hidden rounded-card bg-surface-card shadow-card"
-        data-testid="win-probability-card"
-        aria-labelledby="journey-heading"
-      >
-        <div className="relative flex items-center justify-between px-4 py-3 sm:px-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <h2
-              id="journey-heading"
-              className="shrink-0 text-[13px] font-semibold text-text-primary"
-            >
-              {shape === "duel"
-                ? "Win Probability"
-                : shape === "participation"
-                  ? "Qualification Probability"
-                  : "Probability"}
-            </h2>
-            {!resolved && (
-              <PriceAgeMark
-                observedAt={lead.last_updated ?? detail.updated_at}
-                cadence="futures"
-                scope="card"
-              />
-            )}
-          </div>
-          <button
-            type="button"
-            ref={openerRef}
-            onClick={() => setFullscreen(true)}
-            className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary"
-            aria-label="Open fullscreen chart"
-            title="Open fullscreen chart"
-          >
-            <Maximize2 size={16} strokeWidth={1.5} />
-          </button>
-        </div>
-        <div className="px-4 pb-1 pt-1 sm:px-5">
-          <div className={styles.rangeChips}>
-            <ChartRangeChips
-              ranges={ranges}
-              selected={effectiveRange}
-              onSelect={setRange}
-            />
-          </div>
-          <div className="mt-3" data-testid="event-composition-chart">
-            {chart}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-surface-border/30 px-4 py-2.5 sm:px-5">
-          <span className="inline-flex items-center gap-1.5 text-[10px] text-text-muted">
-            <span className="h-0.5 w-4 rounded bg-accent-brand" />
-            {lead.name}
-            <SourceMark />
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <Attribution sources={[detail.source ?? ""]} />
-            <span className="text-[10px] text-text-muted">
-              · recorded history
-            </span>
-          </span>
-        </div>
-        {data.historyNote && (
-          <p className="border-t border-surface-border/20 px-4 py-2.5 text-[10px] leading-relaxed text-text-muted sm:px-5">
-            {data.historyNote}
-          </p>
-        )}
-        {isStudy && (
-          <p className="px-4 pb-2.5 text-[10px] text-text-muted sm:px-5">
-            {study === "settled"
-              ? "Layout study only. Assumed results are not added to recorded history."
-              : "Open layout study using the last recorded values. The market is resolved."}
-          </p>
-        )}
-      </section>
-      <div className={styles.relatedRail}>
-        <MatchupsRail
-          items={railItems}
-          title="Bigger Picture"
-          marketHref={(id) =>
-            CASES.some((c) => c.id === id)
-              ? `/kernels-preview/futures/${id}`
-              : `/futures/${id}`
-          }
-        />
+        <section className={styles.related} aria-label="Related markets"><div className={styles.eyebrow}>Keep exploring</div><h3>Related markets</h3>{data.related.map((market) => <Link key={market.id} className={styles.relatedCard} href={CASES.some((c) => c.id === market.id) ? `/kernels-preview/futures/${market.id}` : `/futures/${market.id}`}>
+          <div><strong>{market.name.replace(/\?$/, "")}</strong><span>{market.lead || "Explore this market"}</span></div><span>{market.status === "resolved" ? "Settled" : validProbability(market.probability) ? <Chance value={market.probability} /> : <ArrowRight size={16} />}</span>
+        </Link>)}</section>
       </div>
-      <details
-        className="rounded-card border border-surface-border p-3 text-xs text-text-secondary"
-        aria-label="Prototype review controls"
-      >
-        <summary className="cursor-pointer text-[11px] text-text-muted">
-          Design preview · examples and state studies
-        </summary>
-        <nav
-          aria-label="Prototype examples"
-          className="mt-3 flex flex-wrap gap-1.5"
-        >
-          {CASES.map((c) => (
-            <Link
-              key={c.id}
-              href={`/kernels-preview/futures/${c.id}`}
-              className={`rounded-full px-2.5 py-1.5 ${c.id === detail.id ? "bg-text-primary text-surface-card" : "bg-surface-elevated"}`}
-            >
-              {c.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="mt-3 flex items-center gap-2">
-          <label htmlFor="study-state">Review state</label>
-          <select
-            id="study-state"
-            value={study}
-            onChange={(e) => {
-              setStudy(e.target.value as StudyState);
-              if (e.target.value === "settled") setRange("all");
-            }}
-            className="rounded-md border border-surface-border bg-surface-card px-2 py-1"
-          >
-            <option value="payload">As served</option>
-            <option value="open">Open layout study</option>
-            <option value="settled">Settled layout study</option>
-          </select>
-        </div>
-        {isStudy && (
-          <p className="mt-2 text-[11px] leading-relaxed">
-            Layout study only.{" "}
-            {study === "settled"
-              ? shape === "participation"
-                ? "The twelve leading teams are assumed to qualify; these are not production grades."
-                : shape === "quantity"
-                  ? "The selected threshold is assumed to be the last cleared; this is not a production grade."
-                  : "The selected outcome is assumed to win; this is not a production grade."
-              : "Uses last recorded numbers, not the production status."}
-          </p>
-        )}
-      </details>
-      {fullscreen && (
-        <ChartFullscreenDialog
-          title={shape === "duel" ? "Win Probability" : "Probability"}
-          openerRef={openerRef}
-          onClose={() => setFullscreen(false)}
-        >
-          <div className="mx-auto w-full max-w-[1200px] px-3">{chart}</div>
-        </ChartFullscreenDialog>
-      )}
+      <footer className={styles.attribution}><span>Attribution · {attribution(data.sources)}</span><button className={styles.textButton} onClick={() => openDetails()}>Capture &amp; market details</button></footer>
+      <aside className={styles.reviewTools} aria-label="Prototype review controls"><div className={styles.eyebrow}>Atlas family preview · iteration 3</div><nav aria-label="Six real market examples">{CASES.map((c) => <Link key={c.id} href={`/kernels-preview/futures/${c.id}`} aria-current={c.id === detail.id ? "page" : undefined}>{c.label}</Link>)}</nav><label><input type="checkbox" checked={missing} onChange={(e) => setMissing(e.target.checked)} />Preview “No recent price”</label>{isOneLeg && <div className={styles.studyChoices}><button aria-pressed={study === "open"} onClick={() => { setStudy("open"); setMissing(false); }}>Archived open study</button><button aria-pressed={study !== "open"} onClick={() => setStudy("payload")}>Confirmed settled payload</button></div>}<p>Real archived payloads · {datePT(capture, true)}. Preview controls change presentation, never evidence.</p></aside>
     </div>
-  );
+    <dialog ref={dialog} className={`${styles.sheet} ${large ? styles.large : ""}`} onCancel={() => setSheet(null)} onClose={() => setSheet(null)} onClick={(e) => { if (e.target === e.currentTarget) setSheet(null); }} aria-labelledby="futures-sheet-title">
+      <div className={styles.sheetHandle} /><div className={styles.sheetHeader}><h2 id="futures-sheet-title">{sheet === "field" ? `All ${detail.outcomes.length} outcomes` : selected.name}</h2><button autoFocus className={styles.iconButton} aria-label="Close details" onClick={() => setSheet(null)}><X size={20} /></button></div>
+      {sheet === "field" ? <div className={styles.sheetContent}><label className={styles.searchLabel}>Find an outcome<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name" /></label><p className={styles.note}>{shape === "participation" ? "Independent qualification chances" : "Every supplied outcome. Original names and shares retained."}</p>{rows.map((row) => <button key={row.id} className={styles.catalogRow} aria-pressed={row.id === selected.id} onClick={() => { choose(row.id); setSheet(null); }}><span>{row.name}</span><strong>{verdictFor(row) ? <Result verdict={verdictFor(row)!} /> : missing || !validProbability(row.probability) ? "No recent price" : <Chance value={row.probability} />}</strong></button>)}{!rows.length && <p>No matching outcomes.</p>}</div> : <div className={styles.sheetContent}>
+        <p className={styles.predicate}>{detail.name}</p>
+        {verdict && <p><Result verdict={verdict} /></p>}
+        <dl className={styles.evidence}>
+          <div><dt>Opening chance</dt><dd>{opening == null ? "Not supplied for this blend" : <Chance value={opening} />}<small>Opening observation time not supplied. This is not a pre-event pin.</small></dd></div>
+          {inspected && <div><dt>Selected observation</dt><dd><Chance value={inspected.probability} /><small>{datePT(inspected.timestamp,true,true)}</small></dd></div>}
+          <div><dt>Last recorded quote</dt><dd>{latest ? <Chance value={latest.probability} /> : "No blended history supplied"}<small>{latest ? datePT(latest.timestamp,true,true) : "The retained one-venue history is excluded from this blended view."}</small></dd></div>
+          <div><dt>Quote at archive capture</dt><dd>{settled ? "Settlement value excluded from probabilities" : <Chance value={selected.probability} />}<small>{datePT(data.capturedAt,true)} · capture clock, not eligibility</small></dd></div>
+          <div><dt>Current-price eligibility</dt><dd>Not supplied<small>The archive is not advertised as live now.</small></dd></div>
+          {data.settledAt && settled && <div><dt>Settlement</dt><dd>{datePT(data.settledAt,true)}<small>Authoritative venue result. A result is not another historical probability.</small></dd></div>}
+          <div><dt>Scheduled resolution</dt><dd>{deadline ? datePT(deadline,true) : "Not supplied"}<small>Schedule only; does not establish settlement.</small></dd></div>
+          <div><dt>Attribution</dt><dd>{attribution(data.sources)}</dd></div>
+          <div><dt>Original market / outcome</dt><dd>{detail.external_id}<small>{detail.id} / {selected.id}</small></dd></div>
+          <div><dt>Settlement rules</dt><dd>{data.venueRules ?? detail.description ?? "Full venue rules are not supplied in this payload."}</dd></div>
+        </dl>
+      </div>}
+    </dialog>
+  </div>;
 }

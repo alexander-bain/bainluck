@@ -8,6 +8,8 @@ import field from "../_data/108629.json";
 import quantity from "../_data/65536371.json";
 import participation from "../_data/227.json";
 import oneLeg from "../_data/109918.json";
+import oneLegFinal from "../_data/109918-final.json";
+import oneLegVenue from "../_data/109918-venue-final.json";
 import settled from "../_data/108645.json";
 import midterms from "../_data/midterms.json";
 import cfp from "../_data/cfp.json";
@@ -43,7 +45,7 @@ function relatedCard(card: Card): RelatedMarket {
   };
 }
 
-export default function FuturesPrototypePage({ params, searchParams }: { params: { id: string }; searchParams?: { state?: string } }) {
+export default function FuturesPrototypePage({ params, searchParams }: { params: { id: string }; searchParams?: { state?: string; price?: string } }) {
   if (!snapshots[params.id]) notFound();
   const raw = snapshots[params.id] as {
     detail: FuturesMarketDetailResponse; history: { outcomes: FuturesOutcomeHistory[] };
@@ -67,12 +69,18 @@ export default function FuturesPrototypePage({ params, searchParams }: { params:
   }));
 
   const study = searchParams?.state === "open" || searchParams?.state === "settled" ? searchParams.state : "payload";
-  return <Prototype key={`${detail.id}-${study}`} initialStudy={study} data={{
+  return <Prototype key={`${detail.id}-${study}`} initialStudy={study} initialMissing={searchParams?.price === "missing"} data={{
     detail, history: raw.history.outcomes, sources, related,
     capturedAt: manifest.captured_at,
     settledAt: detail.id === 108645 ? manifest.settled_today.settled_at : null,
+    ...(detail.id === 109918 ? {
+      finalDetail: oneLegFinal.detail as unknown as FuturesMarketDetailResponse,
+      finalCapturedAt: oneLegFinal.captured_at,
+      settledAt: oneLegVenue.payload.event.markets[0].settlement_ts,
+      venueRules: oneLegVenue.payload.event.markets[0].rules_primary,
+    } : {}),
     historyNote: detail.id === 109085
-      ? "The current number is blended. The recorded path covers one venue; a registered-twin blended history is not served yet."
+      ? "Blended history is not supplied. The two-venue headline is not appended to a one-venue path."
       : detail.id === 65536371
         ? "Five isolated readings are served across these thresholds. None has enough history to draw a path."
         : null,

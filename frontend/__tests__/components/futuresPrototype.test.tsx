@@ -1,175 +1,97 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Prototype from "@/app/kernels-preview/futures/Prototype";
-import {
-  bodyKind,
-  payloadVerdict,
-  percentText,
-  storedShape,
-  type PrototypeData,
-} from "@/app/kernels-preview/futures/_model";
+import { bodyKind, observations, openingFor, payloadVerdict, percentText, storedShape, type PrototypeData } from "@/app/kernels-preview/futures/_model";
+import type { FuturesMarketDetailResponse, FuturesOutcomeHistory } from "@/lib/types";
+import duel from "@/app/kernels-preview/futures/_data/109085.json";
 import field from "@/app/kernels-preview/futures/_data/108629.json";
 import participation from "@/app/kernels-preview/futures/_data/227.json";
 import oneLeg from "@/app/kernels-preview/futures/_data/109918.json";
+import finalOneLeg from "@/app/kernels-preview/futures/_data/109918-final.json";
 import settled from "@/app/kernels-preview/futures/_data/108645.json";
-import duel from "@/app/kernels-preview/futures/_data/109085.json";
-import type { FuturesMarketDetailResponse } from "@/lib/types";
 
-jest.mock("@/hooks", () => ({
-  usePageTracking: jest.fn(),
-  useScrollDepth: jest.fn(),
-  useEngagementTime: jest.fn(),
-}));
-jest.mock("@/components/FuturesChart", () => ({
-  FuturesChart: () => <div>Recorded chart</div>,
-}));
-
-function asDetail(value: unknown) {
-  return value as FuturesMarketDetailResponse;
+jest.mock("@/hooks", () => ({ usePageTracking: jest.fn(), useScrollDepth: jest.fn(), useEngagementTime: jest.fn() }));
+function dataFor(raw: typeof oneLeg | typeof field | typeof settled | typeof participation | typeof duel): PrototypeData {
+  return { detail: raw.detail as unknown as FuturesMarketDetailResponse, history: raw.history.outcomes as FuturesOutcomeHistory[], sources: ["kalshi"], related: [], capturedAt: "2026-11-04T02:33:38Z", settledAt: null, historyNote: null };
 }
-function render(
-  detail: FuturesMarketDetailResponse,
-  history: PrototypeData["history"] = [],
-) {
-  const data: PrototypeData = {
-    detail,
-    history,
-    sources: ["kalshi"],
-    related: [],
-    capturedAt: "2026-11-04T02:33:00Z",
-    historyNote: null,
-    settledAt: "2026-11-04T02:27:31Z",
-  };
-  return renderToStaticMarkup(<Prototype data={data} />);
+function render(data: PrototypeData, props: Partial<React.ComponentProps<typeof Prototype>> = {}) {
+  return renderToStaticMarkup(<Prototype data={data} {...props} />);
 }
 
-test("field top three retain their served shares of all 24, with the rest reachable", () => {
-  const detail = asDetail(field.detail);
-  const html = render(detail);
-  expect(html).toContain("21 more");
-  expect(detail.outcomes).toHaveLength(24);
-  expect(html).toContain(">24<");
-  expect(html).toContain(">states<");
-  expect(html).toContain("Florida");
-  expect(html).toContain("Nevada");
-  expect(html).toContain("Kansas");
-  expect(html).toContain(
-    percentText(detail.outcomes.find((o) => o.name === "Nevada")!.probability),
-  );
-  expect(html).not.toContain("without a price");
+test("an independent field never enters the winner normalization branch", () => {
+  const data = dataFor(participation);
+  expect(storedShape(data.detail)).toBe("field");
+  expect(bodyKind(data.detail)).toBe("participation");
+  expect(render(data)).toContain("These chances do not add to 100%");
+  expect(render(data)).toContain("94%");
 });
 
-test("a duel reuses the actual two-sided event hero and chart-card composition", () => {
-  const html = render(asDetail(duel.detail));
-  expect(html.match(/data-hero-digits=""/g) ?? []).toHaveLength(2);
-  expect(html).toContain("Adam Hamilton");
-  expect(html).toContain("Roger Marshall");
-  expect(html).toContain('data-testid="win-probability-card"');
-  expect(html).toContain("Back to Discover");
+test("a multi-venue blend gets no one-venue opening, path, or normalized split", () => {
+  const data = dataFor(duel);
+  data.sources = ["kalshi", "polymarket"];
+  data.detail = { ...data.detail, outcomes: data.detail.outcomes.map((row, i) => ({ ...row, probability: i ? .024 : .97125 })) };
+  expect(openingFor(data,data.detail.outcomes[0])).toBeNull();
+  const html = render(data);
+  expect(html).toContain("97%");
+  expect(html).not.toContain('data-kind="observed-run"');
+  expect(html).not.toContain("98%");
 });
 
-test("the native related-market rail has real destinations", () => {
-  const data: PrototypeData = {
-    detail: asDetail(field.detail),
-    history: [],
-    sources: ["kalshi"],
-    capturedAt: "2026-11-04T02:33:00Z",
-    historyNote: null,
-    settledAt: null,
-    related: [
-      {
-        id: 109085,
-        name: "Kansas Senate winner",
-        lead: "Adam Hamilton",
-        probability: 0.98,
-        verdict: null,
-        sources: ["kalshi", "polymarket"],
-      },
-    ],
-  };
-  const html = renderToStaticMarkup(<Prototype data={data} />);
-  expect(html).toContain("Bigger Picture");
-  expect(html).toContain('href="/kernels-preview/futures/109085"');
+test("the field retains full-field shares and a route to every named outcome", () => {
+  const html = render(dataFor(field));
+  expect(html).toContain("29%");
+  expect(html).toContain("21");
+  expect(html).toContain(" more");
+  expect(html).toContain("All outcomes · ");
+  expect(html).not.toContain(">Other<");
 });
 
-test("the stored shape survives while a nonexclusive field takes the independent band", () => {
-  const detail = asDetail(participation.detail);
-  expect(storedShape(detail)).toBe("field");
-  expect(bodyKind(detail)).toBe("participation");
-  const html = render(detail);
-  expect(html).toContain("these do not add to 100%");
-  expect(html).toContain("94%");
-  expect(
-    detail.outcomes.reduce((sum, o) => sum + (o.probability ?? 0), 0),
-  ).toBeGreaterThan(1);
-});
-
-test("a one-leg retraction produces neither a loss nor an invented second side", () => {
-  const detail = asDetail(oneLeg.detail);
-  expect(storedShape(detail)).toBe("unshaped");
-  expect(payloadVerdict(detail, detail.outcomes[0])).toBeNull();
-  const html = render(detail);
-  expect(html).toContain("Result unavailable");
-  expect(html).toContain("Last recorded");
+test("ungradeable is not a loss and a one-leg view has no invented No", () => {
+  const data = dataFor(oneLeg);
+  expect(payloadVerdict(data.detail,data.detail.outcomes[0])).toBeNull();
+  const html = render(data, { initialStudy: "open", initialMissing: true });
+  expect(html).toContain("No recent price");
+  expect(html).not.toContain("Result unavailable");
   expect(html).not.toContain(">Lost<");
   expect(html).not.toContain(">No<");
-  expect(html).toContain("1 outcome");
 });
 
-test("a real settled grade features the winner and renders result words", () => {
-  const detail = asDetail(settled.detail);
-  const html = render(detail);
-  expect(html).toContain("Keisha Lance Bottoms");
+test("a later authoritative one-leg result replaces the ungradeable boolean", () => {
+  const data = dataFor(oneLeg);
+  data.finalDetail = finalOneLeg.detail as unknown as FuturesMarketDetailResponse;
+  const html = render(data);
   expect(html).toContain(">Won<");
-  expect(html).toContain(">Lost<");
-  expect(html).toContain("6:27 PM PT");
-  expect(html).not.toContain("100%");
+  expect(html).toContain("Opening chance");
+  expect(html).toContain("38%");
+  const headline = html.split('aria-label="Market headline"')[1].split("</section>")[0];
+  expect(headline).not.toContain("100%");
 });
 
-test("raw gambling formats cannot leak through an outcome render", () => {
-  const detail = asDetail(field.detail);
-  const html = render({
-    ...detail,
-    outcomes: detail.outcomes.map((o) => ({
-      ...o,
-      american_odds: 87654321,
-      opening_american_odds: -87654321,
-    })),
-  });
+test("settlement annotations are excluded before domains, paths and inspection", () => {
+  const data = dataFor(settled);
+  const id = data.detail.outcomes[0].id;
+  const points = observations(data.history,id);
+  const raw = data.history.find((s) => s.outcome_id === id)!;
+  const synthetic = raw.history.filter((p) => p.bookmaker === "settlement");
+  expect(synthetic.length).toBeGreaterThan(0);
+  expect(points).toHaveLength(raw.history.length - synthetic.length);
+  expect(points.at(-1)!.probability).toBe(.959);
+  const headline = render(data).split('aria-label="Market headline"')[1].split("</section>")[0];
+  expect(headline).toContain("56%");
+  expect(headline).not.toContain("100%");
+});
+
+test("gambling formats cannot leak into headline, graphic or native sheet", () => {
+  const data = dataFor(field);
+  data.detail = { ...data.detail, outcomes: data.detail.outcomes.map((row) => ({ ...row, american_odds: 87654321, opening_american_odds: -87654321 })) };
+  const html = render(data);
   expect(html).not.toContain("87654321");
   expect(html).toContain("Source information reserved");
+  expect(html).toContain("<dialog");
 });
 
-test("whole numbers keep the existing live boundary marks", () => {
-  expect(percentText(0.575)).toBe("58%");
-  expect(percentText(0.995)).toBe(">99%");
-  expect(percentText(0.004)).toBe("<1%");
-});
-
-test("the server renders the answer while reader-timezone chart labels wait for the browser", () => {
-  const html = render(
-    asDetail(field.detail),
-    field.history.outcomes as PrototypeData["history"],
-  );
-  expect(html).toContain("Closest Governor race in 2026");
-  expect(html).toContain("Loading probability history");
-  expect(html).not.toContain("Recorded chart");
-});
-
-test("a stale one-leg study waits for the browser timezone before rendering its exact age stamp", () => {
-  const data: PrototypeData = {
-    detail: asDetail(oneLeg.detail),
-    history: [],
-    sources: ["kalshi"],
-    related: [],
-    capturedAt: "2026-11-04T02:33:00Z",
-    historyNote: null,
-    settledAt: null,
-  };
-  const html = renderToStaticMarkup(
-    <Prototype data={data} initialStudy="open" />,
-  );
-  expect(html).toContain("58");
-  expect(html).not.toContain('data-testid="price-age-mark"');
-  expect(html).not.toContain("Last number:");
+test("whole-number boundary language never claims a near-certainty is certain", () => {
+  expect(percentText(.575)).toBe("58%");
+  expect(percentText(.995)).toBe(">99%");
+  expect(percentText(.004)).toBe("<1%");
 });
