@@ -33,6 +33,7 @@ def _count(root: Path, source: dict[str, Any]) -> int:
         )
     if source.get("kind") == "ast_list":
         tree = ast.parse(path.read_text())
+        count = None
         for node in tree.body:
             targets = node.targets if isinstance(node, ast.Assign) else (
                 [node.target] if isinstance(node, ast.AnnAssign) else []
@@ -40,7 +41,13 @@ def _count(root: Path, source: dict[str, Any]) -> int:
             if any(isinstance(t, ast.Name) and t.id == source["key"] for t in targets):
                 if not isinstance(node.value, (ast.List, ast.Tuple, ast.Dict)):
                     raise ValueError(f"{path}: {source['key']} is not a literal case table")
-                return len(node.value.keys if isinstance(node.value, ast.Dict) else node.value.elts)
+                count = len(node.value.keys if isinstance(node.value, ast.Dict) else node.value.elts)
+            if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == source["key"]:
+                if count is None or not isinstance(node.op, ast.Add) or not isinstance(node.value, (ast.List, ast.Tuple)):
+                    raise ValueError(f"{path}: unsupported extension of {source['key']}")
+                count += len(node.value.elts)
+        if count is not None:
+            return count
         raise ValueError(f"{path}: case table {source['key']} absent")
     value = _read(root, source["path"])
     for part in source.get("selector", []):
@@ -67,10 +74,16 @@ def build_scoreboard(root: Path = REPO) -> dict[str, Any]:
                 "case_sources": sources,
                 "last_result": evidence.get("last_result"),
             })
+        # An adapter may share a corpus with another member. Count those rows
+        # once in the family; JSON still reports the input size of each member.
+        unique_sources = {
+            json.dumps({k: v for k, v in source.items() if k != "unit"}, sort_keys=True): source
+            for member in members for source in member["case_sources"]
+        }
         families.append({
             "domain": domain["domain"],
             "canonical": domain["canonical"],
-            "cases": sum(m["cases"] or 0 for m in members),
+            "cases": sum(_count(root, source) for source in unique_sources.values()),
             "unknown_case_counts": [m["name"] for m in members if m["cases"] is None],
             "members": members,
         })
@@ -109,7 +122,7 @@ def build_scoreboard(root: Path = REPO) -> dict[str, Any]:
 def render(board: dict[str, Any]) -> str:
     lines = [
         "BAIN LUCK EVALS — recorded evidence; no production reads",
-        f"Results recorded {board['recorded_at_pt']} at {board['recorded_source_sha'][:10]}",
+        f"Tests recorded {board['recorded_at_pt']} at {board['recorded_source_sha'][:10]}",
         "DOMAIN / CANONICAL FAMILY                         CASES   LAST RECORDED RESULT",
     ]
     for family in board["families"]:
@@ -128,7 +141,7 @@ def render(board: dict[str, Any]) -> str:
     lines += [
         f"Golden: {g['passing']}/{g['total']} passing; floor {g['floor']}/{g['declared_total']} (recorded, not replayed)",
         f"Bite audit: {b['mutation_bites']}/{b['total']} bite; {b['real_boundaries']}/{b['total']} real boundaries (offline replay)",
-        f"Mutation residue: {r['verdict']} (recorded); {r['needles']} needles, {r['targets']} targets; {r['scope']}",
+        f"Mutation residue: {r['verdict']} (recorded {r['recorded_at_pt']}); {r['needles']} needles/{r['targets']} targets; {r['broad_checks']:,} broad checks",
         f"Registry: {counts['registered']} registered / {counts['unregistered']} unregistered / {counts['legacy']} legacy; {counts['grandfathered']} pre-ratification unregistered",
         "Cases include fixture rows, mutants and named generated tests; +? = missing counts.",
         "A recorded test pass grades its contract, not production; --json lists every member and source.",

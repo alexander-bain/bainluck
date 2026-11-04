@@ -1,4 +1,6 @@
-"""LAT-P119 / #2085 — the pair-that-prints-101 mutation class.
+"""Extends feed_card_trust_contract (ruling 002).
+
+LAT-P119 / #2085 — the pair-that-prints-101 mutation class.
 
 WHAT A MUTANT PROVES HERE
 -------------------------

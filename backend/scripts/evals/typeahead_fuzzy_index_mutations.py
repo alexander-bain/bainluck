@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P135 — mutation battery for the fuzzy-fallback access-path guards.
+"""Extends first_card_client_contract (ruling 002).
+
+LAT-P135 — mutation battery for the fuzzy-fallback access-path guards.
 
 WHAT THIS PROVES. `tests/test_typeahead_fuzzy_index_lat_p135.py` asserts six
 properties over two route functions. Every one of them is a statement about

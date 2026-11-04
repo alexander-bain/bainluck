@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Mutation gate for LAT-P051's #1846 fix — typeahead concept provenance.
+"""Extends search_truth_closure_contract (ruling 002).
+
+Mutation gate for LAT-P051's #1846 fix — typeahead concept provenance.
 
 The change is four lines: one blanket `_derived = True` becomes a per-row
 predicate, and the predicate itself is split into a shape-free core plus two thin

@@ -1,4 +1,6 @@
-"""LAT-P115 — the warmer-that-warms-nothing mutation class.
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P115 — the warmer-that-warms-nothing mutation class.
 
 WHAT A MUTANT PROVES HERE
 -------------------------

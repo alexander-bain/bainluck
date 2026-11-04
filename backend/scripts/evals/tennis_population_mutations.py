@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P146 mutation battery: a shared population must stay a strict superset.
+"""Extends first_card_client_contract (ruling 002).
+
+LAT-P146 mutation battery: a shared population must stay a strict superset.
 
 A guard suite that passes proves the code runs; it does not prove the code is
 PINNED. Each mutant below is a plausible way a later edit could put the defect

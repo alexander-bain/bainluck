@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Q050 mutation battery — is the drain PINNED, or does the suite just run?
+"""Extends feed_card_trust_contract (ruling 002).
+
+Q050 mutation battery — is the drain PINNED, or does the suite just run?
 
 The ship: `/api/events/15300759` — a `kalshi_ticker` duplicate of the completed
 US Open match on 15293804 — stops answering "scheduled, 2026-08-30" and answers

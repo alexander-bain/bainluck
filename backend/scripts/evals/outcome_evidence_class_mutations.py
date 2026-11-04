@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Mutation gate for LAT-P052's OUTCOME-EVIDENCE probe class (ruling 056, #1861).
+"""Extends search_truth_closure_contract (ruling 002).
+
+Mutation gate for LAT-P052's OUTCOME-EVIDENCE probe class (ruling 056, #1861).
 
 WHAT IS UNDER TEST HERE IS AN INSTRUMENT, NOT A FEATURE
 -------------------------------------------------------

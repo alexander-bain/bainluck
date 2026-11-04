@@ -1,4 +1,6 @@
-"""State-machine oracle for a resumable staged calibration population build."""
+"""Extends calibration_population_integrity (ruling 002).
+
+State-machine oracle for a resumable staged calibration population build."""
 
 from __future__ import annotations
 

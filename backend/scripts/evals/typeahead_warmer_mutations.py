@@ -1,4 +1,6 @@
-"""Mutation coverage for the `/typeahead` page warmer (#1866, LAT-P056).
+"""Extends cache_failure_resilience (ruling 002).
+
+Mutation coverage for the `/typeahead` page warmer (#1866, LAT-P056).
 
 WHY THIS HARNESS AND NOT JUST THE TESTS. Every failure mode this warmer has is
 SILENT. It cannot crash a page, it cannot 500 a user, and it cannot return a

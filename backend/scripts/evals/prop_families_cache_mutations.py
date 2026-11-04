@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""LAT-P138 — would the guard suite NOTICE if the prop-families tier stopped?
+"""Extends cache_failure_resilience (ruling 002).
+
+LAT-P138 — would the guard suite NOTICE if the prop-families tier stopped?
 
 WHAT THE MUTANTS ARE FOR
 ------------------------

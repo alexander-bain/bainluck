@@ -1,4 +1,6 @@
-"""LAT-P040 (#835) — mutants for "a p95 must carry its own window".
+"""Extends first_card_client_contract (ruling 002).
+
+LAT-P040 (#835) — mutants for "a p95 must carry its own window".
 
 WHAT THIS PROVES
 ----------------

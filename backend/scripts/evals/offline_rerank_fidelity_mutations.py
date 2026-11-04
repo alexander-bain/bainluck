@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Mutation gate for LAT-P050's instrument-fidelity work.
+"""Extends search_truth_closure_contract (ruling 002).
+
+Mutation gate for LAT-P050's instrument-fidelity work.
 
 Same discipline as `search_scorer_wiring_mutations.py`, each rule from a named
 prior failure:

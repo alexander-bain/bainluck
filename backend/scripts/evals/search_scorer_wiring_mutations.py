@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Mutation gate for LAT-P049's `/search` scorer wiring.
+"""Extends search_truth_closure_contract (ruling 002).
+
+Mutation gate for LAT-P049's `/search` scorer wiring.
 
 Discipline this harness is built to satisfy, each from a named prior failure:
 
