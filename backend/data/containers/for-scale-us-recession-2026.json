@@ -1,0 +1,43 @@
+{
+  "slug": "for-scale-us-recession-2026",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "kicker": "FOR SCALE",
+  "name": "For scale: US recession by end of 2026",
+  "category": "cross-topic",
+  "tag": "",
+  "section_title": "For scale",
+  "footer": "Two unrelated markets with the same chance.",
+  "rule": {
+    "producer": "yardstick_pair",
+    "anchor": {
+      "market": "polymarket:113012",
+      "short_label": "a US recession by end of 2026",
+      "row_label": "US recession by end of 2026",
+      "deadline": "2026-12-31"
+    },
+    "same_band_max_diff": 2,
+    "apart_band_min_diff": 10,
+    "allow_less_likely": false,
+    "max_age_hours": 48,
+    "min_hours_to_decision": 48,
+    "candidates": [
+      "polymarket:113200",
+      "polymarket:61340822",
+      "polymarket:67903133",
+      "polymarket:63727104"
+    ],
+    "candidate_labels": {
+      "113200": {
+        "short_label": "The Iranian regime falls before 2027",
+        "row_label": "The Iranian regime falls before 2027"
+      }
+    },
+    "cache": "none",
+    "twins": "none",
+    "normalize": false,
+    "relation": "exact",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}

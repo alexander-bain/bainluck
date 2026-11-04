@@ -1,0 +1,54 @@
+{
+  "slug": "for-scale-snow-in-dc",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "kicker": "FOR SCALE",
+  "name": "For scale: snow in DC by Nov 30",
+  "category": "cross-topic",
+  "tag": "",
+  "section_title": "For scale",
+  "footer": "Two unrelated markets with the same chance.",
+  "rule": {
+    "producer": "yardstick_pair",
+    "anchor": {
+      "market": "polymarket:60104328",
+      "short_label": "snow in DC by Nov 30",
+      "row_label": "Snow in Washington, DC by Nov 30",
+      "deadline": "2026-11-30"
+    },
+    "same_band_max_diff": 2,
+    "apart_band_min_diff": 10,
+    "allow_less_likely": false,
+    "max_age_hours": 48,
+    "min_hours_to_decision": 48,
+    "candidates": [
+      "polymarket:60880786",
+      "polymarket:8422080",
+      "polymarket:30587891",
+      "polymarket:68064291",
+      "polymarket:62141888",
+      "polymarket:68320839",
+      "polymarket:62611724"
+    ],
+    "candidate_labels": {
+      "60880786": {
+        "short_label": "Gavin Newsom announces a 2028 run",
+        "row_label": "Gavin Newsom announces a 2028 run"
+      },
+      "8422080": {
+        "short_label": "Pete Hegseth out by Dec 31",
+        "row_label": "Pete Hegseth out as Secretary of Defense by Dec 31"
+      },
+      "30587891": {
+        "short_label": "Banksy creates a new mural by Dec 31",
+        "row_label": "Banksy creates a new mural or street artwork by Dec 31"
+      }
+    },
+    "cache": "none",
+    "twins": "none",
+    "normalize": false,
+    "relation": "exact",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}
