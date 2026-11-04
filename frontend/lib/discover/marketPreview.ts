@@ -1,5 +1,6 @@
 import type { FeedBundleData, FeedFuturesData, FeedItem } from '../types';
 import type { DiscoverGroupedItem } from '../../components/discover/types';
+import { isComplementPair, renderedCardPercents } from '../renderedPercent';
 import { marketResolved, observationOrder } from './priceRefresh';
 
 /**
@@ -84,20 +85,45 @@ type MarketCard = Omit<FeedFuturesData, 'top_outcomes'> & { outcome_observed_at?
 
 function overlayCard(data: MarketCard, state: MarketPreviewState, now: number): MarketCard {
   if (data.display_scale !== 1 || data.source !== state.source || marketResolved(data)) return data;
-  let changed = false;
-  const rows = (data.top_outcomes ?? []).map(row => {
+  const committedRows = data.top_outcomes ?? [];
+  const admitted = committedRows.map(row => {
     const leg = state.legs[String(row.id)];
     // A withheld (null) price stays withheld: the server refused it on purpose.
-    if (!leg || leg.expiresAt <= now || row.probability === null || row.probability === leg.p) return row;
+    if (!leg || leg.expiresAt <= now || row.probability === null || row.probability === leg.p) return null;
     const committed = data.outcome_observed_at?.[String(row.id)] ?? row.price_observed_at ?? null;
-    if (committed && (observationOrder(leg.observedAt, committed) ?? 0) <= 0) return row;
-    changed = true;
-    // The served whole percent describes the committed value; the card's own
-    // rounding rule decides for the provisional one.
-    return { ...row, probability: leg.p, rendered_percent: null };
+    if (committed && (observationOrder(leg.observedAt, committed) ?? 0) <= 0) return null;
+    return leg.p;
   });
-  return changed ? { ...data, top_outcomes: rows } : data;
+  if (admitted.every(p => p === null)) return data;
+
+  // A committed complement pair prints a total of 100 (#2060), and so must its
+  // preview: a one-sided move carries its complement to the other leg, and two
+  // previewed legs that are not a pair keep the committed pair rather than print
+  // another total. The whole percents follow the card rule for the new pair.
+  if (isComplementPair(committedRows.map(row => row.probability))) {
+    let pair: [number, number];
+    if (admitted[0] !== null && admitted[1] !== null) {
+      if (!isComplementPair(admitted)) return data;
+      pair = [admitted[0], admitted[1]];
+    } else if (admitted[0] !== null) {
+      pair = [admitted[0], complement(admitted[0])];
+    } else {
+      pair = [complement(admitted[1]!), admitted[1]!];
+    }
+    const printed = renderedCardPercents(pair);
+    return { ...data, top_outcomes: committedRows.map((row, i) =>
+      ({ ...row, probability: pair[i], rendered_percent: printed[i] ?? null })) };
+  }
+
+  // Any other card: each previewed leg on its own. The served whole percent
+  // describes the committed value; the card's own rounding rule decides for the
+  // provisional one.
+  return { ...data, top_outcomes: committedRows.map((row, i) =>
+    admitted[i] === null ? row : { ...row, probability: admitted[i]!, rendered_percent: null }) };
 }
+
+/** `1 - p` on the venues' decimal grid (bare `1 - .445` is .5549999…). */
+const complement = (p: number) => (1000 - p * 1000) / 1000;
 
 /**
  * The page's cards with each held market's admitted preview overlaid. Returns

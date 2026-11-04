@@ -37,16 +37,27 @@ const T1 = '2026-11-03T17:00:05.250000+00:00';
 const T_MID = '2026-11-03T17:00:03.000000+00:00';
 const MARKET = 501;
 
+const leg = (id: number, name: string, probability: number, clock: string, rank: number) => (
+  { id, name, probability, rank, movement: null, rendered_percent: Math.round(probability * 100), price_observed_at: clock });
+
+/** A three-way field (not a complement pair): each previewed leg moves on its own. */
 function market(yes = 0.4, clock = T0, extra: Record<string, unknown> = {}) {
   return {
-    id: MARKET, name: 'Will it happen?', source: 'kalshi', status: 'open', group_id: null, group_type: null,
+    id: MARKET, name: 'Who wins?', source: 'kalshi', status: 'open', group_id: null, group_type: null,
     canonical_market_key: null, external_id: 'KXTEST', display_scale: 1, price_observed_at: clock,
-    outcome_observed_at: { '70': clock, '71': clock },
-    top_outcomes: [
-      { id: 70, name: 'Yes', probability: yes, rank: 1, movement: null, rendered_percent: Math.round(yes * 100), price_observed_at: clock },
-      { id: 71, name: 'No', probability: 0.6, rank: 2, movement: null, rendered_percent: 60, price_observed_at: clock },
-    ],
+    outcome_observed_at: { '70': clock, '71': clock, '72': clock },
+    top_outcomes: [leg(70, 'Alpha', yes, clock, 1), leg(71, 'Beta', 0.5, clock, 2), leg(72, 'Gamma', 0.1, clock, 3)],
     ...extra,
+  } as unknown as FeedFuturesData;
+}
+
+/** A Yes/No complement pair (#2060: it prints a total of 100). */
+function pairMarket(yes = 0.425, no = 0.575, clock = T0) {
+  return {
+    ...market(yes, clock), name: 'Will it happen?', outcome_observed_at: { '70': clock, '71': clock },
+    top_outcomes: [
+      { ...leg(70, 'Yes', yes, clock, 1), rendered_percent: 43 }, { ...leg(71, 'No', no, clock, 2), rendered_percent: 57 },
+    ],
   } as unknown as FeedFuturesData;
 }
 const card = (data: FeedFuturesData) => ({
@@ -114,7 +125,8 @@ test('a preview frame moves a visible futures card before any refetch', async ()
   stream().emit('market_preview', preview());
   expect(yes()).toEqual(expect.objectContaining({ id: 70, probability: 0.47, rendered_percent: null }));
   // Only the previewed leg moves; its sibling keeps its committed number.
-  expect(rows()[1]).toEqual(expect.objectContaining({ id: 71, probability: 0.6, rendered_percent: 60 }));
+  expect(rows()[1]).toEqual(expect.objectContaining({ id: 71, probability: 0.5, rendered_percent: 50 }));
+  expect(rows()[2]).toEqual(expect.objectContaining({ id: 72, probability: 0.1, rendered_percent: 10 }));
   expect(fetcher.mock.calls.length).toBe(reads);
 });
 
@@ -202,6 +214,51 @@ test('a card printed on a scaled basis, another source, or a withheld leg ignore
   await visibleCard(withheld);
   stream().emit('market_preview', preview());
   expect(yes().probability).toBe(null);
+});
+
+// ── a complement pair prints a total of 100 ─────────────────────────────────
+
+const percents = () => rows().map(row => row.rendered_percent);
+
+test('a one-sided Kalshi move on a complement pair carries its complement to the other side', async () => {
+  await visibleCard(pairMarket());
+  // 0.445 / 0.555 rounded on their own read 45 / 56 = 101 (the #2060 picture).
+  stream().emit('market_preview', preview({}, [{ outcome_id: 70, p: 0.445, observed_at: T1 }]));
+  expect(rows().map(row => row.probability)).toEqual([0.445, 0.555]);
+  expect(percents()[0]! + percents()[1]!).toBe(100);
+  expect(percents()).toEqual([45, 55]);
+});
+
+test('the No side previewed alone sets Yes to its complement', async () => {
+  await visibleCard(pairMarket());
+  stream().emit('market_preview', preview({}, [{ outcome_id: 71, p: 0.615, observed_at: T1 }]));
+  expect(rows().map(row => row.probability)).toEqual([0.385, 0.615]);
+  expect(percents()[0]! + percents()[1]!).toBe(100);
+});
+
+test('both sides previewed consistently are shown', async () => {
+  await visibleCard(pairMarket());
+  stream().emit('market_preview', preview({}, [
+    { outcome_id: 70, p: 0.47, observed_at: T1 }, { outcome_id: 71, p: 0.535, observed_at: T1 },
+  ]));
+  expect(rows().map(row => row.probability)).toEqual([0.47, 0.535]);
+  expect(percents()[0]! + percents()[1]!).toBe(100);
+});
+
+test('both sides previewed inconsistently keep the committed pair', async () => {
+  await visibleCard(pairMarket());
+  stream().emit('market_preview', preview({}, [
+    { outcome_id: 70, p: 0.47, observed_at: T1 }, { outcome_id: 71, p: 0.6, observed_at: T1 },
+  ]));
+  expect(rows().map(row => row.probability)).toEqual([0.425, 0.575]);
+  expect(percents()).toEqual([43, 57]);
+});
+
+test('a multi-outcome field that is not a pair is untouched by the pair rule', async () => {
+  await visibleCard(market());
+  stream().emit('market_preview', preview({}, [{ outcome_id: 70, p: 0.445, observed_at: T1 }]));
+  expect(rows().map(row => row.probability)).toEqual([0.445, 0.5, 0.1]);
+  expect(percents()).toEqual([null, 50, 10]);
 });
 
 test('control: with no preview frames the items are exactly what the price book projects', async () => {
