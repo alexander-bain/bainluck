@@ -2089,6 +2089,7 @@ export interface FeedTournamentData {
   golfers: {
     name: string;
     probability: number;
+    rendered_percent?: number | null;
     rank: number;
     movement_24h: number | null;
     // #7226 — is `movement_24h` a dated 23-25h snapshot subtraction, or the
@@ -2501,6 +2502,7 @@ export interface SharedTeamFuturesResponse {
 export interface GolfGolfer {
   name: string;
   probability: number;
+  rendered_percent?: number | null;
   american_odds: number | null;
   opening_probability: number | null;
   movement_24h: number | null;
@@ -3071,6 +3073,7 @@ export interface ProbabilityTimelineResponse {
 export interface MarchMadnessTeam {
   team_name: string;
   probability: number;
+  rendered_percent?: number | null;
   movement_24h: number | null;
   opening_probability: number | null;
   sources: Record<string, number>;

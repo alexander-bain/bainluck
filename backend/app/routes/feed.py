@@ -16236,7 +16236,9 @@ async def _score_golf_tournaments(
 
         # Build the reason text
         leader = golfers[0]
-        leader_pct = round(leader["probability"] * 100, 1)
+        leader_pct = leader.get("rendered_percent")
+        if leader_pct is None:
+            leader_pct = round(leader["probability"] * 100, 1)
         champion = t.get("champion")
         # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
         # for a tournament whose tour we cannot evidence, and a .get() default only
@@ -16344,6 +16346,7 @@ async def _score_golf_tournaments(
                 {
                     "name": g["name"],
                     "probability": g["probability"],
+                    "rendered_percent": g.get("rendered_percent"),
                     "rank": g["rank"],
                     "movement_24h": g.get("movement_24h"),
                     # #7226 — the flag the `reason` gate 50 lines above already

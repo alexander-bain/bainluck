@@ -920,6 +920,10 @@ def _golf_winner_renorm_factor(
 ) -> float | None:
     """Renormalization factor for a golf winner market, or None to skip it (#926).
 
+    #11995: an explicitly exclusive winner field supplies RAW inputs (factor
+    1); `_build_tournament_entry` normalizes its final complete blend. The
+    legacy bands below retain admission for the other fields.
+
     Kalshi tournament-WINNER markets are independent per-golfer binaries that sum
     well over 100% (gotcha #23). They represent a real field, so we renormalize
     them to sum 1.0 (factor = 1/sum) instead of dropping them at the >1.5
@@ -961,6 +965,11 @@ def _golf_winner_renorm_factor(
     is `true` AND sums 1.00-1.15 — under the 1.5 early return, so untouched by this
     gate either way. The only rows it moves are the two season-scope Kalshi markets.
     """
+    if mutually_exclusive is True and n_outcomes >= 2 and (
+        _WINNER_MARKET_RE.search(market_name) and not _NON_WINNER_MARKET_RE.search(market_name)
+    ):
+        # #11995: blend raw eligible inputs, then normalize the final full field.
+        return 1.0
     if prob_sum <= 1.5:
         return 1.0
     if mutually_exclusive is False:
@@ -1704,6 +1713,10 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
 
         # Merge sources and probabilities
         long["sources"].update(short["sources"])
+        if short.get("is_winner") is True:
+            long["is_winner"] = True
+            if long.get("resolution_source") in (None, "ungradeable_result"):
+                long["resolution_source"] = short.get("resolution_source")
 
         # #3013 — the per-source moves merge exactly as `sources` just did (the
         # short entry's source wins, and brings its own dated delta or none),
@@ -2565,7 +2578,11 @@ def _aggregate_golfer_outcome(
         _pin_golfer_name(golfer_data[key], display_name, is_datagolf)
 
     entry = golfer_data[key]
-    entry["sources"][source_label] = round(prob, 3)
+    entry["sources"][source_label] = prob
+    if getattr(outcome, "is_winner", None) is True:
+        entry["is_winner"] = True
+        if entry.get("resolution_source") in (None, "ungradeable_result"):
+            entry["resolution_source"] = getattr(outcome, "resolution_source", None)
 
     # Lockstep with the line above: `sources` is last-write-wins per source, so
     # the dated delta for that source must be THIS outcome's or none — never an
@@ -2603,6 +2620,7 @@ def _build_tournament_entry(
     golfer_data: dict[str, dict], prop_markets_list: list[dict],
     market_ids: list[int], market_sources: list[str],
     earliest_commence, latest_resolution,
+    *, mutually_exclusive: bool | None = None, field_complete: bool = True,
 ) -> dict | None:
     """Build a single tournament response dict from aggregated golfer data."""
     golfer_data = _merge_abbreviated_golfers(golfer_data)
@@ -2634,8 +2652,17 @@ def _build_tournament_entry(
             "movement_is_dated": bool(data.get("movement_is_dated")),
             "sources": data["sources"],
             "opening_probability": data["opening_probability"],
+            "is_winner": data.get("is_winner"),
+            "resolution_source": data.get("resolution_source"),
         })
 
+    if mutually_exclusive is True:
+        from app.utils.outcome_display import normalize_display_probs
+
+        if normalize_display_probs(golfers, field_complete=field_complete):
+            for golfer in golfers:
+                golfer["movement_24h"] = golfer["opening_probability"] = None
+                golfer["movement_is_dated"] = False
     golfers.sort(key=lambda g: g["probability"], reverse=True)
 
     if not golfers:
@@ -2657,7 +2684,8 @@ def _build_tournament_entry(
 
     all_golfers = golfers
     for g in all_golfers:
-        g["probability"] = round(g["probability"], 3)
+        if "rendered_percent" not in g:
+            g["probability"] = round(g["probability"], 3)
         g["american_odds"] = probability_to_american(g["probability"])
     for i, g in enumerate(all_golfers):
         g["rank"] = i + 1
@@ -3415,6 +3443,8 @@ async def get_golf(
         earliest_commence = None
         latest_resolution = None
         team_format_withheld = 0
+        winner_field_exclusive = True
+        winner_field_complete = True
 
         source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
 
@@ -3547,6 +3577,13 @@ async def get_golf(
                 )
 
             # Aggregate winner outcomes
+            winner_field_exclusive &= getattr(market, "mutually_exclusive", None) is True
+            winner_field_complete &= all(
+                o.current_probability is not None and not _is_placeholder_price(o, source)
+                and o.name.strip().lower() not in ("tie", "field", "other", "the field")
+                and not _PROP_OUTCOME_RE.search(o.name)
+                for o in market.outcomes
+            )
             withheld = 0
             for outcome in market.outcomes:
                 if outcome.current_probability is None:
@@ -3583,6 +3620,7 @@ async def get_golf(
         entry = _build_tournament_entry(
             tourn_key, tourn_markets, golfer_data, prop_markets_list,
             market_ids, market_sources, earliest_commence, latest_resolution,
+            mutually_exclusive=winner_field_exclusive, field_complete=winner_field_complete,
         )
         if entry:
             tournaments.append(entry)

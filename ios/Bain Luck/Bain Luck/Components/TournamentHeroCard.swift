@@ -89,7 +89,7 @@ nonisolated struct TournamentHeroCard: View {
                                 .foregroundStyle(movement > 0 ? .green : .red)
                             }
                             Spacer()
-                            Text(String(format: "%.1f%%", golfer.probability * 100))
+                            Text(golfer.renderedPercent.map { "\($0)%" } ?? String(format: "%.1f%%", golfer.probability * 100))
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .monospacedDigit()

@@ -915,6 +915,7 @@ nonisolated struct FeedTournamentData: Decodable, Sendable {
 nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
     let name: String
     let probability: Double
+    var renderedPercent: Int? = nil
     let rank: Int
     let movement24h: Double?
 
@@ -939,7 +940,7 @@ nonisolated struct FeedTournamentGolfer: Decodable, Identifiable, Sendable {
     /// this strategy is affected. The rest are on non-Discover surfaces and are routed
     /// rather than swept here; see the L2-225 report.
     enum CodingKeys: String, CodingKey {
-        case name, probability, rank
+        case name, probability, renderedPercent, rank
         case movement24h = "movement24H"
     }
 }

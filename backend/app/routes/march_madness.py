@@ -150,14 +150,18 @@ def _aggregate_championship_odds(
 ) -> list[dict]:
     """Merge teams across sources and compute normalized championship odds."""
     team_data: dict[str, dict] = {}
+    field_complete = True
+    field_exclusive = all(getattr(m, "mutually_exclusive", None) is True for m in championship_markets)
 
     for market in championship_markets:
         source = market.source or "unknown"
         for outcome in market.outcomes:
             if outcome.current_probability is None:
+                field_complete = False
                 continue
             prob = float(outcome.current_probability)
             if source == "kalshi" and prob == 0.5:
+                field_complete = False
                 continue
 
             display_name = outcome.name.strip()
@@ -176,10 +180,16 @@ def _aggregate_championship_odds(
                     "region": None,
                     "is_eliminated": False,
                     "is_alma_mater": False,
+                    "is_winner": False,
+                    "resolution_source": None,
                 }
 
             team_data[key]["sources"][source] = round(prob, 3)
             team_data[key]["probabilities"].append(prob)
+            if getattr(outcome, "is_winner", None) is True:
+                team_data[key]["is_winner"] = True
+                if team_data[key]["resolution_source"] in (None, "ungradeable_result"):
+                    team_data[key]["resolution_source"] = getattr(outcome, "resolution_source", None)
 
             if outcome.probability_change_24h is not None:
                 existing = team_data[key]["movement_24h"]
@@ -195,7 +205,10 @@ def _aggregate_championship_odds(
         avg_prob = sum(data["probabilities"]) / len(data["probabilities"])
         championship_odds.append({
             "team_name": data["team_name"],
-            "probability": round(avg_prob, 4),
+            "name": data["team_name"],
+            "probability": avg_prob,
+            "is_winner": data["is_winner"],
+            "resolution_source": data["resolution_source"],
             "movement_24h": data["movement_24h"],
             "opening_probability": data["opening_probability"],
             "sources": data["sources"],
@@ -208,11 +221,16 @@ def _aggregate_championship_odds(
 
     championship_odds.sort(key=lambda t: t["probability"], reverse=True)
 
-    total_prob = sum(t["probability"] for t in championship_odds)
-    if total_prob > 0:
-        for team in championship_odds:
-            team["probability"] = round(team["probability"] / total_prob, 4)
-            team["american_odds"] = probability_to_american(team["probability"])
+    from app.utils.outcome_display import normalize_display_probs
+
+    changed = normalize_display_probs(
+        championship_odds, mutually_exclusive=field_exclusive, field_complete=field_complete,
+    )
+    for team in championship_odds:
+        team.pop("name")
+        if changed:
+            team["movement_24h"] = team["opening_probability"] = None
+        team["american_odds"] = probability_to_american(team["probability"])
 
     return championship_odds
 

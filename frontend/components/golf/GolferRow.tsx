@@ -116,7 +116,7 @@ export function GolferRow({
         )}
         <MovementBadge movement={golfer.movement_24h} />
         <span className="text-sm font-mono text-text-primary w-10 text-right">
-          {formatProbability(golfer.probability)}
+          {formatProbability(golfer.probability, { rendered: golfer.rendered_percent })}
         </span>
         {sourceCount > 1 && (
           <SourceDots sources={golfer.sources} />

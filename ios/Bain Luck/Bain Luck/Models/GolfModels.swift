@@ -128,6 +128,7 @@ nonisolated struct GolfTournamentData: Decodable, Sendable, Identifiable {
 nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
     let name: String
     let probability: Double
+    let renderedPercent: Int?
     let rank: Int?
     let movement24h: Double?
     let openingProbability: Double?
@@ -139,6 +140,7 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         probability = (try? container.decode(Double.self, forKey: .probability)) ?? 0
+        renderedPercent = try container.decodeIfPresent(Int.self, forKey: .renderedPercent)
         rank = try container.decodeIfPresent(Int.self, forKey: .rank)
         // Tolerant: a malformed movement value must not erase this golfer or the
         // rest of the field.
@@ -150,7 +152,7 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         // `movement_24h` converts to the key `movement24H`, not `movement24h` —
         // the previous raw value here matched nothing. See `TolerantNumeric`.
-        case name, probability, rank, movement24h = "movement24H", openingProbability, americanOdds
+        case name, probability, renderedPercent, rank, movement24h = "movement24H", openingProbability, americanOdds
     }
 }
 

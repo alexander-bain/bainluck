@@ -116,18 +116,14 @@ class TestTheControls:
         assert _golf_winner_renorm_factor(name, n, s, mutually_exclusive=True) == 1.0
         assert _golf_winner_renorm_factor(name, n, s) == 1.0
 
-    def test_an_oversumming_EXCLUSIVE_field_is_still_renormalized(self):
-        """The two `excl=true` oversumming rows in the census keep today's behaviour.
-
-        Without this the gate could be 'refuse everything over 1.5' and still pass
-        every arm above, which would drop the only markets #926 exists to save.
-        """
+    def test_an_oversumming_exclusive_field_reaches_the_final_blend_raw(self):
+        """#11995 normalizes after the blend, never once per provider input."""
         assert _golf_winner_renorm_factor(
             "New Zealand Darts Masters: Winner", 16, 3.825, mutually_exclusive=True
-        ) == pytest.approx(1 / 3.825)
+        ) == 1.0
         assert _golf_winner_renorm_factor(
             "KLM Open Winner", 157, 5.338, mutually_exclusive=True
-        ) == pytest.approx(1 / 5.338)
+        ) == 1.0
 
     def test_unknown_exclusivity_keeps_the_pre_4402_path(self):
         """Zero golf rows are null today; the default is graceful degradation, not policy."""

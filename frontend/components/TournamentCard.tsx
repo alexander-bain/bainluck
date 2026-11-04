@@ -128,7 +128,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                   beside someone else's name. */}
               {leader.winProb != null && (
                 <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
-                  {leader.winProb.toFixed(1)}
+                  {leader.renderedPercent ?? leader.winProb.toFixed(1)}
                   <span className="text-base font-semibold">%</span>
                 </div>
               )}
@@ -193,7 +193,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                     {chaserLabels[i]}
                   </div>
                   <div className="text-[15px] font-bold tabular-nums">
-                    {c.winProb.toFixed(1)}%
+                    {c.renderedPercent ?? c.winProb.toFixed(1)}%
                   </div>
                   {(c.score || c.hole) && (
                     <div className="text-[10px] text-text-tertiary">
@@ -301,7 +301,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                 {wonA && <span className="ml-1.5 bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">Won</span>}
               </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
-                {probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
+                {teamA.rendered_percent ?? probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
             </div>
 
@@ -315,7 +315,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                 {teamB.name}
               </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
-                {probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
+                {teamB.rendered_percent ?? probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
             </div>
           </div>
@@ -360,6 +360,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
 // ============================================================================
 
 interface CardGolfer {
+  renderedPercent?: number | null;
   name: string;
   winProb: number;
   score?: string | null;
@@ -414,13 +415,14 @@ function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardP
     const i = championRowIndex(tournament.golfers, tournament.champion);
     if (i < 0) return { name: tournament.champion, winProb: null };
     const c = tournament.golfers[i];
-    return { name: c.name, winProb: c.probability * 100, movement: c.movement_24h };
+    return { name: c.name, winProb: c.probability * 100, renderedPercent: c.rendered_percent, movement: c.movement_24h };
   }
   const g = tournament.golfers[0];
   if (!g) return null;
   return {
     name: g.name,
     winProb: g.probability * 100,
+    renderedPercent: g.rendered_percent,
     movement: g.movement_24h,
   };
 }
@@ -445,6 +447,7 @@ function _buildChasers(tournament: GolfTournament, leaderboard?: GolfLeaderboard
     .map((g) => ({
       name: g.name,
       winProb: g.probability * 100,
+      renderedPercent: g.rendered_percent,
     }));
 }
 

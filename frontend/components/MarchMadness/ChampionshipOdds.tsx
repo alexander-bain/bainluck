@@ -38,7 +38,7 @@ export default function ChampionshipOdds({ teams, almaMaterTeams }: Championship
                 </div>
               </div>
               <div className="mm-team-prob">
-                <div className="mm-prob-value">{(team.probability * 100).toFixed(1)}%</div>
+                <div className="mm-prob-value">{team.rendered_percent ?? (team.probability * 100).toFixed(1)}%</div>
                 {team.movement_24h !== null && team.movement_24h !== 0 && (
                   <div className={`mm-prob-movement ${team.movement_24h > 0 ? "up" : "down"}`}>
                     {team.movement_24h > 0 ? "+" : ""}

@@ -81,6 +81,11 @@ const row = (g: GolfGolfer, showSourceBreakdown = false) =>
   );
 
 describe("UX-P161 — the golf field row honours the probability floor", () => {
+  it("#11995 prints the server allocation instead of rounding this leg again", () => {
+    const html = row(golfer({ probability: 0.255, rendered_percent: 25 }));
+    expect(html).toContain(">25%<");
+    expect(html).not.toContain(">26%<");
+  });
   it("prints <1% for the exact production specimen, not 0%", () => {
     // Billy Andrade / K.J. Choi / Scott McCarron, Rogers Charity Classic,
     // 2026-08-29: probability 0.003, single Kalshi source.
