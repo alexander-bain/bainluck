@@ -458,3 +458,125 @@ class TestEveryLeaderTemplateAsksTheQuestion:
             assert (
                 "rendered_runner_up_percent" in inspect.signature(composer).parameters
             ), f"{composer.__name__} cannot be told what the board prints"
+
+
+class TestTiedLeadersAreNamedTogether11941:
+    """#11941 — when the printed board ties at the top, a headline or reason names
+    the tied leaders together instead of picking the first row.
+    """
+
+    def test_stanley_cup_tie_at_9_77_each_names_carolina_and_colorado(self):
+        from app.routes.feed import (
+            _printed_leader_percent,
+            _printed_outcome_name,
+            _printed_runner_up_percent,
+        )
+
+        market_name = "2026-27 Stanley Cup® Final Winner"
+        top_outcomes_data = [
+            {
+                "name": "Carolina Hurricanes",
+                "probability": 0.0977,
+                "rendered_percent": 10,
+            },
+            {
+                "name": "Colorado Avalanche",
+                "probability": 0.0977,
+                "rendered_percent": 10,
+            },
+            {
+                "name": "Edmonton Oilers",
+                "probability": 0.085,
+                "rendered_percent": 8,
+            },
+        ]
+        leader = _printed_outcome_name(
+            "Carolina Hurricanes",
+            {},
+            market_name,
+            top_outcomes_data,
+        )
+        assert leader == "Carolina Hurricanes and Colorado Avalanche"
+
+        l_pct = _printed_leader_percent(top_outcomes_data)
+        r_pct = _printed_runner_up_percent(top_outcomes_data)
+        assert l_pct == 10 and r_pct == 10
+
+        headline = fr.generate_futures_headline(
+            highlight_reasons=["featured_market"],
+            leader_name=leader,
+            leader_probability=0.0977,
+            rendered_leader_percent=l_pct,
+            rendered_runner_up_percent=r_pct,
+            market_name=market_name,
+        )
+        reason = fr.generate_futures_reason(
+            market_name,
+            ["featured_market"],
+            leader_name=leader,
+            leader_probability=0.0977,
+            rendered_leader_percent=l_pct,
+            rendered_runner_up_percent=r_pct,
+        )
+        context = fr.generate_futures_context_summary(
+            highlight_reasons=["featured_market"],
+            leader_name=leader,
+            leader_probability=0.0977,
+            rendered_leader_percent=l_pct,
+            rendered_runner_up_percent=r_pct,
+            market_name=market_name,
+            headline=headline,
+        )
+        assert headline == "Carolina Hurricanes and Colorado Avalanche at 10%"
+        assert (
+            reason
+            == "Carolina Hurricanes and Colorado Avalanche (10%) in 2026-27 Stanley Cup® Final Winner"
+        )
+        assert context == "Carolina Hurricanes and Colorado Avalanche at 10%"
+        for text in (headline, reason, context):
+            assert "leads" not in text
+            assert "lead" not in text
+
+    def test_explicit_tied_leader_names_parameter_formats_two_and_three_way_ties(self):
+        market_name = "2026-27 Stanley Cup® Final Winner"
+        headline = fr.generate_futures_headline(
+            highlight_reasons=["featured_market"],
+            leader_name="Carolina Hurricanes",
+            leader_probability=0.0977,
+            rendered_leader_percent=10,
+            rendered_runner_up_percent=10,
+            tied_leader_names=["Carolina Hurricanes", "Colorado Avalanche"],
+            market_name=market_name,
+        )
+        reason = fr.generate_futures_reason(
+            market_name,
+            ["featured_market"],
+            leader_name="Carolina Hurricanes",
+            leader_probability=0.0977,
+            rendered_leader_percent=10,
+            rendered_runner_up_percent=10,
+            tied_leader_names=["Carolina Hurricanes", "Colorado Avalanche"],
+        )
+        context = fr.generate_futures_context_summary(
+            highlight_reasons=["resolving_soon_7d"],
+            leader_name="Carolina Hurricanes",
+            leader_probability=0.0977,
+            rendered_leader_percent=10,
+            rendered_runner_up_percent=10,
+            tied_leader_names=["Carolina Hurricanes", "Colorado Avalanche"],
+            market_name=market_name,
+            headline=headline,
+        )
+        assert headline == "Carolina Hurricanes and Colorado Avalanche at 10%"
+        assert (
+            reason
+            == "Carolina Hurricanes and Colorado Avalanche (10%) in 2026-27 Stanley Cup® Final Winner"
+        )
+        assert (
+            context
+            == "Carolina Hurricanes and Colorado Avalanche at 10%; resolves within a week"
+        )
+        assert (
+            fr.format_tied_leaders(["Carolina", "Colorado", "Edmonton"])
+            == "Carolina, Colorado and Edmonton"
+        )

@@ -385,11 +385,13 @@ def _freeze_one_winner_line(
                 last_ts = last_ts.replace(tzinfo=timezone.utc)
         except Exception:
             last_ts = None
-        last_prob = last.get("probability")
-        # Already resolved (the charted source converged to ~1.0) — the line
-        # already ends at the win; nothing to add, just clear any spurious
-        # elimination flag a fizzle-then-recover pattern may have set.
-        if last_prob is not None and last_prob >= 0.999:
+        # A line that already converged to ~1.0 still gets its settlement
+        # point. Since #10955 both clients read that point as the RESULT and
+        # never draw it, so it adds no tail. Skipping it took "Won"/"Lost" off
+        # the legend once the fuller venue history ended a line at 0.999
+        # (109085 Kansas Senate, Nov 4). A line that already ends in a
+        # settlement point keeps exactly that one (a second pass is a no-op).
+        if last.get("bookmaker") == "settlement":
             entry["eliminated"] = False
             entry["eliminated_at"] = None
             return
@@ -515,10 +517,11 @@ def _apply_settled_loser_freeze(
         if not entry or not entry.get("history"):
             continue  # never synthesized — see the docstring
         last = entry["history"][-1]
-        last_prob = last.get("probability")
-        # The charted source already converged to the loss; the line ends where
-        # it should and a second point would draw a flat tail nobody observed.
-        if last_prob is not None and last_prob <= 0.001:
+        # A line that already converged to the loss still gets its settlement
+        # point: both clients read it as the RESULT and never draw it (#10955),
+        # so it adds no tail, and without it the legend loses "Lost". One that
+        # already ends in a settlement point keeps exactly that one.
+        if last.get("bookmaker") == "settlement":
             continue
         last_ts = None
         try:
@@ -11119,7 +11122,11 @@ def _format_market_detail(
     # copy of these two steps. Gating one surface and not the other would divide
     # the same board by two different numbers and manufacture exactly the
     # detail-vs-hub disagreement #7016 closed.
-    if normalize_display_probs(
+    # #11948, Alex A (Nov 4): this one-winner field prints the same raw venue
+    # prices as its Midterms card. This is display policy; mutual exclusivity
+    # and the independent field_band producer's contract remain unchanged.
+    raw_midterms_field = market.source == "kalshi" and market.id == 108629
+    if not raw_midterms_field and normalize_display_probs(
         outcomes,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=prices_withheld == 0,

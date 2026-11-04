@@ -1400,7 +1400,12 @@ class TestCommitAcknowledgement:
                 raise
 
         mod = _load_script("kalshi_archive_import.py")
-        deadline = 0.8
+        # 2 s, not 0.8 s: the reserve is 10% of the wall, so 0.8 s left the
+        # receipt 80 ms (60 ms artifact, 20 ms console), and master CI
+        # 41785513473 lost the control's console with no collection during the
+        # call. At 2 s the reserve is 200 ms and the 0.6 s artifact delay still
+        # overruns its 150 ms slice, so both cases test what they did.
+        deadline = 2.0
         # The wall stays real (no held clock): only the pytest heap's full
         # collection is kept out of the receipt slice, which is what took
         # +0.09-0.11 s from this case and two 0.8 s siblings in PR #11504's CI.

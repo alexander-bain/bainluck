@@ -2676,14 +2676,24 @@ def assemble_nfl_division_roundup(
     closest = sorted(blends, key=lambda b: (b.leader.probability, order[b.division]))[:NFL_DIVISION_ROUNDUP_ROWS]
     shown = sorted(closest, key=lambda b: (-b.leader.probability, order[b.division]))
 
+    from app.utils.feed_reasons import format_tied_leaders
+
     rows = []
     for b in shown:
         lead = b.leader
+        tied = getattr(b, "leaders", (lead,))
+        club_label = format_tied_leaders([c.club for c in tied])
+        stamps = [c.observed_at for c in tied]
+        row_observed_at = (
+            min(stamps).isoformat()
+            if stamps and all(s is not None for s in stamps)
+            else None
+        )
         rows.append({
             "market_id": int(b.kalshi_market_id),
-            "label": f"{b.division}: {lead.club}",
+            "label": f"{b.division}: {club_label}",
             "probability": float(lead.probability),
-            "observed_at": lead.observed_at.isoformat() if lead.observed_at else None,
+            "observed_at": row_observed_at,
             "pair": {"kalshi_market_id": int(b.kalshi_market_id), "polymarket_market_id": int(b.polymarket_market_id)},
         })
     member_ids = [r["market_id"] for r in rows]
@@ -2809,9 +2819,11 @@ def _build_nfl_division_roundup_members(
         ]
         if len(blended_outcomes) != 4:
             return None, None
+        tied = getattr(div_blend, "leaders", (div_blend.leader,))
+        stamps = [c.observed_at for c in tied]
         lead_age = (
-            div_blend.leader.observed_at.isoformat()
-            if div_blend.leader.observed_at is not None
+            min(stamps).isoformat()
+            if stamps and all(s is not None for s in stamps)
             else None
         )
         card = {

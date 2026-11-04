@@ -449,12 +449,18 @@ class TestControlsThatMustHoldBothSidesOfThisChange:
         _apply_settled_winner_freeze(market, oh, {1: "Spain"})
         assert _stamp_of(oh[1]) == last_real + timedelta(seconds=1)
 
-    def test_a_line_that_already_converged_gets_no_second_point(self):
+    def test_a_line_that_already_converged_still_carries_its_result(self):
+        """Since #10955 the settlement point is the RESULT, never drawn. A line
+        ending at 0.9995 used to get none, so the legend lost "Won" (109085)."""
         champ = _outcome(1, "Spain", prob=1.0, is_winner=True)
         market = _market([champ], resolution_date=NOW + timedelta(days=6))
         oh = {1: _series(1, "Spain", [(NOW - timedelta(days=2), 0.9995)])}
         _apply_settled_winner_freeze(market, oh, {1: "Spain"})
-        assert len(oh[1]["history"]) == 1
+        assert len(oh[1]["history"]) == 2
+        assert oh[1]["history"][-1]["bookmaker"] == "settlement"
+        assert oh[1]["history"][-1]["probability"] == 1.0
+        _apply_settled_winner_freeze(market, oh, {1: "Spain"})
+        assert len(oh[1]["history"]) == 2  # a second pass adds nothing
 
     def test_non_champion_lines_terminate_at_their_own_last_value(self):
         champ = _outcome(1, "Spain", prob=0.587, is_winner=True)

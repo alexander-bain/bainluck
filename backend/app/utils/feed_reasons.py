@@ -2272,6 +2272,18 @@ def movement_subject_is_printable(
     return bool(subject_is_printed)
 
 
+def format_tied_leaders(names: Sequence[str]) -> str:
+    """Format one or more tied leader names ('A', 'A and B', 'A, B and C') (#11941)."""
+    cleaned = [n.strip() for n in names if isinstance(n, str) and n.strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return f"{', '.join(cleaned[:-1])} and {cleaned[-1]}"
+
+
 def leader_standing_clause(
     leader_name: str, pct: int | str, *, verb: str, lead_is_visible: bool
 ) -> str:
@@ -2363,6 +2375,7 @@ def generate_futures_reason(
     rendered_affirmative_percent: Optional[int] = None,
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
+    tied_leader_names: Optional[Sequence[str]] = None,
 ) -> str:
     """
     Generate a one-line explanation for why a futures market is interesting.
@@ -2431,6 +2444,13 @@ def generate_futures_reason(
     # every outcome-label input rather than to the nine f-strings below, so a
     # tenth template cannot reintroduce the defect.
     leader_name = _answering_side_label(leader_name, market_name)
+    if not _lead_visible and tied_leader_names and not _no_leader_subject:
+        leader_name = (
+            format_tied_leaders(
+                [_answering_side_label(n, market_name) or "" for n in tied_leader_names]
+            )
+            or leader_name
+        )
     top_mover_name = _answering_side_label(top_mover_name, market_name)
     top_surprise_name = _answering_side_label(top_surprise_name, market_name)
 
@@ -2645,6 +2665,7 @@ def generate_futures_headline(
     rendered_affirmative_percent: Optional[int] = None,
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
+    tied_leader_names: Optional[Sequence[str]] = None,
 ) -> str:
     """Generate compact, specific card text for futures Discover cards."""
     reasons = set(highlight_reasons)
@@ -2692,6 +2713,13 @@ def generate_futures_headline(
     # here, and `_answering_side_label` is a no-op without it — a headline with
     # no question to negate is left exactly as it renders today.
     leader_name = _answering_side_label(leader_name, market_name)
+    if not _lead_visible and tied_leader_names and not _no_leader_subject:
+        leader_name = (
+            format_tied_leaders(
+                [_answering_side_label(n, market_name) or "" for n in tied_leader_names]
+            )
+            or leader_name
+        )
     top_mover_name = _answering_side_label(top_mover_name, market_name)
     top_surprise_name = _answering_side_label(top_surprise_name, market_name)
 
@@ -2909,6 +2937,7 @@ def generate_futures_context_summary(
     top_surprise_change: Optional[float] = None,
     top_surprise_opened_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
+    tied_leader_names: Optional[Sequence[str]] = None,
 ) -> str:
     """Generate short visible context copy for Discover cards.
 
@@ -2949,6 +2978,18 @@ def generate_futures_context_summary(
     # Same single point as `generate_futures_reason`, and before the closure
     # below captures it.
     leader_name = _answering_side_label(leader_name, market_name)
+    if (
+        not _lead_visible
+        and tied_leader_names
+        and not _leader_is_unnameable(leader_name, leader_is_ladder_rung)
+    ):
+        _tied = [
+            _answering_side_label(n, market_name)
+            for n in tied_leader_names
+            if not _leader_is_unnameable(n, leader_is_ladder_rung)
+        ]
+        if len(_tied) >= 2:
+            leader_name = format_tied_leaders(_tied)
 
     if "stale_past_resolution" in reasons:
         return ""
