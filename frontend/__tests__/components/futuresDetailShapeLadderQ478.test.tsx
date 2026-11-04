@@ -28,6 +28,7 @@ const RAW = PRODUCTION as Record<string, unknown>;
 const WITH_SHAPE = { ...RAW, market_type: "quantity" };
 
 let payload: Record<string, unknown> = WITH_SHAPE;
+let groupPayloadOverride: Record<string, unknown> | null = null;
 
 jest.mock("next/link", () => ({
   __esModule: true,
@@ -52,7 +53,7 @@ jest.mock("swr", () => ({
     // the ladder below can only have come from the shape field.
     if (tag === "futures-group") {
       return {
-        data: { group_id: RAW.group_id, markets: [], threshold_groups: {} },
+        data: groupPayloadOverride ?? { group_id: RAW.group_id, markets: [], threshold_groups: {} },
         error: null,
         isLoading: false,
       };
@@ -74,8 +75,12 @@ jest.mock("@/components/Analytics", () => ({
 
 import FuturesDetailPage from "@/app/futures/[id]/page";
 
-function render(p: Record<string, unknown>): string {
+function render(
+  p: Record<string, unknown>,
+  groupOverride: Record<string, unknown> | null = null,
+): string {
   payload = p;
+  groupPayloadOverride = groupOverride;
   return renderToStaticMarkup(<FuturesDetailPage params={{ id: "109349" }} />);
 }
 
@@ -212,6 +217,7 @@ describe("the fallbacks this must not break", () => {
       ...WITH_SHAPE,
       id: 65536371,
       name: "Snow in Denver in Dec 2026?",
+      group_id: "kalshi:KXDENSNOWM-26DEC",
       ladder_treatment_refused: true,
       outcomes: [
         { id: 246319890, name: "Above 2 inches", probability: 0.795 },
@@ -226,5 +232,25 @@ describe("the fallbacks this must not break", () => {
     expect(html).toContain('data-testid="outcome-row"');
     expect(html).toContain(">Above 6 inches<");
     expect(html).not.toContain('aria-label="Above 6 inches:');
+
+    const denverGroupWithSixRungs = {
+      group_id: "kalshi:KXDENSNOWM-26DEC",
+      markets: [],
+      threshold_groups: {
+        "above #": [
+          { outcome_id: 246319890, name: "Above 2 inches", probability: 0.795, threshold_value: 2, threshold_unit: "inches", threshold_direction: "above", source: "kalshi" },
+          { outcome_id: 246319889, name: "Above 6 inches", probability: 0.64, threshold_value: 6, threshold_unit: "inches", threshold_direction: "above", source: "kalshi" },
+          { outcome_id: 246319891, name: "Above 4 inches", probability: 0.595, threshold_value: 4, threshold_unit: "inches", threshold_direction: "above", source: "kalshi" },
+          { outcome_id: 246319892, name: "Above 8 inches", probability: 0.4, threshold_value: 8, threshold_unit: "inches", threshold_direction: "above", source: "kalshi" },
+          { outcome_id: 246319893, name: "Above 10 inches", probability: 0.37, threshold_value: 10, threshold_unit: "inches", threshold_direction: "above", source: "kalshi" },
+          { outcome_id: 246319894, name: "Above 12 inches", probability: 0.28, threshold_value: 12, threshold_unit: "inches", threshold_direction: "above", source: "kalshi" },
+        ],
+      },
+    };
+    const htmlWithGroupThreshold = render(denver, denverGroupWithSixRungs);
+    expect(htmlWithGroupThreshold).toContain('data-testid="outcome-row"');
+    expect(htmlWithGroupThreshold).toContain(">Above 6 inches<");
+    expect(htmlWithGroupThreshold).not.toContain('aria-label="Above 6 inches:');
+    expect(htmlWithGroupThreshold).not.toContain('aria-label="> 6 inches:');
   });
 });

@@ -419,6 +419,8 @@ def test_denver_december_snow_ladder_refusal_and_drop_incoherent_rung():
         created_at=fresh_ts,
         updated_at=fresh_ts,
         group_id="kalshi:KXDENSNOWM-26DEC",
+        group_type=None,
+        group_position=None,
         canonical_market_key=None,
         hook_description=None,
         image_url=None,
@@ -433,6 +435,29 @@ def test_denver_december_snow_ladder_refusal_and_drop_incoherent_rung():
     by_name = {o["name"]: o for o in detail["outcomes"]}
     assert by_name["Above 6 inches"]["probability"] == pytest.approx(0.64)
     assert by_name["Above 6 inches"]["last_updated"] == stale_ts.isoformat()
+
+    import asyncio
+    import app.routes.futures as fr
+
+    class _FakeDB:
+        async def execute(self, *_a, **_k):
+            class _Scalars:
+                def all(self):
+                    return [market]
+
+            class _Result:
+                def scalars(self):
+                    return _Scalars()
+
+                def all(self):
+                    return []
+
+            return _Result()
+
+    group = asyncio.run(fr.get_group("kalshi:KXDENSNOWM-26DEC", _FakeDB()))
+    assert group["threshold_groups"] == {}
+    assert len(group["markets"]) == 1
+    assert len(group["markets"][0]["outcomes"]) == 6
 
 
 def test_flow_sentinel_detects_out_of_order_ladder_and_counts_refused():

@@ -11617,6 +11617,7 @@ async def get_group(
     threshold detection and cross-source comparison data.
     """
     from app.utils.market_grouping import detect_threshold_groups
+    from app.utils.outcome_display import ladder_rungs_out_of_order
 
     # Fetch markets in this group
     stmt = (
@@ -11673,7 +11674,23 @@ async def get_group(
                     if field in od:
                         od[field] = None
             outcomes.append(od)
-            all_outcomes.append(od)
+
+        # #11942: keep every outcome on the market row in `markets`, and refuse
+        # feeding `detect_threshold_groups` when this open market's cumulative
+        # rungs are out of order — the same refusal `_format_market_detail`
+        # serves via `ladder_treatment_refused`, so the detail page lists the
+        # rungs plainly instead of drawing bars from `threshold_groups`.
+        if not (
+            getattr(m, "status", None) == "open"
+            and not getattr(m, "mutually_exclusive", False)
+            and ladder_rungs_out_of_order(
+                outcomes,
+                lambda o: o.get("name"),
+                lambda o: o.get("probability"),
+                getattr(m, "name", "") or "",
+            )
+        ):
+            all_outcomes.extend(outcomes)
 
         market_list.append({
             "id": m.id,
