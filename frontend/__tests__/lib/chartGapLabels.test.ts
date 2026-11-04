@@ -214,6 +214,65 @@ describe("placeGapLabels", () => {
     expect(holeIsLabelled(wideHole, [])).toBe(false);
   });
 
+  // Fable's read at 9ee16863: a label inside line A's hole may not cover line
+  // B's readings when the two lines' holes differ (US Open 34277822, per-line
+  // holes). Line A: readings either side of one wide 40→110 h hole.
+  const lineA = () => {
+    const h = hole(40, 110, 60);
+    const points = [0, 10, 20, 30, 40, 110, 120, 130, 140, 150, 160, 168].map((x) => ({
+      t: T0 + x * HOUR,
+      x: xAt(x),
+      y: 60,
+    }));
+    return { hole: h, line: { points, holes: [h] } };
+  };
+  const lineOf = (hours: number[], yAt: (i: number) => number) => ({
+    points: hours.map((x, i) => ({ t: T0 + x * HOUR, x: xAt(x), y: yAt(i) })),
+    holes: [],
+  });
+
+  test("another line's readings inside the hole, top to bottom: no label, the hole keeps its bridge", () => {
+    const a = lineA();
+    // Line B has no hole and zigzags from the plot's top to its bottom across
+    // A's hole, so every candidate box (above, below, top band, bottom band)
+    // touches one of its drawn segments.
+    const hours = Array.from({ length: 35 }, (_, i) => i * 5);
+    const b = lineOf(hours, (i) => (i % 2 ? 25 : 158));
+    expect(placeGapLabels([a.hole], FRAME)).toHaveLength(1); // alone, it is labelled
+    const labels = placeGapLabels([a.hole], FRAME, [a.line, b]);
+    expect(labels).toHaveLength(0);
+    expect(holeIsLabelled(a.hole, labels)).toBe(false);
+  });
+
+  test("another line's readings inside the hole at the label's height: the label moves clear of them, or is refused", () => {
+    const a = lineA();
+    for (const y of [25, 40, 55, 70, 90, 120, 150]) {
+      const hours = Array.from({ length: 35 }, (_, i) => i * 5);
+      const b = lineOf(hours, () => y); // flat through A's hole at height y
+      const labels = placeGapLabels([a.hole], FRAME, [a.line, b]);
+      for (const l of labels) {
+        const w = gapLabelWidth(l.text);
+        const [x0, x1] = [l.x - w / 2, l.x + w / 2];
+        const [y0, y1] = [l.y - 13, l.y + 6]; // ascent + air, descent + air
+        for (const p of b.points) {
+          expect(p.x > x0 && p.x < x1 && p.y >= y0 && p.y <= y1).toBe(false);
+        }
+        expectInsideItsHole(l);
+      }
+    }
+  });
+
+  test("control: another line whose readings stay outside the hole does not cost the label", () => {
+    const a = lineA();
+    const b = lineOf([0, 10, 20, 30, 35, 115, 130, 150, 168], () => 100);
+    // B's one segment across the hole (35→115 h) is a drawn run at y 100, so the
+    // label sits clear of it: above A at y≈55.
+    const labels = placeGapLabels([a.hole], FRAME, [a.line, b]);
+    expect(labels).toHaveLength(1);
+    expectInsideItsHole(labels[0]);
+    expect(labels[0].y).toBeLessThan(100 - 13);
+  });
+
   test("total: NaN stamps, backwards holes and NaN pixels produce no label and no throw", () => {
     const bad: ChartHole[] = [
       { from: { t: NaN, x: 100, y: 90 }, to: { t: T0, x: 200, y: 90 } },

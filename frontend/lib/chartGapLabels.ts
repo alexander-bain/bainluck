@@ -104,6 +104,47 @@ export const MIN_LABELLED_HOLE_SHARE = 0.01;
 /** Two holes are one stretch when they overlap by at least this share of their union. */
 export const SAME_STRETCH_OVERLAP = 0.9;
 
+/**
+ * Every displayed line, as the chart plots it: its points and its own holes.
+ * Fable's read at 9ee16863: a label that fits inside ONE line's hole can still
+ * sit over ANOTHER line's readings when the lines' holes differ (the
+ * capture-only US Open board 34277822 is the normal case), and its halo would
+ * hide them under "No numbers…". So a candidate box is also refused when it
+ * touches any drawn point or segment of any line.
+ */
+export interface GapLabelLine {
+  points: readonly { t: number; x: number; y: number }[];
+  holes: readonly ChartHole[];
+}
+
+/**
+ * Does this box touch anything a line draws? A point inside it, or a segment
+ * between consecutive points whose bounding box meets it. The bounding box
+ * covers both linear and step drawing, so it errs toward refusing. A pair that
+ * is one of the line's own holes draws no solid segment and is skipped; if that
+ * hole is unlabelled its faint bridge may pass under the label, which is the
+ * hole the label names, so it is not a reading.
+ */
+function coversADrawnReading(box: Box, lines: readonly GapLabelLine[]): boolean {
+  for (const line of lines) {
+    const holeStarts = new Set(line.holes.map((h) => h.from.t));
+    const pts = line.points;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      if (p.x > box.x0 && p.x < box.x1 && p.y > box.y0 && p.y < box.y1) return true;
+      if (i === 0) continue;
+      const a = pts[i - 1];
+      if (holeStarts.has(a.t)) continue;
+      const sx0 = Math.min(a.x, p.x);
+      const sx1 = Math.max(a.x, p.x);
+      const sy0 = Math.min(a.y, p.y);
+      const sy1 = Math.max(a.y, p.y);
+      if (sx0 < box.x1 && box.x0 < sx1 && sy0 <= box.y1 && box.y0 <= sy1) return true;
+    }
+  }
+  return false;
+}
+
 export function gapLabelWidth(text: string): number {
   return text.length * CHAR_UNITS;
 }
@@ -144,6 +185,7 @@ function clamp(v: number, lo: number, hi: number): number {
 export function placeGapLabels(
   holes: readonly ChartHole[],
   frame: GapLabelFrame,
+  lines: readonly GapLabelLine[] = [],
 ): GapLabel[] {
   const usable = holes.filter(
     (h) =>
@@ -212,9 +254,10 @@ export function placeGapLabels(
         y0: y - ASCENT_UNITS - LABEL_GAP_UNITS,
         y1: y + DESCENT_UNITS + LABEL_GAP_UNITS,
       };
-      const collides = placed.some(
-        (p) => box.x0 < p.box.x1 && p.box.x0 < box.x1 && box.y0 < p.box.y1 && p.box.y0 < box.y1,
-      );
+      const collides =
+        placed.some(
+          (p) => box.x0 < p.box.x1 && p.box.x0 < box.x1 && box.y0 < p.box.y1 && p.box.y0 < box.y1,
+        ) || coversADrawnReading(box, lines);
       if (collides) continue;
       placed.push({
         label: {

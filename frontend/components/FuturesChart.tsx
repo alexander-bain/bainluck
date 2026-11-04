@@ -563,6 +563,8 @@ export function FuturesChart({
           top: padding.top,
           bottom: padding.top + innerHeight,
         },
+        // Fable 9ee16863: a label may not cover another line's readings.
+        outcomePaths.map((o) => ({ points: o.points, holes: o.path.holes })),
       );
 
   // #10955 / #11158: where each graded leg's result is marked. A leg with real
