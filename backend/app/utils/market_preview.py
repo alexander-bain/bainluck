@@ -248,7 +248,8 @@ class MarketPreviewPublisher:
                 try:
                     await asyncio.wait_for(wake.wait(), timeout=wait)
                 except asyncio.TimeoutError:
-                    pass
+                    # The window ended with no new note: loop round and publish what is due.
+                    continue
 
     def _due_frames(self, now: float) -> list[dict]:
         frames = []
