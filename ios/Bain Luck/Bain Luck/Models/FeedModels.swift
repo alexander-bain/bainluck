@@ -954,6 +954,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
 
 /// Top outcome summary shown on a futures feed card.
 nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
+    var renderedPercent: Int? = nil
     let id: Int
     let name: String
     let probability: Double?

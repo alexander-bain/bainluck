@@ -313,6 +313,7 @@ nonisolated struct FuturesQuestionIdentity: Codable, Sendable {
 
 /// Individual outcome within a futures market.
 nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
+    @TolerantNumeric var renderedPercent: Int? = nil
     let id: Int
     let name: String
     let probability: Double?
@@ -341,7 +342,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, probability, americanOdds, rank
+        case id, name, probability, americanOdds, rank, renderedPercent
         case rankChange24h = "rankChange24H"
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated

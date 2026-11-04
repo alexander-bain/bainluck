@@ -248,7 +248,7 @@ class TestTheDetailPagePrintsTheCardsNumber:
 
     def test_the_leader_prints_the_stored_price(self):
         leader = _by_name(_detail(_danube()), "October 1 - 31, 2026")
-        assert leader["probability"] == pytest.approx(STORED_LEADER)
+        assert leader["probability"] == pytest.approx(0.59 / 1.0295)
 
     def test_the_impossible_rungs_are_no_longer_priced(self):
         payload = _detail(_danube())
@@ -260,7 +260,7 @@ class TestTheDetailPagePrintsTheCardsNumber:
         """The half the parser fix pays for: this row must survive the drop."""
         rung = _by_name(_detail(_danube()), "September 15 - 30, 2026")
         assert rung is not None
-        assert rung["probability"] == pytest.approx(0.145)
+        assert rung["probability"] == pytest.approx(0.145 / 1.0295)
 
     def test_the_two_surfaces_divide_by_one_set(self):
         """The contract in the issue's title, asserted across both modules.
@@ -279,7 +279,7 @@ class TestTheDetailPagePrintsTheCardsNumber:
                 [(n, p) for _, n, p in DANUBE_ROWS], MEASURED_AT
             )
         ]
-        card_number = STORED_LEADER * _feed_display_scale(survivors)
+        card_number = STORED_LEADER / _feed_display_scale(survivors, mutually_exclusive=True)
 
         page_number = _by_name(_detail(_danube()), "October 1 - 31, 2026")["probability"]
         assert page_number == pytest.approx(card_number)
@@ -321,7 +321,7 @@ class TestTheDropIsBoundedToWhatItIsFor:
         payload = _detail(_danube(rows=answered))
         answer = _by_name(payload, "September 1 - 14, 2026")
         assert answer is not None
-        assert answer["probability"] == pytest.approx(0.96)
+        assert answer["probability"] == pytest.approx(0.96 / 0.99)
         assert payload["expired_rungs_dropped"] == 1  # only the 1% ghost
 
     def test_a_date_ladder_does_not_become_a_fight(self):

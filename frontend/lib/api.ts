@@ -2452,7 +2452,7 @@ export interface PoliticsMarketRow {
   prob: number;
   src: string;
   market_id: number;
-  top_outcomes: { name: string; prob: number }[];
+  top_outcomes: { name: string; prob: number; rendered_percent?: number | null }[];
   outcome_count: number;
   // Rungs `/futures/{id}` shows beyond `top_outcomes` (#9109). Absent on a
   // payload built before it shipped.

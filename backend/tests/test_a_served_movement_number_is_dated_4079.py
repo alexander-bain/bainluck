@@ -186,7 +186,7 @@ class _Market:
         self.llm_sport_category = category
         self.market_tier = 1
         self.market_type = "outright"
-        self.mutually_exclusive = True
+        self.mutually_exclusive = False  # #11995: exercise the raw, non-exclusive movement arm
         self.description = None
         self.canonical_market_key = CANONICAL_KEY
         self.group_id = None
@@ -454,6 +454,7 @@ def test_the_ladder_withholds_the_amount_once_the_SQUEEZE_moves_the_column():
     fails there.
     """
     market = _game_awards_market(basis_at=LIVE_BASIS_AT)
+    market.mutually_exclusive = True
     _reprice(market.outcomes[1], 0.45)
     _reprice(market.outcomes[2], 0.30)
     detail = _format_market_detail(market, ["kalshi"], set())
@@ -824,6 +825,7 @@ def _normalized_market(*, market_id, sports=False):
     variants under one id inside one event loop compare a card with itself.
     """
     market = (_sports_market if sports else _game_awards_market)(market_id=market_id)
+    market.mutually_exclusive = True
     _reprice(market.outcomes[1], 0.45)
     _reprice(market.outcomes[2], 0.30)
     return market

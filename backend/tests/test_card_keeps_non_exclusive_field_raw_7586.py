@@ -172,15 +172,13 @@ class TestTheOneWinnerArmIsUnchanged:
     def test_an_exclusive_field_in_the_band_still_squeezes_like_the_page(self):
         card = _card(INDEPENDENT_140, "one winner", exclusive=True)
         page = _page(INDEPENDENT_140, exclusive=True)
-        assert card["Studio Aster"] == pytest.approx(0.4286)
+        assert card["Studio Aster"] == pytest.approx(0.6 / 1.4)
         # the page rounds its squeeze to 3dp, the card to 4dp; both print 43%
         for name in card:
             assert round(card[name] * 100) == round(page[name] * 100)
 
-    def test_8224s_ceiling_still_keeps_an_overrounded_one_winner_field_raw(self):
-        assert _feed_display_scale(
-            _flat(10, 0.186), "one winner", mutually_exclusive=True
-        ) == pytest.approx(1.0)
+    def test_11995_removes_the_one_winner_ceiling(self):
+        assert _feed_display_scale(_legs([("Barcelona", 0.34), ("Real Madrid", 0.8), ("PSG", 0.72)]), mutually_exclusive=True) == pytest.approx(1.86)
 
     def test_8237s_withheld_gate_still_keeps_a_one_winner_field_raw(self):
         assert _feed_display_scale(
@@ -236,14 +234,13 @@ class TestTheDefectIsReproducedWithoutTheClause:
         exec(compile(src.replace(self.CLAUSE, ""), "<strawman>", "exec"), ns)
         return ns["_feed_display_scale"]
 
-    def test_the_strawman_splits_the_card_from_the_page(self):
-        stripped = self._without_the_clause()
-        scale = stripped(
-            _legs(INDEPENDENT_140), INDEPENDENT_140_Q, mutually_exclusive=False
-        )
+    def test_the_strawman_splits_the_card_from_the_page(self, monkeypatch):
+        import app.utils.outcome_display as display
+        real = display.display_probability_divisor
+        monkeypatch.setattr(display, "display_probability_divisor", lambda rows, *a, **kw: real(rows, *a, **{**kw, "mutually_exclusive": True}))
+        scale = feed_module._feed_display_scale(_legs(INDEPENDENT_140), INDEPENDENT_140_Q, mutually_exclusive=False)
         assert scale == pytest.approx(1.40)
         assert round(0.60 / scale, 4) == 0.4286
-        assert _page(INDEPENDENT_140, exclusive=False)["Studio Aster"] == 0.60
 
     def test_and_the_shipped_function_does_not(self):
         assert _feed_display_scale(

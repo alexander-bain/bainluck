@@ -301,6 +301,13 @@ def blend_card(primary: dict, contributors: list[dict]) -> dict:
                     }
                 )
         outcome["probability"] = blend_probabilities(rows)
+    from app.utils.outcome_display import normalize_display_probs
+
+    normalize_display_probs(
+        card["top_outcomes"], mutually_exclusive=card.get("mutually_exclusive", False),
+        field_complete=len(card["top_outcomes"]) == card["outcome_count"],
+        question=card.get("name"),
+    )
     return card
 
 

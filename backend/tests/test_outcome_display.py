@@ -76,30 +76,14 @@ class TestNormalizeAndLeaderPick:
         assert make_cut[1]["probability"] == 0.885
         assert sum(o["probability"] for o in make_cut) > 4.0, "not squashed to sum-1"
 
-    def test_make_cut_overround_protected_even_if_misflagged_me(self):
-        # #1200: the SAME make-cut field summing >> 100% (0.87+0.885+0.84 = 2.595)
-        # is ALSO protected by the raw-sum overround guard even when mis-flagged
-        # mutually_exclusive=True — the sum guard catches it before the squeeze.
-        # Defense in depth on top of the ME gate (both a mis-flag and a dropped
-        # gate now render raw). Previously this collapsed the leader to ~1%.
-        make_cut = [{"probability": 0.87}, {"probability": 0.885}, {"probability": 0.84}]
-        assert sum(o["probability"] for o in make_cut) > 1.60  # over the ceiling
-        normalize_display_probs(make_cut, mutually_exclusive=True)
-        assert make_cut[0]["probability"] == 0.87, "overround field kept raw"
-
-    def test_overrounded_independent_field_keeps_raw(self):
-        # #1200: a 184-way independent-binary GC field (Kalshi Tour de France) sums
-        # ~281% (heavy overround). Even flagged mutually_exclusive=True, it must
-        # render RAW per-rider prices — never squeezed to ~100% (which crushed
-        # Pogačar's -1718/94.5% into a false 33.6% coin-flip). Regression guard.
+    def test_exclusivity_not_price_mass_selects_normalization(self):
+        # #11995: an overround is not evidence of participation semantics.
         field = [{"name": "Pogacar", "probability": 0.945}]
-        # 183 longshots so the field sums ~2.8x (independent binaries)
         field += [{"name": f"r{i}", "probability": 0.01} for i in range(183)]
-        raw_sum = sum(o["probability"] for o in field)
-        assert raw_sum > 2.5, "sanity: heavy independent-binary overround"
+        mass = sum(o["probability"] for o in field)
         normalize_display_probs(field, mutually_exclusive=True)
-        assert field[0]["probability"] == 0.945, "leader keeps raw 94.5%, not diluted"
-        assert sum(o["probability"] for o in field) == raw_sum, "field left raw"
+        assert field[0]["probability"] == pytest.approx(0.945 / mass)
+        assert sum(o["rendered_percent"] for o in field) == 100
 
     def test_coherent_field_still_normalized_at_66_way(self):
         # #1200 counterpart: a large but COHERENT field (World Cup 66-team winner,
@@ -185,15 +169,15 @@ class TestPlaceholderMidpointStrip:
         assert outs[0]["probability"] == 0.5
         assert abs(sum(o["probability"] for o in outs) - 1.0) < 0.01
 
-    def test_independent_binary_field_without_halves_still_raw(self):
+    def test_one_winner_field_without_halves_normalizes_above_old_ceiling(self):
         # #1200 regression: an overrounded independent-binary field with NO 0.5
         # run (varied prices) is untouched by the strip and kept RAW by the guard.
         field = [{"name": "Pogacar", "probability": 0.945}]
         field += [{"name": f"r{i}", "probability": 0.01} for i in range(183)]
         raw_sum = sum(o["probability"] for o in field)
         normalize_display_probs(field, mutually_exclusive=True)
-        assert field[0]["probability"] == 0.945
-        assert sum(o["probability"] for o in field) == raw_sum
+        assert field[0]["probability"] == pytest.approx(0.945 / raw_sum)
+        assert sum(o["probability"] for o in field) == pytest.approx(1)
 
 
 class TestDetailUsesSharedPipeline:

@@ -34,6 +34,18 @@ final class FuturesDetailSumsTo100_8097Tests: XCTestCase {
         """)
     }
 
+    func testServerFieldAllocationOverridesIndependentRounding11995() throws {
+        let field = try outcomes("""
+        [{"id": 1, "name": "A", "probability": 0.33333333, "rendered_percent": 34},
+         {"id": 2, "name": "B", "probability": 0.33333333, "rendered_percent": 33},
+         {"id": 3, "name": "C", "probability": 0.33333333, "rendered_percent": 33}]
+        """)
+        let percentages = futuresDetailRenderedPercents(field)
+        XCTAssertEqual(percentages, [1: 34, 2: 33, 3: 33])
+        XCTAssertEqual(percentages.values.reduce(0, +), 100)
+        XCTAssertEqual(futuresDetailRenderedPercents(Array(field.reversed())), percentages)
+    }
+
     // MARK: - The defect
 
     func test_theProductionPairPrintsOneHundred() throws {

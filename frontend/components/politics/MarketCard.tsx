@@ -247,7 +247,7 @@ function MultiCard({
               className={s.probNum}
               style={{ fontSize: 28, color: "var(--text-primary)", flexShrink: 0 }}
             >
-              {Math.round(leader.prob)}%
+              {leader.rendered_percent ?? Math.round(leader.prob)}%
             </span>
           </div>
 
@@ -284,7 +284,7 @@ function MultiCard({
                 >
                   <span style={{ color: "var(--text-secondary)" }}>{o.name}</span>
                   <span className={s.probNum} style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                    {Math.round(o.prob)}%
+                    {o.rendered_percent ?? Math.round(o.prob)}%
                   </span>
                 </div>
               ))}

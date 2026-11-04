@@ -134,7 +134,7 @@ def _goty_market(outcomes=None, metadata=None):
         # `normalize_display_probs` is a no-op and every price below is the
         # stored one. That is deliberate: this ship is about an instant, and a
         # squeezed price would put a second variable in every assertion.
-        mutually_exclusive=True,
+        mutually_exclusive=False,  # #11995: raw movement fixture
         commence_time=None,
         resolution_date=None,
         created_at=None,

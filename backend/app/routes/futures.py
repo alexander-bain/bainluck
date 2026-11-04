@@ -1386,6 +1386,7 @@ async def browse_futures(
         drop_unbacked_legs,
         is_placeholder_outcome_name,
         leader_pick_order,
+        normalize_display_probs,
     )
 
     items = []
@@ -1508,6 +1509,13 @@ async def browse_futures(
         display_outcomes = drop_dominant_field_outcomes(
             display_outcomes, lambda o: o.get("name"), lambda o: o.get("probability")
         )
+        if normalize_display_probs(
+            display_outcomes,
+            mutually_exclusive=getattr(market, "mutually_exclusive", False),
+            field_complete=not withheld, question=market.name,
+        ):
+            for o in display_outcomes:
+                o["movement"] = None
         leader_pick_order(display_outcomes)
         top3 = display_outcomes[:3]
         items.append({
@@ -10403,6 +10411,7 @@ def _format_market_detail(
     )
     from app.utils.outcome_display import (
         assign_display_ranks,
+        is_field_outcome,
         is_placeholder_outcome_name,
         ladder_rungs_out_of_order,
         normalize_display_probs,
@@ -11141,14 +11150,22 @@ def _format_market_detail(
     # copy of these two steps. Gating one surface and not the other would divide
     # the same board by two different numbers and manufacture exactly the
     # detail-vs-hub disagreement #7016 closed.
-    # #11948, Alex A (Nov 4): this one-winner field prints the same raw venue
-    # prices as its Midterms card. This is display policy; mutual exclusivity
-    # and the independent field_band producer's contract remain unchanged.
-    raw_midterms_field = market.source == "kalshi" and market.id == 108629
-    if not raw_midterms_field and normalize_display_probs(
+    def _is_graded_winner(o: dict) -> bool:
+        return bool(o.get("is_winner")) and o.get("resolution_source") is not None
+
+    raw_outcome_count = len(outcomes)
+    has_named_outcome = any(not is_field_outcome(o.get("name")) for o in outcomes)
+    outcomes = drop_dominant_field_outcomes(
+        outcomes, lambda o: o.get("name"), lambda o: 1.0 if has_named_outcome and o.get("probability") == 1.0 else None,
+        is_winner_of=_is_graded_winner,
+    )
+    raw_dominant_dropped = raw_outcome_count - len(outcomes)
+    # #11995 supersedes the raw Midterms pin: one shared full-field rule.
+    if normalize_display_probs(
         outcomes,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=prices_withheld == 0,
+        question=market.name,
     ):
         _withhold_openings()
         openings_withheld = True
@@ -11196,7 +11213,7 @@ def _format_market_detail(
     # two-row count is what the combat adapters read as a fight — so letting the
     # expiry drop feed this would invent a breadcrumb on a river-level market.
     # The identity answer stays bit-identical to the one served before #7274.
-    concept_outcome_count = len(outcomes) + expired_rungs_dropped
+    concept_outcome_count = len(outcomes) + expired_rungs_dropped + raw_dominant_dropped
 
     # #4253: a single-winner field cannot have five different winners. Measured
     # live 2026-09-09, `/api/futures/12764689` (*Dancing with the Stars*) served
@@ -11263,15 +11280,8 @@ def _format_market_detail(
     # The predicate is stricter than the sibling's bare `is_winner` on purpose
     # (#4788, argued at the `resolution_source` key above): the column is
     # `boolean NULL DEFAULT false`, so a `True` beside a NULL source is a row
-    # nobody graded, and this exemption should not be the one place that trusts
-    # it. A settled field champion always carries a source.
-    def _is_graded_winner(o: dict) -> bool:
-        return bool(o.get("is_winner")) and o.get("resolution_source") is not None
-
     outcomes = drop_dominant_field_outcomes(
-        outcomes,
-        lambda o: o.get("name"),
-        lambda o: o.get("probability"),
+        outcomes, lambda o: o.get("name"), lambda o: o.get("probability"),
         is_winner_of=_is_graded_winner,
     )
     # The SAME predicate, and it has to be the same one: `leader_pick_order`

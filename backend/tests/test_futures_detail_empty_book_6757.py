@@ -235,7 +235,8 @@ class TestTheLadder:
                 1 for o in detail["outcomes"] if o["probability"] == pytest.approx(value)
             )
 
-        assert _at(before, 0.48) == 15 and _at(before, 0.475) == 1
+        assert sum(o["probability"] is not None for o in before["outcomes"]) == 30
+        assert sum(o["rendered_percent"] for o in before["outcomes"]) == 100
         assert _at(after, 0.48) == 0 and _at(after, 0.475) == 0
 
     def test_the_survivors_keep_their_raw_prices_and_the_leader_does_not_move(self):

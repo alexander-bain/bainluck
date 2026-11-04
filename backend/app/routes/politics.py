@@ -743,11 +743,11 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         live or priced,
         key=lambda o: (o.name in expired, -float(o.current_probability)),
     )
-    top = ranked[:3]
+    top = ranked
     top_outcomes = [
         {
             "name": o.name,
-            "prob": round(float(o.current_probability) * 100, 1),
+            "prob": float(o.current_probability) * 100,
         }
         for o in top
     ]
@@ -765,8 +765,18 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # the stored three. `None` keeps today's behaviour (the column defaults
     # True; the chamber-control reader below makes the same call).
     mutually_exclusive = getattr(market, "mutually_exclusive", None)
-    if mutually_exclusive is not False:
-        _normalize_outcome_probs(top_outcomes)
+    from app.utils.outcome_display import normalize_display_probs
+
+    normalized = [{**o, "probability": o["prob"] / 100} for o in top_outcomes]
+    normalize_display_probs(
+        normalized, mutually_exclusive=mutually_exclusive,
+        field_complete=len(ranked) == len(outcomes), question=market.name,
+    )
+    top_outcomes = [
+        {"name": o["name"], "prob": o["probability"] * 100,
+         **({"rendered_percent": o["rendered_percent"]} if "rendered_percent" in o else {})}
+        for o in normalized[:3]
+    ]
 
     # #9109 follow-up — "+N MORE" COUNTS WHAT THE PAGE SHOWS, NOT THE LADDER.
     # The card's badge was `outcome_count - 3`: every rung the ladder ever had,

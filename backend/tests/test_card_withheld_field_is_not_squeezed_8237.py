@@ -112,7 +112,7 @@ class TestTheDropIsWhatCreatesTheDefect:
 
     def test_the_stored_field_is_above_the_ceiling_and_would_already_agree(self):
         assert sum(r[2] for r in HOST_2031) == pytest.approx(STORED_SUM, abs=1e-9)
-        assert _feed_display_scale(_legs(), mutually_exclusive=True) == 1.0
+        assert _feed_display_scale(_legs(), mutually_exclusive=True) == pytest.approx(1.79)
 
     def test_but_the_survivors_land_inside_the_band(self):
         assert sum(r[2] for r in HOST_2031 if not r[3]) == pytest.approx(

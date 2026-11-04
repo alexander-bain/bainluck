@@ -947,6 +947,7 @@ export interface SettlementDisplay {
 }
 
 export interface FuturesOutcome {
+  rendered_percent?: number | null;
   id: number;
   name: string;
   probability: number | null;
