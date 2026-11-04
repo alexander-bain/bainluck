@@ -1,0 +1,2074 @@
+{
+  "eventID": 15318681,
+  "verifiedStart": true,
+  "start": "2026-10-04T00:20:00+00:00",
+  "sourceHashes": {
+    "mma-event-history.json": "fa831fb6d396abba72a7ef7dc5e58b66b6b8f26baf50ae7ee058066f7edaf6fb",
+    "combat-ko-detail.json": "0f6b28243098aa183ec2d7e8876263fca311428828c33ec1b3b044f81a2bb550",
+    "combat-ko-history.json": "a12f381df08e0f988eaf8c875ae2bcb573cc5d42ceba277809407f2b22eba271",
+    "prop-63254893-detail.json": "23e08c430ef0163153fa1c1fbfb01b1b144bb670707bb7269085107d77b2b794",
+    "prop-63254893-history.json": "4cd110b287c812e575a5c66eecb4ed7a3f61bd77c13d8355d5a2aa7b7b71ed27",
+    "prop-63254894-detail.json": "5cbb2eb0206722d5986d5c96efd11ff61612c44e9e6cc86efa6ed4aefb0f17b8",
+    "prop-63254894-history.json": "58e5b508833138845ebbdaf5561db445bce80abb7ff1aab124591404f9c6f9ad",
+    "prop-63254895-detail.json": "4bb681d40843ecc572aeba1d3c6ae5d28415e9572ce943ee087d60dc7a94e59a",
+    "prop-63254895-history.json": "800cee111559dfe7d4748bc6fcf7187a5990a6af550669b1f338c8d5ff9eb508",
+    "prop-63455521-detail.json": "888a39bb59f0ca1260e6b37a234ba29fb69ceb69a648b0cee83dd36f4a8ee883",
+    "prop-63455521-history.json": "04534082d3e5854161f59d6b2cb1677d10073b727b969e7be4a297647adf3363",
+    "prop-63634393-detail.json": "3fdcc72d88f7fc19c0d41a0e9bda271d62f69e43bcd4e971e8e6291eef4463f9",
+    "prop-63634393-history.json": "09a6026523495a69c3d5c2a11c5f8b4fb255334f405e7d8d1988b324ba55ba09",
+    "prop-63786875-detail.json": "fda710ce9976e3c00f9139a9562fa27e92dfcb3f314bf12a3df45a9de97e754d",
+    "prop-63786875-history.json": "70873c3b17e3045f9566fe25a2d485553702247aeb7267f1ae9eee9800786d71",
+    "prop-63786877-detail.json": "92cbd62690c6ba79c483ff5edd368565ac63e61a3d34aaab9107cf33b68ed9f0",
+    "prop-63786877-history.json": "9a587116fb3db162d4826371dd1e7876f3dc35857fb5332f6675ec9b885f3175",
+    "prop-63786880-detail.json": "fa087f4229eb60460f1edb80b5b29169d127ddf763e97e396fa98a282bedde16",
+    "prop-63786880-history.json": "da032cc9b48ca67234538eb5579d5962a952a4e3b6f229fc779db76cba8f3678",
+    "prop-63786881-detail.json": "c3c5a433d887c14ae89bad23486d29cf8b2d7d56e385c317f694b6f91f83ad02",
+    "prop-63786881-history.json": "596879c599dc65cc4378d8a46e96b671b8e694cb4f43080247f200d1ab42ab8f",
+    "prop-63786882-detail.json": "35a8b0271142c2fbb32cd1bcf09f7ad60dfc53b09751cfe3d2c2a6a438c91ad1",
+    "prop-63786882-history.json": "b5078f201e59540f7a5b3c75e5c6aeadfa693b90962c28bdf53904a87c4f1f9b",
+    "prop-63786883-detail.json": "d04da8a61c86997aa43c9c1659734b99cc594545eb771bf72b8ad95e535de7ec",
+    "prop-63786883-history.json": "ad68d9ee25b76be2e76e0f4e5e57fbd364064ae6989d3a776427d7daa18c34f4",
+    "prop-63900810-detail.json": "ec1098e07636dbd645913b3a839d4736d0fd7f39f99eb87ee1baf7bf286d01b4",
+    "prop-63900810-history.json": "712d66e31ad99d9bd3115e66e755da1a7198f684ab92c9d8c2cfaee1997b67e1",
+    "prop-63900818-detail.json": "215346e5b5f8ab5dce4b3d773a8ea030993bb2c4bf645f1e9f5214324c2ddd47",
+    "prop-63900818-history.json": "8abeab991ce086c78d36ee1cdec3595c6ec08a2b8bade6eddc2273a228aa9a60",
+    "prop-63900819-detail.json": "143017a99e5e97bda9f754ffdcf9f2a09081ad259f92983028adf79c591e127a",
+    "prop-63900819-history.json": "6b4c306d5b293f19bbc91ddf8a8aba6f52752e15c1055edf80004110005d0f75",
+    "prop-63900820-detail.json": "f2d2867b39cc92c839b2b06d473687f27a630c084660e3f99a6ccabfd4bfcc06",
+    "prop-63900820-history.json": "9bdbdfb3a254607bebc24d7edcd4699f2b5e2ec3948fdfa17bc01432b3159887",
+    "prop-63900822-detail.json": "93a81d9e5621bae948b5ac505dc0b7fce4c2ca8c0df02bba50d206a7044dd25e",
+    "prop-63900822-history.json": "14cf750d96bb14b10ca57a0344f9de7087e6506dd508518820ee5dd294ad2189"
+  },
+  "rows": [
+    {
+      "key": "mma-15318681-game-markets.json:other:4",
+      "source": "polymarket",
+      "marketID": 63254893,
+      "question": "UFC 332: Roman Kopylov vs. Ateba Gautier (Middleweight, Main Card)",
+      "outcomeID": 238409894,
+      "side": "Roman Kopylov",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63254893-history.json",
+      "detailFile": "prop-63254893-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-09-29T14:28:57.287800+00:00",
+          "probability": 0.335,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-09-30T14:45:05.316274+00:00",
+          "probability": 0.335,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.570562+00:00",
+          "probability": 0.325,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.032833+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.795056+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.594912+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.433584+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:49.993048+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.315,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:5",
+      "source": "polymarket",
+      "marketID": 63254893,
+      "question": "UFC 332: Roman Kopylov vs. Ateba Gautier (Middleweight, Main Card)",
+      "outcomeID": 238409895,
+      "side": "Ateba Gautier",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63254893-history.json",
+      "detailFile": "prop-63254893-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-09-29T14:28:57.287800+00:00",
+          "probability": 0.665,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-09-30T14:45:05.316274+00:00",
+          "probability": 0.665,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.570562+00:00",
+          "probability": 0.675,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.032833+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.795056+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.594912+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.433584+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:49.993048+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:24",
+      "source": "polymarket",
+      "marketID": 63254894,
+      "question": "Fight to Go the Distance?",
+      "outcomeID": 238409897,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63254894-history.json",
+      "detailFile": "prop-63254894-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-09-29T14:28:57.287800+00:00",
+          "probability": 0.63,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-09-30T14:45:05.316274+00:00",
+          "probability": 0.63,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.645,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.587573+00:00",
+          "probability": 0.645,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.047400+00:00",
+          "probability": 0.64,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.813672+00:00",
+          "probability": 0.64,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.64,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.617489+00:00",
+          "probability": 0.635,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.462560+00:00",
+          "probability": 0.635,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.635,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.021622+00:00",
+          "probability": 0.635,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.635,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.625,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.63,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:25",
+      "source": "polymarket",
+      "marketID": 63254894,
+      "question": "Fight to Go the Distance?",
+      "outcomeID": 238409896,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63254894-history.json",
+      "detailFile": "prop-63254894-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-09-29T14:28:57.287800+00:00",
+          "probability": 0.37,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-09-30T14:45:05.316274+00:00",
+          "probability": 0.37,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.355,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.587573+00:00",
+          "probability": 0.355,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.047400+00:00",
+          "probability": 0.36,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.813672+00:00",
+          "probability": 0.36,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.36,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.617489+00:00",
+          "probability": 0.365,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.462560+00:00",
+          "probability": 0.365,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.365,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.021622+00:00",
+          "probability": 0.365,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.365,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.375,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.37,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:totals:1",
+      "source": "polymarket",
+      "marketID": 63254895,
+      "question": "O/U 1.5 Rounds",
+      "outcomeID": 238409899,
+      "side": "Under",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63254895-history.json",
+      "detailFile": "prop-63254895-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-09-29T14:28:57.287800+00:00",
+          "probability": 0.395,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-09-30T14:45:05.316274+00:00",
+          "probability": 0.4,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.405,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.604222+00:00",
+          "probability": 0.405,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.063120+00:00",
+          "probability": 0.385,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.830717+00:00",
+          "probability": 0.385,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.385,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.638926+00:00",
+          "probability": 0.385,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.483169+00:00",
+          "probability": 0.375,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.375,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.041308+00:00",
+          "probability": 0.375,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.375,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.375,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.375,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:13:40.731794+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:totals:2",
+      "source": "polymarket",
+      "marketID": 63455521,
+      "question": "O/U 2.5 Rounds",
+      "outcomeID": 239081307,
+      "side": "Under",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63455521-history.json",
+      "detailFile": "prop-63455521-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-09-30T14:45:05.316274+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.626151+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.076798+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.847828+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.660600+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.504003+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.56,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.56,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:16:02.902407+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:20",
+      "source": "polymarket",
+      "marketID": 63634393,
+      "question": "Will the fight be won by submission?",
+      "outcomeID": 239735846,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63634393-history.json",
+      "detailFile": "prop-63634393-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.9,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.644610+00:00",
+          "probability": 0.92,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.098389+00:00",
+          "probability": 0.905,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.861594+00:00",
+          "probability": 0.91,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.91,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.688161+00:00",
+          "probability": 0.94,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.529836+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.062799+00:00",
+          "probability": 0.94,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.905,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.935,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.895,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:21",
+      "source": "polymarket",
+      "marketID": 63634393,
+      "question": "Will the fight be won by submission?",
+      "outcomeID": 239735845,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63634393-history.json",
+      "detailFile": "prop-63634393-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T16:51:34.873755+00:00",
+          "probability": 0.1,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T23:00:51.644610+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T06:02:26.098389+00:00",
+          "probability": 0.095,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:09:26.861594+00:00",
+          "probability": 0.09,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.09,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.688161+00:00",
+          "probability": 0.06,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.529836+00:00",
+          "probability": 0.07,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.07,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.062799+00:00",
+          "probability": 0.06,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.095,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.065,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.105,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:6",
+      "source": "polymarket",
+      "marketID": 63786874,
+      "question": "Will the fight be won by KO or TKO?",
+      "outcomeID": 240262496,
+      "side": "Yes",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "combat-ko-history.json",
+      "detailFile": "combat-ko-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.722280+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.549561+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.084152+00:00",
+          "probability": 0.575,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:7",
+      "source": "polymarket",
+      "marketID": 63786874,
+      "question": "Will the fight be won by KO or TKO?",
+      "outcomeID": 240262497,
+      "side": "No",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "combat-ko-history.json",
+      "detailFile": "combat-ko-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.722280+00:00",
+          "probability": 0.43,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.549561+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.084152+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.45,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.43,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.45,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:22",
+      "source": "polymarket",
+      "marketID": 63786875,
+      "question": "Will Ateba Gautier win by KO or TKO?",
+      "outcomeID": 240262499,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786875-history.json",
+      "detailFile": "prop-63786875-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.53,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.751002+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.568839+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.53,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.107418+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.52,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.53,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.6,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:23",
+      "source": "polymarket",
+      "marketID": 63786875,
+      "question": "Will Ateba Gautier win by KO or TKO?",
+      "outcomeID": 240262498,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786875-history.json",
+      "detailFile": "prop-63786875-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.47,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.751002+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.568839+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.47,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.107418+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.48,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.47,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.4,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:totals:0",
+      "source": "polymarket",
+      "marketID": 63786877,
+      "question": "O/U 0.5 Rounds",
+      "outcomeID": 240262502,
+      "side": "Over",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786877-history.json",
+      "detailFile": "prop-63786877-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.825,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.772139+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.585455+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.825,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.128649+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.825,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.82,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.825,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:16:02.902407+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:10",
+      "source": "polymarket",
+      "marketID": 63786880,
+      "question": "Will the fight end before Round 2?",
+      "outcomeID": 240262508,
+      "side": "Yes",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786880-history.json",
+      "detailFile": "prop-63786880-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.33,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.790222+00:00",
+          "probability": 0.33,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.602599+00:00",
+          "probability": 0.33,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.33,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.146311+00:00",
+          "probability": 0.33,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.33,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.32,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.325,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:11",
+      "source": "polymarket",
+      "marketID": 63786880,
+      "question": "Will the fight end before Round 2?",
+      "outcomeID": 240262509,
+      "side": "No",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786880-history.json",
+      "detailFile": "prop-63786880-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.67,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.790222+00:00",
+          "probability": 0.67,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.602599+00:00",
+          "probability": 0.67,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.67,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.146311+00:00",
+          "probability": 0.67,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.67,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.68,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.675,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:18",
+      "source": "polymarket",
+      "marketID": 63786881,
+      "question": "Will the fight end before Round 3?",
+      "outcomeID": 240262510,
+      "side": "Yes",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786881-history.json",
+      "detailFile": "prop-63786881-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.53,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.806975+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.618539+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.166813+00:00",
+          "probability": 0.53,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.525,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.53,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.53,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:19",
+      "source": "polymarket",
+      "marketID": 63786881,
+      "question": "Will the fight end before Round 3?",
+      "outcomeID": 240262511,
+      "side": "No",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786881-history.json",
+      "detailFile": "prop-63786881-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.47,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.806975+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.618539+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.166813+00:00",
+          "probability": 0.47,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.47,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.47,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:26",
+      "source": "polymarket",
+      "marketID": 63786882,
+      "question": "Will Ateba Gautier win in Round 1?",
+      "outcomeID": 240262513,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786882-history.json",
+      "detailFile": "prop-63786882-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.8,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.825879+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.642523+00:00",
+          "probability": 0.79,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:27",
+      "source": "polymarket",
+      "marketID": 63786882,
+      "question": "Will Ateba Gautier win in Round 1?",
+      "outcomeID": 240262512,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786882-history.json",
+      "detailFile": "prop-63786882-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-02T12:28:48.870897+00:00",
+          "probability": 0.2,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:57:13.825879+00:00",
+          "probability": 0.205,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:06:50.642523+00:00",
+          "probability": 0.21,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.215,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.205,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.205,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:0",
+      "source": "polymarket",
+      "marketID": 63786883,
+      "question": "Will the fight end in a decision or draw?",
+      "outcomeID": 240262515,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786883-history.json",
+      "detailFile": "prop-63786883-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T08:03:50.187004+00:00",
+          "probability": 0.49,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:1",
+      "source": "polymarket",
+      "marketID": 63786883,
+      "question": "Will the fight end in a decision or draw?",
+      "outcomeID": 240262514,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63786883-history.json",
+      "detailFile": "prop-63786883-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T08:03:50.187004+00:00",
+          "probability": 0.51,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:8",
+      "source": "polymarket",
+      "marketID": 63900810,
+      "question": "Will Roman Kopylov win by KO or TKO?",
+      "outcomeID": 240654996,
+      "side": "Yes",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900810-history.json",
+      "detailFile": "prop-63900810-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.207116+00:00",
+          "probability": 0.17,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.17,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.17,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.125,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:9",
+      "source": "polymarket",
+      "marketID": 63900810,
+      "question": "Will Roman Kopylov win by KO or TKO?",
+      "outcomeID": 240654997,
+      "side": "No",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900810-history.json",
+      "detailFile": "prop-63900810-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.835,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T08:03:50.207116+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:12",
+      "source": "polymarket",
+      "marketID": 63900818,
+      "question": "Will Roman Kopylov win in Round 1?",
+      "outcomeID": 240655012,
+      "side": "Yes",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900818-history.json",
+      "detailFile": "prop-63900818-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.13,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.13,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.125,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.11,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:13",
+      "source": "polymarket",
+      "marketID": 63900818,
+      "question": "Will Roman Kopylov win in Round 1?",
+      "outcomeID": 240655013,
+      "side": "No",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900818-history.json",
+      "detailFile": "prop-63900818-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.89,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:11.326692+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:2",
+      "source": "polymarket",
+      "marketID": 63900819,
+      "question": "Will Roman Kopylov win in Round 2?",
+      "outcomeID": 240655015,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900819-history.json",
+      "detailFile": "prop-63900819-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.88,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.88,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.885,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.9,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:3",
+      "source": "polymarket",
+      "marketID": 63900819,
+      "question": "Will Roman Kopylov win in Round 2?",
+      "outcomeID": 240655014,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900819-history.json",
+      "detailFile": "prop-63900819-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.12,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.12,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.115,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.1,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:14",
+      "source": "polymarket",
+      "marketID": 63900820,
+      "question": "Will Roman Kopylov win in Round 3?",
+      "outcomeID": 240655017,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900820-history.json",
+      "detailFile": "prop-63900820-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.895,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.9,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.9,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.91,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:15",
+      "source": "polymarket",
+      "marketID": 63900820,
+      "question": "Will Roman Kopylov win in Round 3?",
+      "outcomeID": 240655016,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900820-history.json",
+      "detailFile": "prop-63900820-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.105,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.1,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.1,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.09,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:16",
+      "source": "polymarket",
+      "marketID": 63900822,
+      "question": "Will Ateba Gautier win in Round 3?",
+      "outcomeID": 240655021,
+      "side": "No",
+      "detailResult": true,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900822-history.json",
+      "detailFile": "prop-63900822-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.88,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.88,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.89,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "mma-15318681-game-markets.json:other:17",
+      "source": "polymarket",
+      "marketID": 63900822,
+      "question": "Will Ateba Gautier win in Round 3?",
+      "outcomeID": 240655020,
+      "side": "Yes",
+      "detailResult": false,
+      "resolutionSource": "api_settlement",
+      "historyFile": "prop-63900822-history.json",
+      "detailFile": "prop-63900822-detail.json",
+      "observations": [
+        {
+          "timestamp": "2026-10-03T01:58:16.397207+00:00",
+          "probability": 0.13,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:00:42.163684+00:00",
+          "probability": 0.12,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:42:41.515378+00:00",
+          "probability": 0.12,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:27:48.847758+00:00",
+          "probability": 0.11,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T03:59:59.999000+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    }
+  ]
+}

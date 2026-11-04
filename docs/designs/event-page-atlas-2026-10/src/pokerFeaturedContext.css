@@ -1,0 +1,22 @@
+.pk-baseline-field{margin:12px 0 8px}.pk-baseline-heading{display:block;font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:7px}.pk-baseline-field>div{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.pk-baseline-field button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;background:var(--surface-card);border:1px solid;border-radius:10px;min-width:0;min-height:44px;padding:8px;font:inherit;text-align:left}.pk-baseline-field button[aria-pressed=true]{border-width:2px;padding:7px}.pk-baseline-field button>span{font-size:12px;font-weight:650;line-height:1.3;overflow-wrap:anywhere}.pk-baseline-field strong{font-size:22px;line-height:1.1;letter-spacing:-.5px;font-variant-numeric:tabular-nums}.pk-baseline-field strong[data-unavailable=true]{font-size:13px;letter-spacing:0}.pk-baseline-field small{font-size:10px;line-height:1.3;color:var(--text-secondary)}.pk-history-price{display:block;font-size:11px;color:var(--text-secondary);margin:6px 0}.pk-recorded-reading{margin:8px 0}.pk-reader-anchor .pk-baseline-field{margin:8px 0}.pk-reader-anchor .pk-baseline-heading{font-size:11px}.pk-reader-anchor .pk-baseline-field strong{font-size:20px}.pk-reader-anchor .pk-recorded-reading strong{font-size:25px}.pk-reader-anchor .pk-recorded-reading p{font-size:11px}.pk-reader-anchor .pk-history-price{font-size:11px;margin-bottom:0}.pk-expanded.pk-history>.pk-card-top{display:none}.pk-expanded.pk-history{padding-top:0}.pk-expanded.pk-history .pk-plot{margin-top:0}.pk-large .pk-baseline-heading,.pk-large .pk-baseline-field button>span,.pk-large .pk-baseline-field small,.pk-large .pk-history-price,.pk-large .pk-recorded-reading p{font-size:16px}.pk-large .pk-baseline-field strong{font-size:26px}.pk-large .pk-baseline-field strong[data-unavailable=true]{font-size:16px}.pk-large .pk-baseline-field>div{grid-template-columns:repeat(2,minmax(0,1fr))}.pk-reader-anchor.pk-large .pk-recorded-reading strong{font-size:30px}.pk-reader-anchor.pk-large .pk-recorded-reading p{font-size:16px}.pk-selected-reference>span,.pk-selected-reference>small{display:block;font-size:16px}.pk-selected-reference>strong{font-size:26px;color:var(--series-home)}
+
+.pk-reader-anchor .pk-baseline-field{margin:6px 0}.pk-reader-anchor .pk-baseline-heading{margin-bottom:5px}.pk-reader-anchor .pk-recorded-reading{margin:4px 0}.pk-reader-anchor .pk-recorded-reading p{margin:2px 0 0;line-height:1.2}
+
+
+
+
+
+/* Keep complete names and explicit shape keys above the full chart. */
+.pk-baseline-field button{padding-block:5px}
+.pk-baseline-field button[aria-pressed=true]{padding-block:4px}
+.pk-reader-anchor .pk-baseline-field{margin:2px 0}
+.pk-reader-anchor .pk-baseline-heading{margin-bottom:3px}
+.cf-view:has(.pk-primary-reader) .cf-track{padding-top:4px}
+
+.cf-view:has(.pk-primary-reader) .cf-header{padding-bottom:6px}
+
+/* On wider readers, put the recorded trade beside the fixed earlier field. */
+.cf-wide .pk-primary-reader:not(.pk-large):has(.pk-recorded-reading){display:grid;grid-template-columns:minmax(150px,1fr) minmax(0,2fr);column-gap:16px;align-items:start}
+.cf-wide .pk-primary-reader:not(.pk-large):has(.pk-recorded-reading)>b,.cf-wide .pk-primary-reader:not(.pk-large):has(.pk-recorded-reading)>.pk-history-price{grid-column:1/-1}
+.cf-wide .pk-primary-reader:not(.pk-large):has(.pk-recorded-reading)>.pk-recorded-reading{grid-column:1;grid-row:2;margin:2px 0}
+.cf-wide .pk-primary-reader:not(.pk-large):has(.pk-recorded-reading)>.pk-baseline-field{grid-column:2;grid-row:2}

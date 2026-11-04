@@ -1,0 +1,37 @@
+.associated-series-card{display:flex;flex-direction:column;gap:12px}
+.associated-series-card .atlas-card-head{margin-bottom:0}
+.series-score-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.series-team h4,.series-winner-groups h4{font-size:14px;line-height:1.35;margin:0 0 8px}
+.series-team{min-width:0}
+.series-score-tile{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;min-height:60px;margin-bottom:8px;padding:10px;border:1px solid var(--surface-border);border-radius:12px;background:var(--surface-page);color:var(--text-primary)}
+.series-score-tile>strong{font-size:26px;line-height:1;font-variant-numeric:tabular-nums}
+.series-score-tile>span{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px}
+.series-score-tile.won{color:var(--series-away);background:color-mix(in srgb,var(--series-away) 8%,var(--surface-card))}
+.series-score-tile[aria-pressed=true],.series-pending[aria-pressed=true],.series-winners button[aria-pressed=true]{outline:2px solid var(--series-home);outline-offset:-2px}
+.series-score-tile:disabled{opacity:.4}
+.series-pending{display:flex;align-items:center;gap:12px;padding:12px;min-height:58px;border:1px solid var(--surface-border);border-radius:12px;background:var(--surface-page);color:var(--text-primary);text-align:left}
+.series-pending>svg:first-child{width:23px;height:23px;flex:none}
+.series-pending>svg:last-child{margin-left:auto;flex:none}
+.series-pending span{display:flex;flex-direction:column;gap:4px}
+.series-pending strong{font-size:14px}.series-pending small{font-size:12px;color:var(--text-secondary)}
+.series-winner-groups{display:grid;gap:12px}.series-winner-groups[hidden]{display:none}
+.series-winners{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.series-winners button{padding:10px;min-height:64px;background:var(--surface-page);color:var(--text-primary);border:1px solid var(--surface-border);border-radius:10px;display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.series-winners strong{font-size:14px}.series-winners span{display:flex;align-items:center;gap:5px;font-size:12px}
+.associated-series-card .card-link{min-height:44px;margin:0}
+.large-text .series-score-grid,.large-text .series-winners{grid-template-columns:1fr}
+.large-text .series-score-tile>span,.large-text .series-pending small,.large-text .series-winners span{font-size:16px}
+.large-text .series-team h4,.large-text .series-pending strong,.large-text .series-winner-groups h4,.large-text .series-winners strong{font-size:18px}
+
+.series-score-tile{display:grid;grid-template-columns:minmax(0,1fr) 72px;column-gap:2px;row-gap:2px;text-align:left;min-height:100px}
+.series-score-tile>.series-pregame-chance{grid-column:2;grid-row:1/3;width:72px;height:72px}
+.series-score-tile>span{align-items:flex-start;flex-direction:row;gap:3px}
+.series-score-tile>.series-pregame-chance strong{font-size:17px}
+.series-score-tile>.series-pregame-chance span{font-size:9px}
+.series-winners small{font-size:12px;color:var(--text-secondary)}
+.large-text .series-score-tile{grid-template-columns:minmax(0,1fr) 108px;min-height:132px}
+.large-text .series-score-tile>.series-pregame-chance{width:108px;height:108px}
+.large-text .series-score-tile>.series-pregame-chance strong{font-size:24px}
+.large-text .series-score-tile>.series-pregame-chance span,.large-text .series-winners small{font-size:16px}
+
+.series-team:first-child .series-pregame-chance{color:var(--series-away)}

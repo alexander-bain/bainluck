@@ -1,0 +1,1238 @@
+{
+  "eventID": 15321889,
+  "eventTicker": "KXNBATOTAL-26OCT06LALGSW",
+  "start": "2026-10-07T02:00:00+00:00",
+  "actualTotal": 222,
+  "actualAt": "2026-10-07T07:59:18.987921+00:00",
+  "pregameWindowSeconds": 3600,
+  "rows": [
+    {
+      "key": "nba-half:totals:0",
+      "minimumTotal": 201,
+      "threshold": 200.5,
+      "original": {
+        "threshold": 200.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 200.5 points",
+        "observed_at": "2026-10-07T04:31:25+00:00",
+        "contributor_outcome_ids": [
+          243148369
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:0",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-201",
+      "rules": "If over 200.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.89,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 1264.91
+      },
+      "baseline": {
+        "value": 0.89,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 1264.91
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:1",
+      "minimumTotal": 203,
+      "threshold": 202.5,
+      "original": {
+        "threshold": 202.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 202.5 points",
+        "observed_at": "2026-10-07T04:31:25+00:00",
+        "contributor_outcome_ids": [
+          243148370
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:1",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-203",
+      "rules": "If over 202.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.87,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 61.5
+      },
+      "baseline": {
+        "value": 0.87,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 61.5
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:2",
+      "minimumTotal": 205,
+      "threshold": 204.5,
+      "original": {
+        "threshold": 204.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 204.5 points",
+        "observed_at": "2026-10-07T04:31:25+00:00",
+        "contributor_outcome_ids": [
+          243148371
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.02,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:2",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-205",
+      "rules": "If over 204.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.83,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 32.14
+      },
+      "baseline": {
+        "value": 0.83,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 32.14
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:3",
+      "minimumTotal": 207,
+      "threshold": 206.5,
+      "original": {
+        "threshold": 206.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 206.5 points",
+        "observed_at": "2026-10-07T04:31:25+00:00",
+        "contributor_outcome_ids": [
+          243148372
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.04,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:3",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-207",
+      "rules": "If over 206.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.8,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 121.95
+      },
+      "baseline": {
+        "value": 0.8,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 121.95
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:4",
+      "minimumTotal": 209,
+      "threshold": 208.5,
+      "original": {
+        "threshold": 208.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 208.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148373
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:4",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-209",
+      "rules": "If over 208.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.77,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 112.61
+      },
+      "baseline": {
+        "value": 0.77,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 112.61
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:5",
+      "minimumTotal": 211,
+      "threshold": 210.5,
+      "original": {
+        "threshold": 210.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 210.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148374
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:5",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-211",
+      "rules": "If over 210.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.72,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 59.56
+      },
+      "baseline": {
+        "value": 0.72,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 59.56
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:6",
+      "minimumTotal": 213,
+      "threshold": 212.5,
+      "original": {
+        "threshold": 212.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 212.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148375
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:6",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-213",
+      "rules": "If over 212.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.71,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 854.01
+      },
+      "baseline": {
+        "value": 0.71,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 854.01
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:7",
+      "minimumTotal": 215,
+      "threshold": 214.5,
+      "original": {
+        "threshold": 214.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 214.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148376
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:7",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-215",
+      "rules": "If over 214.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.66,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 86.28
+      },
+      "baseline": {
+        "value": 0.66,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 86.28
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:8",
+      "minimumTotal": 217,
+      "threshold": 216.5,
+      "original": {
+        "threshold": 216.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 216.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148377
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:8",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-217",
+      "rules": "If over 216.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.64,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 339.57
+      },
+      "baseline": {
+        "value": 0.64,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 339.57
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:9",
+      "minimumTotal": 219,
+      "threshold": 218.5,
+      "original": {
+        "threshold": 218.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 218.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148378
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:9",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-219",
+      "rules": "If over 218.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.57,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 1793.05
+      },
+      "baseline": {
+        "value": 0.57,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 1793.05
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:10",
+      "minimumTotal": 221,
+      "threshold": 220.5,
+      "original": {
+        "threshold": 220.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 220.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148379
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:10",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-221",
+      "rules": "If over 220.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.51,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 23072.86
+      },
+      "baseline": {
+        "value": 0.51,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 23072.86
+      },
+      "state": "recent",
+      "result": "Won"
+    },
+    {
+      "key": "nba-half:totals:12",
+      "minimumTotal": 223,
+      "threshold": 222.5,
+      "original": {
+        "threshold": 222.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 222.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148380
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.05,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:12",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-223",
+      "rules": "If over 222.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.47,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 6554.42
+      },
+      "baseline": {
+        "value": 0.47,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 6554.42
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:13",
+      "minimumTotal": 225,
+      "threshold": 224.5,
+      "original": {
+        "threshold": 224.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 224.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148381
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:13",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-225",
+      "rules": "If over 224.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.45,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 569.34
+      },
+      "baseline": {
+        "value": 0.45,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 569.34
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:14",
+      "minimumTotal": 227,
+      "threshold": 226.5,
+      "original": {
+        "threshold": 226.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 226.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148382
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:14",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-227",
+      "rules": "If over 226.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.38,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 46.87
+      },
+      "baseline": {
+        "value": 0.38,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 46.87
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:15",
+      "minimumTotal": 229,
+      "threshold": 228.5,
+      "original": {
+        "threshold": 228.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 228.5 points",
+        "observed_at": "2026-10-07T04:31:26+00:00",
+        "contributor_outcome_ids": [
+          243148383
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:15",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-229",
+      "rules": "If over 228.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.32,
+        "at": "2026-10-06T19:00:00+00:00",
+        "ageSeconds": 25200,
+        "volume": 3.08
+      },
+      "baseline": null,
+      "state": "stale",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:16",
+      "minimumTotal": 231,
+      "threshold": 230.5,
+      "original": {
+        "threshold": 230.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 230.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148384
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:16",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-231",
+      "rules": "If over 230.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.32,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 1120.97
+      },
+      "baseline": {
+        "value": 0.32,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 1120.97
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:17",
+      "minimumTotal": 233,
+      "threshold": 232.5,
+      "original": {
+        "threshold": 232.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 232.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148385
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:17",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-233",
+      "rules": "If over 232.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.25,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 2280.06
+      },
+      "baseline": {
+        "value": 0.25,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 2280.06
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:18",
+      "minimumTotal": 235,
+      "threshold": 234.5,
+      "original": {
+        "threshold": 234.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 234.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148386
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:18",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-235",
+      "rules": "If over 234.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.22,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 20.0
+      },
+      "baseline": {
+        "value": 0.22,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 20.0
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:19",
+      "minimumTotal": 237,
+      "threshold": 236.5,
+      "original": {
+        "threshold": 236.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 236.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148387
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.03,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:19",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-237",
+      "rules": "If over 236.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.21,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 89.0
+      },
+      "baseline": {
+        "value": 0.21,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 89.0
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:20",
+      "minimumTotal": 239,
+      "threshold": 238.5,
+      "original": {
+        "threshold": 238.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 238.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148388
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:20",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-239",
+      "rules": "If over 238.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.17,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 43.43
+      },
+      "baseline": {
+        "value": 0.17,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 43.43
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:21",
+      "minimumTotal": 241,
+      "threshold": 240.5,
+      "original": {
+        "threshold": 240.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 240.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148389
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:21",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-241",
+      "rules": "If over 240.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": {
+        "value": 0.2,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 5879.0
+      },
+      "baseline": {
+        "value": 0.2,
+        "at": "2026-10-07T02:00:00+00:00",
+        "ageSeconds": 0,
+        "volume": 5879.0
+      },
+      "state": "recent",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:22",
+      "minimumTotal": 243,
+      "threshold": 242.5,
+      "original": {
+        "threshold": 242.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 242.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148390
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:22",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-243",
+      "rules": "If over 242.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:23",
+      "minimumTotal": 245,
+      "threshold": 244.5,
+      "original": {
+        "threshold": 244.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 244.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148391
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:23",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-245",
+      "rules": "If over 244.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:24",
+      "minimumTotal": 247,
+      "threshold": 246.5,
+      "original": {
+        "threshold": 246.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 246.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148392
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:24",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-247",
+      "rules": "If over 246.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:25",
+      "minimumTotal": 249,
+      "threshold": 248.5,
+      "original": {
+        "threshold": 248.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 248.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148393
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:25",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-249",
+      "rules": "If over 248.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:26",
+      "minimumTotal": 251,
+      "threshold": 250.5,
+      "original": {
+        "threshold": 250.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 250.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148394
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:26",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-251",
+      "rules": "If over 250.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:27",
+      "minimumTotal": 253,
+      "threshold": 252.5,
+      "original": {
+        "threshold": 252.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 252.5 points",
+        "observed_at": "2026-10-07T04:31:27+00:00",
+        "contributor_outcome_ids": [
+          243148395
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:27",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-253",
+      "rules": "If over 252.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:28",
+      "minimumTotal": 255,
+      "threshold": 254.5,
+      "original": {
+        "threshold": 254.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 254.5 points",
+        "observed_at": "2026-10-07T04:31:28+00:00",
+        "contributor_outcome_ids": [
+          243148396
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:28",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-255",
+      "rules": "If over 254.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:29",
+      "minimumTotal": 257,
+      "threshold": 256.5,
+      "original": {
+        "threshold": 256.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 256.5 points",
+        "observed_at": "2026-10-07T04:31:28+00:00",
+        "contributor_outcome_ids": [
+          243148397
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:29",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-257",
+      "rules": "If over 256.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:30",
+      "minimumTotal": 259,
+      "threshold": 258.5,
+      "original": {
+        "threshold": 258.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 258.5 points",
+        "observed_at": "2026-10-07T04:31:28+00:00",
+        "contributor_outcome_ids": [
+          243148398
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:30",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-259",
+      "rules": "If over 258.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    },
+    {
+      "key": "nba-half:totals:31",
+      "minimumTotal": 261,
+      "threshold": 260.5,
+      "original": {
+        "threshold": 260.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+        "outcome_name": "Over 260.5 points",
+        "observed_at": "2026-10-07T04:31:28+00:00",
+        "contributor_outcome_ids": [
+          243148399
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 64649036,
+        "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+        "key": "nba-half:totals:31",
+        "category": "totals",
+        "source_file": "15321889-markets.json"
+      },
+      "ticker": "KXNBATOTAL-26OCT06LALGSW-261",
+      "rules": "If over 260.5 total points are scored in the Los Angeles L vs Golden State Pro Basketball game originally scheduled for Oct 6, 2026, then the market resolves to Yes.",
+      "additionalRules": "If the game is postponed but begins within 48 hours of its originally scheduled start time, the market will remain open and resolve based on the official final result. If the game is cancelled or not started within 48 hours of its originally scheduled start, all markets will resolve to a fair price.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "lastQuote": null,
+      "baseline": null,
+      "state": "missing",
+      "result": "Lost"
+    }
+  ]
+}

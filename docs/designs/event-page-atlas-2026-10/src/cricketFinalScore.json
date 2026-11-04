@@ -1,0 +1,79 @@
+{
+  "contract": "cricket-final-state.v1",
+  "marketEvent": "KXTESTMATCH-26SEP290000AUS-AINA",
+  "providerMatch": "bcci:63f10afd-88ca-4501-a2a3-4e82105601cf",
+  "home": "India A",
+  "away": "Australia A",
+  "competition": "2nd Four-Day Match",
+  "startDate": "2026-09-29",
+  "endDate": "2026-10-02",
+  "venue": "Cricket Association Puducherry Siechem Stadium, Puducherry",
+  "status": "final",
+  "result": "draw",
+  "actualStartedAt": null,
+  "actualFinishedAt": null,
+  "projection": null,
+  "sources": [
+    {
+      "file": "bcci-match.html",
+      "url": "https://www.bcci.tv/matches/63f10afd-88ca-4501-a2a3-4e82105601cf/india-a-vs-australia-a",
+      "captured_at": "2026-10-13T12:48:45.572187+00:00",
+      "status": 200,
+      "sha256": "1d9f4f96afaa5690c4ab103fb656f216ce88c115e3d66cd6b0b418351521f79f"
+    },
+    {
+      "file": "ca-match-report.html",
+      "url": "https://www.cricket.com.au/news/4585863/day-four-report-india-a-draw-australia-a-second-four-day-match-puducherry-harper-century-scott-five-wickets-rathod-mulani",
+      "captured_at": "2026-10-13T12:48:45.572714+00:00",
+      "status": 200,
+      "sha256": "e2ddb5bf36c591d6c8203a7b76cfa15b3592561590ace9900aeae570af9bf277"
+    }
+  ],
+  "innings": [
+    {
+      "team": "Australia A",
+      "number": 1,
+      "runs": 358,
+      "wickets": null,
+      "overs": "116.3",
+      "declared": false,
+      "originalScore": "358"
+    },
+    {
+      "team": "India A",
+      "number": 1,
+      "runs": 167,
+      "wickets": 10,
+      "overs": "68.0",
+      "declared": false,
+      "originalScore": "167"
+    },
+    {
+      "team": "Australia A",
+      "number": 2,
+      "runs": 173,
+      "wickets": 4,
+      "overs": "49.0",
+      "declared": true,
+      "originalScore": "173/4 d"
+    },
+    {
+      "team": "India A",
+      "number": 2,
+      "runs": 310,
+      "wickets": 9,
+      "overs": "103.0",
+      "declared": false,
+      "originalScore": "310/9"
+    }
+  ],
+  "chase": {
+    "team": "India A",
+    "targetRuns": 365,
+    "runs": 310,
+    "wicketsLost": 9,
+    "overs": "103.0",
+    "result": "draw"
+  },
+  "correspondence": "Isolated design correspondence: same two A teams, second four-day match in India, Sep 29-Oct 2. No production event linkage or registry merge."
+}
