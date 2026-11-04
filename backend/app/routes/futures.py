@@ -11119,7 +11119,11 @@ def _format_market_detail(
     # copy of these two steps. Gating one surface and not the other would divide
     # the same board by two different numbers and manufacture exactly the
     # detail-vs-hub disagreement #7016 closed.
-    if normalize_display_probs(
+    # #11948, Alex A (Nov 4): this one-winner field prints the same raw venue
+    # prices as its Midterms card. This is display policy; mutual exclusivity
+    # and the independent field_band producer's contract remain unchanged.
+    raw_midterms_field = market.source == "kalshi" and market.id == 108629
+    if not raw_midterms_field and normalize_display_probs(
         outcomes,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=prices_withheld == 0,
