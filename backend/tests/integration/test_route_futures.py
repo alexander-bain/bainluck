@@ -247,6 +247,7 @@ class TestFuturesMarketDetail:
             # Discover card applies, so the card and this page divide by one
             # set. Present for the same reason as the two lines above.
             "expired_rungs_dropped",
+            "ladder_treatment_refused",
             "bookmakers",
             "category_tags",
             "created_at",

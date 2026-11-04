@@ -381,7 +381,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   );
   const groupMarkets = Array.isArray(groupData?.markets) ? groupData.markets : [];
   const thresholdGroups = groupData?.threshold_groups ?? {};
-  const thresholdEntries = Object.entries(thresholdGroups).filter(([, outcomes]) => outcomes.length >= 2);
+  const thresholdEntries = market?.ladder_treatment_refused
+    ? []
+    : Object.entries(thresholdGroups).filter(([, outcomes]) => outcomes.length >= 2);
   // #8167 — one decision for the whole set: a card's heading can depend on what
   // its SIBLINGS are called, so the headings are computed together and consumed
   // positionally beside the same array.
@@ -451,6 +453,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // refusal, never a fallback to serve order.
   const ownLadderRungs = useMemo(() => {
     if (marketShape !== SHAPE_QUANTITY) return [];
+    if (market?.ladder_treatment_refused) return [];
     if (thresholdEntries.length > 0) return [];
     const outcomes = market?.outcomes ?? [];
     if (outcomes.length < 2) return [];
@@ -474,6 +477,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     marketShape,
+    market?.ladder_treatment_refused,
     thresholdEntries.length,
     market?.outcomes,
     market?.mutually_exclusive,

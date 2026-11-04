@@ -1304,6 +1304,10 @@ export interface FuturesMarketDetailResponse extends FuturesMarket {
   /** #8892: on a game container, the id of the match-winner outcome a hero leads
    *  with. Null everywhere else; absent on builds before #8894. */
   lead_outcome_id?: number | null;
+  /** #11942: true when cumulative ladder rungs are out of order on an open market;
+   *  every venue rung stays in `outcomes` with its `last_updated`, while the
+   *  detail page refuses the ladder drawing and lists the rungs plainly. */
+  ladder_treatment_refused?: boolean;
   /** #10165: on a Polymarket game container, the game it is the container OF —
    *  the page sends the reader there. Null everywhere else; absent on builds
    *  before #10173. */

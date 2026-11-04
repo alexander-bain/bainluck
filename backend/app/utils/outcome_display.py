@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Sequence, TypeVar
 
+from app.utils.graded_card import rendered_percent
 from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder
 
 _T = TypeVar("_T")
@@ -898,6 +899,57 @@ def incoherent_ladder_indexes(
 LADDER_MIN_DRAWN_RUNGS = 2
 
 
+def ladder_rungs_out_of_order(
+    items: Sequence[_T],
+    name_of: Callable[[_T], str | None],
+    prob_of: Callable[[_T], float | None],
+    question: str | None = None,
+) -> bool:
+    """True when a cumulative ladder's priced rungs reverse beyond whole-number rounding (#11942)."""
+    rows = [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)]
+    ladder = cumulative_outcome_ladder(
+        rows,
+        dates=True,
+        question=question,
+    )
+    if ladder is None and len(rows) >= 2:
+        probs = [float(p) for item in items if (p := prob_of(item)) is not None]
+        if sum(probs) > _FIELD_SUM_MAX and not re.search(r"\bon\b", question or "", re.I):
+            ladder = cumulative_outcome_ladder(
+                rows,
+                dates=True,
+                question=f"{(question or '').rstrip('? ').strip()} by...?",
+            )
+    if ladder is None:
+        return False
+    legs, direction = ladder
+    ordered: list[tuple[float, int]] = []
+    for value, leg in legs:
+        index = int(leg["index"])  # type: ignore[call-overload]
+        probability = prob_of(items[index])
+        if probability is None:
+            continue
+        pct = rendered_percent(float(probability))
+        if pct is None:
+            continue
+        ordered.append((value, pct))
+    ordered.sort(key=lambda rung: rung[0])
+    if len(ordered) < 2:
+        return False
+    falling = direction == DEC
+    running = ordered[0][1]
+    for _, curr_pct in ordered[1:]:
+        if falling:
+            if curr_pct > running:
+                return True
+            running = min(running, curr_pct)
+        else:
+            if curr_pct < running:
+                return True
+            running = max(running, curr_pct)
+    return False
+
+
 def ladder_treatment_collapsed(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],
@@ -921,6 +973,8 @@ def ladder_treatment_collapsed(
     incoherent, priced_rungs = incoherent_ladder_verdict(
         items, name_of, prob_of, question)
     if not incoherent:
+        if priced_rungs < _LADDER_MIN_PRICED_RUNGS:
+            return ladder_rungs_out_of_order(items, name_of, prob_of, question)
         return False
     return priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS
 

@@ -1381,6 +1381,7 @@ async def browse_futures(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
+        drop_incoherent_ladder_outcomes,
         drop_incoherent_near_certain,
         drop_unbacked_legs,
         is_placeholder_outcome_name,
@@ -1497,6 +1498,13 @@ async def browse_futures(
         # Drop BEFORE the `[:3]` slice, then leader-pick: demotion alone only keeps
         # a row out of a top-N slot while the list is LONGER than N (UX-P163), and
         # the mean browse market has 6.3 outcomes.
+        if getattr(market, "status", None) == "open":
+            display_outcomes = drop_incoherent_ladder_outcomes(
+                display_outcomes,
+                lambda o: o.get("name"),
+                lambda o: o.get("probability"),
+                getattr(market, "name", "") or "",
+            )
         display_outcomes = drop_dominant_field_outcomes(
             display_outcomes, lambda o: o.get("name"), lambda o: o.get("probability")
         )
@@ -9979,7 +9987,7 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
         reverse=True
     )
 
-    top_outcomes = [
+    outcome_dicts = [
         {
             "id": o.id,
             "name": o.name,
@@ -9995,8 +10003,18 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
                 else None
             ),
         }
-        for o in sorted_outcomes[:5]
+        for o in sorted_outcomes
     ]
+    if getattr(market, "status", None) == "open":
+        from app.utils.outcome_display import drop_incoherent_ladder_outcomes
+
+        outcome_dicts = drop_incoherent_ladder_outcomes(
+            outcome_dicts,
+            lambda o: o.get("name"),
+            lambda o: o.get("probability"),
+            getattr(market, "name", "") or "",
+        )
+    top_outcomes = outcome_dicts[:5]
 
     # Cross-source info from canonical key
     source_info = None
@@ -10386,6 +10404,7 @@ def _format_market_detail(
     from app.utils.outcome_display import (
         assign_display_ranks,
         is_placeholder_outcome_name,
+        ladder_rungs_out_of_order,
         normalize_display_probs,
         leader_pick_order,
         drop_dominant_field_outcomes,
@@ -11392,6 +11411,18 @@ def _format_market_detail(
     # #9531: a cumulative ladder leads with the rung the `/weather` card quotes
     # (#9283), not its loosest one. Set only when that rung is not already the
     # price leader, so a board whose hero is right serves null as before.
+    # #11942: on the detail page, every venue rung stays in `outcomes` with its
+    # own `last_updated`, while `ladder_treatment_refused` refuses only the
+    # ladder drawing when cumulative rungs are out of order.
+    ladder_treatment_refused = bool(
+        market.status not in NOT_LIVE_STATUSES
+        and ladder_rungs_out_of_order(
+            outcomes,
+            lambda o: o.get("name"),
+            lambda o: o.get("probability"),
+            getattr(market, "name", "") or "",
+        )
+    )
     if lead_outcome_id is None and market.status not in NOT_LIVE_STATUSES:
         from app.utils.ladder_headline import ladder_headline_outcome_id
 
@@ -11522,6 +11553,7 @@ def _format_market_detail(
         # the rule. Machine-readable only — notice 34 keeps diagnostics off the
         # page. Always present, so its absence means an old build.
         "expired_rungs_dropped": expired_rungs_dropped,
+        "ladder_treatment_refused": ladder_treatment_refused,
         "bookmakers": bookmakers or [],
         "category_tags": market.category_tags or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,
@@ -11585,6 +11617,7 @@ async def get_group(
     threshold detection and cross-source comparison data.
     """
     from app.utils.market_grouping import detect_threshold_groups
+    from app.utils.outcome_display import ladder_rungs_out_of_order
 
     # Fetch markets in this group
     stmt = (
@@ -11641,7 +11674,23 @@ async def get_group(
                     if field in od:
                         od[field] = None
             outcomes.append(od)
-            all_outcomes.append(od)
+
+        # #11942: keep every outcome on the market row in `markets`, and refuse
+        # feeding `detect_threshold_groups` when this open market's cumulative
+        # rungs are out of order — the same refusal `_format_market_detail`
+        # serves via `ladder_treatment_refused`, so the detail page lists the
+        # rungs plainly instead of drawing bars from `threshold_groups`.
+        if not (
+            getattr(m, "status", None) == "open"
+            and not getattr(m, "mutually_exclusive", False)
+            and ladder_rungs_out_of_order(
+                outcomes,
+                lambda o: o.get("name"),
+                lambda o: o.get("probability"),
+                getattr(m, "name", "") or "",
+            )
+        ):
+            all_outcomes.extend(outcomes)
 
         market_list.append({
             "id": m.id,
