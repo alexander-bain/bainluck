@@ -123,6 +123,86 @@ class TestAlertFingerprintingAndFiling:
         )
 
 
+@pytest.fixture
+def filing_rail(monkeypatch):
+    from types import SimpleNamespace
+    from app.tasks import bug_report_github as gh, sentinel_filing as rail
+
+    state = SimpleNamespace(issues=[], created=[], comments=[], read_error=None)
+    monkeypatch.setattr(gh, "GITHUB_TOKEN", "offline-test-token")
+
+    def population():
+        return rail.OpenIssuesResult(
+            ok=state.read_error is None, issues=list(state.issues), error=state.read_error,
+        )
+
+    def create(title, body, labels):
+        state.created.append((title, body, labels))
+        state.issues.append({"number": 11988, "state": "open", "body": body})
+        return 11988, "node"
+
+    monkeypatch.setattr(rail, "fetch_open_alert_issues", population)
+    monkeypatch.setattr(gh, "create_github_issue", create)
+    monkeypatch.setattr(gh, "comment_on_issue", lambda number, body: state.comments.append((number, body)))
+    monkeypatch.setattr(gh, "add_to_project_board", lambda node: None)
+    return state
+
+
+def test_changing_vacuum_readings_comment_on_the_existing_issue_without_search(filing_rail, monkeypatch):
+    import httpx
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: pytest.fail("search must not decide whether an issue exists"))
+    first = watchdog._file_watchdog_issue("vacuum_block", "postgres", "age 3736", "first observation")
+    again = watchdog._file_watchdog_issue("vacuum_block", "postgres", "age 12421", "later observation")
+    assert first["action"] == "filed" and again["action"] == "commented"
+    assert again["issue"] == 11988
+    assert len(filing_rail.created) == 1
+    assert filing_rail.comments == [(11988, "Watchdog re-observed this alert. age 12421")]
+
+
+@pytest.mark.parametrize("error", ["GitHub 503", "open alert-intake list truncated"])
+def test_unreadable_or_truncated_issue_population_never_files_a_duplicate(filing_rail, error):
+    filing_rail.read_error = error
+    result = watchdog._file_watchdog_issue("vacuum_block", "postgres", "title", "body")
+    assert result["action"] == "skipped_dedup_unavailable"
+    assert result["error"] == error
+    assert filing_rail.created == [] and filing_rail.comments == []
+
+
+@pytest.mark.parametrize("quoted", [
+    "> <!-- watchdog-alert-fingerprint:vacuum_block:postgres -->",
+    "    <!-- watchdog-alert-fingerprint:vacuum_block:postgres -->",
+    "```\n<!-- watchdog-alert-fingerprint:vacuum_block:postgres -->\n```",
+    "~~~\n<!-- watchdog-alert-fingerprint:vacuum_block:postgres -->\n~~~",
+])
+def test_quoted_markers_are_evidence_rather_than_an_alert_owner(filing_rail, quoted):
+    filing_rail.issues = [{"number": 1, "state": "open", "body": quoted}]
+    result = watchdog._file_watchdog_issue("vacuum_block", "postgres", "title", "body")
+    assert result["action"] == "filed" and len(filing_rail.created) == 1
+
+
+def test_closed_pr_and_other_condition_markers_do_not_own_the_alert(filing_rail):
+    body = "<!-- watchdog-alert-fingerprint:vacuum_block:postgres -->"
+    filing_rail.issues = [
+        {"number": 1, "state": "closed", "body": body},
+        {"number": 2, "state": "open", "body": body, "pull_request": {}},
+        {"number": 3, "state": "open", "body": "<!-- watchdog-alert-fingerprint:creation_stall:postgres -->"},
+    ]
+    assert watchdog._file_watchdog_issue("vacuum_block", "postgres", "title", "body")["action"] == "filed"
+
+
+def test_comment_failure_is_reported_and_never_creates_a_second_issue(filing_rail, monkeypatch):
+    from app.tasks import bug_report_github as gh
+    filing_rail.issues = [{"number": 11988, "state": "open", "body": "<!-- watchdog-alert-fingerprint:vacuum_block:postgres -->"}]
+
+    def fail(*args):
+        raise RuntimeError("GitHub 503")
+
+    monkeypatch.setattr(gh, "comment_on_issue", fail)
+    result = watchdog._file_watchdog_issue("vacuum_block", "postgres", "title", "body")
+    assert result["action"] == "error" and result["issue"] == 11988
+    assert filing_rail.created == []
+
+
 # ── creation-freshness ────────────────────────────────────────────────
 
 

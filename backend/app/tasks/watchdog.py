@@ -396,23 +396,39 @@ def _capture_fingerprinted(alert_class: str, provider: str, msg: str) -> None:
         logger.critical(msg)
 
 
+def _declares_watchdog_alert(body: str, declaration: str) -> bool:
+    """The legacy class/provider marker must be declared, never quoted as evidence."""
+    fence = None
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            token = stripped[:3]
+            if fence is None:
+                fence = token
+            elif fence == token:
+                fence = None
+            continue
+        if fence is None and line == declaration:
+            return True
+    return False
+
+
 def _file_watchdog_issue(alert_class: str, provider: str, title: str, body: str):
     """File OR comment ONE deduped GitHub issue per [alert_class, provider].
 
     Mirrors the flow/calibration sentinel rail (bug_report_github). Fingerprint
-    is embedded in the body so the search-based dedup finds the open issue and
+    is embedded in the body so the repository list finds the open issue and
     accretes evidence instead of spawning duplicates. No-ops (returns a reason)
     when GITHUB_TOKEN is unset so a token gap can never crash the watchdog."""
     fingerprint = f"{alert_class}:{provider}"
     try:
         from app.tasks.bug_report_github import (
             GITHUB_TOKEN,
-            REPO,
             add_to_project_board,
             comment_on_issue,
             create_github_issue,
         )
-        import httpx
+        from app.tasks.sentinel_filing import fetch_open_alert_issues
     except Exception as exc:  # pragma: no cover - import guard
         return {"action": "error", "error": f"import: {exc}"[:200]}
 
@@ -420,31 +436,27 @@ def _file_watchdog_issue(alert_class: str, provider: str, title: str, body: str)
         return {"action": "skipped_no_token", "fingerprint": fingerprint}
 
     marker = f"{_WATCHDOG_ALERT_MARKER}:{fingerprint}"
-    body = f"{body}\n\n<!-- {marker} -->"
-    # Dedup: find an open issue carrying this fingerprint marker.
-    existing = None
-    try:
-        resp = httpx.get(
-            "https://api.github.com/search/issues",
-            headers={
-                "Authorization": f"Bearer {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            params={"q": f'repo:{REPO} in:body "{marker}" state:open'},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        existing = items[0]["number"] if items else None
-    except Exception as exc:
-        logger.warning("watchdog dedup search failed (%s): %s", fingerprint, exc)
+    declaration = f"<!-- {marker} -->"
+    body = f"{body}\n\n{declaration}"
+    # #2006: GitHub search can lag newly filed issues. Reuse the existing
+    # paginated REST list; an unreadable/truncated population is not an empty one.
+    population = fetch_open_alert_issues()
+    if not population.ok:
+        logger.warning("watchdog dedup unavailable (%s): %s", fingerprint, population.error)
+        return {"action": "skipped_dedup_unavailable", "error": population.error, "fingerprint": fingerprint}
+    matches = [
+        issue["number"] for issue in population.issues
+        if issue.get("state") == "open" and "pull_request" not in issue
+        and _declares_watchdog_alert(issue.get("body") or "", declaration)
+    ]
+    existing = min(matches, default=None)
 
     if existing:
         try:
             comment_on_issue(existing, f"Watchdog re-observed this alert. {title}")
         except Exception as exc:
             logger.warning("watchdog comment failed on #%d: %s", existing, exc)
+            return {"action": "error", "issue": existing, "error": str(exc)[:200], "fingerprint": fingerprint}
         return {"action": "commented", "issue": existing, "fingerprint": fingerprint}
 
     labels = ["alert-intake", "needs-agent", "area:infra", "priority:p1"]
