@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app.tasks.flow_sentinel import discover_ladder_order_failures
 from app.tasks.polymarket import sub_market_metadata
 from app.utils.deadline_family_story import (
@@ -322,6 +324,8 @@ def test_deadline_family_out_of_order_refuses_bundle_and_serves_plain_legs():
 
 
 def test_denver_december_snow_ladder_refusal_and_drop_incoherent_rung():
+    from app.routes.futures import _format_market_detail, _format_market_summary
+
     outcomes = [
         {"id": 246319890, "name": "Above 2 inches", "probability": 0.795},
         {"id": 246319889, "name": "Above 6 inches", "probability": 0.64},
@@ -370,6 +374,66 @@ def test_denver_december_snow_ladder_refusal_and_drop_incoherent_rung():
         "Above 10 inches",
         "Above 12 inches",
     ]
+
+    stale_ts = datetime(2026, 10, 30, 19, 45, tzinfo=timezone.utc)
+    fresh_ts = datetime(2026, 11, 3, 19, 45, tzinfo=timezone.utc)
+    orm_outcomes = [
+        SimpleNamespace(
+            id=o["id"],
+            name=o["name"],
+            external_id=f"KXDENSNOWM-26DEC-{o['id']}",
+            current_probability=o["probability"],
+            current_american_odds=None,
+            rank=idx + 1,
+            rank_change_24h=None,
+            probability_change_24h=None,
+            opening_probability=o["probability"],
+            opening_american_odds=None,
+            is_winner=False,
+            resolution_source=None,
+            last_updated=stale_ts if o["name"] == "Above 6 inches" else fresh_ts,
+            price_changed_at=stale_ts if o["name"] == "Above 6 inches" else fresh_ts,
+            outcome_metadata={},
+        )
+        for idx, o in enumerate(outcomes)
+    ]
+    market = SimpleNamespace(
+        id=65536371,
+        name="Snow in Denver in Dec 2026?",
+        description=None,
+        sport=None,
+        sport_id=None,
+        event_id=None,
+        category="weather",
+        llm_sport_category="weather",
+        status="open",
+        source="kalshi",
+        external_id="KXDENSNOWM-26DEC",
+        market_type="quantity",
+        market_tier=2,
+        mutually_exclusive=False,
+        commence_time=None,
+        resolution_date=datetime(2027, 1, 1, 0, 0, tzinfo=timezone.utc),
+        outcomes=orm_outcomes,
+        category_tags=["weather"],
+        created_at=fresh_ts,
+        updated_at=fresh_ts,
+        group_id="kalshi:KXDENSNOWM-26DEC",
+        canonical_market_key=None,
+        hook_description=None,
+        image_url=None,
+        market_metadata={},
+    )
+    summary = _format_market_summary(market)
+    assert "Above 6 inches" not in [o["name"] for o in summary["top_outcomes"]]
+
+    detail = _format_market_detail(market)
+    assert detail["ladder_treatment_refused"] is True
+    assert detail["lead_outcome_id"] is None
+    assert len(detail["outcomes"]) == 6
+    by_name = {o["name"]: o for o in detail["outcomes"]}
+    assert by_name["Above 6 inches"]["probability"] == pytest.approx(0.64)
+    assert by_name["Above 6 inches"]["last_updated"] == stale_ts.isoformat()
 
 
 def test_flow_sentinel_detects_out_of_order_ladder_and_counts_refused():

@@ -451,6 +451,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // refusal, never a fallback to serve order.
   const ownLadderRungs = useMemo(() => {
     if (marketShape !== SHAPE_QUANTITY) return [];
+    if (market?.ladder_treatment_refused) return [];
     if (thresholdEntries.length > 0) return [];
     const outcomes = market?.outcomes ?? [];
     if (outcomes.length < 2) return [];
@@ -474,6 +475,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     marketShape,
+    market?.ladder_treatment_refused,
     thresholdEntries.length,
     market?.outcomes,
     market?.mutually_exclusive,

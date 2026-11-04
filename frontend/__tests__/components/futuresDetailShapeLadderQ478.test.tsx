@@ -206,4 +206,25 @@ describe("the fallbacks this must not break", () => {
     const html = render(WITH_SHAPE);
     expect(html.split(">Before April<").length - 1).toBe(1);
   });
+
+  test("a quantity market with ladder_treatment_refused lists every rung plainly instead of drawing ladder bars", () => {
+    const denver = {
+      ...WITH_SHAPE,
+      id: 65536371,
+      name: "Snow in Denver in Dec 2026?",
+      ladder_treatment_refused: true,
+      outcomes: [
+        { id: 246319890, name: "Above 2 inches", probability: 0.795 },
+        { id: 246319889, name: "Above 6 inches", probability: 0.64 },
+        { id: 246319891, name: "Above 4 inches", probability: 0.595 },
+        { id: 246319892, name: "Above 8 inches", probability: 0.4 },
+        { id: 246319893, name: "Above 10 inches", probability: 0.37 },
+        { id: 246319894, name: "Above 12 inches", probability: 0.28 },
+      ],
+    };
+    const html = render(denver);
+    expect(html).toContain('data-testid="outcome-row"');
+    expect(html).toContain(">Above 6 inches<");
+    expect(html).not.toContain('aria-label="Above 6 inches:');
+  });
 });
