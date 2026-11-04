@@ -3931,6 +3931,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
                 "resnapshots=%d quote_priority=%d probe_refused=%d "
                 "bundled_refused=%d parked=%d history_points=%d "
+                "history_keepalive=%d history_keepalive_errors=%d "
                 "history_capped=%d history_skipped=%d history_refused=%d "
                 "history_errors=%d skipped_locked=%d | %s",
                 stats["price_updates"], stats["flushes"],
@@ -3962,6 +3963,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # inside 5 min); settled/graded refusals; failed inserts.
                 # Cumulative for the run, like `updates`.
                 stream_history.stats["history_points"],
+                # #11929 keep-alive: points for live legs whose price sat
+                # still 15 min (`keepalive_pass` below); failed passes.
+                stream_history.stats["history_keepalive"],
+                stream_history.stats["history_keepalive_errors"],
                 stream_history.stats["history_capped"],
                 stream_history.stats["history_skipped"],
                 stream_history.stats["history_refused"],
@@ -3983,6 +3988,36 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 stamped=blend["stamped"],
                 no_reading=blend["no_reading"],
             )
+            # #11929 keep-alive: its own session and transaction, after the
+            # minute line, outside the flush gate. Failures are counted inside.
+            if stream_history.keepalive:
+                try:
+                    await stream_history.keepalive_pass(
+                        get_task_session, await keepalive_legs(),
+                    )
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    stream_history.stats["history_keepalive_errors"] += 1
+                    logger.warning("Kalshi WS: keep-alive pass failed", exc_info=True)
+
+    async def keepalive_legs():
+        """#11929: (outcome_id, market_id) of every leg a SUBSCRIBED connection
+        carries now — game clients through the slate map, open-contract clients
+        through theirs. A ticker that left scope is unmapped, so not live; a
+        disconnected client's legs are not being read, so no point."""
+        legs = []
+        for clients, ids in (
+            (list(game_clients), ticker_to_ids),
+            (list(open_clients), open_contract_ids),
+        ):
+            for client in clients:
+                if not getattr(client.sock, "is_subscribed", False):
+                    continue
+                for ticker in client.tickers:
+                    pair = ids.get(ticker)
+                    if pair is not None:
+                        legs.append((pair[1], pair[0]))
+                await asyncio.sleep(0)
+        return legs
 
     flush_task = asyncio.create_task(flush_loop(), name="kalshi-flush-loop")
     stats_task = asyncio.create_task(stats_loop(), name="kalshi-stats-loop")
