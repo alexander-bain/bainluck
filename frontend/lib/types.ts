@@ -1406,15 +1406,6 @@ export interface FuturesHistoryResponse {
   auto_extended?: boolean;
   /** True if fewer than 10 total data points (very sparse) */
   sparse?: boolean;
-  /** #11929 — present only when a line longer than the chart's plot was served as
-   *  the last real observation per `bucket_seconds` slice. Not read by the chart. */
-  resolution?: {
-    bucket_seconds: number;
-    max_points_per_line: number;
-    lines_thinned: number;
-    points_before: number;
-    points_served: number;
-  } | null;
   /** #683 — the server's account of what the Kalshi archive served, present only
    *  when the archive store answered. Metadata: the chart labels archive points
    *  from the points themselves (`lib/archiveHistory.ts`), never from this block. */
