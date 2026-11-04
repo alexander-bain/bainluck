@@ -2273,7 +2273,7 @@ def regenerate_tags_task(self, limit: int = 5000, category: str = None):
 
 @celery_app.task(bind=True, name="app.tasks.mark_resolved_futures")
 def mark_resolved_futures(self):
-    """Mark futures markets as resolved when their resolution_date has passed."""
+    """Resolve venue winners; Kalshi never resolves from a stored date alone."""
     from app.tasks.futures import _mark_resolved_impl
     return run_async(_mark_resolved_impl())
 
