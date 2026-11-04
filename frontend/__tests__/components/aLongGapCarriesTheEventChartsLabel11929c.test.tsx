@@ -12,16 +12,19 @@
  * 33 connectors and 22 dots. The fixtures below are those shapes.
  *
  * Pinned, every case a pair:
- *   • a hole renders the caption's own sentence over the gap and no connector;
+ *   • a hole wide enough for its sentence renders it inside the gap and no
+ *     connector;
+ *   • a hole too narrow for its sentence renders NO label and keeps its faint
+ *     bridge — a label never covers readings (production 2026-11-04: Denver's
+ *     3-day hole at the right edge slid its label left over a week of data);
  *   • a sub-threshold gap draws one continuous line and no label;
- *   • several holes → several labels, each over its own hole;
+ *   • several holes → a label inside each hole wide enough, a bridge across
+ *     each one that is not;
  *   • lone real points stay dots;
  *   • a settled line still ends at its last real observation, with its result
  *     mark there, and its settlement point never opens a labelled hole;
  *   • control: a dense series renders exactly as on B's branch.
  *
- * This file imports nothing that #11929 C adds, so on the base every
- * assertion below runs and the label assertions fail on their own.
  * Fixed anchors throughout — never Date.now() (gotcha #44).
  */
 
@@ -29,6 +32,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { FuturesChart } from "../../components/FuturesChart";
+import { gapLabelWidth } from "../../lib/chartGapLabels";
 import type { FuturesHistoryPoint, FuturesOutcomeHistory } from "../../lib/types";
 
 const MIN = 60 * 1000;
@@ -126,8 +130,13 @@ function widestStride(d: string): number {
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
-/** Hourly captures with ONE 37 h hole in the middle — Alex's own example. */
-const ONE_HOLE = one(at([...hourly(0, 60), ...hourly(97, 167)], (i) => 0.4 + (i % 4) / 100));
+/**
+ * Hourly captures with ONE 37 h hole in the middle — Alex's own example — on a
+ * 97 h window, so the hole is 38% of the plot (278 units) and its 250-unit
+ * sentence fits inside it. On a full week the same hole is 161 units: too
+ * narrow, so it would keep its bridge instead (pinned below).
+ */
+const ONE_HOLE = one(at([...hourly(70, 100), ...hourly(137, 167)], (i) => 0.4 + (i % 4) / 100));
 
 /** The same week with a 90 min skipped beat instead — under the 2 h floor. */
 const SKIPPED_BEAT = one(
@@ -164,10 +173,14 @@ const DENVER = one(
   "Above 8 inches",
 );
 
-/** Three holes, far apart on a long window, each wide enough to label. */
+/**
+ * Three holes on one line: 70 h, 35 h, 70 h over a 195 h window. The two 70 h
+ * holes are 262 units, room for "No numbers for 3 days in this stretch" (237);
+ * the 35 h hole between them is 131 units, too narrow for its sentence.
+ */
 const THREE_HOLES = one(
   at(
-    [...hourly(0, 20), ...hourly(60, 80), ...hourly(120, 140), ...hourly(180, 200)],
+    [...hourly(0, 5), ...hourly(75, 80), ...hourly(115, 120), ...hourly(190, 195)],
     (i) => 0.5 + (i % 3) / 100,
   ),
 );
@@ -188,8 +201,8 @@ describe("#11929 C — a hole carries the caption's sentence, not a connector", 
     expect(caption(html)).toBe(label.text);
 
     // Over the gap: centred on the stretch between the two bracketing readings.
-    expect(label.from).toBe(new Date(START + 60 * HOUR).toISOString());
-    expect(label.to).toBe(new Date(START + 97 * HOUR).toISOString());
+    expect(label.from).toBe(new Date(START + 100 * HOUR).toISOString());
+    expect(label.to).toBe(new Date(START + 137 * HOUR).toISOString());
     expect(label.toX - label.fromX).toBeGreaterThan(100);
     expect(label.x).toBeCloseTo((label.fromX + label.toX) / 2, 6);
     // Inside the plot frame (top 20, floor 160 at the default height).
@@ -257,41 +270,121 @@ describe("#11929 C — a gap under the threshold is one line", () => {
 });
 
 describe("#11929 C — several holes, several labels", () => {
-  test("three far-apart holes: three labels, each over its own hole, none overlapping", () => {
+  test("three holes: a label inside each wide one, none overlapping; the narrow one keeps its bridge", () => {
     const html = render(THREE_HOLES);
     const ls = labels(html);
 
     expect(ls.map((l) => l.text)).toEqual([
-      "No numbers for 40 hours in this stretch",
-      "No numbers for 40 hours in this stretch",
-      "No numbers for 40 hours in this stretch",
+      "No numbers for 3 days in this stretch",
+      "No numbers for 3 days in this stretch",
     ]);
-    expect(new Set(ls.map((l) => l.from)).size).toBe(3);
+    expect(ls.map((l) => l.from)).toEqual([
+      new Date(START + 5 * HOUR).toISOString(),
+      new Date(START + 120 * HOUR).toISOString(),
+    ]);
     for (const l of ls) {
-      expect(l.x).toBeGreaterThanOrEqual(l.fromX);
-      expect(l.x).toBeLessThanOrEqual(l.toX);
+      const w = gapLabelWidth(l.text);
+      expect(l.x - w / 2).toBeGreaterThanOrEqual(l.fromX);
+      expect(l.x + w / 2).toBeLessThanOrEqual(l.toX);
     }
-    expect(connectors(html)).toEqual([]);
+    // The 35 h hole (80 → 115) carries no label but its faint bridge.
+    const bridged = connectors(html);
+    expect(bridged).toHaveLength(1);
+    const xAt = (h: number) => 50 + (h / 195) * 730;
+    expect(Math.min(...xs(bridged[0].d))).toBeCloseTo(xAt(80), 6);
+    expect(Math.max(...xs(bridged[0].d))).toBeCloseTo(xAt(115), 6);
     expect(solid(html)).toHaveLength(4);
   });
 
-  test("Denver snow: every hole is a break, no connector; the largest is labelled", () => {
+  test("Denver snow: every hole is a break; none is wide enough for its sentence, so none is labelled and each keeps its bridge", () => {
+    // 15.6–19 h holes on a 123 h window are 93–113 units; the sentence is ~250.
     const html = render(DENVER);
-    const ls = labels(html);
 
-    expect(connectors(html)).toEqual([]);
+    expect(labels(html)).toEqual([]);
+    expect(html).not.toContain("futures-chart-gap-labels");
+    expect(connectors(html)).toHaveLength(4);
     // Four holes → five pieces (one of them the lone reading).
     expect(solid(html)).toHaveLength(5);
-    expect(ls.length).toBeGreaterThanOrEqual(1);
-    expect(ls.length).toBeLessThanOrEqual(4);
-    expect(ls.map((l) => l.text)).toContain("No numbers for 19 hours in this stretch");
-    // Every label names a distinct hole and sits in the plot.
-    expect(new Set(ls.map((l) => l.from)).size).toBe(ls.length);
-    for (const l of ls) {
-      expect(l.y).toBeGreaterThan(20);
-      expect(l.y).toBeLessThan(160);
-    }
   });
+});
+
+// ── guard: a label never covers readings (production 2026-11-04) ─────────────
+
+/**
+ * Denver December snow (`/futures/65536371`) at 390 px after C shipped: a 3-day
+ * hole at the RIGHT edge, narrower than its sentence, so centre-then-clamp slid
+ * "No numbers for 3 days in this stretch" left over a week of real readings.
+ * Another board clamped its label onto the y-axis — the LEFT-edge mirror.
+ *
+ * Both fixtures: a 30-day venue-bank line ending at NOW (2 h readings, the 12 h floor), one
+ * 11-day hole in the middle wide enough for its sentence (268 units vs 243),
+ * and one 3-day hole at the edge (73 units) that is not.
+ */
+const bank = { bookmaker: "kalshi", provenance: "venue_history" } as const;
+const every2h = (from: number, to: number) =>
+  Array.from({ length: Math.floor((to - from) / 2) + 1 }, (_, i) => from + 2 * i);
+/** The 30-day window opens here and closes at NOW. */
+const START_30D = NOW - 720 * HOUR;
+const on30d = (hours: readonly number[]) =>
+  hours.map((h, i) => pt(START_30D + h * HOUR, 0.3 + (i % 7) / 100, bank));
+const DENVER_RIGHT_EDGE = one(
+  on30d([...every2h(0, 300), ...every2h(564, 640), ...every2h(712, 720)]),
+  "Above 8 inches",
+);
+const DENVER_LEFT_EDGE = one(
+  on30d([...every2h(0, 8), ...every2h(80, 156), ...every2h(420, 720)]),
+  "Above 8 inches",
+);
+/** x of an hour offset on the 720 h window. */
+const x720 = (h: number) => 50 + (h / 720) * 730;
+
+/** Every x where the chart draws a real reading: solid-run vertices and lone dots. */
+function readingXs(html: string): number[] {
+  const fromRuns = solid(html).flatMap((p) => xs(p.d));
+  const fromDots = dots(html).map((tag) => Number(/\bcx="([^"]*)"/.exec(tag)![1]));
+  return [...fromRuns, ...fromDots];
+}
+
+describe("#11929 C guard — a label sits inside its own hole, never over readings", () => {
+  for (const [name, data, narrow, wide] of [
+    ["right edge (Denver 65536371)", DENVER_RIGHT_EDGE, [640, 712], [300, 564]],
+    ["left edge (the y-axis clamp)", DENVER_LEFT_EDGE, [8, 80], [156, 420]],
+  ] as const) {
+    test(`${name}: no "No numbers" text over any reading`, () => {
+      const html = render(data);
+      const readings = readingXs(html);
+      expect(readings.length).toBeGreaterThan(100);
+      for (const l of labels(html)) {
+        const w = gapLabelWidth(l.text);
+        const covered = readings.filter((x) => x > l.x - w / 2 && x < l.x + w / 2);
+        expect({ label: l.text, covered }).toEqual({ label: l.text, covered: [] });
+      }
+    });
+
+    test(`${name}: the narrow hole has no label and draws its faint bridge`, () => {
+      const html = render(data);
+      const from = new Date(START_30D + narrow[0] * HOUR).toISOString();
+      expect(labels(html).filter((l) => l.from === from)).toEqual([]);
+      const bridged = connectors(html);
+      expect(bridged).toHaveLength(1);
+      expect(Math.min(...xs(bridged[0].d))).toBeCloseTo(x720(narrow[0]), 6);
+      expect(Math.max(...xs(bridged[0].d))).toBeCloseTo(x720(narrow[1]), 6);
+    });
+
+    test(`${name}: the wide hole carries its label, centred within the hole`, () => {
+      const html = render(data);
+      const [l, ...rest] = labels(html);
+      expect(rest).toEqual([]);
+      expect(l.text).toBe("No numbers for 11 days in this stretch");
+      expect(l.from).toBe(new Date(START_30D + wide[0] * HOUR).toISOString());
+      expect(l.to).toBe(new Date(START_30D + wide[1] * HOUR).toISOString());
+      expect(l.x).toBeCloseTo((x720(wide[0]) + x720(wide[1])) / 2, 6);
+      const w = gapLabelWidth(l.text);
+      expect(l.x - w / 2).toBeGreaterThanOrEqual(x720(wide[0]));
+      expect(l.x + w / 2).toBeLessThanOrEqual(x720(wide[1]));
+      expect(caption(html)).toBe(l.text);
+    });
+  }
 });
 
 describe("#11929 C — what must not move", () => {

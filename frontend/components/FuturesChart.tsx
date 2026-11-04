@@ -11,7 +11,7 @@ import { anchorScrollLeft, edgeOverflowFor, seriesMovementMarks } from "@/lib/ch
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness, venueBankGapFloorMs } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
-import { placeGapLabels } from "@/lib/chartGapLabels";
+import { holeIsLabelled, placeGapLabels } from "@/lib/chartGapLabels";
 import {
   settlementResultWord,
   splitSettlementPoints,
@@ -908,12 +908,13 @@ export function FuturesChart({
               // <path> with exactly the attributes it emitted before, so the
               // six surfaces that plot healthy series see no markup change at
               // all. Bridges render first so the solid runs paint over them.
-              // #11929 cause C: bridges are `mini` only. A full chart draws
-              // NOTHING across a hole — a connector, dotted or stepped, reads as
-              // a movement — and names it with a label instead (`gapLabels`).
+              // #11929 cause C: a full chart names a hole with a label instead
+              // of a connector (`gapLabels`). A hole too narrow for its sentence
+              // gets no label (a label never covers readings), so it keeps the
+              // faint bridge, as `mini` does: no hole is left unexplained.
               return (
                 <Fragment key={outcome.outcome_id}>
-                  {mini && bridges.map((d, b) => (
+                  {bridges.map((d, b) => (mini || !holeIsLabelled(path.holes[b], gapLabels)) && (
                     <path
                       key={`gap-${b}`}
                       d={d}
