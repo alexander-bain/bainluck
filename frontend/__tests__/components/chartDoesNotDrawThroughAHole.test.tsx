@@ -30,6 +30,12 @@
  *
  * Every case is a pair, for the reason #2961 gave: a chart that always breaks
  * its line has moved the problem, not fixed it.
+ *
+ * #11929 C (Alex, 2026-11-03): the faint dotted bridge #3659 put across the
+ * hole is gone from the full chart — a connector reads as a movement — and the
+ * hole carries the caption's own sentence instead (`lib/chartGapLabels.ts`).
+ * The "a void would read as a rendering failure" argument below is answered by
+ * the label, not by a stroke.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -99,6 +105,18 @@ function xs(d: string): number[] {
   return [...d.matchAll(/[MLH] (-?[\d.]+)/g)].map((m) => Number(m[1]));
 }
 
+/** The in-plot hole labels (#11929 C): text, centre x, and the stretch named. */
+function gapLabels(html: string) {
+  return [...html.matchAll(/<text[^>]*data-testid="futures-chart-gap-label"[^>]*>([^<]*)<\/text>/g)].map(
+    (m) => ({
+      text: m[1],
+      x: Number(/\sx="([^"]*)"/.exec(m[0])![1]),
+      fromX: Number(/data-gap-from-x="([^"]*)"/.exec(m[0])![1]),
+      toX: Number(/data-gap-to-x="([^"]*)"/.exec(m[0])![1]),
+    }),
+  );
+}
+
 /** The widest jump between consecutive x's on a single path. */
 function widestStride(d: string): number {
   const seq = xs(d);
@@ -115,19 +133,15 @@ describe("#3659 FuturesChart — the solid line does not cross the hole", () => 
     expect(seriesPaths(html).length).toBeGreaterThan(1);
   });
 
-  test("no fully-opaque stroke spans the hole", () => {
+  test("no stroke spans the hole — the hole is named instead", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
     const drawn = seriesPaths(html);
 
-    // Something has to cross it — the plot is ~93% hole and a void would read
-    // as a rendering failure — so the test is not "nothing crosses". It is that
-    // whatever crosses is not wearing the clothes of data.
-    const crossing = drawn.filter((p) => widestStride(p.d) > 100);
-    expect(crossing.length).toBeGreaterThan(0);
-    for (const p of crossing) {
-      expect(p.opacity).toBeLessThan(0.5);
-      expect(p.dash).not.toBeNull();
-    }
+    // #3659 put a faint dotted stroke across it so the ~93%-hole plot would not
+    // read as a rendering failure. #11929 C: nothing crosses it at all — any
+    // stroke there reads as a movement — and the label says what the void is.
+    expect(drawn.filter((p) => widestStride(p.d) > 100)).toEqual([]);
+    expect(gapLabels(html)).toHaveLength(1);
 
     const solid = drawn.filter((p) => p.opacity === 1);
     expect(solid.length).toBeGreaterThan(0);
@@ -157,7 +171,9 @@ describe("#3659 FuturesChart — the solid line does not cross the hole", () => 
     // "14 days". What this test is actually about — one threshold driving both
     // the caption and the break — is untouched; only the printed number moved.
     expect(html).toContain("No numbers for 15 days in this stretch");
-    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(1);
+    // #11929 C: and the label over the hole says the same sentence.
+    expect(gapLabels(html).map((l) => l.text)).toEqual(["No numbers for 15 days in this stretch"]);
+    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(0);
   });
 
   test("when the caption is talking about something ELSE, the line still breaks", () => {
@@ -188,19 +204,22 @@ describe("#3659 FuturesChart — the solid line does not cross the hole", () => 
     jest.setSystemTime(NOW);
 
     expect(html).toContain('data-series-state="stale"');
-    expect(html).not.toContain("No numbers for");
-    // The caption has gone quiet about the hole. The line has not.
-    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(1);
+    expect(html).not.toMatch(/data-testid="futures-chart-freshness"[^>]*>No numbers for/);
+    // The caption has gone quiet about the hole. The line has not — and since
+    // #11929 C the hole says so in words, over the hole itself.
+    expect(gapLabels(html).map((l) => l.text)).toEqual(["No numbers for 15 days in this stretch"]);
+    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(0);
   });
 
-  test("the bridge covers the hole the caption measured, not some other gap", () => {
+  test("the label sits over the hole the caption measured, not some other gap", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
-    const bridge = seriesPaths(html).find((p) => p.dash === "1 5")!;
-    const span = widestStride(bridge.d);
+    const [label] = gapLabels(html);
 
-    // 345.6h of a 363.6h domain across 730px of plot: the bridge is ~95% of the
+    // 345.6h of a 363.6h domain across 730px of plot: the hole is ~95% of the
     // drawable width, because the hole very nearly IS this chart.
-    expect(span / 730).toBeGreaterThan(0.9);
+    expect((label.toX - label.fromX) / 730).toBeGreaterThan(0.9);
+    expect(label.x).toBeGreaterThan(label.fromX);
+    expect(label.x).toBeLessThan(label.toX);
   });
 });
 

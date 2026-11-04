@@ -76,6 +76,12 @@ export interface PlottedPoint {
   y: number;
 }
 
+/** One hole: the real observation before it and the real observation after it. */
+export interface ChartHole {
+  from: PlottedPoint;
+  to: PlottedPoint;
+}
+
 export interface ChartSeriesPath {
   /**
    * One `d` string per run of observations with no hole in it. Drawn solid —
@@ -92,6 +98,17 @@ export interface ChartSeriesPath {
    * nobody observed between two distant real points.
    */
   bridges: string[];
+  /**
+   * The same holes as `bridges`, one per hole and in the same order, as the two
+   * real observations that bracket each one.
+   *
+   * #11929 (cause C): a full chart no longer draws the bridge at all — a
+   * connector across a hole, dotted or not, reads as a movement — and labels
+   * the hole in words instead (`lib/chartGapLabels.ts`). It needs the hole's
+   * instants and pixels, not a `d` string, and taking them from HERE keeps the
+   * one threshold that breaks the line as the one that decides what is labelled.
+   */
+  holes: ChartHole[];
   /**
    * The observations that stand alone — every run of exactly one point, in the
    * order they occur. A subset of what `runs` already describes, named
@@ -143,9 +160,9 @@ export function chartSeriesPath(
   points: readonly PlottedPoint[],
   { step = false, gapFloorMs }: { step?: boolean; gapFloorMs?: number } = {},
 ): ChartSeriesPath {
-  if (points.length === 0) return { runs: [], bridges: [], dots: [] };
+  if (points.length === 0) return { runs: [], bridges: [], holes: [], dots: [] };
   if (points.length === 1) {
-    return { runs: [runFrom(points, step)], bridges: [], dots: [points[0]] };
+    return { runs: [runFrom(points, step)], bridges: [], holes: [], dots: [points[0]] };
   }
 
   // #11929: `gapFloorMs` is the caller's — a venue-bank line's 12 h joint.
@@ -155,11 +172,12 @@ export function chartSeriesPath(
   // honest move is to draw exactly what we drew yesterday rather than to invent
   // a threshold, so this returns the old single run unchanged.
   if (threshold === null) {
-    return { runs: [runFrom(points, step)], bridges: [], dots: [] };
+    return { runs: [runFrom(points, step)], bridges: [], holes: [], dots: [] };
   }
 
   const runs: string[] = [];
   const bridges: string[] = [];
+  const holes: ChartHole[] = [];
   const dots: PlottedPoint[] = [];
   let current: PlottedPoint[] = [points[0]];
 
@@ -177,6 +195,7 @@ export function chartSeriesPath(
       bridges.push(
         `M ${points[i - 1].x} ${points[i - 1].y} ${segmentTo(points[i], true)}`,
       );
+      holes.push({ from: points[i - 1], to: points[i] });
       current = [points[i]];
     } else {
       current.push(points[i]);
@@ -184,5 +203,5 @@ export function chartSeriesPath(
   }
   close(current);
 
-  return { runs, bridges, dots };
+  return { runs, bridges, holes, dots };
 }

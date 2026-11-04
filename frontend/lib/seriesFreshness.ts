@@ -246,6 +246,21 @@ export function formatGapSpan(ms: number): string {
 }
 
 /**
+ * "No numbers for 19 hours in this stretch" — the one sentence a hole is
+ * confessed in.
+ *
+ * #11929 (cause C). Split out of `seriesFreshness`'s `gapped` arm so the caption
+ * under a chart and the label a chart prints over each hole are the SAME string
+ * from the same code: wording, units and the round-up rule of `formatGapSpan`
+ * cannot drift between them. Before this, the event chart's caption said it in
+ * words and the futures line said it with a dotted connector that read as a
+ * movement nobody observed.
+ */
+export function gapNote(ms: number): string {
+  return `No numbers for ${formatGapSpan(ms)} in this stretch`;
+}
+
+/**
  * "29d" / "6h" / "20m" — the window a COLUMN of series actually covers, or
  * `null` when nothing in it can be dated.
  *
@@ -414,7 +429,7 @@ export function seriesFreshness(
     return {
       ...base,
       state: "gapped",
-      note: `No numbers for ${formatGapSpan(largestGapMs)} in this stretch`,
+      note: gapNote(largestGapMs),
     };
   }
 
