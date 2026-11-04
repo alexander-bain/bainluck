@@ -214,18 +214,28 @@ def _extract_blended_leader(
     if not (isinstance(home_name, str) and home_name.strip() and isinstance(away_name, str) and away_name.strip()):
         return None
 
+    from app.utils.graded_card import rendered_percent
+
     home_label = _team_short_label(card.get("home_team_data"), home_name)
     away_label = _team_short_label(card.get("away_team_data"), away_name)
-    if hp >= ap:
+    home_pct = rendered_percent(hp)
+    away_pct = rendered_percent(ap)
+    tied = home_pct is not None and away_pct is not None and home_pct == away_pct
+    if tied:
+        leader_prob = max(hp, ap)
+        leader_label = f"{away_label} and {home_label}"
+        row_label = f"{away_label} at {home_label}"
+    elif hp > ap:
         leader_prob = hp
         leader_label = home_label
+        row_label = f"{away_label} at {home_label}: {leader_label}"
     else:
         leader_prob = ap
         leader_label = away_label
+        row_label = f"{away_label} at {home_label}: {leader_label}"
 
     observed_at = card.get("hero_probability_observed_at")
     observed_str = str(observed_at) if isinstance(observed_at, str) and observed_at.strip() else None
-    row_label = f"{away_label} at {home_label}: {leader_label}"
     return leader_prob, leader_label, row_label, observed_str
 
 
