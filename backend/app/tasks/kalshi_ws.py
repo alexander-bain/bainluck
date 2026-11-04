@@ -1521,6 +1521,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     )
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+    # #10090 market previews: a held market's buffered price, published at
+    # arrival on its `live:market:<id>` channel (`utils/market_preview`). No
+    # database work: the ids are this run's maps, the settled test is the
+    # run's own `prices.settled_market_ids`, Redis is the refresher's client.
+    # Reached through the refresher, like `held_quotes`: no new name.
+    from app.utils.market_preview import MarketPreviewPublisher
+
+    blend_refresher.market_preview = MarketPreviewPublisher(
+        "kalshi", lambda: blend_refresher._client(),
+        refused=lambda market_id: market_id in prices.settled_market_ids,
+    )
     # #10090: when this arm is the named preview source, claim its display
     # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
     if getattr(blend_refresher, "preview", False):
@@ -3201,6 +3212,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         async with buffer_lock:
             primary_quote_custody.receive(outcome_id, msg)
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
+            # #10090: the buffered price, to a held market's readers now (no I/O
+            # here; one drain task publishes). Linked and open contracts alike.
+            preview = getattr(blend_refresher, "market_preview", None)
+            if preview is not None:
+                preview.note(market_id, outcome_id, prob)
             if getattr(blend_refresher, "preview_events", ()):
                 note_observation_continuity(outcome_id, ticker, (prob, yes_bid, yes_ask))
             # Under the lock, so seq order is buffer order. Never raises into
@@ -3403,6 +3419,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # #5411 guard anyway; dropping it keeps the count honest.
             async with buffer_lock:
                 price_buffer.pop(outcome_id, None)
+                # #10090: nor is a graded leg ever previewed again.
+                preview = getattr(blend_refresher, "market_preview", None)
+                if preview is not None:
+                    preview.refuse_outcome(outcome_id)
                 # #10090: and no held quote outlives it (no phase will carry
                 # this leg again to release it). The grade advanced
                 # `last_updated`, so the overlay already refuses it meanwhile.

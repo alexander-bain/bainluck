@@ -10,6 +10,7 @@ import {
   adoptPriceCards, groupedLeaves, marketResolved, priceKey, projectPriceGroups,
   reconcilePriceBook, type PriceBook,
 } from '@/lib/discover/priceRefresh';
+import { useMarketPreviews } from './useMarketPreviews';
 import { useMarketStream } from './useMarketStream';
 
 /** Price bodies are projected AFTER editorial ranking/filtering/grouping. */
@@ -68,10 +69,14 @@ export function useDiscoverPriceStream(groups: DiscoverGroupedItem[], principal:
 
   const visibleSignature = leaves.map(priceKey).sort().join(',');
   useEffect(() => { invalidate(); }, [visibleSignature, invalidate, principal]);
+  const streamedMarkets = leaves.filter(item => item.type === 'futures' && !marketResolved(item.data as FeedFuturesData))
+    .map(item => (item.data as FeedFuturesData).id);
+  // #10090: a futures card in view shows its venue's move at arrival.
+  const marketPreviews = useMarketPreviews(streamedMarkets);
   useMarketStream({
-    marketIds: leaves.filter(item => item.type === 'futures' && !marketResolved(item.data as FeedFuturesData))
-      .map(item => (item.data as FeedFuturesData).id),
+    marketIds: streamedMarkets,
     enabled: true, onInvalidate: invalidate,
+    onPreview: marketPreviews.onPreview, onPreviewReset: marketPreviews.onPreviewReset,
   });
 
   const eventKey = leaves.filter(item => item.type === 'event' && ['live', 'scheduled', 'suspended'].includes((item.data as FeedEventData).status))
@@ -110,5 +115,8 @@ export function useDiscoverPriceStream(groups: DiscoverGroupedItem[], principal:
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', sync); close(); };
   }, [eventKey, invalidate, principal]);
 
-  return { items: projected, setPriceVisibility };
+  // The price book, the dispatcher and adoption all keep reading `projected`:
+  // a preview is never a committed price.
+  const items = useMemo(() => marketPreviews.overlay(projected), [marketPreviews, projected]);
+  return { items, setPriceVisibility };
 }
