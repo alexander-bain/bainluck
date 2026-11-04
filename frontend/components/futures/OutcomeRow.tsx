@@ -448,6 +448,7 @@ export default function OutcomeRow({
   // it — never `isResolved && outcome.is_winner === X`, which counts a defaulted
   // `false` as a grader's verdict.
   const verdict = outcomeRowVerdict(outcome, isResolved);
+  const noCurrentPrice = !isResolved && verdict === null && outcome.probability == null;
   // #698 — a settled row with NO result to state. Not the ungraded/live
   // fallback below: it says "Result unknown", labels a finite price as the LAST
   // RECORDED one, never prints a final 0%/100%, a win/loss tint or a move, and
@@ -739,7 +740,7 @@ export default function OutcomeRow({
               settlement is self-justifying), so `verdict` is no longer always
               null when `!isResolved` — keyed off `isResolved` this label would
               now print "Latest" directly above a `100% / Settled` cell. */}
-          {verdict === null && !(resultUnknown && outcome.probability == null) && (
+          {verdict === null && !noCurrentPrice && !(resultUnknown && outcome.probability == null) && (
             <div className="text-[10px] uppercase tracking-wide text-text-muted">
               {resultUnknown ? "Last recorded" : "Latest"}
             </div>
@@ -762,7 +763,14 @@ export default function OutcomeRow({
                 Settled
               </div>
             </>
-          ) : resultUnknown && outcome.probability == null ? null : (
+          ) : resultUnknown && outcome.probability == null ? null : noCurrentPrice ? (
+            <div
+              data-testid="outcome-current-unavailable"
+              className="text-xs text-text-secondary"
+            >
+              No current price
+            </div>
+          ) : (
             <>
               <div
                 data-testid="outcome-price"
