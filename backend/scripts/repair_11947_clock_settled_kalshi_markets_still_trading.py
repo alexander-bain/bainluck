@@ -19,6 +19,7 @@ date-only modes never write prices, price clocks, snapshots or history.
 market whose original retraction is proved by this repair's banked before-image.
 It requires --only-ids and preserves that original backup while banking the
 date-repair before-image alongside it in the same row and transaction.
+This restores fallback eligibility; socket admission keeps its existing rules.
 
 --withdraw-refused-quotes implements Alex's #11980 no-current-price decision
 for the six reviewed outcome ids below, and no others. Fresh venue evidence
