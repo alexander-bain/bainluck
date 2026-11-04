@@ -61,9 +61,7 @@ test("field top three retain their served shares of all 24, with the rest reacha
 
 test("a duel reuses the actual two-sided event hero and chart-card composition", () => {
   const html = render(asDetail(duel.detail));
-  expect(
-    html.match(/data-hero-digits=""/g) ?? [],
-  ).toHaveLength(2);
+  expect(html.match(/data-hero-digits=""/g) ?? []).toHaveLength(2);
   expect(html).toContain("Adam Hamilton");
   expect(html).toContain("Roger Marshall");
   expect(html).toContain('data-testid="win-probability-card"');
@@ -156,4 +154,22 @@ test("the server renders the answer while reader-timezone chart labels wait for 
   expect(html).toContain("Closest Governor race in 2026");
   expect(html).toContain("Loading probability history");
   expect(html).not.toContain("Recorded chart");
+});
+
+test("a stale one-leg study waits for the browser timezone before rendering its exact age stamp", () => {
+  const data: PrototypeData = {
+    detail: asDetail(oneLeg.detail),
+    history: [],
+    sources: ["kalshi"],
+    related: [],
+    capturedAt: "2026-11-04T02:33:00Z",
+    historyNote: null,
+    settledAt: null,
+  };
+  const html = renderToStaticMarkup(
+    <Prototype data={data} initialStudy="open" />,
+  );
+  expect(html).toContain("58");
+  expect(html).not.toContain('data-testid="price-age-mark"');
+  expect(html).not.toContain("Last number:");
 });

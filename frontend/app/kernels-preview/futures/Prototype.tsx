@@ -10,7 +10,6 @@ import EventLeaderboard from "@/components/event/EventLeaderboard";
 import MatchupsRail from "@/components/event/MatchupsRail";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
-import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import { SettledMark } from "@/components/SettledOutcomeMark";
 import {
   availableRanges,
@@ -31,6 +30,13 @@ import {
   type StudyState,
 } from "./_model";
 import styles from "./prototype.module.css";
+
+// The shared mark's exact stamp uses the reader's timezone. Keep that text
+// out of server HTML, as with the shared history kernel below.
+const PriceAgeMark = dynamic(
+  () => import("@/components/event/PriceAgeMark").then((m) => m.PriceAgeMark),
+  { ssr: false },
+);
 
 // Event composition's fixed-domain winner/settled journey kernel. OddsChart's
 // automatic Y scale conflicts with this prototype's explicit 0–100 requirement.
