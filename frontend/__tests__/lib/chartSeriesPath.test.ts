@@ -150,16 +150,10 @@ describe("#3659 chartSeriesPath — a hole is not drawn through", () => {
       360.5, 361.5, 362.5, 363.5,
       369.6, 370.6, 371.6, 372.6,
     ]);
-    const { runs, bridges, holes } = chartSeriesPath(points);
+    const { runs, bridges } = chartSeriesPath(points);
 
     expect(bridges).toHaveLength(3);
     expect(runs).toHaveLength(4);
-    // #11929 C: one hole per bridge, in order, bracketed by the real readings.
-    expect(holes.map((h) => [h.from, h.to])).toEqual([
-      [points[5], points[6]],
-      [points[9], points[10]],
-      [points[13], points[14]],
-    ]);
   });
 
   test("a fast series is not split by a lapse smaller than the 2h floor", () => {
@@ -180,14 +174,13 @@ describe("#3659 chartSeriesPath — a hole is not drawn through", () => {
 
 describe("#3659 chartSeriesPath — every input produces an answer", () => {
   test("no points", () => {
-    expect(chartSeriesPath([])).toEqual({ runs: [], bridges: [], holes: [], dots: [] });
+    expect(chartSeriesPath([])).toEqual({ runs: [], bridges: [], dots: [] });
   });
 
   test("one point is a dot", () => {
     expect(chartSeriesPath(at([0]))).toEqual({
       runs: [`M 50 100 L 50 100`],
       bridges: [],
-      holes: [],
       dots: [at([0])[0]],
     });
   });
