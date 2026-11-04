@@ -126,7 +126,18 @@ describe("#10357 round-up model", () => {
       ["no footer", { ...base(), footer: " " }, "no_footer"],
       ["no kicker", { ...base(), kicker: "" }, "no_kicker"],
       ["two rows", { ...base(), rows: base().rows.slice(0, 2) }, "row_count"],
-      ["five rows", { ...base(), rows: [...base().rows, { ...base().rows[0], market_id: 99 }] }, "row_count"],
+      [
+        "six rows",
+        {
+          ...base(),
+          rows: [
+            ...base().rows,
+            { ...base().rows[0], market_id: 98 },
+            { ...base().rows[0], market_id: 99 },
+          ],
+        },
+        "row_count",
+      ],
       ["a row with no number", { ...base(), rows: base().rows.map((r, i) => (i === 2 ? { ...r, probability: NaN } : r)) }, "bad_row"],
       ["a row with no label", { ...base(), rows: base().rows.map((r, i) => (i === 1 ? { ...r, label: "" } : r)) }, "bad_row"],
       ["a row with neither market_id nor event_id", { ...base(), rows: base().rows.map((r, i) => (i === 1 ? { label: r.label, probability: r.probability } : r)) }, "bad_row"],
@@ -252,6 +263,53 @@ describe("#10357 round-up model", () => {
       "Round-up NCAAF College Football Playoff picture 80 % Penn State 68 % Notre Dame 64 % Alabama 60 % Miami Chance to make the 12-team field · teams between 20% and 80%",
     );
     expect(html).toMatch(/<a href="\/collections\/roundup-cfp-picture"[^>]*data-testid="roundup-card"/);
+  });
+
+  it("admits same_deadline_board five-row cards ('By December 31') with kicker 'SAME DEADLINE', count_line 'Showing 5 of 6', and no venue name or blend claim", () => {
+    const dec31Contract: FeedRoundupContract = {
+      kicker: "SAME DEADLINE",
+      tag: null,
+      count_line: "Showing 5 of 6",
+      footer: "Separate markets that settle by the same day.",
+      rows: [
+        { market_id: 62162058, label: "Next Claude Opus (5.6+) released", probability: 0.885, observed_at: FRESH },
+        { market_id: 27594137, label: "Trump meets with Putin", probability: 0.83, observed_at: FRESH },
+        { market_id: 30587891, label: "Banksy create a new mural or street artwork", probability: 0.47, observed_at: FRESH },
+        { market_id: 8422080, label: "Pete Hegseth out as Secretary of Defense", probability: 0.40, observed_at: FRESH },
+        { market_id: 13791228, label: "SCOTUS accepts sports event contract case", probability: 0.205, observed_at: FRESH },
+      ],
+    };
+    const { model, refusal } = buildRoundupCardModel("By December 31", dec31Contract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.kicker).toBe("SAME DEADLINE");
+    expect(model!.tag).toBeNull();
+    expect(model!.countLine).toBe("Showing 5 of 6");
+    expect(model!.footer).toBe("Separate markets that settle by the same day.");
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "89% Next Claude Opus (5.6+) released",
+      "83% Trump meets with Putin",
+      "47% Banksy create a new mural or street artwork",
+      "40% Pete Hegseth out as Secretary of Defense",
+      "21% SCOTUS accepts sports event contract case",
+    ]);
+
+    const html = render(dec31Contract, {
+      title: "By December 31",
+      ref: {
+        slug: "by-december-31",
+        name: "By December 31",
+        revision: 91238411,
+        collection_count: 6,
+      },
+    });
+    const plain = stripTags(html);
+    expect(plain).toBe(
+      "SAME DEADLINE By December 31 89 % Next Claude Opus (5.6+) released 83 % Trump meets with Putin 47 % Banksy create a new mural or street artwork 40 % Pete Hegseth out as Secretary of Defense 21 % SCOTUS accepts sports event contract case Showing 5 of 6 Separate markets that settle by the same day.",
+    );
+    expect(plain).not.toMatch(/\b(kalshi|polymarket|sportsbooks?|blend|question|questions)\b/i);
+    expect(html).toContain('data-testid="roundup-count-line">Showing 5 of 6</div>');
+    expect(html).not.toContain('data-testid="roundup-tag"');
+    expect(html).toMatch(/<a href="\/collections\/by-december-31"[^>]*data-testid="roundup-card"/);
   });
 
   it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {

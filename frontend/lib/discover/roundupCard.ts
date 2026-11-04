@@ -22,7 +22,7 @@ import type { FeedRoundupContract } from "@/lib/types";
 /** Over this many characters the headline drops to its long size (R4). */
 export const ROUNDUP_LONG_HEADLINE_CHARS = 44;
 export const ROUNDUP_MIN_ROWS = 3;
-export const ROUNDUP_MAX_ROWS = 4;
+export const ROUNDUP_MAX_ROWS = 5;
 
 export interface RoundupRowModel {
   marketId: number;
@@ -44,6 +44,7 @@ export interface RoundupCardModel {
   title: string;
   tag: string | null;
   footer: string;
+  countLine: string | null;
   longHeadline: boolean;
   rows: RoundupRowModel[];
   cadence: "live" | "futures";
@@ -156,6 +157,7 @@ export function buildRoundupCardModel(
       title: headline,
       tag: text(contract.tag) || null,
       footer,
+      countLine: text(contract.count_line) || null,
       longHeadline: headline.length > ROUNDUP_LONG_HEADLINE_CHARS,
       rows,
       cadence: cardCadence,

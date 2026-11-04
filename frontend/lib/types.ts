@@ -2239,6 +2239,7 @@ export interface FeedRoundupContract {
   kicker: string;
   tag?: string | null;
   footer: string;
+  count_line?: string | null;
   rows: FeedRoundupRow[];
 }
 

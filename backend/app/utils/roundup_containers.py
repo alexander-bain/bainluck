@@ -50,7 +50,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 ROUNDUP_CACHE_TTL_S = 60.0
-ROUNDUP_READ_BUDGET_SECONDS = 0.5
+ROUNDUP_READ_BUDGET_SECONDS = 1.5
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
@@ -69,6 +69,7 @@ class RoundupMembers:
     rows: tuple[dict[str, Any], ...] = ()
     feed_item: Optional[dict[str, Any]] = None
     footer: Optional[str] = None
+    count_line: Optional[str] = None
     sections: tuple[dict[str, Any], ...] = ()
     revision_ids: tuple[int, ...] = ()
 
@@ -79,6 +80,7 @@ class RoundupMembers:
         *,
         feed_item: Optional[dict[str, Any]] = None,
         footer: Optional[str] = None,
+        count_line: Optional[str] = None,
         sections: Sequence[dict[str, Any]] = (),
         revision_ids: Sequence[int] = (),
     ) -> None:
@@ -87,6 +89,9 @@ class RoundupMembers:
         object.__setattr__(self, "feed_item", feed_item)
         object.__setattr__(
             self, "footer", str(footer) if footer is not None else None
+        )
+        object.__setattr__(
+            self, "count_line", str(count_line) if count_line is not None else None
         )
         object.__setattr__(self, "sections", tuple(sections))
         object.__setattr__(
@@ -353,6 +358,17 @@ def compose_roundup_feed_item(
             out["data"]["items"] = member_items
             out["data"]["collection_ref"] = collection_ref
         return out
+    tag_value = (
+        producer.tag if producer.tag is not None else producer.category.upper()
+    ) or None
+    roundup_contract: dict[str, Any] = {
+        "kicker": producer.kicker,
+        "tag": tag_value,
+        "footer": footer,
+        "rows": rows,
+    }
+    if members.count_line:
+        roundup_contract["count_line"] = members.count_line
     return {
         "type": "bundle",
         "score": base_score,
@@ -369,12 +385,7 @@ def compose_roundup_feed_item(
             "member_ids": member_ids,
             "items": member_items,
             "collection_ref": collection_ref,
-            "roundup": {
-                "kicker": producer.kicker,
-                "tag": producer.tag or producer.category.upper(),
-                "footer": footer,
-                "rows": rows,
-            },
+            "roundup": roundup_contract,
         },
     }
 
@@ -813,6 +824,7 @@ def register_roundup_producer(producer: RoundupProducer) -> RoundupProducer:
 def _register_builtin_producers() -> None:
     import app.utils.discover_bundles as _bundles
     import app.utils.field_band as _field_band
+    import app.utils.same_deadline_board as _same_deadline
     import app.utils.window_events_closest as _window_closest
 
     producer = getattr(_bundles, "NFL_DIVISION_ROUNDUP_PRODUCER", None)
@@ -828,6 +840,14 @@ def _register_builtin_producers() -> None:
     cfp_producer = getattr(_field_band, "CFP_PICTURE_PRODUCER", None)
     if cfp_producer is not None:
         register_roundup_producer(cfp_producer)
+
+    nov30_producer = getattr(_same_deadline, "BY_NOVEMBER_30_PRODUCER", None)
+    if nov30_producer is not None:
+        register_roundup_producer(nov30_producer)
+
+    dec31_producer = getattr(_same_deadline, "BY_DECEMBER_31_PRODUCER", None)
+    if dec31_producer is not None:
+        register_roundup_producer(dec31_producer)
 
 
 _register_builtin_producers()
