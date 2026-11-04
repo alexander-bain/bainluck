@@ -211,8 +211,14 @@ async def test_actual_controller_recovers_and_keeps_namespace_count_bounded(reco
     assert await r.client.exists(*namespace_keys(first)) == 0
 
 
-async def test_admission_eviction_never_allows_delayed_arm_to_recreate(recovery):
+async def test_admission_eviction_never_allows_delayed_arm_to_recreate(
+    recovery, monkeypatch
+):
     r = recovery
+    # #11939: run 41795716723 exhausted the 150ms store budget during COMMIT.
+    # This case checks admission eviction; authority deadlines have their own
+    # tests. Match the 2s lab budget already used by the lifecycle controls.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     first = await r.prepare()
     await r.controller.arm(first)
     await r.controller.initialize(first)
