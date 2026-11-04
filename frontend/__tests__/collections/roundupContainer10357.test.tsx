@@ -192,3 +192,87 @@ test("midterms collection parsing and section titles remain unaffected", () => {
   expect(hub.sections[0].title).toBe("The closest Senate races");
   expect(hub.sections[0].layout).toBe("duel");
 });
+
+test("same_deadline_board container ('by-december-31') renders all six binary markets in highest-first order with single-venue attribution", () => {
+  const dec31Rows = [
+    { id: 62162058, name: "Next Claude Opus (5.6+) released by December 31, 2026?", prob: 0.885, cat: "tech" },
+    { id: 27594137, name: "Trump meets with Putin by December 31?", prob: 0.83, cat: "politics" },
+    { id: 30587891, name: "Will Banksy create a new mural or street artwork by December 31?", prob: 0.47, cat: "entertainment" },
+    { id: 8422080, name: "Pete Hegseth out as Secretary of Defense by December 31?", prob: 0.40, cat: "geopolitics" },
+    { id: 13791228, name: "SCOTUS accepts sports event contract case by December 31, 2026?", prob: 0.205, cat: "legal" },
+    { id: 13794660, name: "Will Samuel Alito announce his retirement by December 31, 2026?", prob: 0.185, cat: "politics" },
+  ];
+  const raw = {
+    state: "published",
+    slug: "by-december-31",
+    revision: 91238411,
+    reason: null,
+    edition: null,
+    container: {
+      id: 2918471,
+      slug: "by-december-31",
+      name: "By December 31",
+      kind: "roundup",
+      category: "cross-topic",
+      status: "open",
+      window_start: null,
+      window_end: null,
+      parent_container_id: null,
+    },
+    subtitle: "Separate markets that settle by the same day.",
+    sections: [
+      {
+        class: "title",
+        title: "Markets settling by December 31",
+        layout: "field",
+        count: 6,
+        members: dec31Rows.map((r) => ({
+          type: "market",
+          id: r.id,
+          event_id: null,
+          destination: { kind: "market", id: r.id, web: `/futures/${r.id}`, api: `/api/futures/${r.id}` },
+          card: {
+            id: r.id,
+            name: r.name,
+            category: r.cat,
+            llm_sport_category: r.cat,
+            market_tier: 2,
+            market_type_label: "Yes / No",
+            market_type: "yes_no",
+            status: "open",
+            source: "polymarket",
+            sources: ["polymarket"],
+            source_count: 1,
+            outcome_count: 2,
+            top_outcomes: [
+              { id: r.id * 10 + 1, name: "Yes", probability: r.prob, rank: 1 },
+              { id: r.id * 10 + 2, name: "No", probability: 1 - r.prob, rank: 2 },
+            ],
+            prices_updated_at: "2026-11-03T22:30:00+00:00",
+          },
+        })),
+      },
+    ],
+    member_count: 6,
+    withheld: [],
+    withheld_count: 0,
+    children: [],
+    assembled: true,
+  };
+  const hub = parseCollection(raw, "by-december-31");
+  expect(hub.title).toBe("By December 31");
+  expect(hub.subtitle).toBe("Separate markets that settle by the same day.");
+  expect(hub.members.map((m) => m.id)).toEqual(dec31Rows.map((r) => r.id));
+
+  settleCollectionRead(hub.slug, { hub });
+  const html = renderToStaticMarkup(<CollectionHub slug="by-december-31" />);
+  expect(html).toContain("By December 31");
+  expect(html).toContain("Separate markets that settle by the same day.");
+  expect(html).toContain("Markets settling by December 31");
+  for (const r of dec31Rows) {
+    expect(html).toContain(r.name);
+  }
+  const plain = html.replace(/<[^>]*>/g, " ");
+  expect(plain).not.toMatch(/\bquestions?\b/i);
+  expect(plain).not.toMatch(/\b(kalshi|polymarket|sportsbooks?|blend)\b/i);
+});
