@@ -8870,18 +8870,53 @@ def _card_display_names(outcomes) -> dict[str, str]:
 
 
 def _printed_outcome_name(
-    raw_name: Optional[str], display_names: dict[str, str], market_name: str
+    raw_name: Optional[str],
+    display_names: dict[str, str],
+    market_name: str,
+    top_outcomes_data: Optional[list[dict]] = None,
 ) -> Optional[str]:
     """The completed, humanized label for a name that is about to be PRINTED.
 
     Falsy in, falsy out — the callers' `if name else name` idiom, kept so a
     `None` leader still reaches the headline generators as `None`.
+    When ``top_outcomes_data`` is supplied (#11941) and the printed board ties at
+    the top across multiple nameable non-ladder outcomes, formats the tied leaders
+    together via ``format_tied_leaders``.
     """
     if not raw_name:
         return raw_name
-    return humanize_binary_outcome_name(
+    single = humanize_binary_outcome_name(
         display_names.get(raw_name, raw_name), market_name
     )
+    if not top_outcomes_data or len(top_outcomes_data) < 2:
+        return single
+    top_pct = _printed_leader_percent(top_outcomes_data)
+    runner_up_pct = _printed_runner_up_percent(top_outcomes_data)
+    if top_pct is None or runner_up_pct is None or top_pct != runner_up_pct:
+        return single
+    if _leader_is_ladder_rung(top_outcomes_data, market_name):
+        return single
+    tied_names = [
+        str(o.get("name") or "").strip()
+        for o in top_outcomes_data
+        if o.get("rendered_percent") == top_pct and str(o.get("name") or "").strip()
+    ]
+    if len(tied_names) < 2:
+        return single
+    from app.utils.feed_reasons import (
+        _negates_market_question,
+        _weak_outcome_label,
+        format_tied_leaders,
+    )
+
+    if any(
+        n.lower() in {"yes", "no"}
+        or _weak_outcome_label(n)
+        or _negates_market_question(n, market_name)
+        for n in tied_names
+    ):
+        return single
+    return format_tied_leaders(tied_names) or single
 
 
 def _normalize_feed_probabilities(
@@ -13326,7 +13361,7 @@ async def _score_sports_mode_futures(
 
         # THE PRINT STEP (#6552). These three are the only completed copies;
         # every predicate above keeps the raw `*_name` it matched on.
-        _h_leader = _printed_outcome_name(leader_name, display_names, market.name)
+        _h_leader = _printed_outcome_name(leader_name, display_names, market.name, top_outcomes_data)
         _h_mover = _printed_outcome_name(top_mover_name, display_names, market.name)
         _h_surprise = _printed_outcome_name(
             top_surprise_name, display_names, market.name
@@ -15017,7 +15052,7 @@ async def _score_futures(
             # "Anthropic leads at 69%" instead of "Yes leads at 69%".
             # …and #6552's completed club label is applied in the same step,
             # so the raw `*_name` above stays the lookup key it has to be.
-            _h_leader = _printed_outcome_name(leader_name, display_names, market.name)
+            _h_leader = _printed_outcome_name(leader_name, display_names, market.name, top_outcomes_data)
             _h_mover = _printed_outcome_name(
                 top_mover_name, display_names, market.name
             )

@@ -574,7 +574,8 @@ def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
         assert row["observed_at"] == hero_stamp
         assert row["observed_at"] != odds_stamp
 
-    # Exact 50/50 tie picks the home team as leader (`hp >= ap`):
+    # Exact 50/50 tie and whole-number-rounded 50/50 tie refuse to name a single
+    # leader on the row (#11941):
     tie_card = _game_card(
         599,
         home="Celtics",
@@ -587,7 +588,23 @@ def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
     )
     assert _extract_blended_leader(tie_card) == (
         0.5,
-        "Celtics",
-        "Knicks at Celtics: Celtics",
+        "Knicks and Celtics",
+        "Knicks at Celtics",
+        hero_stamp,
+    )
+    rounded_tie_card = _game_card(
+        600,
+        home="Celtics",
+        away="Knicks",
+        home_prob=0.502,
+        away_prob=0.498,
+        hero_source="blend",
+        hero_observed_at=hero_stamp,
+        captured_at=odds_stamp,
+    )
+    assert _extract_blended_leader(rounded_tie_card) == (
+        0.502,
+        "Knicks and Celtics",
+        "Knicks at Celtics",
         hero_stamp,
     )
