@@ -1341,7 +1341,8 @@ export interface FuturesHistoryPoint {
   bookmaker: string;
   /** #683 — present only on a point recovered from Kalshi's archive
    *  (`"kalshi_archive"`). Such a point is an interval: `timestamp` is its
-   *  close, `interval_start` its open. Live points carry none of these. */
+   *  close, `interval_start` its open. Live points carry none of these.
+   *  #7351 — `"venue_history"` on a point from the venue's history bank. */
   provenance?: string;
   interval_start?: string;
   period_minutes?: number;

@@ -103,6 +103,29 @@ export const GAP_CADENCE_MULTIPLE = 6;
 export const STALE_FLOOR_MS = 15 * 60 * 1000;
 export const GAP_FLOOR_MS = 2 * HOUR_MS;
 
+/**
+ * #11929 — the hole floor for a line carrying the venue's history bank.
+ *
+ * The bank is compacted by move with a flat joint of up to 12 h
+ * (`VENUE_BANK_MAX_JOINT_SECONDS` = `MAX_HEARTBEAT_SECONDS`, backend
+ * `generic_market_history_fill.py`), and its last day is at the venue's minutes,
+ * so such a line's MEDIAN gap is minutes and 6× it falls to the 2 h floor. Every
+ * flat joint the venue observed was then bridged as a hole: production
+ * 2026-11-04, `/futures/109085` filled to 411 points and drew 21 runs, 20
+ * dotted bridges and 8 lone dots; at this floor it draws one line. Gaps wider
+ * than the bank promised (Denver snow's 15–19 h, withheld points) still bridge.
+ */
+export const VENUE_BANK_JOINT_MS = 12 * HOUR_MS;
+
+/** `VENUE_BANK_JOINT_MS` for points that carry the venue's bank, else the default floor. */
+export function venueBankGapFloorMs(
+  points: readonly { provenance?: string }[] | null | undefined,
+): number | undefined {
+  return (points ?? []).some((p) => p.provenance === "venue_history")
+    ? VENUE_BANK_JOINT_MS
+    : undefined;
+}
+
 export type SeriesFreshnessState =
   /** No usable points at all. */
   | "empty"
@@ -294,7 +317,7 @@ export function seriesWindowLabel(
 export function seriesFreshness(
   timestamps: readonly unknown[] | null | undefined,
   now: number = Date.now(),
-  opts?: { settled?: boolean },
+  opts?: { settled?: boolean; gapFloorMs?: number },
 ): SeriesFreshness {
   const raw = timestamps ?? [];
   const points = raw
@@ -350,7 +373,8 @@ export function seriesFreshness(
   const medianGapMs = median([...gaps].sort((a, b) => a - b));
 
   const staleAfter = Math.max(STALE_CADENCE_MULTIPLE * medianGapMs, STALE_FLOOR_MS);
-  const gapAfter = Math.max(GAP_CADENCE_MULTIPLE * medianGapMs, GAP_FLOOR_MS);
+  // #11929: the caller's floor, the same one its line is broken at.
+  const gapAfter = Math.max(GAP_CADENCE_MULTIPLE * medianGapMs, opts?.gapFloorMs ?? GAP_FLOOR_MS);
 
   const base = { n: points.length, medianGapMs, ageMs, largestGapMs };
 
@@ -428,6 +452,7 @@ export function seriesHasHole(freshness: SeriesFreshness): boolean {
  */
 export function seriesGapThresholdMs(
   timestamps: readonly unknown[] | null | undefined,
+  floorMs: number = GAP_FLOOR_MS,
 ): number | null {
   const points = (timestamps ?? [])
     .map(asInstant)
@@ -438,5 +463,5 @@ export function seriesGapThresholdMs(
   const gaps: number[] = [];
   for (let i = 1; i < points.length; i += 1) gaps.push(points[i] - points[i - 1]);
   const medianGapMs = median([...gaps].sort((a, b) => a - b));
-  return Math.max(GAP_CADENCE_MULTIPLE * medianGapMs, GAP_FLOOR_MS);
+  return Math.max(GAP_CADENCE_MULTIPLE * medianGapMs, floorMs);
 }
