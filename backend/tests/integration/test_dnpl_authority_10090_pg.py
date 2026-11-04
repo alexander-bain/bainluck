@@ -457,7 +457,11 @@ async def test_activation_step_lock_timeout_does_not_grant_late_send(rig):
     assert await rig.store.activation_step(current) == 0
 
 
-async def test_only_first_allocation_or_changed_primary_can_bootstrap_fence(rig):
+async def test_only_first_allocation_or_changed_primary_can_bootstrap_fence(rig, monkeypatch):
+    # This case checks which allocation may bootstrap the fence; the store's
+    # 150ms deadline has its own tests. Master run 41746363779 (shared-tail) hit
+    # AuthorityWriteUncertain on a loaded runner, so widen it as #11916 did.
+    monkeypatch.setattr(rig.store, "budget_s", 2.0)
     seed = await rig.store.read()
     first = await rig.store.prepare(seed, next_candidate(seed))
     assert await rig.store.take_activation_step(first, 1) is True

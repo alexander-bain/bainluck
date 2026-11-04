@@ -375,6 +375,10 @@ URGENT_STAMP_MIN_S = 0.25
 #: repeat on an already-absent event advanced the GLOBAL barrier (and wrote its
 #: row), refusing every prepared open as `read_required` (~1/s on Polymarket).
 TERMINAL_READ_RETRY_S = 30.0
+#: #10090: the read-before-admit ticket's budget on the flush path. A module
+#: constant so a loaded CI runner's rig can widen it without changing what the
+#: test proves (a held publisher lock still times the read out at any budget).
+PREVIEW_ADMISSION_READ_BUDGET_S = 0.25
 #: Received quotes are kept this long for the overlay: the preview's own
 #: uncommitted lifetime (`blend_preview.DEFAULT_MAX_UNCOMMITTED_S`).
 RECEIPT_QUOTE_RETENTION_S = 60.0
@@ -10783,7 +10787,7 @@ class LiveBlendRefresher:
             return None
         self._start_preview_maintenance()
         try:
-            async with asyncio.timeout(.25):
+            async with asyncio.timeout(PREVIEW_ADMISSION_READ_BUDGET_S):
                 before, _ = await self._preview_ticket()
                 return before
         except Exception:
