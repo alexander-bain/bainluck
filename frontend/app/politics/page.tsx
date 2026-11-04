@@ -16,7 +16,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
-import { formatGapSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
+import { NEVER_A_HOLE_MS, seriesFreshness, seriesWindowLabel } from "@/lib/seriesFreshness";
 import s from "./politics.module.css";
 import { SourceBadge } from "@/components/politics/atoms";
 import { CrossSourceSpotlight } from "@/components/politics/CrossSourceSpotlight";
@@ -147,7 +147,7 @@ function CandidateSpark({ history, width = 60, height = 18 }: {
   width?: number;
   height?: number;
 }) {
-  const freshness = seriesFreshness((history ?? []).map((h) => h.t));
+  const freshness = seriesFreshness((history ?? []).map((h) => h.t), undefined, { gapFloorMs: NEVER_A_HOLE_MS });
 
   if (!history || history.length < 2) {
     // Already the right call for n=0 (DeSantis and Rubio serve `history: []`):
@@ -311,15 +311,13 @@ function PresBarRace({ sorted, sourceMode, data }: {
    */
   const trendNote = useMemo(() => {
     const marked = sorted
-      .map((c) => seriesFreshness((c.history ?? []).map((h) => h.t)))
+      .map((c) => seriesFreshness((c.history ?? []).map((h) => h.t), undefined, { gapFloorMs: NEVER_A_HOLE_MS }))
       .filter((f) => f.state === "gapped" || f.state === "stale");
     if (marked.length === 0) return null;
 
-    const widest = marked.reduce((a, b) => ((b.largestGapMs ?? 0) > (a.largestGapMs ?? 0) ? b : a));
-    const gap = widest.largestGapMs;
-    return gap && seriesHasHole(widest)
-      ? `Dimmed trend lines have stretches we have no numbers for — the longest is ${formatGapSpan(gap)}.`
-      : `Dimmed trend lines are missing recent numbers.`;
+    // #11929 (Alex, Nov 4 12:09 PM): nothing names a hole; only a line that is
+    // behind now is dimmed and captioned.
+    return `Dimmed trend lines are missing recent numbers.`;
   }, [sorted]);
 
   /**

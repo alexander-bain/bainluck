@@ -1,15 +1,27 @@
 /**
- * #3659 — THE WIRING: the chart that ships stops drawing through its holes.
+ * #3659 → #11929 — THE WIRING: the chart that ships draws a solid line through
+ * unobserved time.
  *
- * `chartSeriesPath.test.ts` proves the geometry. This proves that
- * `FuturesChart` — the kernel behind `/futures/[id]`, `/categories/golf`,
+ * ═══ SUPERSEDED CONTRACT ═══
+ *
+ * #3659 pinned the opposite: the holed series broke into runs, a faint dotted
+ * bridge (`stroke-dasharray="1 5"`) spanned the hole, and the caption named it
+ * ("No numbers for 15 days in this stretch"). Alex ruled that away on
+ * 2026-11-04 12:09 PM PT (#11929):
+ *
+ *   "A solid line through unobserved time. A hole between two observations is
+ *    drawn like any other segment of that line (the chart's normal
+ *    interpolation): no bridge, no dotted treatment, no label, and the
+ *    caption's 'No numbers for N hours' sentence goes with it — nothing on the
+ *    chart calls the reader's attention to a gap."
+ *
+ * The gaps are the bug, closed at the source; the chart does not confess them.
+ * The file keeps its name and its specimen so the history of the contract
+ * stays readable in one place; every assertion below is the new contract.
+ *
+ * `FuturesChart` is the kernel behind `/futures/[id]`, `/categories/golf`,
  * `/sport/[sport]/[league]`, `TeamSeasonJourney`, `WinnerEvolutionChart`,
- * `SettledPathChart` and `RaceToTitleChart` — actually calls it, and that the
- * six of those seven which plot healthy series see nothing change.
- *
- * The lesson #2961 wrote into this pair still holds: a green rule says nothing
- * about a render. UX-P145 and UX-P146 both swept copy that was never on
- * production.
+ * `SettledPathChart` and `RaceToTitleChart`.
  *
  * ═══ THE FIXTURE ═══
  *
@@ -18,18 +30,14 @@
  * interior hole of 345.6h, then a day of hourly readings. The rendered window
  * puts ~93% of the chart's horizontal space inside that hole.
  *
- * ═══ WHAT IS ASSERTED, AND WHY IT IS NOT THE CONSTANTS ═══
+ * ═══ WHAT IS ASSERTED ═══
  *
- * The reader's property, twice over:
- *
- *   • the SOLID stroke — the thing a reader reads as data — never spans the
- *     hole. Read out of the rendered `d` attributes by coordinate, so a
- *     restyle that changed the dash pattern or the opacity cannot make it pass;
- *   • a series with no hole draws ONE path per outcome and nothing faint at
- *     all, so the dotted treatment can never leak onto a healthy chart.
- *
- * Every case is a pair, for the reason #2961 gave: a chart that always breaks
- * its line has moved the problem, not fixed it.
+ *   • the holed series is ONE solid stroke, read out of the rendered `d` by
+ *     coordinate: it visits every observation, and the hole is one ordinary
+ *     segment of it (`L`, or `H … V` under `stepInterpolation`);
+ *   • nothing dotted, nothing faint, no "No numbers for" anywhere;
+ *   • controls: the stale "Last number …" caption (the line's right-hand end,
+ *     not a gap) still prints, and a healthy chart is unchanged.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -109,98 +117,91 @@ function widestStride(d: string): number {
   return widest;
 }
 
-describe("#3659 FuturesChart — the solid line does not cross the hole", () => {
-  test("the holed series is drawn as more than one stroke", () => {
+/** The observations a path visits: `M x y`, then `L x y` or `H x V y` each. */
+function vertices(d: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const re = /(?:([ML]) (-?[\d.]+) (-?[\d.]+))|(?:H (-?[\d.]+) V (-?[\d.]+))/g;
+  for (const m of d.matchAll(re)) {
+    out.push(m[1] ? [Number(m[2]), Number(m[3])] : [Number(m[4]), Number(m[5])]);
+  }
+  return out;
+}
+
+const HOLED_N = HOLED[0].history.length;
+
+describe("#11929 FuturesChart — a solid line through the hole (supersedes #3659)", () => {
+  test("the holed series is drawn as ONE stroke", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
-    expect(seriesPaths(html).length).toBeGreaterThan(1);
+    expect(seriesPaths(html)).toHaveLength(1);
   });
 
-  test("no fully-opaque stroke spans the hole", () => {
+  test("the stroke that spans the hole is the solid line itself — not faint, not dotted", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
-    const drawn = seriesPaths(html);
+    const [line] = seriesPaths(html);
 
-    // Something has to cross it — the plot is ~93% hole and a void would read
-    // as a rendering failure — so the test is not "nothing crosses". It is that
-    // whatever crosses is not wearing the clothes of data.
-    const crossing = drawn.filter((p) => widestStride(p.d) > 100);
-    expect(crossing.length).toBeGreaterThan(0);
-    for (const p of crossing) {
-      expect(p.opacity).toBeLessThan(0.5);
-      expect(p.dash).not.toBeNull();
-    }
-
-    const solid = drawn.filter((p) => p.opacity === 1);
-    expect(solid.length).toBeGreaterThan(0);
-    for (const p of solid) expect(widestStride(p.d)).toBeLessThan(100);
+    expect(line.opacity).toBe(1);
+    expect(line.dash).toBeNull();
+    // The hole is ~95% of the plot; it is crossed by this same path.
+    expect(widestStride(line.d)).toBeGreaterThan(0.9 * 730);
+    expect(html).not.toContain('stroke-dasharray="1 5"');
   });
 
-  test("the observation stranded on the far side of the hole is still painted", () => {
-    // A bare `M` paints nothing. The Aug 22 reading is alone on its side of the
-    // hole and is visible on production today; a break must not delete it.
+  test("the observation stranded on the far side of the hole is still painted, as part of the line", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
-    const solid = seriesPaths(html).filter((p) => p.opacity === 1);
-    const leftmost = Math.min(...solid.flatMap((p) => xs(p.d)));
+    const [line] = seriesPaths(html);
+    const v = vertices(line.d);
 
-    // 50 is the chart's left padding — the x the oldest point scales to.
-    expect(leftmost).toBeCloseTo(50, 5);
-    expect(solid.some((p) => /^M 50 [\d.]+ L 50 [\d.]+$/.test(p.d))).toBe(true);
+    // Every observation is a vertex of the one path, the stranded Aug 22
+    // reading first — at the left padding (50), the x the oldest point scales to.
+    expect(v).toHaveLength(HOLED_N);
+    expect(v[0][0]).toBeCloseTo(50, 5);
+    // …and the next vertex is the far side of the hole, joined by a plain `L`.
+    expect(line.d).toMatch(/^M 50 [\d.]+ L [\d.]+ [\d.]+ L /);
+    expect(v[1][0] - v[0][0]).toBeGreaterThan(0.9 * 730);
+    // It is a line vertex now, not a lone dot.
+    expect(html).not.toMatch(/<circle[^>]*\br="3"/);
   });
 
-  test("when the caption names the hole, it names the one the line broke on", () => {
-    // One threshold drives both, so they can never describe different
-    // intervals — which is why #3659 took the number from
-    // `seriesGapThresholdMs` instead of re-deriving one.
+  test("no caption names the hole — the line is current, so no caption at all", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
 
-    expect(html).toContain('data-series-state="gapped"');
-    // #7491 rounds a confessed hole UP: 345.6h is 14.4 days, which read as
-    // "14 days". What this test is actually about — one threshold driving both
-    // the caption and the break — is untouched; only the printed number moved.
-    expect(html).toContain("No numbers for 15 days in this stretch");
-    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(1);
+    expect(html).not.toContain("No numbers for");
+    expect(html).not.toContain('data-series-state="gapped"');
+    expect(html).not.toContain('data-testid="futures-chart-freshness"');
   });
 
-  test("when the caption is talking about something ELSE, the line still breaks", () => {
-    // THE PRODUCTION CASE, and the strongest argument for this ship.
-    //
+  test("control: a line behind NOW still says how old its last number is, and is still one stroke", () => {
     // Run through the real cached payload the page rendered on 2026-09-06, the
-    // 16630403 series comes out `stale`, not `gapped` — n=358, median 1.00h,
-    // age 6.37h, largest hole 345.6h — because `seriesFreshness` ranks being
-    // behind NOW above being holed, deliberately: the right-hand end of the
-    // line is where a reader looks first.
-    //
-    // So the caption on that chart reads "Last number 6 hours ago" and says
-    // NOTHING about the fourteen days. #2961's declaration does not cover this
-    // case at all. The broken line is the only thing on the page that does.
-    const staleAndHoled: FuturesOutcomeHistory[] = [
-      {
-        outcome_id: 1,
-        name: "Yes",
-        history: pointsAt([0, 345.6, ...Array.from({ length: 18 }, (_, i) => 346.6 + i)]),
-      },
-    ];
-    // The newest point is ~24 min before NOW. Move the CLOCK forward 6h rather
-    // than the points back, so the cadence is untouched and the only thing that
-    // changes is how far behind the series has fallen — which is the one
-    // variable that flips `gapped` to `stale`.
+    // 16630403 series comes out `stale` — n=358, median 1.00h, age 6.37h. That
+    // caption is about the line's right-hand end, not a gap, and the ruling
+    // leaves it alone. Move the CLOCK forward 6h rather than the points back,
+    // so the cadence is untouched.
     jest.setSystemTime(NOW + 6 * HOUR);
-    const html = renderToStaticMarkup(<FuturesChart historyData={staleAndHoled} showAxes />);
+    const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
     jest.setSystemTime(NOW);
 
     expect(html).toContain('data-series-state="stale"');
+    expect(html).toContain("Last number 6 hours ago");
     expect(html).not.toContain("No numbers for");
-    // The caption has gone quiet about the hole. The line has not.
-    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(1);
+    expect(seriesPaths(html)).toHaveLength(1);
+    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(0);
   });
 
-  test("the bridge covers the hole the caption measured, not some other gap", () => {
-    const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
-    const bridge = seriesPaths(html).find((p) => p.dash === "1 5")!;
-    const span = widestStride(bridge.d);
-
-    // 345.6h of a 363.6h domain across 730px of plot: the bridge is ~95% of the
-    // drawable width, because the hole very nearly IS this chart.
-    expect(span / 730).toBeGreaterThan(0.9);
+  test("under step interpolation the hole is an ordinary step of the same stroke", () => {
+    const html = renderToStaticMarkup(
+      <FuturesChart historyData={HOLED} showAxes stepInterpolation fixedYAxis />,
+    );
+    const drawn = seriesPaths(html);
+    expect(drawn).toHaveLength(1);
+    const [line] = drawn;
+    expect(line.dash).toBeNull();
+    // Hold, then riser — `H x V y` — exactly like every other step on the line.
+    expect(line.d).toMatch(/^M 50 [\d.]+ H [\d.]+ V [\d.]+ H /);
+    expect(line.d).not.toMatch(/ L /);
+    const v = vertices(line.d);
+    expect(v).toHaveLength(HOLED_N);
+    expect(v[1][0] - v[0][0]).toBeGreaterThan(0.9 * 730);
+    expect(html).not.toContain("No numbers for");
   });
 });
 

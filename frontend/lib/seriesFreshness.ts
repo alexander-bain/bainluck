@@ -126,6 +126,21 @@ export function venueBankGapFloorMs(
     : undefined;
 }
 
+/**
+ * A floor no gap reaches: the line is never split and no caption names a hole.
+ *
+ * Alex, 2026-11-04 12:09 PM PT (#11929, after 11:38 AM): "a solid line through
+ * unobserved time. A hole between two observations is drawn like any other
+ * segment of that line (the chart's normal interpolation): no bridge, no
+ * dotted treatment, no label, and the caption's 'No numbers for N hours'
+ * sentence goes with it — nothing on the chart calls the reader's attention to
+ * a gap." The gaps themselves are the bug, closed at the source (stream points,
+ * keep-alive points, the venue backfill), not confessed on the chart. Every
+ * chart caller passes this as `gapFloorMs`; the trailing "Last number …" age is
+ * about the line's right-hand end, not a gap, and is unchanged.
+ */
+export const NEVER_A_HOLE_MS = Number.POSITIVE_INFINITY;
+
 export type SeriesFreshnessState =
   /** No usable points at all. */
   | "empty"
