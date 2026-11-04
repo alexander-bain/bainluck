@@ -80,6 +80,10 @@ function seriesPaths(html: string): DrawnPath[] {
 }
 const bridges = (html: string) => seriesPaths(html).filter((p) => p.dash === "1 5");
 const dots = (html: string) => html.match(/<circle[^>]*\br="3"[^>]*>/g) ?? [];
+/** #11929 C: a full chart names each hole instead of bridging it. */
+const gapLabels = (html: string) =>
+  html.match(/<text[^>]*data-testid="futures-chart-gap-label"[^>]*>/g) ?? [];
+const solidRuns = (html: string) => seriesPaths(html).filter((p) => p.dash === null);
 
 function render(history: FuturesHistoryPoint[]) {
   return renderToStaticMarkup(<FuturesChart historyData={line(history)} showAxes fixedYAxis />);
@@ -93,9 +97,12 @@ describe("#11929 FuturesChart — the venue's bank draws as one line", () => {
     expect(seriesPaths(html).filter((p) => p.dash === null)).toHaveLength(1);
   });
 
-  test("control: the same instants as captures keep today's 2 h rule and still bridge", () => {
+  test("control: the same instants as captures keep today's 2 h rule and still break", () => {
+    // #11929 C: broken, and labelled rather than bridged.
     const html = render(bankLine(null));
-    expect(bridges(html).length).toBeGreaterThan(5);
+    expect(solidRuns(html).length).toBeGreaterThan(5);
+    expect(gapLabels(html).length).toBeGreaterThan(0);
+    expect(bridges(html)).toHaveLength(0);
   });
 
   test("the caption breaks where the line does — no hole claimed across a bank joint", () => {
@@ -103,13 +110,16 @@ describe("#11929 FuturesChart — the venue's bank draws as one line", () => {
     expect(render(bankLine(null))).toContain("No numbers for");
   });
 
-  test("a hole wider than the bank's joint still bridges, and the caption names it", () => {
+  test("a hole wider than the bank's joint still breaks, and the caption names it", () => {
     const holed = bankLine().filter((p) => {
       const t = Date.parse(p.timestamp);
       return t < START + 40 * HOUR || t > START + 70 * HOUR; // ~30 h with nothing
     });
     const html = render(holed);
-    expect(bridges(html)).toHaveLength(1);
+    // #11929 C: two strokes and one label over the hole — no connector.
+    expect(solidRuns(html)).toHaveLength(2);
+    expect(gapLabels(html)).toHaveLength(1);
+    expect(bridges(html)).toHaveLength(0);
     expect(html).toContain('data-series-state="gapped"');
   });
 
