@@ -83,7 +83,7 @@ def test_precondition_judge_is_seventh_and_off_the_dropdown_without_the_query():
 
 def test_judge_dropdown_row_leads_with_aaron_judge():
     rows = _dropdown(_show_cover(), JUDGE)
-    assert rows[0] == {"name": "Aaron Judge", "probability": 0.09, "movement": None}
+    assert rows[0] == {"name": "Aaron Judge", "probability": 0.09, "movement": None, "rendered_percent": 9}
     assert _names(rows) == ["Aaron Judge", "Matt Olson", "Bryan Woo"]
 
 

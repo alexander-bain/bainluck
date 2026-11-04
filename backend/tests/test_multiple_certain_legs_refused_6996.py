@@ -264,7 +264,7 @@ class TestTheSerializerWithholdsWhatTheRuleRefuses:
                 id=i,
                 name=f"Entrant {i}",
                 external_id=f"ENT-{i}",
-                current_probability=0.2,
+                current_probability=op,
                 current_american_odds=400,
                 rank=i,
                 rank_change_24h=None,

@@ -314,7 +314,7 @@ async def test_only_the_prose_moves_ids_and_points_are_untouched_6479():
     row = next(o for o in payload["outcomes"] if o["outcome_id"] == 643828)
     assert row["name"] == "Los Angeles Rams"
     assert len(row["history"]) == 12
-    assert all(p["probability"] == pytest.approx(0.1) for p in row["history"])
+    assert all(p["probability"] == pytest.approx(1 / len(SUPER_BOWL_RUNGS), abs=1e-8) for p in row["history"])
     assert {o["outcome_id"] for o in payload["outcomes"]} == {r[0] for r in SUPER_BOWL_RUNGS}
 
 
@@ -411,4 +411,4 @@ async def test_repairing_the_label_did_not_move_the_champion_MATCH_6479():
     assert champ["name"] == "Los Angeles Rams"
 
     other = next(o for o in payload["outcomes"] if o["outcome_id"] == 643833)
-    assert other["history"][-1]["probability"] == pytest.approx(0.1)
+    assert other["history"][-1]["probability"] == pytest.approx(0.5)

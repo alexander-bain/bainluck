@@ -66,7 +66,7 @@ _CHART_BEFORE = {SINNER: 0.203, ALCARAZ: 0.174, RUUD: 0.019}
 #: #8595: the twenty 0.010 legs are the venue floor and are out of the squeeze's
 #: divisor, so a COMPLETE board now divides by its priced 1.355, not 1.555. It
 #: still squeezes, which is all the controls below need; this is what it prints.
-_PRICED_MASS = 1.355
+_PRICED_MASS = sum(_FIELD.values())  # #11995 includes the full tail
 _CHART_SQUEEZED = {oid: _FIELD[oid] / _PRICED_MASS for oid in _HERO}
 
 
@@ -143,7 +143,7 @@ class TestTheServedSeries:
             {T0: {"kalshi": whole}}, mutually_exclusive=True, field_complete=True
         )[T0]
 
-        priced = [oid for oid, p in whole.items() if p > 0.01]
+        priced = list(whole)
         assert sum(point[oid] for oid in priced) == pytest.approx(1.0, abs=0.01)
         assert point[SINNER] != pytest.approx(0.315, abs=1e-6)
 

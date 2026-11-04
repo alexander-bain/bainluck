@@ -2819,7 +2819,7 @@ def _serialize_outcomes(
         rows,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=prices_withheld == 0,
-        question=market.name,
+        question=getattr(market, "name", None),
     ):
         # #5539, inherited with the squeeze rather than invented: once the
         # printed column has moved, a raw opening beside it is a movement the

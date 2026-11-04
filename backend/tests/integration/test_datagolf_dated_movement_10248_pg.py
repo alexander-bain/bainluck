@@ -453,12 +453,15 @@ def test_a_tiny_poll_keeps_the_bank_and_moves_the_answer(monkeypatch) -> None:
 
     _write(monkeypatch, "live", _priced(0.1505))
     result = _sweep(monkeypatch)
-    market_ids, _ = asyncio.run(_ids())
+    market_ids, outcome_ids = asyncio.run(_ids())
     served = _served(monkeypatch, market_ids[("pga", "win")])
 
-    assert served[run["jordan"]] is not None and abs(served[run["jordan"]] - 0.1305) < 1e-6, (
-        f"a tiny poll lost the dated move: {served[run['jordan']]} result={result}"
-    )
+    # #11995 normalizes even a 1.0005-sum field. The raw day move is not a
+    # claim about that displayed scale; the observed bank must still survive.
+    assert served[run["jordan"]] is None
+    _, metadata = _rows(market_ids, outcome_ids)
+    assert metadata[market_ids[("pga", "win")]][DATED_BASIS_METADATA_KEY][str(run["jordan"])][0] == 0.02
+    assert result["dated_basis_unbanked_datagolf"] == 0
 
 
 async def _ids():
@@ -926,11 +929,15 @@ def test_r11_a_market_that_leaves_open_loses_its_bank(monkeypatch) -> None:
 def test_p1_successive_tiny_polls_keep_the_bank(monkeypatch) -> None:
     run = _drive_specimen(monkeypatch, "live")
     assert run["served"] is not None
-    for price, expected in ((0.151, 0.131), (0.1505, 0.1305)):
+    for price in (0.151, 0.1505):
         _write(monkeypatch, "live", _priced(price))
         _sweep(monkeypatch)
         served = _jordan_served(monkeypatch)
-        assert served is not None and abs(served - expected) < 1e-6, (price, served)
+        assert served is None  # #11995: raw move withheld on the new field scale
+        markets, outcomes = asyncio.run(_ids())
+        _, metadata = _rows(markets, outcomes)
+        bank = metadata[markets[("pga", "win")]][DATED_BASIS_METADATA_KEY]
+        assert bank[str(run["jordan"])][0] == 0.02
 
 
 def test_p2_an_overnight_of_unchanged_polls_keeps_the_answer(monkeypatch) -> None:

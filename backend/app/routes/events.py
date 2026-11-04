@@ -38710,6 +38710,8 @@ def _build_search_top_outcomes(
     )
     full_display = [
         {"id": o.id, "name": o.name,
+         "is_winner": getattr(o, "is_winner", None),
+         "resolution_source": getattr(o, "resolution_source", None),
          "probability": None if o.id in _withheld_ids or o.current_probability is None
          else float(o.current_probability)}
         for o in display_field
@@ -38719,7 +38721,7 @@ def _build_search_top_outcomes(
     )
     changed = _normalize_search_outcome_probs(
         full_display, mutually_exclusive=getattr(market, "mutually_exclusive", True),
-        field_complete=not _withheld_ids, question=market.name,
+        field_complete=not _withheld_ids, question=getattr(market, "name", None),
     )
     by_id = {o["id"]: o for o in full_display}
     selected_ids = {name: o.id for o, name in named}

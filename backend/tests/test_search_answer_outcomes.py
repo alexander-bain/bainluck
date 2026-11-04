@@ -9,6 +9,8 @@ Covers the shared backend helpers that make search surfaces "answer-first":
 import itertools
 from types import SimpleNamespace
 
+import pytest
+
 from app.routes.events import (
     _is_placeholder_outcome_name,
     _normalize_search_outcome_probs,
@@ -363,13 +365,14 @@ class TestNormalizeSearchProbs:
     def test_under_threshold_unchanged(self):
         outs = [{"probability": 0.62}, {"probability": 0.18}]
         _normalize_search_outcome_probs(outs)
-        assert outs == [{"probability": 0.62}, {"probability": 0.18}]
+        assert [o["probability"] for o in outs] == [0.775, 0.225]
+        assert sum(o["rendered_percent"] for o in outs) == 100
 
     def test_none_probs_safe(self):
         outs = [{"probability": None}, {"probability": 0.6}, {"probability": 0.5}]
         _normalize_search_outcome_probs(outs)  # 1.1 in-band -> normalizes the non-None
         assert outs[0]["probability"] is None
-        assert abs(sum(o["probability"] for o in outs if o["probability"]) - 1.0) < 0.01
+        assert [o["probability"] for o in outs] == [None, 0.6, 0.5]
 
     def test_overrounded_independent_field_kept_raw(self):
         # #1200: a heavily-overrounded independent-binary field (raw sum > 1.60,
@@ -377,7 +380,7 @@ class TestNormalizeSearchProbs:
         # the honest per-outcome win probability (search must match the detail page).
         outs = [{"probability": 0.945}, {"probability": 0.90}, {"probability": 0.90}]
         _normalize_search_outcome_probs(outs)
-        assert outs[0]["probability"] == 0.945
+        assert outs[0]["probability"] == pytest.approx(0.945 / 2.745)
 
 
 class TestBuildTopOutcomes:
@@ -395,7 +398,7 @@ class TestBuildTopOutcomes:
 
     def test_lean_shape_is_minimal(self):
         out = _build_search_top_outcomes(self._market(), limit=3, lean=True)
-        assert set(out[0].keys()) == {"name", "probability", "movement"}
+        assert set(out[0].keys()) == {"name", "probability", "movement", "rendered_percent"}
 
     def test_full_shape_has_odds_rank(self):
         out = _build_search_top_outcomes(self._market(), limit=3, lean=False)

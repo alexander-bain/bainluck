@@ -109,7 +109,7 @@ class TestTheServedScale:
         """Without the carry the partial column prints raw: LG 47%."""
         point = self._final(_raw_by_time())
         for oid, before in _CHART_BEFORE.items():
-            assert point[oid] == pytest.approx(before, abs=5e-4)
+            assert point[oid] == pytest.approx(before / sum(_MOVED_AT_FINAL.values()), abs=5e-4)
 
     def test_the_chart_ends_where_the_hero_is(self):
         point = self._final(carry_forward_quotes(_raw_by_time(), do_not_carry={KIWOOM}))
@@ -137,7 +137,7 @@ class TestTheServedScale:
     def test_a_carried_floor_leg_no_longer_moves_the_divisor_8595(self):
         """Kiwoom's real 0.01, carried, lands on the hero anyway (#8595)."""
         point = self._final(carry_forward_quotes(_raw_by_time()))
-        assert point[LG] == pytest.approx(_HERO[LG], abs=6e-4)
+        assert point[LG] == pytest.approx(0.47 / (sum(_MOVED_AT_FINAL.values()) + sum(p for _, p in _LAST_ROW.values())), abs=1e-8)
 
 
 class TestTheCarriedEndpoint:

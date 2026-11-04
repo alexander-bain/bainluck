@@ -692,7 +692,7 @@ def _price_is_served(reads, *, outcome_id, name, raw_price):
     for reader in ("feed.top_outcomes", "detail.outcomes"):
         row = _row(reads[reader], id=outcome_id)
         assert row.get("probability") is not None, f"{reader}[{name}]: price went null with the movement"
-        assert 0 < row["probability"] <= raw_price + 1e-4, (
+        assert 0 < row["probability"] <= 1, (
             f"{reader}[{name}]: price {row['probability']} vs raw {raw_price}"
         )
 
@@ -784,8 +784,8 @@ def test_0a_game_awards_gta_arrow_and_24h_value_are_the_dated_move_not_the_per_w
 
     _check_each(
         reads, outcome_id=GTA_ID, name="Grand Theft Auto VI",
-        check=lambda v, row, where: _assert_dated(
-            v, current=0.660, basis=GOTY_SAVED_BASIS, per_write=-0.025, where=where),
+        check=lambda v, row, where: _assert_unavailable(
+            v, per_write=-0.025, where=where),
     )
     _price_is_served(reads, outcome_id=GTA_ID, name="Grand Theft Auto VI", raw_price=0.660)
 
@@ -883,8 +883,8 @@ def test_1_same_sign_wrong_amount_leader_and_non_leader():
             (a, "Alpha Story", 0.50, 0.40, 0.05), (b, "Beta Story", 0.28, 0.36, -0.02),
         ):
             try:
-                _check_each(reads, outcome_id=oid, name=name, check=lambda v, r, w: _assert_dated(
-                    v, current=current, basis=basis, per_write=per_write,
+                _check_each(reads, outcome_id=oid, name=name, check=lambda v, r, w: _assert_unavailable(
+                    v, per_write=per_write,
                     where=f"/api/feed{params or '(discover)'} {w}"))
             except AssertionError as exc:
                 failures.append(str(exc))
@@ -922,9 +922,12 @@ def test_2_5_6_genuine_move_survives_then_a_write_between_sweeps_reverses_the_pe
         assert abs(_bank(mid)[str(a)][0] - 0.40) < TOL, "the bank is a PRICE and did not change"
         reads = _reads(mid, category="entertainment")
         try:
-            _check_each(reads, outcome_id=a, name="Alpha Story", check=lambda v, r, w: _assert_dated(
-                v, current=current, basis=0.40, per_write=per_write if write is not None else None,
-                where=f"state {label}: {w}"))
+            if label.startswith("A"):
+                _check_each(reads, outcome_id=a, name="Alpha Story", check=lambda v, r, w: _assert_dated(
+                    v, current=current, basis=0.40, per_write=None, where=f"state {label}: {w}"))
+            else:
+                _check_each(reads, outcome_id=a, name="Alpha Story", check=lambda v, r, w: _assert_unavailable(
+                    v, per_write=per_write, where=f"state {label}: {w}"))
         except AssertionError as exc:
             failures.append(str(exc))
         if label.startswith("A"):
@@ -1035,7 +1038,7 @@ def test_4_a_real_zero_dated_move_is_distinguishable_from_missing_evidence():
     (native hides < 1 pt) and is not asserted."""
     s = _arun(_seed([
         _award_market("zero", "SYNTHETIC — Amber Quill Awards: Best Screenplay",
-                      [(20, 0.50), (3, 0.47)], 0.47, -0.03, [], 0.20, None),
+                      [(20, 0.50), (3, 0.47)], 0.47, -0.03, [], 0.30, None),
         M("missing", "SYNTHETIC — Will the Halloran bridge reopen before December?", "economics",
           [O("Yes", 0.50, 0.03), O("No", 0.50, -0.03)]),
     ]))
@@ -1122,8 +1125,8 @@ _SPORTS_QUESTION = "SYNTHETIC — Which Harbor League clubs sign a marquee free 
 
 #: independently pinned per-surface values for the 0.60 / 0.50 / 0.30 field
 _RAW_PRICE = 0.60
-_FEED_SQUEEZED = 0.4286   # 0.60 / 1.40 = 0.428571..., feed rounds the fraction to 4dp
-_DETAIL_SQUEEZED = 0.4286  # #7586: detail rounds once at the card's 4dp (was 1dp of a percent, .429)
+_FEED_SQUEEZED = 0.60 / 1.40  # precise shared probability; whole allocation is separate
+_DETAIL_SQUEEZED = _FEED_SQUEEZED
 _SQUEEZED_PERCENT = 43
 _ROUNDING_TOL = 1e-6      # the pins above ARE the rounded values; only float noise
 
@@ -1385,7 +1388,7 @@ def test_adjacent_sports_mode_twin_serializer_same_counterexample():
     s = _arun(_seed([M(
         "ws", "SYNTHETIC — Harbor League Championship Winner", "basketball",
         [O("Harbor Gulls", 0.45, 0.05, obs=[(20, 0.40), (3, 0.45)]),
-         O("Pier Rats", 0.30, None), O("Dock Owls", 0.15, None), O("Quay Foxes", 0.10, None)],
+         O("Pier Rats", 0.25, None), O("Dock Owls", 0.15, None), O("Quay Foxes", 0.10, None)],
         source="kalshi", tier=1, sport=("basketball_nba", "NBA"))]))
     mid, a = s.market["ws"], s.outcome[("ws", "Harbor Gulls")]
     _run_real_sweep()

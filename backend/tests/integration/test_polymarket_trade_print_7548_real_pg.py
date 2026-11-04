@@ -366,7 +366,11 @@ def test_V2_the_venues_own_series_never_reached_the_print_and_prices_it_out():
         o["outcome_id"]: {p["timestamp"]: p["probability"] for p in o["history"]}
         for o in _fx("bainluck-history-56947465.json")["outcomes"]
     }
-    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == PRINT
+    saved = _series(_fx("bainluck-history-56947465.json"))
+    mass = sum(points.get(BAD_STAMP, 0) for points in saved.values())
+    # #11995: the point survives the book guard, then shares the full field's
+    # probability basis. The old >1.60 raw-price carve-out is superseded.
+    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == round(PRINT / mass, 8)
 
 
 # ---------------------------------------------------------------------------

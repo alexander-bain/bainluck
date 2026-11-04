@@ -222,6 +222,9 @@ def devigged_consensus_by_time(
     *,
     mutually_exclusive: bool = True,
     field_complete: bool = True,
+    incomplete_times: set[datetime] | None = None,
+    outcome_names: Mapping[int, str] | None = None,
+    question: str | None = None,
 ) -> dict[datetime, dict[int, float]]:
     """Return ``{captured_at: {outcome_id: probability}}`` on the PRINTED scale.
 
@@ -260,6 +263,14 @@ def devigged_consensus_by_time(
     )
     from app.utils.odds_math import devig_consensus
     from app.utils.outcome_display import normalize_display_probs
+    from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+
+    nonexclusive = mutually_exclusive is False or bool(
+        outcome_names and cumulative_outcome_ladder(
+            [{"name": name} for name in outcome_names.values()],
+            dates=True, question=question,
+        )
+    )
 
     # A source in neither bucket is de-vigged by the default arm. That is right
     # for a new Odds API sportsbook and WRONG for a new prediction market, and
@@ -293,7 +304,7 @@ def devigged_consensus_by_time(
         consensus = devig_consensus(
             book_columns,
             method="mean",
-            already_normalized=_ALREADY_PROBABILITY_SOURCES,
+            already_normalized=book_columns if nonexclusive else _ALREADY_PROBABILITY_SOURCES,
         )
         if not consensus:
             continue
@@ -306,12 +317,16 @@ def devigged_consensus_by_time(
         # exact-0.5 untraded midpoints), so position cannot be trusted to
         # survive the call.
         entries = [
-            {"_key": key, "probability": value} for key, value in consensus.items()
+            {"_key": key, "name": (outcome_names or {}).get(key, ""), "probability": value}
+            for key, value in consensus.items()
         ]
         normalize_display_probs(
             entries,
             mutually_exclusive=mutually_exclusive,
-            field_complete=field_complete,
+            # A refused historical tick is unknown mass at THIS instant, even
+            # when the board's current quotes are complete (#11995 / #7548).
+            field_complete=field_complete and captured_at not in (incomplete_times or set()),
+            question=question,
         )
 
         point = {entry["_key"]: entry["probability"] for entry in entries}

@@ -769,11 +769,11 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
 
     normalized = [{**o, "probability": o["prob"] / 100} for o in top_outcomes]
     normalize_display_probs(
-        normalized, mutually_exclusive=mutually_exclusive,
+        normalized, mutually_exclusive=mutually_exclusive is not False,
         field_complete=len(ranked) == len(outcomes), question=market.name,
     )
     top_outcomes = [
-        {"name": o["name"], "prob": o["probability"] * 100,
+        {"name": o["name"], "prob": round(o["probability"] * 100, 6),
          **({"rendered_percent": o["rendered_percent"]} if "rendered_percent" in o else {})}
         for o in normalized[:3]
     ]

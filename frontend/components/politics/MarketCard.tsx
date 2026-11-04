@@ -60,7 +60,9 @@ function BinaryCard({
   const { first, second } = twoLegCardPair(market);
   const yesProb = first.prob;
   const noProb = second?.prob ?? 100 - yesProb;
-  const [yesPct, noPct] = renderedOutcomeRowPercents([yesProb / 100, noProb / 100]);
+  const fallback = renderedOutcomeRowPercents([yesProb / 100, noProb / 100]);
+  const yesPct = market.top_outcomes.find(o => o.name === first.name)?.rendered_percent ?? fallback[0];
+  const noPct = market.top_outcomes.find(o => o.name === second?.name)?.rendered_percent ?? fallback[1];
   const yesLeads = yesProb >= 50;
 
   return (

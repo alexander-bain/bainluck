@@ -5576,6 +5576,7 @@ async def get_futures_market(
         # the card's rule (`feed._score_futures`), so the tap lands on the board
         # the card showed. Cached grid only; a miss keeps every leg.
         out_division_labels=(await out_legs_by_market([market])).get(market.id),
+        normalize_numbers=representation != REPRESENTATION_VERIFIED_TITLE,
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
@@ -5723,16 +5724,18 @@ def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
 
 
 async def _verified_title_board(db: AsyncSession, market: FuturesMarket) -> list:
-    """This member's outcomes exactly as `/api/futures/{id}` would serve them.
+    """Eligible source probabilities, before the final display normalization.
 
-    The same withholding union and fleet clock the detail route passes, so a
-    venue contributes only a number its own page would print.
+    Use the detail route's withholding union and fleet clock. Source membership,
+    divergence and blending operate on these source values; the composed full
+    field is normalized only after those decisions.
     """
     served = _format_market_detail(
         market,
         None,
         await _withheld_price_outcome_ids(db, market),
         fleet_newest_observation=await _fleet_newest_observation(db, market),
+        normalize_numbers=False,  # blend/gate inputs remain the source probabilities
     )["outcomes"]
     rows_by_id = {o.id: o for o in market.outcomes}
     board = []
@@ -5903,14 +5906,22 @@ def _apply_verified_title_to_detail(detail: dict, verdict) -> None:
     requested row's provenance. Badges are renumbered by the canonical
     `assign_display_ranks`, because the client sorts on the value it is given.
     """
-    from app.utils.outcome_display import assign_display_ranks
+    from app.utils.outcome_display import assign_display_ranks, normalize_display_probs
 
     _stamp_representation(detail, verdict)
-    if not isinstance(verdict, Composition):
-        return
     changed = False
-    for row in detail["outcomes"]:
-        changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
+    if isinstance(verdict, Composition):
+        for row in detail["outcomes"]:
+            changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
+    scaled = normalize_display_probs(
+        detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
+        field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
+    )
+    if scaled:
+        detail["openings_withheld"] = True
+        for row in detail["outcomes"]:
+            for key in ("opening_probability", "opening_american_odds", "probability_change_24h"):
+                row[key] = None
     assign_display_ranks(detail["outcomes"])
     # The stored sentence was written about the source row's numbers.
     if changed and detail.get("hook_description"):
@@ -6015,21 +6026,34 @@ async def _finish_verified_timeline(
         "source": market.source,
         "market_id": market.id,
     }
-    if not isinstance(verdict, Composition):
-        return payload
+    board = _format_market_detail(
+        market, None, await _withheld_price_outcome_ids(db, market),
+        normalize_numbers=False,
+    )
+    _apply_verified_title_to_detail(board, verdict)
+    current = {row["id"]: row for row in board["outcomes"]}
     for meta in payload.get("outcomes") or []:
         if meta.get("id") is not None:
-            _overlay_current(meta, verdict.overlay.get(meta["id"]), "current_probability")
+            if isinstance(verdict, Composition):
+                _overlay_current(meta, verdict.overlay.get(meta["id"]), "current_probability")
+            row = current.get(meta["id"])
+            if row is not None:
+                meta["current_probability"] = row["probability"]
+                if "rendered_percent" in row:
+                    meta["rendered_percent"] = row["rendered_percent"]
         elif meta.get("name") == "Field":
-            parts = [verdict.overlay.get(i) for i in field_ids]
+            rows = [current[i] for i in field_ids if i in current]
             meta["current_probability"] = round(
-                sum((p.probability or 0.0) for p in parts if p is not None), 6
+                sum((row["probability"] or 0.0) for row in rows), 8
             )
-            meta["contributing_sources"] = [
-                s
-                for s in VERIFIED_TITLE_SOURCES
-                if any(p is not None and s in p.contributing_sources for p in parts)
-            ]
+            if rows and all("rendered_percent" in row for row in rows):
+                meta["rendered_percent"] = sum(row["rendered_percent"] for row in rows)
+            if isinstance(verdict, Composition):
+                parts = [verdict.overlay.get(i) for i in field_ids]
+                meta["contributing_sources"] = [
+                    s for s in VERIFIED_TITLE_SOURCES
+                    if any(p is not None and s in p.contributing_sources for p in parts)
+                ]
     return payload
 
 
@@ -7216,15 +7240,16 @@ def _venue_field_squeezable(
 ) -> bool:
     """Whether `/history` squeezes this board — the condition every venue-instant
     field question is asked under (#7954's bypass included)."""
-    from app.routes.playoffs import _ALREADY_PROBABILITY_SOURCES
+    from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 
-    unsqueezed_board = not field_complete and (
-        getattr(market, "source", None) in _ALREADY_PROBABILITY_SOURCES
-    )
     return (
-        bool(getattr(market, "mutually_exclusive", True))
+        getattr(market, "mutually_exclusive", True) is not False
         and len(charted_outcomes) > 1
-        and not unsqueezed_board
+        and field_complete
+        and cumulative_outcome_ladder(
+            [{"name": getattr(o, "name", "")} for o in charted_outcomes],
+            dates=True, question=getattr(market, "name", None),
+        ) is None
     )
 
 
@@ -7328,46 +7353,18 @@ def _venue_pair_admission(
     market: FuturesMarket, charted_outcomes: list, venue_by_outcome: dict,
     *, field_complete: bool = True,
 ) -> Optional[_PairAdmission]:
-    """#11157 — admit an identity-admitted, annotated Yes/No pair PAIR BY PAIR, or None.
+    """Admit identity-verified, annotated binary pairs without changing their clocks.
 
-    WHY THE EXACT-INSTANT FIELD RULE CANNOT BE ASKED HERE. `_venue_field_columns`
-    requires every charted leg to hold an observation at the SAME instant, so the
-    squeeze has a denominator there. Polymarket's CLOB stamps each token at its
-    own second — 65678073: Yes 461, No 459, zero shared instants — so on the
-    venue's real shape that rule refuses every point.
+    Each admitted pair supplies the full contemporaneous denominator for
+    #11995's display normalization. Its arithmetic key is (knowledge time,
+    tier); each served point retains its OWN quote time and exposes the later
+    knowledge time separately as `pair_known_at`.
 
-    WHAT REPLACES IT, FOR THIS CLASS ONLY (lane1's I2, I3, I7, I9). The fill
-    paired the raw legs and annotated both halves (`async_binary_pair`);
-    `_verify_pair_bank` checked the annotation whole against the stored bank and
-    re-derived identity. Here each pair whose two halves are BOTH in this
-    window becomes one column, keyed on its knowledge time `pair_at`, and that
-    column is what the reader's UNCHANGED scale contract is asked of. Nothing is
-    complemented, interpolated, carried or normalised.
-
-    WHAT IT DOES NOT CLAIM. Not that the halves were simultaneous: each is served
-    at its own raw instant with its own value, and `pair_at` is published beside
-    it as `pair_known_at`, never as a quote time (I1, I8).
-
-    WITHHELD PER POINT AND COUNTED, NEVER A WHOLE-SERIES REFUSAL:
-      * a half whose peer is not in this window (never paired, dropped by the
-        support filter, claimed by a capture) — `unpaired`;
-      * POLYMARKET ONLY: a pair whose values disagree with one complementary book
-        by more than `PAIR_COHERENCE_EPSILON` — a mixed pair across a move —
-        `incoherent`. A refusal guard only; agreement proves neither identity nor
-        a clock.
-    WHY THE COHERENCE GUARD IS POLYMARKET'S ALONE (#10955 R1). Its premise is the
-    Yes and No tokens of ONE condition, which share one book: stamped at their own
-    seconds, a sum off 1.00 can only mean the halves straddle a move. A Kalshi
-    pair is two tickers, each priced from its own book's mid or last trade, paired
-    only at an exact shared candle instant — so a sum of 0.98 or 1.03 is two
-    genuine prices, never a straddle, and base served those points. A Kalshi pair
-    goes straight to the scale contract below, exactly as base's field rule did.
-    The scale contract itself is unchanged and still refuses WHOLE if an admitted
-    pair's printed value differs from its raw one.
-
-    None — the caller's existing rules decide, byte-identical — unless the board
-    is squeezed, has exactly two legs, and every venue row carries the verified
-    partner tag (`_load_generic_venue_history`).
+    Missing peers, claimed halves and incompatible annotations stay refused.
+    Polymarket's two tokens share one book, so a mixed pair across a move is
+    also refused by the existing coherence guard. Kalshi's distinct ticker
+    books can legitimately sum above or below one and keep that exemption.
+    Identity, skew, one-to-one pairing and bank validation remain upstream.
     """
     from app.utils.async_binary_pair import pair_is_incoherent
 
@@ -7487,101 +7484,22 @@ def _venue_scale_refusal(
     *,
     field_complete: bool = True,
 ) -> Optional[str]:
-    """None when `/history`'s PRINTED scale is the venue's raw scale here; else why not.
+    """Refuse a missing denominator, never a complete field's display conversion.
 
-    🔴 FOR A SQUEEZABLE EXCLUSIVE FIELD THE EVIDENCE MUST BE CONTEMPORANEOUS WITH
-    THE POINT BEING ADMITTED. The squeeze is a whole-field operation: what it does
-    to one outcome's number is a function of the OTHER outcomes' values at the
-    SAME instant. A venue point is, by construction, at an instant no capture
-    reached (`unclaimed_instants`), so the captures cannot answer for it.
-
-    The first presentation admitted such a market whenever every CAPTURED instant
-    happened to come through the squeeze unchanged. That is the inference removed
-    here: two outcomes sitting at .5/.5 all week are exactly the case where the
-    squeeze is the identity *because the field already sums to one*, and that says
-    nothing about an unobserved instant where it may not.
-
-    So the venue instants are asked to answer for themselves, through the SAME
-    scale contract this route prints with rather than a second copy of its rules:
-    every charted outcome must have an observation at that instant (a field with a
-    hole has no denominator), and running `devigged_consensus_by_time` over those
-    contemporaneous raw values must return them unchanged. Where that holds the
-    squeeze is measured to be the identity AT THE POINT BEING SERVED; where it
-    does not, the series is refused rather than converted by a rule nobody ruled
-    on. Nothing new is fetched and no denominator is borrowed from today.
-
-    A market that cannot be squeezed by construction needs none of this — a
-    non-exclusive family (#199) or the single-outcome binary the named specimen is
-    — and falls straight through to the per-capture comparison below.
-
-    🔴 #7954 — AND NEITHER DOES A BOARD THIS CHART HAS ALREADY REFUSED TO SQUEEZE.
-    Every sentence above is conditioned on the squeeze FIRING. #7747 gave this
-    route `field_complete = not _withheld_ids` and passes it into the same
-    `devigged_consensus_by_time` that prints the line; `normalize_display_probs`
-    reads `field_complete=False` as REFUSE THE SQUEEZE (#7103), because a field
-    with withheld members is not a proved-complete distribution. So on such a
-    board the printed scale IS the per-instant consensus of the raw column, and
-    a raw venue point is already on it — there is no whole-field operation left
-    for the point to be contemporaneous with, and the completeness test is
-    asking a question about an arithmetic the page is not doing.
-
-    It was not a hypothetical. `/futures/61308736` (*2027 US Open Men's Singles
-    Winner*, Kalshi, tier 1) drew a 12-hour hole captioned "No numbers for 12
-    hours in this stretch" while its durable venue bank held 45 points across 6
-    outcomes, `fill_status: ok` — refused whole, because 4 of the 10 charted
-    legs are price-withheld and can never appear at a venue instant. The two
-    rules were mutually unsatisfiable: one withholds the legs, the other
-    requires them. The refusal was structural, not a property of the data.
-
-    THE BOARD-LEVEL FLAG IS WHY THE INFERENCE IS SOUND HERE AND WAS NOT BEFORE.
-    The removed inference was from one INSTANT to another. `field_complete` is a
-    property of the BOARD (#7747: "PER BOARD, NOT PER INSTANT" — squeezing some
-    instants of a line and not others draws a scale change as a price MOVE), so
-    "this chart does not squeeze" holds at the unclaimed instants too, and
-    nothing is carried across instants.
-
-    TWO THINGS ARE DELIBERATELY NOT LOOSENED. The per-capture comparison below
-    still runs and is the whole contract in this mode — it is a MEASUREMENT that
-    printed equals raw, not an assumption, and it still refuses a board where
-    de-vigging moved the number. And the bypass is limited to sources whose
-    stored column already IS a probability, because `devig_consensus`'s default
-    arm divides an unrecognised book's column by its own sum: that is a
-    whole-field operation the captures cannot answer for at an unclaimed
-    instant, which is this docstring's original objection wearing another hat.
-    An unknown source keeps today's refusal — the gate fails closed.
-
-    ONE RESIDUAL, STATED RATHER THAN HIDDEN. A board whose captures carry a
-    SECOND bookmaker outside that set is still de-vigged by the column sum, and
-    that is caught for every outcome the captures reached — the loop below
-    compares against `mean(raw_values)` and the divisor is board-wide, so one
-    corroborated outcome convicts the whole instant. It is NOT measured at an
-    unclaimed instant for an outcome the captures never reached. Both venue
-    banks in production are single-source (`kalshi`, `polymarket` candlesticks),
-    so the case is unobserved; it is named here so a grader does not have to
-    find it.
+    #11995 normalizes every complete one-winner field. Venue and archive
+    columns therefore use that same rule at THEIR recorded field/pair instants,
+    with each output point retaining its own observation time. A missing peer
+    still refuses the column; today's field is never a historical denominator.
     """
-    # The hole half, shared with the sparsity gate (#7936) so the two can never
-    # disagree about whether this series is servable. #7954's `field_complete`
-    # bypass lives inside it and travels to both callers with it.
-    hole, venue_columns = _venue_field_columns(
+    hole, _columns = _venue_field_columns(
         market, charted_outcomes, venue_by_outcome, field_complete=field_complete
     )
     if hole:
         return hole
-    if venue_columns:
-        from app.utils.futures_history_basis import devigged_consensus_by_time
-
-        venue_printed = devigged_consensus_by_time(
-            {at: {market.source: col} for at, col in venue_columns.items()},
-            mutually_exclusive=True,
-        )
-        for at, column in venue_columns.items():
-            printed_here = venue_printed.get(at)
-            if printed_here is None:
-                return "printed_scale_is_not_the_venue_raw_scale"
-            for oid, raw in column.items():
-                if abs(float(printed_here.get(oid, raw + 1.0)) - raw) > 5e-5:
-                    return "printed_scale_is_not_the_venue_raw_scale"
+    if _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
+        return None
+    # Unsqueezed fields retain the prior raw-scale guard for unrelated book
+    # transformations; normalizing a non-exclusive or unknown field is refused.
     for oid in venue_by_outcome:
         for captured_at, raw_values in (outcome_time_groups.get(oid) or {}).items():
             point = devigged.get(captured_at)
@@ -7590,6 +7508,42 @@ def _venue_scale_refusal(
             if abs(float(point[oid]) - mean(raw_values)) > 5e-5:
                 return "printed_scale_is_not_the_venue_raw_scale"
     return None
+
+
+def _venue_display_probabilities(
+    market, outcomes: list, by_outcome: dict, *, field_complete: bool,
+    pair: Optional[_PairAdmission] = None,
+) -> dict:
+    """Normalized full-field values keyed by (leg, its ORIGINAL observation time)."""
+    from app.utils.outcome_display import normalize_display_probs
+
+    hole, columns = _venue_field_columns(
+        market, outcomes, by_outcome, field_complete=field_complete
+    )
+    if hole or not columns:
+        return {}
+    names = {o.id: getattr(o, "name", "") for o in outcomes}
+    printed = {}
+    for at, column in columns.items():
+        rows = [{"id": oid, "name": names.get(oid, ""), "probability": p}
+                for oid, p in column.items()]
+        normalize_display_probs(
+            rows, mutually_exclusive=getattr(market, "mutually_exclusive", True),
+            field_complete=field_complete, question=getattr(market, "name", None),
+        )
+        printed[at] = {r["id"]: r["probability"] for r in rows}
+    values = {}
+    for oid, rows in by_outcome.items():
+        for row in rows:
+            if pair is not None:
+                if (oid, row.captured_at) not in pair.admitted:
+                    continue
+                at = (row.pair_at, row.tier)
+            else:
+                at = row.captured_at
+            if oid in printed.get(at, {}):
+                values[(oid, row.captured_at)] = printed[at][oid]
+    return values
 
 
 def _venue_rows_served(venue_cells: dict) -> list:
@@ -9662,12 +9616,22 @@ async def get_futures_history(
             _never_carried.add(_o.id)
         else:
             _cleared_until[_o.id] = _stamp
+    supported_history_keys = {
+        (r.outcome_id, r.bookmaker, r.captured_at) for r in _archive_claims
+    }
+    incomplete_history_times = {
+        r.captured_at for r in field_rows
+        if (r.outcome_id, r.bookmaker, r.captured_at) not in supported_history_keys
+    }
     devigged = devigged_consensus_by_time(
         carry_forward_quotes(
             raw_by_time, do_not_carry=_never_carried, carry_until=_cleared_until
         ),
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=_field_complete,
+        incomplete_times=incomplete_history_times,
+        outcome_names={o.id: o.name for o in charted_outcomes},
+        question=market.name,
     )
 
     # Counted as the series is BUILT, not off `outcome_time_groups` above, and
@@ -9679,22 +9643,9 @@ async def get_futures_history(
     # (gotcha #53: an absence and a fact must not share a shape).
     total_data_points = 0
 
-    # #7351 — THE SCALE CONTRACT. The cached venue series is the venue's RAW YES
-    # probability. This route prints `devigged` — per-instant, whole-field, run
-    # through the #23 squeeze — and a venue point has no whole field at its
-    # instant to be squeezed with. So a venue point is admitted ONLY where the
-    # printed scale is measurably the raw scale; otherwise the series is REFUSED
-    # for this reader rather than converted by a rule nobody ruled on.
-    #
-    # #7954: "prints `devigged`" is not "prints SQUEEZED". `_field_complete` is
-    # handed in below because when it is False this chart has already refused
-    # the squeeze (#7747/#7103) and the printed scale is the raw column — so the
-    # completeness half of the contract would be guarding an arithmetic that is
-    # not happening, and it refused 45 banked points on `61308736` for it.
-    # #8000 — the verdict is asked of the FIELD's rows (every leg the bank holds
-    # in the window, `field_venue_rows`), and only then is the drawn subset kept
-    # for serving. A verdict asked of the drawn subset alone would be answering
-    # a question about a denominator this page does not print with.
+    # #11995: complete validated venue fields use the shared display rule at
+    # their own instants. An incomplete field still has no denominator. Ask
+    # about the FULL field before selecting the chart's drawn subset (#8000).
     field_venue_by_outcome: dict[int, list] = defaultdict(list)
     for row in sorted(field_venue_rows, key=lambda r: r.captured_at):
         if row.probability is not None:
@@ -9732,16 +9683,13 @@ async def get_futures_history(
                     for oid, rows in venue_by_outcome.items()
                 })
     venue_rows_served: list = []
+    venue_display_values = _venue_display_probabilities(
+        market, charted_outcomes, field_venue_by_outcome,
+        field_complete=_field_complete, pair=venue.pair_admission,
+    ) if not venue_scale_refusal else {}
 
-    # #683 — THE ARCHIVE ARM, ON THE SAME SCALE CONTRACT AS THE VENUE ARM. An
-    # archive interval is the venue's raw YES price, exactly like a venue point,
-    # so it is admitted only where this route's printed scale is measurably the
-    # raw scale (`_venue_scale_refusal`, asked of the archive rows on their own).
-    # Live evidence wins actual overlap only: an interval holding a capture or a
-    # served venue point is withheld; the rest of the timeline stands.
-    # `range=full`: the archive arm is cut nowhere in time (rule 6 in the reader),
-    # and the live arms above reach their own lifetime, so live keeps precedence
-    # over every interval it actually holds, however old.
+    # Archive intervals follow the same full-field rule; live evidence still
+    # wins actual overlap only. Preserve interval provenance and its own close.
     _field_claims = list(_archive_claims) + list(field_venue_rows) + field_venue_unknown
     _field_unknown: list = []
     if older_live is not None:
@@ -9767,6 +9715,10 @@ async def get_futures_history(
         if archive_scale_refusal:
             archive_by_outcome = {}
     archive_rows_served: list = []
+    archive_display_values = _venue_display_probabilities(
+        market, charted_outcomes, field_archive_by_outcome,
+        field_complete=_field_complete,
+    ) if not archive_scale_refusal else {}
 
 
     # Build aggregated history: one data point per timestamp per outcome
@@ -9837,16 +9789,20 @@ async def get_futures_history(
                     "bookmaker": "consensus",
                 })
         # #7351: the venue's own observations at the instants no capture claims.
-        # Real timestamp, raw value, and a provenance a reader can tell from a
-        # capture — an older venue sample never passes as a fresh poll.
+        # Original timestamp and provenance, plus the raw quote whenever full-field
+        # normalization changes its value; an old sample never becomes a fresh poll.
         for row in venue_by_outcome.get(oid, ()):
             venue_point = {
                 "timestamp": row.captured_at.isoformat(),
-                "probability": round(float(row.probability), 6),
+                "probability": venue_display_values.get(
+                    (oid, row.captured_at), round(float(row.probability), 6)
+                ),
                 "american_odds": None,
                 "bookmaker": row.bookmaker,
                 "provenance": "venue_history",
             }
+            if abs(venue_point["probability"] - float(row.probability)) > 1e-8:
+                venue_point["raw_probability"] = float(row.probability)
             # #11157: a half admitted beside a partner sampled at another second
             # carries the pair's knowledge time AS ITS OWN FIELD; `timestamp`
             # stays the quote's own instant.
@@ -9862,7 +9818,12 @@ async def get_futures_history(
         # #683: the archive's intervals, each drawn at its close with its
         # interval and provenance — never as a polling instant.
         for row in archive_by_outcome.get(oid, ()):
-            history.append(archive_history_point(row))
+            point = archive_history_point(row)
+            value = archive_display_values.get((oid, row.captured_at))
+            if value is not None and abs(value - float(row.probability)) > 1e-8:
+                point["raw_probability"] = float(row.probability)
+                point["probability"] = value
+            history.append(point)
             archive_rows_served.append(row)
         if venue_by_outcome.get(oid) or archive_by_outcome.get(oid):
             history.sort(key=lambda pt: _parse_stamp(pt["timestamp"]))
@@ -10380,6 +10341,7 @@ def _format_market_detail(
     leg_sides: "dict[str, str] | None" = None,
     lead_leg: "str | None" = None,
     out_division_labels: "frozenset[str] | None" = None,
+    normalize_numbers: bool = True,
 ) -> dict:
     """Format a market for detail view with all outcomes.
 
@@ -11161,7 +11123,7 @@ def _format_market_detail(
     )
     raw_dominant_dropped = raw_outcome_count - len(outcomes)
     # #11995 supersedes the raw Midterms pin: one shared full-field rule.
-    if normalize_display_probs(
+    if normalize_numbers and normalize_display_probs(
         outcomes,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=prices_withheld == 0,

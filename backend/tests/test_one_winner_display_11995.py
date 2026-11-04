@@ -96,3 +96,56 @@ def test_search_preview_keeps_the_detail_full_field_divisor():
     for row in preview:
         assert row["probability"] == full[row["name"]]["probability"]
         assert row["rendered_percent"] == full[row["name"]]["rendered_percent"]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"is_winner": True, "resolution_source": "api_settlement"},
+        {"is_winner": True, "resolution_source": "datagolf_settlement"},
+    ],
+)
+def test_a_declared_winner_is_not_scaled_back_into_an_uncertain_price(result):
+    rows = [
+        {"name": "Winner", "probability": 1.0, **result},
+        {"name": "Loser", "probability": 0.003},
+    ]
+    before = deepcopy(rows)
+    assert normalize_display_probs(rows) is False
+    assert rows == before
+
+
+def test_a_refused_history_tick_does_not_turn_unknown_mass_into_zero():
+    from datetime import datetime, timedelta, timezone
+    from app.utils.futures_history_basis import devigged_consensus_by_time
+
+    start = datetime(2026, 11, 4, tzinfo=timezone.utc)
+    full = {1: 0.9, 2: 0.8, 3: 0.7}
+    partial = {2: 0.8, 3: 0.7}
+    result = devigged_consensus_by_time(
+        {
+            start: {"polymarket": full},
+            start + timedelta(minutes=1): {"polymarket": partial},
+        },
+        mutually_exclusive=True,
+        incomplete_times={start + timedelta(minutes=1)},
+    )
+    assert sum(result[start].values()) == pytest.approx(1)
+    assert result[start + timedelta(minutes=1)] == partial
+
+
+def test_event_row_alias_preserves_ladder_semantics_and_rounding_identity():
+    ladder = [
+        {"outcome_name": "Above 50", "probability": 0.8},
+        {"outcome_name": "Above 60", "probability": 0.6},
+    ]
+    before = deepcopy(ladder)
+    assert normalize_display_probs(ladder) is False
+    assert ladder == before
+    rows = [{"outcome_name": name, "probability": 0.4} for name in ("Zoe", "Alice", "Bob")]
+    page = [{"name": row["outcome_name"], "probability": row["probability"]} for row in reversed(rows)]
+    normalize_display_probs(rows)
+    normalize_display_probs(page)
+    assert {r["outcome_name"]: r["rendered_percent"] for r in rows} == {
+        r["name"]: r["rendered_percent"] for r in page
+    }

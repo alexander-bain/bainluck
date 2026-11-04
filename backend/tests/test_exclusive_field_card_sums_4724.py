@@ -21,6 +21,8 @@ overrounded "one-winner" field past `_FIELD_SUM_MAX`.
 
 from types import SimpleNamespace
 
+import pytest
+
 
 from app.routes import events as events_route
 from app.routes.events import _squeeze_exclusive_field_markets
@@ -87,8 +89,10 @@ class TestTheSpecimenCardAddsUp:
         rows = _rows(63152878, RACE_21, RACE_21_LEGS) + _rows(63152876, RACE_35, RACE_35_LEGS)
         markets = [_market(63152878, RACE_21, mex=True), _market(63152876, RACE_35, mex=True)]
         out = _squeeze_exclusive_field_markets(rows, markets)
-        # Race to 35, same page, same minute, sums to 0.98 — nothing to take out.
-        assert out[3:] == rows[3:]
+        # #11995: both complete fields normalize, including the 0.98 underround.
+        assert [r["probability"] for r in out[3:]] == pytest.approx(
+            [r["probability"] / 0.98 for r in rows[3:]], abs=1e-8
+        )
         assert out[0]["probability"] < rows[0]["probability"]
 
 
@@ -101,10 +105,11 @@ class TestTheCardsThatMustNotMove:
         out = _squeeze_exclusive_field_markets(rows, [_market(63152875, name, mex=False)])
         assert out == rows
 
-    def test_a_one_winner_field_under_100_is_left_alone(self):
+    def test_a_one_winner_underround_is_normalized(self):
         rows = _rows(62733774, HTFT, [("PIT / PIT", 0.40), ("CLE / CLE", 0.30), ("Tie / PIT", 0.25)])
         out = _squeeze_exclusive_field_markets(rows, [_market(62733774, HTFT, mex=True)])
-        assert out == rows
+        assert [r["probability"] for r in out] == pytest.approx([0.40 / 0.95, 0.30 / 0.95, 0.25 / 0.95], abs=1e-8)
+        assert sum(r["rendered_percent"] for r in out) == 100
 
     def test_a_field_with_an_unpriced_leg_is_not_reasoned_about(self):
         """A settled market serves its losers as None (the row builder's `if prob else None`)."""
@@ -120,12 +125,13 @@ class TestTheCardsThatMustNotMove:
         out = _squeeze_exclusive_field_markets(rows, [_market(1, name, mex=True)])
         assert out == rows
 
-    def test_a_field_past_the_overround_ceiling_stays_raw(self):
+    def test_a_known_one_winner_field_has_no_overround_ceiling(self):
         name = "Field"
         p = (_FIELD_SUM_MAX + 0.3) / 3
         rows = _rows(2, name, [("A", p), ("B", p), ("C", p)])
         out = _squeeze_exclusive_field_markets(rows, [_market(2, name, mex=True)])
-        assert out == rows
+        assert [r["probability"] for r in out] == pytest.approx([1 / 3] * 3, abs=1e-8)
+        assert sum(r["rendered_percent"] for r in out) == 100
 
     def test_a_market_seen_through_a_merged_row_abstains(self):
         # Four legs, so three single-market legs remain once the merged one is set

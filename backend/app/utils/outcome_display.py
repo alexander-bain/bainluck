@@ -316,6 +316,14 @@ def display_divisor_mass(probs) -> float:
     return sum(float(p) for p in probs if p is not None)
 
 
+def _field_has_result(outcomes: list[dict]) -> bool:
+    return any(
+        o.get("is_winner") is True
+        and o.get("resolution_source") not in (None, "ungradeable_result")
+        for o in outcomes
+    )
+
+
 def display_probability_divisor(
     outcomes: list[dict],
     key: str = "probability",
@@ -333,13 +341,18 @@ def display_probability_divisor(
     """
     import math
 
+    if _field_has_result(outcomes):
+        return None  # a declared result is no longer an uncertain distribution
     if (
         mutually_exclusive is False
         or (mutually_exclusive and not field_complete)
         or len(outcomes) < 2
     ):
         return None
-    if cumulative_outcome_ladder(outcomes, dates=True, question=question):
+    if cumulative_outcome_ladder(
+        [{"name": o.get("name", o.get("outcome_name", o.get("label", "")))} for o in outcomes],
+        dates=True, question=question,
+    ):
         return None
     values = [o.get(key) for o in outcomes]
     if any(
@@ -374,6 +387,8 @@ def normalize_display_probs(
     """
     import math
 
+    if _field_has_result(outcomes):
+        return False
     # Existing untraded midpoint refusal; this is membership cleanup, not vig.
     if mutually_exclusive:
         halves = sum(o.get(key) == 0.5 for o in outcomes)
@@ -396,8 +411,8 @@ def normalize_display_probs(
     order = sorted(
         range(len(outcomes)),
         key=lambda i: (
-            -(exact[i] - whole[i]),
-            str(outcomes[i].get("name", outcomes[i].get("label", ""))).casefold(),
+            -round(exact[i] - whole[i], 10),
+            str(outcomes[i].get("name", outcomes[i].get("outcome_name", outcomes[i].get("label", "")))).casefold(),
             str(outcomes[i].get("id", "")),
         ),
     )
