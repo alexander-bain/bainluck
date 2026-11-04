@@ -545,7 +545,6 @@ export default function Prototype({
             {!resolved && (
               <PriceAgeMark
                 observedAt={lead.last_updated ?? detail.updated_at}
-                nowMs={Date.parse(data.capturedAt)}
                 cadence="futures"
                 scope="card"
               />
