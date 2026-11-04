@@ -1,0 +1,264 @@
+[
+  {
+    "slug": "duel",
+    "marketId": "109085",
+    "study": null,
+    "viewport": 390,
+    "ageMark": null,
+    "chartViewBox": "0 0 334 380",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [
+      "98",
+      "2"
+    ],
+    "relatedLinks": 3,
+    "title": "Kansas Senate winner",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:43.221Z"
+  },
+  {
+    "slug": "field",
+    "marketId": "108629",
+    "study": null,
+    "viewport": 390,
+    "ageMark": null,
+    "chartViewBox": "0 0 334 380",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [
+      "29"
+    ],
+    "relatedLinks": 3,
+    "title": "Closest Governor race in 2026",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:43.625Z"
+  },
+  {
+    "slug": "ladder",
+    "marketId": "65536371",
+    "study": null,
+    "viewport": 390,
+    "ageMark": null,
+    "chartViewBox": "0 0 24 24",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [
+      "80"
+    ],
+    "relatedLinks": 3,
+    "title": "Snow in Denver in Dec 2026",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:43.940Z"
+  },
+  {
+    "slug": "participation",
+    "marketId": "227",
+    "study": null,
+    "viewport": 390,
+    "ageMark": null,
+    "chartViewBox": "0 0 334 380",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [
+      "94"
+    ],
+    "relatedLinks": 1,
+    "title": "College Football Playoff Qualifiers",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:44.612Z"
+  },
+  {
+    "slug": "one-leg",
+    "marketId": "109918",
+    "study": null,
+    "viewport": 390,
+    "ageMark": null,
+    "chartViewBox": "0 0 334 380",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [],
+    "relatedLinks": 3,
+    "title": "Will Democrats sweep all swing state Governor races",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:44.872Z"
+  },
+  {
+    "slug": "settled-today",
+    "marketId": "108645",
+    "study": null,
+    "viewport": 390,
+    "ageMark": null,
+    "chartViewBox": "0 0 334 380",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [],
+    "relatedLinks": 3,
+    "title": "Georgia Governor winner",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:45.366Z"
+  },
+  {
+    "slug": "one-leg-open",
+    "marketId": "109918",
+    "study": "?state=open",
+    "viewport": 390,
+    "ageMark": "20h agoLast number: 3 Nov, 12:55 AM",
+    "chartViewBox": "0 0 334 380",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [
+      "58"
+    ],
+    "relatedLinks": 3,
+    "title": "Will Democrats sweep all swing state Governor races",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:45.629Z"
+  },
+  {
+    "slug": "one-leg-settled",
+    "marketId": "109918",
+    "study": "?state=settled",
+    "viewport": 390,
+    "ageMark": null,
+    "chartViewBox": "0 0 334 380",
+    "documentWidth": 390,
+    "height": 1400,
+    "heroDigits": [],
+    "relatedLinks": 3,
+    "title": "Will Democrats sweep all swing state Governor races",
+    "width": 390,
+    "capturedAt": "2026-11-04T05:30:45.851Z"
+  },
+  {
+    "slug": "duel",
+    "marketId": "109085",
+    "study": null,
+    "viewport": 1280,
+    "ageMark": null,
+    "chartNotes": [],
+    "chartViewBox": "0 0 1192 380",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 3,
+    "title": "Kansas Senate winner",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:05.085Z"
+  },
+  {
+    "slug": "field",
+    "marketId": "108629",
+    "study": null,
+    "viewport": 1280,
+    "ageMark": null,
+    "chartNotes": [],
+    "chartViewBox": "0 0 1192 380",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 3,
+    "title": "Closest Governor race in 2026",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:05.446Z"
+  },
+  {
+    "slug": "ladder",
+    "marketId": "65536371",
+    "study": null,
+    "viewport": 1280,
+    "ageMark": null,
+    "chartNotes": [
+      "Not enough recorded history",
+      "A path needs more than one reading. Current threshold probabilities are shown above."
+    ],
+    "chartViewBox": "0 0 24 24",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 3,
+    "title": "Snow in Denver in Dec 2026",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:05.671Z"
+  },
+  {
+    "slug": "participation",
+    "marketId": "227",
+    "study": null,
+    "viewport": 1280,
+    "ageMark": null,
+    "chartNotes": [],
+    "chartViewBox": "0 0 1192 380",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 1,
+    "title": "College Football Playoff Qualifiers",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:06.322Z"
+  },
+  {
+    "slug": "one-leg",
+    "marketId": "109918",
+    "study": null,
+    "viewport": 1280,
+    "ageMark": null,
+    "chartNotes": [
+      "No numbers for 37 days in this stretch"
+    ],
+    "chartViewBox": "0 0 1192 380",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 3,
+    "title": "Will Democrats sweep all swing state Governor races",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:06.632Z"
+  },
+  {
+    "slug": "settled-today",
+    "marketId": "108645",
+    "study": null,
+    "viewport": 1280,
+    "ageMark": null,
+    "chartNotes": [
+      "No numbers for 37 days in this stretch"
+    ],
+    "chartViewBox": "0 0 1192 380",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 3,
+    "title": "Georgia Governor winner",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:06.943Z"
+  },
+  {
+    "slug": "one-leg-open",
+    "marketId": "109918",
+    "study": "?state=open",
+    "viewport": 1280,
+    "ageMark": "20h agoLast number: 3 Nov, 12:55 AM",
+    "chartNotes": [
+      "Last number 20 hours ago"
+    ],
+    "chartViewBox": "0 0 1192 380",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 3,
+    "title": "Will Democrats sweep all swing state Governor races",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:07.269Z"
+  },
+  {
+    "slug": "one-leg-settled",
+    "marketId": "109918",
+    "study": "?state=settled",
+    "viewport": 1280,
+    "ageMark": null,
+    "chartNotes": [
+      "Last number 20 hours ago"
+    ],
+    "chartViewBox": "0 0 1192 380",
+    "documentWidth": 1280,
+    "height": 1200,
+    "relatedLinks": 3,
+    "title": "Will Democrats sweep all swing state Governor races",
+    "width": 1280,
+    "capturedAt": "2026-11-04T05:31:07.534Z"
+  }
+]

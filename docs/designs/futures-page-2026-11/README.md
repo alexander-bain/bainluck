@@ -1,3 +1,5 @@
+> Archived Iteration 1 evidence. Alex requested a closer Event Details match. [Current Iteration 2 preview and side-by-side comparisons](iteration-2/README.md).
+
 # Futures prototype evidence
 
 [Preview](https://bainluck-1no21ut75-alexander-bain.vercel.app/kernels-preview/futures/109085) · branch `design/futures-page-proto` · application commit `d32237d61f`.

@@ -1,15 +1,13 @@
-# Futures preview visual review
+# Futures preview · Iteration 2 review
 
-final result: passed
+Ready for Alex’s design review. The first pass was rejected for insufficient similarity to Event Details; this record supersedes the earlier pass-level visual verdict.
 
-Reviewed Nov 3, 7:32 PM PT, on deployment `https://bainluck-1no21ut75-alexander-bain.vercel.app`, application commit `d32237d61f`.
+Rendered code: `2629efea23`. Deployment: `https://bainluck-bvmat1i4o-alexander-bain.vercel.app`. Captures: Nov 3, 9:31 PM PT. [Design note and actual web/SwiftUI mapping](docs/designs/futures-page-2026-11.md). [Side-by-side evidence](docs/designs/futures-page-2026-11/iteration-2/README.md).
 
-Reference: the production event page `/events/15341541` and its composed chart/hero primitives, plus the old futures page at 390 px. These are hierarchy and design-system references, with different market content and lifecycle states; this is not a pixel clone. Reference captures and all final screenshots live in `docs/designs/futures-page-2026-11/`.
+The reference images are actual production Event Details pages: live UNLV–Northern Arizona and the recent Canucks–Ducks final. Six market examples are paired at 390px and 1280px per half, with four additional one-leg state-study pairs. Source screenshots are unchanged; labels/dividers are outside their pixels. The hosted futures captures have no privacy overlay or Vercel toolbar. The native page’s existing tenths/auto-scaled axis is visible as a reference; futures follows the requested whole-number, fixed-axis rules.
 
-Iteration 1: collapsed review chrome, kept the leader stable when a field row is selected, aligned the duel's rounded pair and bar, labelled unavailable grades' numbers historical, and defaulted settled charts to the full journey. The final captures show the resulting hierarchy at 390 and 1280 px.
+Compared shared shell, hero typography/identity boxes, card spacing, section headings, range chips, chart frame and Bigger Picture rail. The shapes change their own body. Settled Georgia names the winner and uses actual Won/Lost marks. A retracted one-leg grade remains unavailable. Missing histories stay explicit.
 
-Iteration 2: hosted review found server/browser timezone hydration mismatches in the shared chart. The preview now mounts it client-side, with an SSR guard. A fresh hosted tab rendered all 16 final captures with zero console errors and no horizontal overflow.
+Build passed; typecheck matches baseline 65 with zero new errors; 12 focused tests and 4 startup checks passed. All 16 futures viewports render without document overflow or final-preview console errors. Field expansion reaches all 24 legs, threshold selection updates the answer, ranges work, fullscreen Escape restores focus, and a related card reaches its market. The age-stamp timezone mismatch was reproduced with a UTC server and Pacific browser and fixed in this preview; age labels now share the reader clock.
 
-Interactions: field expands to 24 rows, threshold selection changes the hero, time-range controls work, fullscreen opens, Escape closes it and returns focus. Every displayed probability location reserves the source mark; no sheet is built.
-
-Accepted payload limitations are explicit in the design note: sparse Denver history, single-venue Kansas recorded history, CFP's stored nonexclusive field, and the retracted one-leg grade. Full-page mobile screenshots retain the site's fixed bottom navigation; Vercel's review toolbar is visible. These are preview chrome, not new app controls. No unresolved P0/P1/P2 visual defects found.
+This is prototype review evidence, not Alex’s approval, a production release, or an independent cert. No PR to master was opened. Taste calls E/F remain in the note; A–D are retired. Earlier captures remain archived under `docs/designs/futures-page-2026-11/`.

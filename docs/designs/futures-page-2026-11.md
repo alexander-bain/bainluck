@@ -17,7 +17,7 @@
 
 **New shape bodies.** Field shares remain full-field shares: top three and **21 more**. Participation bars stay independent. Quantity thresholds ascend. One leg never acquires a No. Non-duel heroes use population/period context opposite the leader. Initials occupy native identity boxes where participant artwork is absent. Bottom review controls label state studies; assumed grades never enter history. Native mappings identify existing primitives and required adapters; no native build is claimed.
 
-**Number contract.** Blend only; attribution-only venue names; whole numbers; no gambling formats. Raw chart segments, fixed **0–100** domain, real gaps/results. Game `OddsChart` auto-scales; the shared event-composition `FuturesChart` honors this brief inside the same card. A default-off fit option keeps the entire timeline and requested height at 390px; other callers retain their geometry. Probabilities, results, counts and tooltips reserve ⓘ for #11920; dates/ticks/control labels remain labels. No source sheet or live EKG on frozen captures.
+**Number contract.** Blend only; attribution-only venue names; whole numbers; no gambling formats. Raw chart segments, fixed **0–100** domain, real gaps/results. Game `OddsChart` auto-scales; the shared event-composition `FuturesChart` honors this brief inside the same card. A default-off fit option keeps the entire timeline and requested height at 390px; other callers retain their geometry. Probabilities, results, counts and tooltips reserve ⓘ for #11920; dates/ticks/control labels remain labels. Age labels use the reader’s clock consistently. No source sheet or live EKG on frozen captures.
 
 | Capture | Boundary the design preserves |
 |---|---|

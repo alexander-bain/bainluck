@@ -1,0 +1,389 @@
+{
+  "iteration": 2,
+  "branch": "design/futures-page-proto",
+  "rendered_commit": "2629efea231c9ff3d4df90a3ce6076edb50059b8",
+  "deployment_id": "dpl_2RupevYgsM8bpLRPL14oH3UfP18m",
+  "preview_base": "https://bainluck-bvmat1i4o-alexander-bain.vercel.app",
+  "share_link_location": "NOW #11852 Iteration 2 comment; deployment-scoped 30-day link, capability excluded from repository",
+  "payload_manifest": "../../../../frontend/app/kernels-preview/futures/_data/manifest.json",
+  "reference_events": [
+    {
+      "id": 15341108,
+      "url": "https://www.bainluck.com/events/15341108",
+      "state": "live",
+      "score": "UNLV 89–Northern Arizona 77",
+      "files": [
+        "raw/live-event-15341108-390.jpg",
+        "raw/live-event-15341108-1280.jpg"
+      ]
+    },
+    {
+      "id": 15341089,
+      "url": "https://www.bainluck.com/events/15341089",
+      "state": "final",
+      "score": "Canucks 4–Ducks 5",
+      "files": [
+        "raw/event-15341089-390.jpg",
+        "raw/event-15341089-1280.jpg"
+      ]
+    }
+  ],
+  "viewports": {
+    "390": {
+      "width": 390,
+      "height": 1400
+    },
+    "1280": {
+      "width": 1280,
+      "height": 1200
+    }
+  },
+  "composition": "Unaltered screenshot pixels, event left/futures right, 36px labels and 2px divider. Overview is reduced. Explicit viewport clips prevent app-pane cropping.",
+  "capture_time_pt": "Nov 3, 9:31 PM PT",
+  "validation": {
+    "build_exit": 0,
+    "typecheck_exit": 0,
+    "existing_typecheck_baseline": 65,
+    "new_type_errors": 0,
+    "focused_jest_passed": 12,
+    "startup_passed": 4,
+    "futures_viewports": 16,
+    "horizontal_overflow": 0,
+    "final_preview_console_errors": 0
+  },
+  "files": [
+    {
+      "path": "duel-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "ebc9e0e13bc7760583409ca6ee4d5be022db887476f56ab8d1ffe2c6591339f2",
+      "bytes": 464287
+    },
+    {
+      "path": "duel-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "111ef8d257b3154ef7b1e4bba8d42c160a8a1aa1311054ad5b1905792515c73d",
+      "bytes": 379734
+    },
+    {
+      "path": "field-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "a709c714d10d951cc55007869e2b8df6e2eb8f45a3e8b636db77c07e025cf1b5",
+      "bytes": 413923
+    },
+    {
+      "path": "field-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "badc12ba6f58524ccb67abfef475b5d9ef33f7e95cfe4d70eeaf4ef2ed3dc597",
+      "bytes": 365215
+    },
+    {
+      "path": "ladder-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "746458c4cb57dbd7d960190cdc675dea01157935c055bfc1c18f255d67fbc9c2",
+      "bytes": 479186
+    },
+    {
+      "path": "ladder-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "25e3ede10b76742db9ec4f69ce33e18da947bd224fa7aadd2d73eaec65fe37a6",
+      "bytes": 389154
+    },
+    {
+      "path": "one-leg-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "7ef4e5e9bb9920bdb49ca2c29a7dcea4245829b43ee017c72adce79903eac62b",
+      "bytes": 473932
+    },
+    {
+      "path": "one-leg-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "293356321f30ca410cdfc1945c5e881d1661874018615b04265706d54b9c2d03",
+      "bytes": 422888
+    },
+    {
+      "path": "one-leg-open-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "42ac33792abce70fa917a489ce4515df741554e38cb6f9653ee1a96edd77c49a",
+      "bytes": 459658
+    },
+    {
+      "path": "one-leg-open-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "5a7e0149cb766afeeb35236225634283507ce657bd78b5fce67e6448c968dd66",
+      "bytes": 379962
+    },
+    {
+      "path": "one-leg-settled-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "5885edf47cfc928303691bde09f6fcf98c24bb4a968d2a62970a16c4736c5f30",
+      "bytes": 479734
+    },
+    {
+      "path": "one-leg-settled-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "2ff5203a63e2b61eb3dbd515bf3c1a1c7e55c7c205d29004dd4502e0d37ccb57",
+      "bytes": 428518
+    },
+    {
+      "path": "overview-390.png",
+      "dimensions": [
+        1170,
+        1432
+      ],
+      "sha256": "900fa4b1276462a752da3bb29e9c9b8c4b6a09171809c400fcee4eb8fd1e0863",
+      "bytes": 544519
+    },
+    {
+      "path": "participation-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "5928da99f94b5bafd233d3e3a44df696470e7bef84d46bd0435638607ebdf9a3",
+      "bytes": 437259
+    },
+    {
+      "path": "participation-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "ac624b5572c313cf1eddee73520996e7d1f04bfb3029ae2a95b7545482c8e477",
+      "bytes": 376236
+    },
+    {
+      "path": "raw/duel-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "bb286e3171d358538a43b8b546013433a1e425fefdaec4828f0b33a8bbbf2580",
+      "bytes": 71154
+    },
+    {
+      "path": "raw/duel-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "001114fa6e9a054b2dbcf7bb40333e8d43da8342ba4bcb5c880aded7af890eee",
+      "bytes": 39886
+    },
+    {
+      "path": "raw/event-15341089-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "f6982fe9eaa36072fc0ae4ed7cc2be3b8a7c858911366663367b4188512f5878",
+      "bytes": 81824
+    },
+    {
+      "path": "raw/event-15341089-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "ca232e79d7fafadc16ce92aa9abecce6a57d88d43c623e11f37a334b652176ca",
+      "bytes": 58178
+    },
+    {
+      "path": "raw/field-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "e88e4f175b81b778c757e75a585e8c9066425056f505bf16d0b9a0040ffbcb4d",
+      "bytes": 56961
+    },
+    {
+      "path": "raw/field-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "076bb0fcc114eabeae2ec07ea6317f91a39d3ede26137acf083f91c7a19485d3",
+      "bytes": 39299
+    },
+    {
+      "path": "raw/ladder-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "ec20b7ab865dc0c3a499df6c585bbd1cba5520f76cbd486ea17c524ba0923cd3",
+      "bytes": 64424
+    },
+    {
+      "path": "raw/ladder-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "ecd04b6f2f5b26731fb4ea04d7d3ac3aab65b0110d323e5e31bf420225c3e59c",
+      "bytes": 41408
+    },
+    {
+      "path": "raw/live-event-15341108-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "f7d9b37e446776333563aa10418e9fe8d466a8bbeb7f5ea5bea4dd7dda402a56",
+      "bytes": 73180
+    },
+    {
+      "path": "raw/live-event-15341108-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "9fecf076c0c8fb1ed50535ae0a731b94efa399e13f3336b3735c422dab875c37",
+      "bytes": 50497
+    },
+    {
+      "path": "raw/one-leg-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "8c007fbbe72c4a13e01059dc2abcf31d5d325f2ad2689273ac7e3b35b15c3d2f",
+      "bytes": 70028
+    },
+    {
+      "path": "raw/one-leg-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "394db5ae95ea6e1c7c95a7485220c30062a3ba6408d19dfc07ff15fb11c3fbe2",
+      "bytes": 39872
+    },
+    {
+      "path": "raw/one-leg-open-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "a6a039488a8eba23c1c5d76fcff27a3b52e06eaf49b884556f7c9bd9a6e4bcda",
+      "bytes": 68904
+    },
+    {
+      "path": "raw/one-leg-open-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "863a3647a5bdadcfcea8bb69244cdedad4b0d16db1d5cefc898ef1d160e95abb",
+      "bytes": 40092
+    },
+    {
+      "path": "raw/one-leg-settled-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "9cba23f62c69e3fa3085d7d76feb7a2c90243e4b7d685aa035ce5bb35b2266ae",
+      "bytes": 70021
+    },
+    {
+      "path": "raw/one-leg-settled-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "b571262509632193af7ce6f92bea6db86636575534a8a58511d8944486aefcb4",
+      "bytes": 40458
+    },
+    {
+      "path": "raw/participation-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "7121f1cb33b9343785b2f792e8835f55d61f9c9d338f669ee6e42faa991ef54a",
+      "bytes": 71237
+    },
+    {
+      "path": "raw/participation-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "0ca7f0291131e8d12e1789e6bc81b580f7f8e698f4207da00862ca0f7f1cad5e",
+      "bytes": 43918
+    },
+    {
+      "path": "raw/settled-today-1280.jpg",
+      "dimensions": [
+        1280,
+        1200
+      ],
+      "sha256": "548e1f89c8791664ed7a411ff07cc8ff5ee0ab4acf583d4c2094ee08d568c5fc",
+      "bytes": 73114
+    },
+    {
+      "path": "raw/settled-today-390.jpg",
+      "dimensions": [
+        390,
+        1400
+      ],
+      "sha256": "34cef04b74a460d5534da610ce016f149a2e589514a35b20cb34a65c80111456",
+      "bytes": 39437
+    },
+    {
+      "path": "settled-today-1280.png",
+      "dimensions": [
+        2562,
+        1236
+      ],
+      "sha256": "e7bb3399c303637bf3ebe0936e6264a78b5eb0a9de76f208232f911447c43e83",
+      "bytes": 480953
+    },
+    {
+      "path": "settled-today-390.png",
+      "dimensions": [
+        782,
+        1436
+      ],
+      "sha256": "32c572db7032bd7470a5266b9faa4eff99fd392deefa17690f78bd07bedf9f07",
+      "bytes": 424312
+    }
+  ]
+}

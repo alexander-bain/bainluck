@@ -1,0 +1,37 @@
+{
+  "checks": [
+    {
+      "check": "field expands all legs",
+      "rows": 24,
+      "fewer": true
+    },
+    {
+      "check": "ladder selection changes hero",
+      "digits": [
+        "64"
+      ],
+      "selected": "true"
+    },
+    {
+      "check": "fullscreen chart opens",
+      "dialog": true
+    },
+    {
+      "check": "Escape closes and returns focus",
+      "dialogVisible": false,
+      "focused": "Open fullscreen chart"
+    },
+    {
+      "check": "range chip changes selection",
+      "allPressed": "true"
+    },
+    {
+      "check": "related market navigation",
+      "path": "/futures/108620",
+      "heading": "Which party will win the U.S. Senate?"
+    }
+  ],
+  "finalCaptureStart": "2026-11-04T05:30:43.204Z",
+  "finalPreviewConsoleErrors": [],
+  "timezoneReproduction": "UTC server: Last number 3 Nov 8:55 AM; Pacific browser: 3 Nov 12:55 AM. Preview age mark now mounts in browser. Header and chart ages both use the reader clock."
+}
