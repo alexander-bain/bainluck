@@ -197,14 +197,16 @@ describe("#6331 a healthy chart gains nothing", () => {
     expect(marks(html)).toEqual([]);
   });
 
-  test("a hole between two healthy runs draws a bridge and no mark", () => {
+  test("a hole between two healthy runs carries a label and no mark", () => {
     // Both riders carry the 34-day hole this market really has. A break in a
     // line is not an isolated observation, and must not be marked as one.
+    // #11929 C: the hole is named in words, not spanned by the #3659 bridge.
     const html = renderToStaticMarkup(
       <FuturesChart historyData={HEALTHY} settled height={200} />,
     );
 
-    expect(html).toContain('stroke-dasharray="1 5"'); // the #3659 bridge
+    expect(html).toContain('data-testid="futures-chart-gap-label"');
+    expect(html).not.toContain('stroke-dasharray="1 5"');
     expect(marks(html)).toEqual([]);
   });
 
