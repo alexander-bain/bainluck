@@ -650,7 +650,9 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let blendFoldRevision: ServedFoldRevision?
     let heroProbabilitySource: String?
     let heroProbabilityObservedAt: String?
-    let currentOdds: CurrentOdds?
+    /// `var` so Discover can print an admitted preview over a copy (#10090,
+    /// `DiscoverCardPreviews`); the committed card store is never written.
+    var currentOdds: CurrentOdds?
     let openingOdds: OpeningOdds?
     /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
     let prematchOdds: PrematchOdds?
@@ -769,7 +771,13 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let marketTier: Int?
     let status: String?
     let resolutionDate: String?
-    let topOutcomes: [FeedFuturesOutcome]?
+    /// `var` so Discover can print an admitted market preview over a copy
+    /// (#10090, `DiscoverMarketPreview`); the committed card store is never written.
+    var topOutcomes: [FeedFuturesOutcome]?
+    /// #10090 — the divisor `topOutcomes` was printed on (`_feed_display_scale`).
+    /// A venue preview is a raw price, so it is overlaid only when this is
+    /// exactly 1; absent (an older payload) overlays nothing.
+    var displayScale: Double? = nil
     let outcomeCount: Int?
     let canonicalMarketKey: String?
     let groupId: String?

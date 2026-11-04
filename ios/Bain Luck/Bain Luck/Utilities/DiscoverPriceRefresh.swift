@@ -29,7 +29,9 @@ nonisolated enum DiscoverPriceRefresh {
         var withdrawn: Set<String> = []
     }
 
-    private static func observation(_ raw: String?) -> Date? {
+    /// An observation stamp at sub-second fidelity, or nil when undatable.
+    /// #10090: also orders a market preview against the committed leg.
+    static func observation(_ raw: String?) -> Date? {
         guard let raw else { return nil }
         guard let fraction = raw.range(of: "\\.[0-9]+(?=Z|[+-][0-9]{2}:[0-9]{2}$)", options: .regularExpression) else { return raw.asDate }
         let base = String(raw[..<fraction.lowerBound]) + String(raw[fraction.upperBound...])

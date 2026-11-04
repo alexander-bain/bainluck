@@ -1,13 +1,21 @@
 import Foundation
 
-/// A bounded set of market invalidations, never prices. Owners re-read their
-/// authoritative representation and decide whether any newer data can land.
+/// A bounded set of market invalidations, never committed prices. Owners re-read
+/// their authoritative representation and decide whether any newer data can land.
+/// #10090: it also forwards a held market's PROVISIONAL venue move
+/// (`market_preview`, `DiscoverMarketPreview`), which an owner may draw until
+/// its committed re-read replaces it; never a settlement, never stored.
 @MainActor
 final class MarketStreamSubscription {
     typealias Factory = @MainActor ([Int]) throws -> LiveStreamHandle
     private let makeHandle: Factory
     private let onInvalidate: @MainActor ([Int]) -> Void
     private let onConnectionChange: @MainActor (Bool) -> Void
+    /// #10090 — a provisional venue move for one of this connection's markets.
+    private let onPreview: (@MainActor (DiscoverMarketPreviewFrame) -> Void)?
+    /// #10090 — these markets' previews are no longer vouched for: the
+    /// connection that carried them ended, or one of them went terminal.
+    private let onPreviewReset: @MainActor ([Int]) -> Void
     private let now: () -> TimeInterval
     private let sleep: @Sendable (TimeInterval) async -> Void
     private var ids: [Int] = []
@@ -20,10 +28,14 @@ final class MarketStreamSubscription {
     private var terminalIDs: Set<Int> = []
     /// Highest shared-hub recovery seen on the current handle; a new hub starts at 1.
     private var recoveredGeneration = 0
+    /// #10090 — the markets the current handle was opened for.
+    private var connectedIDs: [Int] = []
 
     init(makeHandle: Factory? = nil,
          onInvalidate: @escaping @MainActor ([Int]) -> Void,
          onConnectionChange: @escaping @MainActor (Bool) -> Void = { _ in },
+         onPreview: (@MainActor (DiscoverMarketPreviewFrame) -> Void)? = nil,
+         onPreviewReset: @escaping @MainActor ([Int]) -> Void = { _ in },
          now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
          sleep: @escaping @Sendable (TimeInterval) async -> Void = {
              try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
@@ -38,6 +50,8 @@ final class MarketStreamSubscription {
         }
         self.onInvalidate = onInvalidate
         self.onConnectionChange = onConnectionChange
+        self.onPreview = onPreview
+        self.onPreviewReset = onPreviewReset
         self.now = now
         self.sleep = sleep
     }
@@ -71,6 +85,7 @@ final class MarketStreamSubscription {
         tickTask = nil
         handle?.close()
         handle = nil
+        retirePreviews()
         ids = []
         terminalIDs = []
         retryAt = nil
@@ -98,8 +113,16 @@ final class MarketStreamSubscription {
         generation += 1
         handle?.close()
         handle = nil
+        retirePreviews()
         setConnected(false)
         retryAt = now() + delay
+    }
+
+    /// #10090: a preview is fenced per connection; the next one starts clean.
+    private func retirePreviews() {
+        let ended = connectedIDs
+        connectedIDs = []
+        if !ended.isEmpty { onPreviewReset(ended) }
     }
 
     private func connect() {
@@ -111,6 +134,7 @@ final class MarketStreamSubscription {
         do { next = try makeHandle(active) }
         catch { recycle(after: 60); return }
         handle = next
+        connectedIDs = active
         lastWireAt = now()
         recoveredGeneration = 0
         next.on("open") { [weak self] _ in
@@ -145,7 +169,20 @@ final class MarketStreamSubscription {
                   frame.invalidation, active.contains(frame.marketID) else { return }
             self.lastWireAt = self.now()
             self.onInvalidate([frame.marketID])
-            if frame.terminal { self.terminalIDs.insert(frame.marketID) }
+            if frame.terminal {
+                self.terminalIDs.insert(frame.marketID)
+                // A settling market is never previewed (#10090).
+                self.onPreviewReset([frame.marketID])
+            }
+        }
+        // #10090: a provisional venue move, under its own event so it can never
+        // be read as an invalidation. Proves the wire, like a heartbeat.
+        next.on("market_preview") { [weak self] raw in
+            guard let self, self.generation == epoch, let onPreview = self.onPreview,
+                  let frame = DiscoverMarketPreview.parse(raw),
+                  active.contains(frame.marketId), !self.terminalIDs.contains(frame.marketId) else { return }
+            self.lastWireAt = self.now()
+            onPreview(frame)
         }
         next.on("reconnect") { [weak self] _ in
             guard let self, self.generation == epoch else { return }
@@ -163,6 +200,9 @@ final class MarketStreamSubscription {
         next.on("error") { [weak self, weak next] _ in
             guard let self, let next, self.generation == epoch else { return }
             self.setConnected(false)
+            // #10090: the connection that vouched for the held previews is
+            // gone, whether or not the transport retries underneath.
+            self.onPreviewReset(active)
             // Network drops retry in the transport. HTTP refusals retire it;
             // bounded retry and the caller's poll handle eligibility recovery.
             if next.isClosed { self.recycle(after: 60) }

@@ -751,9 +751,18 @@ nonisolated enum BlendPreview {
     static func heldAcrossCommitFloor(_ shown: BlendPreviewState?, floor: FoldRevision?,
                                       after: BlendPreviewReader, held: EventDetail?,
                                       now: TimeInterval) -> BlendPreviewState? {
-        guard floor != nil, after.held == nil, let shown, shown.baseFoldRevision != nil, let held,
-              let committed = LiveEventPriceReconciliation.pairedFoldRevision(in: held), committed.rows.count > 1,
-              displayed(shown, held: held, now: now) != nil else { return nil }
+        heldAcrossCommitFloor(shown, floor: floor, after: after, committed: held.map(BlendPreviewCommitted.init),
+                              now: now)
+    }
+
+    /// The same hand-over, judged against any committed hero (#10090: a
+    /// Discover card as well as the event page).
+    static func heldAcrossCommitFloor(_ shown: BlendPreviewState?, floor: FoldRevision?,
+                                      after: BlendPreviewReader, committed: BlendPreviewCommitted?,
+                                      now: TimeInterval) -> BlendPreviewState? {
+        guard floor != nil, after.held == nil, let shown, shown.baseFoldRevision != nil, let committed,
+              let revision = committed.revision, revision.rows.count > 1,
+              displayed(shown, committed: committed, now: now) != nil else { return nil }
         return capped(shown, at: now + commitFloorHandover)
     }
 
@@ -920,9 +929,16 @@ nonisolated enum BlendPreview {
 
     /// The provisional hero probability to show, or `nil` for committed truth.
     static func displayed(_ state: BlendPreviewState?, held: EventDetail?, now: TimeInterval) -> Double? {
-        guard let state, let held, now < state.expiresAt, held.id == state.eventId,
+        displayed(state, committed: held.map(BlendPreviewCommitted.init), now: now)
+    }
+
+    /// The same gate, for any committed hero (#10090: a Discover card as well
+    /// as the event page). One rule: the hero, its status and its revision.
+    static func displayed(_ state: BlendPreviewState?, committed held: BlendPreviewCommitted?,
+                          now: TimeInterval) -> Double? {
+        guard let state, let held, now < state.expiresAt, held.eventId == state.eventId,
               let status = held.status, EventPriceStreaming.isEligible(status), status == state.status,
-              let committed = LiveEventPriceReconciliation.pairedFoldRevision(in: held) else { return nil }
+              let committed = held.revision else { return nil }
         if let base = state.baseFoldRevision {
             guard held.sport == state.sport, base.rows.count == committed.rows.count,
                   base.covers(committed) else { return nil }
@@ -1091,8 +1107,19 @@ nonisolated enum BlendPreview {
     /// preview applies — so a page without previews renders unchanged. The
     /// committed clock and revision stay: a preview has neither.
     static func overlay(_ event: EventDetail, _ state: BlendPreviewState?, now: TimeInterval) -> EventDetail {
-        guard let p = displayed(state, held: event, now: now), var odds = event.currentOdds else { return event }
+        guard let p = displayed(state, held: event, now: now), let odds = event.currentOdds else { return event }
         var shown = event
+        shown.currentOdds = overlaid(odds, p: p, state: state)
+        shown.heroProbability = p
+        shown.heroProbabilityAway = state?.baseFoldRevision != nil
+            ? state?.pAway : (event.heroProbabilityAway == nil ? nil : 1 - p)
+        return shown
+    }
+
+    /// `odds` printing the displayed preview `p` (#10090: the event hero and
+    /// a Discover game card print it the same way).
+    static func overlaid(_ odds: CurrentOdds, p: Double, state: BlendPreviewState?) -> CurrentOdds {
+        var odds = odds
         odds.homeProbability = p
         // Folded authority supplies its own away value, including null. The
         // singleton path retains its existing withheld-away behavior.
@@ -1102,10 +1129,39 @@ nonisolated enum BlendPreview {
         // both nil means every reader rounds this pair WHOLE (`duelPercents`).
         odds.homeRenderedPercent = nil
         odds.awayRenderedPercent = nil
-        shown.currentOdds = odds
-        shown.heroProbability = p
-        shown.heroProbabilityAway = state?.baseFoldRevision != nil
-            ? state?.pAway : (event.heroProbabilityAway == nil ? nil : 1 - p)
-        return shown
+        return odds
+    }
+}
+
+/// #10090 — the committed hero a preview is judged against: the event page's
+/// detail or a Discover game card, read the same way (`BlendPreview.displayed`).
+nonisolated struct BlendPreviewCommitted: Sendable, Equatable {
+    let eventId: Int
+    let status: String?
+    let sport: String?
+    /// The fold revision of the number on screen, or nil when the hero is not
+    /// the live blend (`LiveEventPriceReconciliation.pairedFoldRevision`).
+    let revision: FoldRevision?
+
+    init(eventId: Int, status: String?, sport: String?, revision: FoldRevision?) {
+        self.eventId = eventId
+        self.status = status
+        self.sport = sport
+        self.revision = revision
+    }
+
+    init(_ event: EventDetail) {
+        self.init(eventId: event.id, status: event.status, sport: event.sport,
+                  revision: LiveEventPriceReconciliation.pairedFoldRevision(in: event))
+    }
+
+    /// A card carries no separate hero value: its printed home probability is
+    /// the hero, dated by the revision only when the hero resolved to the blend
+    /// (web's `displayedPreview` on a feed card).
+    init(_ card: FeedEventData) {
+        let blend = EventPriceStreaming.isEligible(card.status) && card.heroProbabilitySource == "blend"
+            && (card.currentOdds?.homeProbability?.isFinite ?? false)
+        self.init(eventId: card.id, status: card.status, sport: card.sport,
+                  revision: blend ? card.blendFoldRevision?.revision : nil)
     }
 }
