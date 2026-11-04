@@ -1,5 +1,8 @@
 name: Tier-B review policy
 
+# Ruling A: the author window merges every Tier-B PR, including policy edits,
+# after green CI, current-head claude[bot] approval and Fable ACCEPT.
+
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited]
@@ -42,6 +45,6 @@ jobs:
               await github.rest.issues.getLabel({...context.repo, name: 'tier-b'});
             } catch (error) {
               if (error.status !== 404) throw error;
-              await github.rest.issues.createLabel({...context.repo, name: 'tier-b', color: 'B60205', description: 'Requires approval from someone other than the PR author'});
+              await github.rest.issues.createLabel({...context.repo, name: 'tier-b', color: 'B60205', description: 'Current-head Claude approval; Fable ACCEPT before the author window merges'});
             }
             await require('./tools/release/tier_b.cjs').evaluate(github, context);
