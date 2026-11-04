@@ -42,6 +42,22 @@
       "30587891": {
         "short_label": "Banksy creates a new mural by Dec 31",
         "row_label": "Banksy creates a new mural or street artwork by Dec 31"
+      },
+      "68064291": {
+        "short_label": "A government shutdown by Dec 31",
+        "row_label": "Government shutdown by Dec 31"
+      },
+      "62141888": {
+        "short_label": "Next Claude Opus released by Nov 30",
+        "row_label": "Next Claude Opus (5.6+) released by Nov 30"
+      },
+      "68320839": {
+        "short_label": "A 7.0+ earthquake occurs worldwide by Nov 30",
+        "row_label": "7.0+ earthquake worldwide by Nov 30"
+      },
+      "62611724": {
+        "short_label": "Trump meets with Putin by Nov 30",
+        "row_label": "Trump meets with Putin by Nov 30"
       }
     },
     "cache": "none",

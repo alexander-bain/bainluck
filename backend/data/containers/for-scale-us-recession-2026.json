@@ -31,6 +31,18 @@
       "113200": {
         "short_label": "The Iranian regime falls before 2027",
         "row_label": "The Iranian regime falls before 2027"
+      },
+      "61340822": {
+        "short_label": "A Russia-Ukraine ceasefire by Nov 30",
+        "row_label": "Russia-Ukraine ceasefire agreement by Nov 30"
+      },
+      "67903133": {
+        "short_label": "Rockstar releases GTA VI on PC by Dec 31",
+        "row_label": "Rockstar releases PC version of GTA VI by Dec 31"
+      },
+      "63727104": {
+        "short_label": "SpaceX Starship Flight Test 15 launches by Nov 15",
+        "row_label": "SpaceX Starship Flight Test 15 launches by Nov 15"
       }
     },
     "cache": "none",
