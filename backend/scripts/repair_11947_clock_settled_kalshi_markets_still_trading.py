@@ -17,6 +17,7 @@ clocks, snapshots and history are never written.
 market whose original retraction is proved by this repair's banked before-image.
 It requires --only-ids and preserves that original backup while banking the
 date-repair before-image alongside it in the same row and transaction.
+This restores fallback eligibility; socket admission keeps its existing rules.
 
     python3 scripts/repair_11947_clock_settled_kalshi_markets_still_trading.py --census-only
     python3 scripts/repair_11947_clock_settled_kalshi_markets_still_trading.py --only-ids 109918
