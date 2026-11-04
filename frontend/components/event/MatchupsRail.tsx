@@ -100,11 +100,16 @@ function MatchupCard({ child, dim }: { child: EventConceptChild; dim?: boolean }
 /** Render one child in the rail: a soccer team duel (crest + score + win prob) or
  *  the combat/golf outcome card. `dim` is passed to the combat card for the
  *  completed group; MatchupDuel handles its own settled treatment internally. */
-function RailChild({ child, index, dim, sport }: { child: EventConceptChild; index: number; dim?: boolean; sport?: string | null }) {
+function RailChild({ child, index, dim, sport, marketHref }: { child: EventConceptChild; index: number; dim?: boolean; sport?: string | null; marketHref?: (id: number) => string }) {
   if (isMatchupChild(child)) {
     return <MatchupDuel child={child} sport={sport} />;
   }
-  return <MatchupCard child={child} dim={dim} />;
+  const card = <MatchupCard child={child} dim={dim} />;
+  return marketHref && typeof child.market_id === "number" ? (
+    <Link href={marketHref(child.market_id)} className="block flex-shrink-0 w-60 md:w-auto rounded-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand [&>div]:w-full">
+      {card}
+    </Link>
+  ) : card;
 }
 
 const GRID_CLASS =
@@ -120,12 +125,14 @@ function RailBody({
   dim,
   className,
   sport,
+  marketHref,
 }: {
   items: EventConceptChild[];
   dim?: boolean;
   className?: string;
   /** #6238 — the container's domain, forwarded to the duel card. */
   sport?: string | null;
+  marketHref?: (id: number) => string;
 }) {
   const groups = groupMatchupsByFamily(items);
   const extra = className ? ` ${className}` : "";
@@ -134,7 +141,7 @@ function RailBody({
     return (
       <div className={`${GRID_CLASS}${extra}`}>
         {items.map((child, i) => (
-          <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} sport={sport} />
+          <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} sport={sport} marketHref={marketHref} />
         ))}
       </div>
     );
@@ -160,7 +167,7 @@ function RailBody({
           </summary>
           <div className={`${GRID_CLASS} mt-2 mb-1`}>
             {g.items.map((child, i) => (
-              <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} sport={sport} />
+              <RailChild key={childReactKey(child, i)} child={child} index={i} dim={dim} sport={sport} marketHref={marketHref} />
             ))}
           </div>
         </details>
@@ -213,9 +220,12 @@ interface MatchupsRailProps {
   /** #6238 — the container's domain, so a soccer duel can withhold the away
    *  number instead of printing the home side's complement. See `MatchupDuel`. */
   sport?: string | null;
+  /** Optional navigation for generic market cards; existing event rails keep
+   * their current behavior when absent. */
+  marketHref?: (id: number) => string;
 }
 
-export default function MatchupsRail({ items, exclude, title, sport }: MatchupsRailProps) {
+export default function MatchupsRail({ items, exclude, title, sport, marketHref }: MatchupsRailProps) {
   const shown = (items || []).filter((c) => c !== exclude);
   if (shown.length === 0) return null;
   if (sport === "awards") {
@@ -240,7 +250,7 @@ export default function MatchupsRail({ items, exclude, title, sport }: MatchupsR
           grid so wide viewports don't hide bouts behind a scroll gutter. #1602:
           above MATCHUP_GROUPING_THRESHOLD that grid becomes collapsed family
           groups instead of one 52,000px wall. */}
-      {live.length > 0 && <RailBody items={live} sport={sport} />}
+      {live.length > 0 && <RailBody items={live} sport={sport} marketHref={marketHref} />}
       {settled.length > 0 && (
         <details className="mt-4">
           <summary className="text-xs font-semibold uppercase tracking-wide text-text-muted cursor-pointer">
@@ -249,7 +259,7 @@ export default function MatchupsRail({ items, exclude, title, sport }: MatchupsR
           {/* The settled tail costs no height while collapsed, but on this page it
               is 744 cards — opening it would be the identical wall one click in,
               so it groups by the same rule. */}
-          <RailBody items={settled} dim className="mt-2" sport={sport} />
+          <RailBody items={settled} dim className="mt-2" sport={sport} marketHref={marketHref} />
         </details>
       )}
       {live.length === 0 && settled.length === 0 && (

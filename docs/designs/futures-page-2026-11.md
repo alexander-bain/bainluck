@@ -1,27 +1,38 @@
-# Futures page — November 2026 prototype
+# Futures page — November 2026 · Iteration 2
 
-**Pillar: FORMATTING / TRUTH. Ship:** a futures detail that answers at a glance, with the event page’s hierarchy and a body suited to its market. [Open preview](https://bainluck-1no21ut75-alexander-bain.vercel.app/kernels-preview/futures/109085). **Preview only**, on `design/futures-page-proto`, under `/kernels-preview/futures/[id]`. Production routes and APIs are untouched. Production payloads were captured Nov 3, 6:33 PM PT; these are dated snapshots, not a live price feed.
+**FORMATTING / TRUTH. Ship:** Event Details and futures read as one product. Branch `design/futures-page-proto`; six production captures under `/kernels-preview/futures/[id]`. [Preview and comparisons](futures-page-2026-11/iteration-2/README.md). Captured Nov 3, **6:33 PM PT**; dated snapshots. No production route, API, stream, Midterms or round-up changes; no PR to master.
 
-**Reused.** `EventHeroProbabilityPair` supplies the hero numeral and boundary marks; the shared duel rounding keeps the hero, split and `ProbabilityBar` coherent. `FuturesChart`, also used by the event composition’s `WinnerEvolutionChart` and `SettledPathChart`, supplies the recorded journey, fixed 0–100 scale, unsmoothed paths, gaps and settlement marks. The chart mounts in the browser to keep timezone labels consistent. `ChartRangeChips` and `ChartFullscreenDialog` retain range selection, Escape and focus return. `outcomeRowVerdict` and `SettledMark` own result language. Existing light surfaces, card radius, type, spacing, accents and site navigation remain.
+**Reuse decides the design.** The references are `live-game-detail-v2.html`, shipped `app/events/[id]/page.tsx`, and `EventDetailView.swift`. Gone: the standalone oversized numeral, desktop sidebar and top review panel. Adopted: paired identity hero, native typography, 12px card rhythm, chart card and below-chart rail. The actual shipped app width governs desktop; the HTML’s 680px canvas is a demonstration width.
 
-**New.** A quiet category/status strip, one large answer and its subject, then the native body: duel split; full-field shares with top three and **21 more**; ascending snowfall rungs; independent qualification band; or one supplied outcome. Selecting a row highlights its history; selecting a rung changes its hero and chart. Related markets become a desktop side column and follow the journey on mobile. Attribution stays beside the numbers. Every probability location reserves a quiet ⓘ, including chart readouts; there is no sources sheet. The small preview drawer contains navigation and clearly labelled state studies.
+| Futures block | Actual web component / composition | Actual SwiftUI mapping |
+|---|---|---|
+| Frame, back link, status/date | Game page’s inline `space-y-3`, hero frame and meta strip | `EventDetailView.contentView`, `heroSection(_:)`, `heroStatusBadge(_:)` |
+| Duel answer / 56px identities | `EventHeroProbabilityPair`; game hero’s identity boxes | `heroSection(_:)`, `heroValue(away:)`, `nflPairedSide`, `nflPairedCenter` |
+| Winner / final outcomes | `SettledOutcomeHero`, `SettledMark`, `outcomeRowVerdict` | Final branches of `heroSection(_:)` / `nflPairedSide` |
+| Field / participation band | Actual `EventLeaderboard`, three / six rows plus disclosure | New adapter using `EvolutionLeaderboardHeader` / `EvolutionLeaderboardRow` in `EvolutionChartView.swift` |
+| Quantity strip | New body following `FinishPositionLadder` / `PlacementGrid` grammar | New adapter following `EventDetailView.nbaLadders` and `LadderCardView` |
+| Chart card / controls | Game card frame, `ChartRangeChips`, `ChartFullscreenDialog`; actual `FuturesChart` from event `WinnerEvolutionChart` / `SettledPathChart` | `chartHeaderBar(_:)`; actual `OddsChartView` in `contentView`, its `selectedRange` binding; futures-data adapter |
+| Age / quiet ⓘ | Actual `PriceAgeMark`; reserved source marks, no sheet | `PriceAgeMarkView`; future disclosure maps to `probabilityDetails` / `FreshnessRevealView` |
+| Bigger Picture | Actual `MatchupsRail`, opt-in market links; below-chart rail/grid | Actual `RelatedFuturesView` called from `contentView`; related-data adapter |
 
-| Example | Production evidence / design consequence |
+**New shape bodies.** Field shares remain full-field shares: top three and **21 more**. Participation bars stay independent. Quantity thresholds ascend. One leg never acquires a No. Non-duel heroes use population/period context opposite the leader. Initials occupy native identity boxes where participant artwork is absent. Bottom review controls label state studies; assumed grades never enter history. Native mappings identify existing primitives and required adapters; no native build is claimed.
+
+**Number contract.** Blend only; attribution-only venue names; whole numbers; no gambling formats. Raw chart segments, fixed **0–100** domain, real gaps/results. Game `OddsChart` auto-scales; the shared event-composition `FuturesChart` honors this brief inside the same card. A default-off fit option keeps the entire timeline and requested height at 390px; other callers retain their geometry. Probabilities, results, counts and tooltips reserve ⓘ for #11920; dates/ticks/control labels remain labels. No source sheet or live EKG on frozen captures.
+
+| Capture | Boundary the design preserves |
 |---|---|
-| Duel · 109085 | Kansas hero uses the existing container’s registered-twin blend, joined by outcome ID. Its history endpoint supplies a single-venue recorded path; the caption declares that coverage. No invented blend history or appended current endpoint. |
-| Field · 108629 | All 24 outcomes retained. Top-three rows keep their shares of the entire field; expanding never renormalizes them. |
-| Quantity · 65536371 | Six thresholds; only five isolated history readings. The chart slot shows an explicit limited-history state. The served 4-inch / 6-inch chances are **60% / 64%**; the design does not repair their upstream ordering. |
-| Participation · 227 | Stored shape is `field`, with `mutually_exclusive: false`. That field’s independent form is the qualification band; the stored classification is not rewritten. No sum-to-100 normalization or combined-probability line. A dedicated participation classification/semantic relation is missing from this detail payload. |
-| One leg · 109918 | Production says resolved, with `ungradeable_result`: no winner or loss is asserted. The 58% last reading is labelled historical. Open and settled studies demonstrate the layouts without fabricating an opposing outcome. |
-| Settled today · 108645 | Georgia Governor: `settled_at` Nov 3, **6:27 PM PT**, found by a bounded read of stored grades; both outcomes carry `api_settlement`. Winner name leads; rows say Won/Lost; chart retains the completed journey. Detail does not serve `settled_at`; the prototype’s dated capture records it separately. |
+| 109085 · Kansas Senate | Existing registered-twin container supplies the blend by outcome ID. History is single-venue, explicitly attributed; blended history is missing. |
+| 108629 · closest Governor race | All 24 legs retained; expanding never normalizes the displayed shares. |
+| 65536371 · Denver snow | Six thresholds, five isolated readings: honest empty chart. Served 4/6-inch chances remain 60/64%. Structured threshold bounds are absent. |
+| 227 · CFP qualifiers | Stored `field` + `mutually_exclusive:false` selects an independent band; classification unchanged. Dedicated participation relation absent. |
+| 109918 · one leg | Resolved, `ungradeable_result`: “Result unavailable,” historical 58%, no asserted loss. Open/settled versions are labelled studies. |
+| 108645 · Georgia Governor | `api_settlement`: Keisha Lance Bottoms won; Rick Jackson lost. Grade time Nov 3, **6:27 PM PT**, found from grades; absent from detail, retained separately in capture. |
 
-**Taste calls for Alex — recommendations, not rulings.**
+The settled hero’s legacy authority type lists only score/tournament. The preview bridge retains runtime `market` provenance; a production port needs an honest type extension. No API field was added.
 
-- **A — answer hierarchy:** large leader + native body (**recommend**) or equal-size outcomes throughout. The leader preserves the event page’s immediate answer; the body keeps context.
-- **B — participation:** independent bars in one band (**recommend**) or a plain ranked list. The band makes multiple qualifiers legible without implying a shared pie.
-- **C — one-leg settlement:** a result word replacing the percentage (**recommend**) or a result word plus the last percentage in the hero. Historical numbers belong in the journey; an unavailable grade stays explicit.
-- **D — related markets:** side column at 1280 px, below the chart at 390 px (**recommend**) or below the chart at every width. The side column uses desktop space without interrupting mobile reading.
+**Taste calls.** Old **A–D retired**: event hierarchy, independent semantics, settled language and below-chart placement settle them.
 
-**Review controls:** `?state=open` and `?state=settled` are labelled layout studies, never production results. Duel/field studies assume the selected winner; quantity studies assume the selected rung is the last cleared; participation studies assume the twelve leading teams qualify. Assumed results are never added to recorded chart data. Actual settled acceptance is the Georgia page.
+- **E — non-duel opposite slot:** population/period context (**recommend; shown**) or an empty slot. Context gives the paired composition meaning without implying another probability.
+- **F — missing history:** event-sized chart frame with an explicit empty state (**recommend; shown**) or a compact notice. The frame preserves the same reading sequence through a data gap.
 
-Screenshots, the review link and validation are linked in the [evidence index](futures-page-2026-11/README.md) and the single NOW #11852 comment signed **Codex design thread**.
+Evidence: real recent event left, hosted futures right; **390px and 1280px per half**, all six plus both one-leg studies.

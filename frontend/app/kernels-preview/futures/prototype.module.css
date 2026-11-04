@@ -1,6 +1,39 @@
-.prototype { color: var(--text-primary); }
-.heroNumber [data-hero-digits] { font-family: var(--font-jetbrains-mono), monospace; font-size: 64px; letter-spacing: -0.065em; line-height: 1; }
-.heroNumber [data-hero-digits] + span { margin-left: 4px; }
-.chartFrame { min-height: 260px; width: 100%; }
-.prototype [data-testid="futures-chart-tooltip"] span.font-mono::after { content: " ⓘ"; color: var(--text-muted); font: 11px sans-serif; }
-@media (min-width: 640px) { .heroNumber [data-hero-digits] { font-size: 76px; } }
+.prototype {
+  color: var(--text-primary);
+}
+/* Preserve native hero typography; only reserve the requested source mark. */
+.pairedValues
+  :global([data-testid="event-hero-probability"] > span.ml-0\.5)::after {
+  content: " ⓘ";
+  font: 10px sans-serif;
+  color: var(--text-muted);
+}
+.nativeLeaderboard :global(section) {
+  box-shadow: none;
+}
+.nativeLeaderboard :global(#leaderboard > div:first-child > div) {
+  display: none;
+}
+.nativeLeaderboard :global(.font-mono.font-semibold)::after {
+  content: " ⓘ";
+  font: 10px sans-serif;
+  color: var(--text-muted);
+}
+.rangeChips :global(button[aria-pressed="true"]) {
+  background: var(--text-primary);
+  color: var(--surface-card);
+}
+.relatedRail :global(h2) {
+  font-size: 13px;
+}
+.relatedRail :global(.font-mono)::after {
+  content: " ⓘ";
+  font: 10px sans-serif;
+  color: var(--text-muted);
+}
+.prototype
+  :global([data-testid="futures-chart-tooltip"] span.font-mono)::after {
+  content: " ⓘ";
+  font: 10px sans-serif;
+  color: var(--text-muted);
+}
