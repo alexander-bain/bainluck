@@ -12,8 +12,8 @@ jest.mock("@/hooks", () => ({ usePageTracking: jest.fn(), useScrollDepth: jest.f
 jest.mock("@/components/FuturesChart", () => ({ FuturesChart: () => <div>Recorded chart</div> }));
 
 function asDetail(value: unknown) { return value as FuturesMarketDetailResponse; }
-function render(detail: FuturesMarketDetailResponse) {
-  const data: PrototypeData = { detail, history: [], sources: ["kalshi"], related: [],
+function render(detail: FuturesMarketDetailResponse, history: PrototypeData["history"] = []) {
+  const data: PrototypeData = { detail, history, sources: ["kalshi"], related: [],
     capturedAt: "2026-11-04T02:33:00Z", historyNote: null, settledAt: "2026-11-04T02:27:31Z" };
   return renderToStaticMarkup(<Prototype data={data} />);
 }
@@ -71,4 +71,11 @@ test("whole numbers keep the existing live boundary marks", () => {
   expect(percentText(0.575)).toBe("58%");
   expect(percentText(0.995)).toBe(">99%");
   expect(percentText(0.004)).toBe("<1%");
+});
+
+test("the server renders the answer while reader-timezone chart labels wait for the browser", () => {
+  const html = render(asDetail(field.detail), field.history.outcomes as PrototypeData["history"]);
+  expect(html).toContain("Closest Governor race in 2026");
+  expect(html).toContain("Loading probability history");
+  expect(html).not.toContain("Recorded chart");
 });

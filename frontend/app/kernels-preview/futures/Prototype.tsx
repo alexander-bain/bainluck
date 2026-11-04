@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ArrowLeft, ArrowUpRight, Check, ChevronDown, ChevronRight, Info, Maximize2 } from "lucide-react";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import ProbabilityBar from "@/components/ProbabilityBar";
-import { FuturesChart } from "@/components/FuturesChart";
 import { SettledMark } from "@/components/SettledOutcomeMark";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
@@ -15,6 +15,14 @@ import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
 import type { FuturesOutcome } from "@/lib/types";
 import { bodyKind, CASES, datePT, payloadVerdict, percentText, rankedOutcomes, type PrototypeData, type StudyState } from "./_model";
 import styles from "./prototype.module.css";
+
+// The event page also mounts its interactive charts in the browser. This
+// component's axis labels intentionally use the reader's timezone; rendering
+// them on a UTC preview server would disagree with the first PT browser frame.
+const FuturesChart = dynamic(() => import("@/components/FuturesChart").then((module) => module.FuturesChart), {
+  ssr: false,
+  loading: () => <div className="h-[260px] animate-pulse rounded-lg bg-surface-elevated" aria-label="Loading probability history" />,
+});
 
 function SourceMark() {
   // Reserved for #11920. A quiet mark, not a dead button or a fake sources sheet.
