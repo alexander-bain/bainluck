@@ -3646,7 +3646,8 @@ def _log_stats_line(
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
         "| %s | %s | held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
-        "lock_timeouts=%d skipped_locked=%d repeats_skipped=%d",
+        "lock_timeouts=%d history_points=%d history_capped=%d history_skipped=%d "
+        "history_refused=%d history_errors=%d skipped_locked=%d repeats_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -3683,6 +3684,14 @@ def _log_stats_line(
         # already known-held. Kept out of `errors`, so a sustained table lock
         # shows here rather than as one error and then silence.
         stats.get("price_lock_timeouts", 0),
+        # #11929: chart points the flush wrote; due legs the per-market cap
+        # held for a later minute; ticks not due (under a point, inside 5 min);
+        # settled/graded refusals; failed inserts. Cumulative for the run.
+        stats.get("history_points", 0),
+        stats.get("history_capped", 0),
+        stats.get("history_skipped", 0),
+        stats.get("history_refused", 0),
+        stats.get("history_errors", 0),
         # #10090: price rows a row lock elsewhere held back (with their unit)
         # while the rest of their chunk committed. Counted, never logged per
         # flush; each stays buffered and is retried by the next flush.
@@ -4523,6 +4532,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     blend_refresher.market_preview = MarketPreviewPublisher(
         "polymarket", lambda: blend_refresher._client(),
     )
+    # #11929: chart history points from the committed flush (`write_chunk`),
+    # never from the preview above. Off unless `STREAM_HISTORY_POINTS` names
+    # this venue; `handle_resolved` refuses its market. Reached through the
+    # refresher, like `market_preview`: no new name in the writer.
+    from app.utils.stream_history_points import StreamHistoryPoints
+
+    blend_refresher.stream_history = StreamHistoryPoints("polymarket")
     # #10090 decision J: `confirmed_at` for this venue's events. A buffered
     # withdrawal whose book prices a published leg out is a pending change
     # (the rule `flush_withdrawals` applies to the stored price).
@@ -4699,6 +4715,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         clock_ticket = None
         clock_owner = None
         write_clock = None
+        # #11929: this chunk's chart points, written in its transaction.
+        history_plan = None
+        stream_history = getattr(blend_refresher, "stream_history", None)
         try:
             async with get_task_session() as session:
                 if stage_trace is not None:
@@ -4862,6 +4881,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             *pm_rerank_market_fields_execution(sorted(reranked_markets))
                         )
                     ).rowcount
+                # #11929 — bounded chart history from the committed write: the
+                # rows this UPDATE returned (never a held-back one), at the
+                # prices it wrote, one INSERT in this same transaction. Never
+                # from a preview; memory advances only after COMMIT.
+                if getattr(stream_history, "enabled", False) is True and written_rows:
+                    history_plan = stream_history.plan(written_rows, chunk)
+                    await stream_history.write(session, history_plan)
             stats["price_updates"] += len(written_rows)
             stats["open_contract_prices_written"] += sum(
                 1 for row in written_rows if row.id in open_outcome_ids
@@ -4972,6 +4998,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             return False
 
+        # #11929: the chunk's transaction committed; its chart points are
+        # stored, so their legs' memory advances now.
+        if history_plan is not None:
+            stream_history.committed(history_plan)
         if held_back:
             # #10090: counted, never logged per flush (`skipped_locked=` on the
             # minute line). Each held row stays buffered and known-held, due at
@@ -7363,6 +7393,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         preview = getattr(blend_refresher, "market_preview", None)
         if preview is not None:
             preview.refuse_market(market_id)
+        # #11929: nor does it take another chart point (its terminal price
+        # still reaches the row through the flush; never the chart).
+        history = getattr(blend_refresher, "stream_history", None)
+        if history is not None:
+            history.refuse_market(market_id)
         task = asyncio.create_task(_settle_resolution(
             msg, condition_id, market_id,
             list(outcomes_by_market.get(market_id, [])), dict(asset_to_outcome),
@@ -7550,6 +7585,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             owner = catalog_boundary.stamps
             stats["stamp_wait_s"] = owner.waited_s if owner is not None else 0.0
             stamp_spans = getattr(blend_refresher, "stamp_spans", None)
+            # #11929: the chart-point counters ride the minute line.
+            history_stats = getattr(
+                getattr(blend_refresher, "stream_history", None), "stats", None,
+            )
+            if isinstance(history_stats, dict):
+                stats.update(history_stats)
             _log_stats_line(
                 stats, ws_stats, blend, game_flush=game_flush_timings.line(),
                 **({"stamp_tx": stamp_spans.line()} if stamp_spans is not None else {}),
