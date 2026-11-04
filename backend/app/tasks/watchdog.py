@@ -223,9 +223,27 @@ Q_VACUUM_OLDEST_XACT = (
     "AND coalesce(application_name, '') NOT LIKE 'pg_dump%' "
     "ORDER BY xact_start ASC LIMIT 1"
 )
+#: A table qualifies for the dead-tuple signal only with at least this many dead
+#: tuples — a share of a handful of rows is arithmetic, not evidence.
+#:
+#: #11988, measured 2026-11-04: `owed_chart_points` is a queue holding 3–14 live
+#: rows at ~6 inserts and ~6 deletes a second. Autovacuum ran on it every minute
+#: (8 passes in 8 minutes), yet it read 99.6% dead between passes: the rows
+#: deleted while the current 1–4 minute read held the horizon, plus ANALYZE
+#: extrapolating its sample over a 5,007-page heap. ~6,000 over ~6 cleared the
+#: old floor (`n_live_tup + n_dead_tup > 1000`) on every pass, so this signal
+#: paged alone — 9 board issues in 2 hours — while both horizon signals read ok
+#: and the queue's own read took 0.065 ms.
+#:
+#: An absolute DEAD floor, not a live-row floor, so the queue still counts when
+#: it matters: under a real hold like #2005's it passes 100,000 in under five
+#: hours. Above the floor the same day, the worst table was `odds_snapshots`
+#: at 15.4% (5.0M dead of 32.7M) — under WARN, as it should be.
+VACUUM_DEAD_MIN_TUPLES = 100_000
+
 Q_VACUUM_WORST_DEAD_PCT = (
     "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables "
-    "WHERE schemaname = 'public' AND n_live_tup + n_dead_tup > 1000 "
+    f"WHERE schemaname = 'public' AND n_dead_tup >= {VACUUM_DEAD_MIN_TUPLES} "
     "ORDER BY n_dead_tup::float8 / NULLIF(n_live_tup + n_dead_tup, 0) DESC "
     "LIMIT 1"
 )
