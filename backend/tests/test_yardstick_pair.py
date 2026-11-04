@@ -26,6 +26,8 @@ from app.utils.yardstick_pair import (
     FOR_SCALE_US_RECESSION_2026_DEFINITION,
     FOR_SCALE_US_RECESSION_2026_PRODUCER,
     FOR_SCALE_US_RECESSION_2026_SLUG,
+    MAX_YARDSTICK_PERCENT,
+    MIN_YARDSTICK_PERCENT,
     PRODUCER_KIND_YARDSTICK_PAIR,
     for_scale_snow_in_buffalo,
     for_scale_snow_in_dc,
@@ -533,6 +535,134 @@ class TestYardstickPairRefusals:
         )
         assert isinstance(res_past, RoundupRefusal)
         assert ("anchor", 60104328, "anchor_deadline_passed") in res_past.reasons
+
+    def test_refuses_outside_three_to_ninety_seven_percent_band(self) -> None:
+        """Enforces the 3%-97% whole-number band on both anchor and candidate legs
+        with explicit boundary assertions at 2%, 3%, 97%, and 98%.
+        """
+        assert MIN_YARDSTICK_PERCENT == 3
+        assert MAX_YARDSTICK_PERCENT == 97
+
+        # 2% candidate (outside band) is refused when anchor is 3%.
+        res_cand_2 = select_yardstick_pair(
+            [
+                _make_binary_market(113012, "US recession by end of 2026?", 0.03, category="economy"),
+                _make_binary_market(113200, "Will the Iranian regime fall before 2027?", 0.02, category="geopolitics"),
+            ],
+            anchor_spec="kalshi:113012",
+            candidate_specs=["kalshi:113200"],
+            now=NOW_NOV_4,
+        )
+        assert isinstance(res_cand_2, RoundupRefusal)
+        assert ("candidate", 113200, "outside_probability_band:2") in res_cand_2.reasons
+
+        # 2% anchor (outside band) is refused.
+        res_anchor_2 = select_yardstick_pair(
+            [
+                _make_binary_market(113012, "US recession by end of 2026?", 0.02, category="economy"),
+                _make_binary_market(113200, "Will the Iranian regime fall before 2027?", 0.03, category="geopolitics"),
+            ],
+            anchor_spec="kalshi:113012",
+            candidate_specs=["kalshi:113200"],
+            now=NOW_NOV_4,
+        )
+        assert isinstance(res_anchor_2, RoundupRefusal)
+        assert ("anchor", 113012, "outside_probability_band:2") in res_anchor_2.reasons
+
+        # 3% anchor and 3% candidate (lower boundary) succeed.
+        res_3 = select_yardstick_pair(
+            [
+                _make_binary_market(113012, "US recession by end of 2026?", 0.03, category="economy"),
+                _make_binary_market(113200, "Will the Iranian regime fall before 2027?", 0.03, category="geopolitics"),
+            ],
+            anchor_spec="kalshi:113012",
+            candidate_specs=["kalshi:113200"],
+            now=NOW_NOV_4,
+        )
+        assert isinstance(res_3, RoundupMembers)
+        assert [r["rendered_percent"] for r in res_3.rows] == [3, 3]
+
+        # 97% anchor and 97% candidate (upper boundary) succeed.
+        res_97 = select_yardstick_pair(
+            [
+                _make_binary_market(113012, "US recession by end of 2026?", 0.97, category="economy"),
+                _make_binary_market(113200, "Will the Iranian regime fall before 2027?", 0.97, category="geopolitics"),
+            ],
+            anchor_spec="kalshi:113012",
+            candidate_specs=["kalshi:113200"],
+            now=NOW_NOV_4,
+        )
+        assert isinstance(res_97, RoundupMembers)
+        assert [r["rendered_percent"] for r in res_97.rows] == [97, 97]
+
+        # 98% candidate (outside band) is refused when anchor is 97%.
+        res_cand_98 = select_yardstick_pair(
+            [
+                _make_binary_market(113012, "US recession by end of 2026?", 0.97, category="economy"),
+                _make_binary_market(113200, "Will the Iranian regime fall before 2027?", 0.98, category="geopolitics"),
+            ],
+            anchor_spec="kalshi:113012",
+            candidate_specs=["kalshi:113200"],
+            now=NOW_NOV_4,
+        )
+        assert isinstance(res_cand_98, RoundupRefusal)
+        assert ("candidate", 113200, "outside_probability_band:98") in res_cand_98.reasons
+
+        # 98% anchor (outside band) is refused when candidate is 97%.
+        res_anchor_98 = select_yardstick_pair(
+            [
+                _make_binary_market(113012, "US recession by end of 2026?", 0.98, category="economy"),
+                _make_binary_market(113200, "Will the Iranian regime fall before 2027?", 0.97, category="geopolitics"),
+            ],
+            anchor_spec="kalshi:113012",
+            candidate_specs=["kalshi:113200"],
+            now=NOW_NOV_4,
+        )
+        assert isinstance(res_anchor_98, RoundupRefusal)
+        assert ("anchor", 113012, "outside_probability_band:98") in res_anchor_98.reasons
+
+    @pytest.mark.asyncio
+    async def test_refuses_uncurated_in_band_market_when_curated_candidates_miss(
+        self,
+    ) -> None:
+        """Candidates are restricted strictly to the curated pool in the definition;
+        an uncurated market within 2 points of the anchor is never selected.
+        """
+        pool = [
+            _make_binary_market(
+                60087427,
+                "Will it snow in Buffalo, NY by November 15?",
+                0.42,
+                category="weather",
+                resolution_date="2026-11-19T04:59:00Z",
+                market_type="container_member",
+            ),
+            # Curated candidate 8422080 is at 55% (outside the 2-point band).
+            _make_binary_market(
+                8422080,
+                "Pete Hegseth out as Secretary of Defense by December 31?",
+                0.55,
+                category="politics",
+                resolution_date="2026-12-31T00:00:00Z",
+                market_type="container_member",
+            ),
+            # Uncurated market 99999999 sits at 42% (exact match), cross-category, open & fresh.
+            _make_binary_market(
+                99999999,
+                "Will an uncurated market resolve Yes by December 31?",
+                0.42,
+                category="tech",
+                resolution_date="2026-12-31T00:00:00Z",
+                market_type="binary",
+            ),
+        ]
+        res = await produce_yardstick_pair(
+            pool,
+            definition=FOR_SCALE_SNOW_IN_BUFFALO_DEFINITION,
+            now=NOW_NOV_4,
+        )
+        assert isinstance(res, RoundupRefusal)
+        assert ("pair", "no_qualifying_target") in res.reasons
 
     @pytest.mark.asyncio
     async def test_registered_in_roundup_producers_and_folds_covered_feed_cards(

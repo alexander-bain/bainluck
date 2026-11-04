@@ -65,6 +65,8 @@ __all__ = [
     "FOR_SCALE_US_RECESSION_2026_ID",
     "FOR_SCALE_US_RECESSION_2026_PRODUCER",
     "FOR_SCALE_US_RECESSION_2026_SLUG",
+    "MAX_YARDSTICK_PERCENT",
+    "MIN_YARDSTICK_PERCENT",
     "PRODUCER_KIND_YARDSTICK_PAIR",
     "build_yardstick_pair_producer",
     "compute_yardstick_sentence",
@@ -83,6 +85,8 @@ __all__ = [
 
 PRODUCER_KIND_YARDSTICK_PAIR = "yardstick_pair"
 
+MIN_YARDSTICK_PERCENT = 3
+MAX_YARDSTICK_PERCENT = 97
 DEFAULT_SAME_BAND_MAX_DIFF = 2
 DEFAULT_APART_BAND_MIN_DIFF = 10
 DEFAULT_MAX_AGE_HOURS = 48.0
@@ -434,8 +438,8 @@ def _qualify_yardstick_member(
         return None, "missing_probability"
 
     pct = _half_up_percent(prob)
-    if pct <= 0 or pct >= 100:
-        return None, "extreme_probability"
+    if pct < MIN_YARDSTICK_PERCENT or pct > MAX_YARDSTICK_PERCENT:
+        return None, f"outside_probability_band:{pct}"
 
     no_prob: Optional[float] = None
     if no_outcome is not None:
@@ -616,19 +620,17 @@ def select_yardstick_pair(
         return RoundupRefusal((("anchor", anchor_id, str(anchor_err)),))
 
     priority_ids: list[int] = []
-    if candidate_specs:
+    if candidate_specs is not None:
         for spec in candidate_specs:
             _, cid, _ = parse_market_ref(spec)
             if cid is not None and cid != anchor_id and cid in by_id and cid not in priority_ids:
                 priority_ids.append(cid)
-
+        candidate_pool: list[Mapping[str, Any]] = [by_id[cid] for cid in priority_ids]
+    else:
+        candidate_pool = [
+            m for m in ordered_inputs if int(m["id"]) != anchor_id
+        ]
     priority_set = set(priority_ids)
-    candidate_pool: list[Mapping[str, Any]] = [by_id[cid] for cid in priority_ids]
-    candidate_pool.extend(
-        m
-        for m in ordered_inputs
-        if int(m["id"]) != anchor_id and int(m["id"]) not in priority_set
-    )
 
     labels_by_id = candidate_labels or {}
     same_matches: list[tuple[int, float, _QualifiedYardstickMember, str, str]] = []
@@ -768,7 +770,7 @@ async def _load_markets_from_db(
     db: Any,
     target_ids: Sequence[int],
 ) -> tuple[dict[int, dict[str, Any]], dict[int, set[int]]]:
-    """Load the anchor and priority ``target_ids`` plus a fresh open binary pool from ``db``."""
+    """Load the explicit anchor and curated ``target_ids`` from ``db``."""
     if isinstance(db, (list, tuple)):
         mapped_seq: dict[int, dict[str, Any]] = {}
         for item in db:
@@ -780,7 +782,7 @@ async def _load_markets_from_db(
     if not hasattr(db, "execute") or not callable(db.execute):
         return {}, {}
 
-    from sqlalchemy import or_, select
+    from sqlalchemy import select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import joinedload
 
@@ -792,63 +794,25 @@ async def _load_markets_from_db(
         for mid in target_ids
         if isinstance(mid, int) and not isinstance(mid, bool) and mid > 0
     ]
-    seen_ids = set(clean_ids)
-    hydrate_ids = list(clean_ids)
-    preloaded_rows: list[Any] = []
+    if not clean_ids:
+        return {}, {}
 
-    res_pool = await db.execute(
-        select(FuturesMarket.id)
-        .where(
-            FuturesMarket.status == "open",
-            FuturesMarket.event_id.is_(None),
-            FuturesMarket.resolution_date.is_not(None),
-            or_(
-                FuturesMarket.market_type.is_(None),
-                FuturesMarket.market_type.in_(
-                    ("yes_no", "binary", "container_member", "unshaped")
-                ),
-            ),
+    res = await db.execute(
+        select(FuturesMarket)
+        .options(
+            joinedload(FuturesMarket.sport),
+            joinedload(FuturesMarket.outcomes),
         )
-        .order_by(
-            FuturesMarket.updated_at.desc().nullslast(),
-            FuturesMarket.id.desc(),
-        )
-        .limit(80)
+        .where(FuturesMarket.id.in_(clean_ids))
     )
-    pool_items: list[Any] = []
-    if hasattr(res_pool, "all") and callable(res_pool.all):
-        pool_items = list(res_pool.all())
-    elif hasattr(res_pool, "scalars") and callable(res_pool.scalars):
-        pool_items = list(res_pool.scalars().all())
-
-    for item in pool_items:
-        if hasattr(item, "outcomes") or isinstance(item, Mapping):
-            preloaded_rows.append(item)
-            continue
-        try:
-            mid = int(item[0] if isinstance(item, (tuple, list)) else item)
-        except (IndexError, TypeError, ValueError):
-            continue
-        if mid > 0 and mid not in seen_ids:
-            seen_ids.add(mid)
-            hydrate_ids.append(mid)
-
-    hydrate_ids = hydrate_ids[:50]
-    orm_rows: list[Any] = list(preloaded_rows)
-    if hydrate_ids:
-        res = await db.execute(
-            select(FuturesMarket)
-            .options(
-                joinedload(FuturesMarket.sport),
-                joinedload(FuturesMarket.outcomes),
-            )
-            .where(FuturesMarket.id.in_(hydrate_ids))
-        )
-        if hasattr(res, "scalars") and callable(res.scalars):
-            scalars_obj = res.scalars()
-            if hasattr(scalars_obj, "unique") and callable(scalars_obj.unique):
-                scalars_obj = scalars_obj.unique()
-            orm_rows.extend(list(scalars_obj.all()))
+    orm_rows: list[Any] = []
+    if hasattr(res, "scalars") and callable(res.scalars):
+        scalars_obj = res.scalars()
+        if hasattr(scalars_obj, "unique") and callable(scalars_obj.unique):
+            scalars_obj = scalars_obj.unique()
+        orm_rows.extend(list(scalars_obj.all()))
+    elif hasattr(res, "all") and callable(res.all):
+        orm_rows.extend(list(res.all()))
 
     if not orm_rows:
         return {}, {}
