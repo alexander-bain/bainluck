@@ -52,7 +52,7 @@ export default function MidtermsMarketCard({ market, presentation }: { market: F
   }
 
   const pair = twoLegCardPair(row);
-  if (presentation === "field" || !pair.second) return <MarketCard market={row} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} showLeaderHeadshot />;
+  if (presentation === "field" || !pair.second) return <MarketCard market={{ ...row, top_outcomes: row.top_outcomes.slice(0, 5) }} theme="congressional" forceField={presentation === "field"} forceDuel={presentation === "duel"} showLeaderHeadshot />;
   const percentages = renderedOutcomeRowPercents([pair.first.prob / 100, pair.second.prob / 100]);
   const legs = [pair.first, pair.second].map((leg, index) => {
     const source = market.top_outcomes.find(outcome => outcome.name === leg.name);

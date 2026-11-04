@@ -44,9 +44,12 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
   // Keep authoritative results even when they have no price; settled rows keep
   // their existing result vocabulary and order.
   const unpriced = resolved ? [] : (outcomes ?? []).filter(outcome => outcome.probability == null && outcomeRowVerdict(outcome, false) === null);
-  const shownOutcomes = unpriced.length ? outcomes?.filter(outcome => outcome.probability != null || outcomeRowVerdict(outcome, false) !== null)
+  const availableOutcomes = unpriced.length ? outcomes?.filter(outcome => outcome.probability != null || outcomeRowVerdict(outcome, false) !== null)
     .sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1)) : outcomes;
   const hasVerdict = outcomes?.some((outcome) => outcomeRowVerdict(outcome, resolved) !== null) ?? false;
+  const shownOutcomes = presentation === "field" && !resolved && !hasVerdict
+    ? availableOutcomes?.slice(0, 5) : availableOutcomes;
+  const moreCount = Math.max(unpriced.length, (market?.outcome_count ?? 0) - (shownOutcomes?.length ?? 0));
   const missingPrices = !!market && (!outcomes?.length || (presentation && outcomes.length < market.outcome_count) || outcomes.some((outcome) => outcome.probability == null));
   const winner = (market as (FeedFuturesData & { settled_winner?: string }) | null)?.settled_winner;
   if (presentation && market && !resolved && !hasVerdict && !missingPrices) {
@@ -81,8 +84,8 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
             <span className={`shrink-0 font-semibold ${verdict === "won" ? "text-accent-brand" : "text-text-primary"}`} style={party ? { color: MIDTERMS_PARTY_COLOR[party] } : undefined}>{label}</span>
           </div>;
         })}
-        {unpriced.length > 0 && <p data-unpriced-outcomes={unpriced.length} className="text-text-secondary">
-          {shownOutcomes?.length ? `${unpriced.length} more without a price yet` : `${unpriced.length} ${unpriced.length === 1 ? "outcome" : "outcomes"} without a price yet`}
+        {!resolved && moreCount > 0 && <p data-unpriced-outcomes={unpriced.length} className="text-text-secondary">
+          {shownOutcomes?.length ? `${moreCount} more` : `${moreCount} ${moreCount === 1 ? "outcome" : "outcomes"} without a price yet`}
         </p>}
         {!outcomes?.length && <p className="text-text-secondary">{resolved ? "Result unavailable" : "Probabilities aren't available right now."}</p>}
       </div>}

@@ -208,7 +208,7 @@ describe("AC-R5 an old number says how old it is", () => {
     const partialStale = market(65678073, "Katie Zacharia out as Press Secretary by October 31?", [{ name: "Yes", probability: 0.55 }, { name: "No", probability: null }], { pricesAt: "2026-10-14T23:38:28Z" });
     const html = card(departurePage([{ class: "departure_announced", members: [partialStale] }]));
     expect(html).toContain("55%");
-    expect(html).toContain("1 more without a price yet");
+    expect(html).toContain("1 more");
     expect(html).toContain('data-testid="price-age-mark"');
     expect(html).toContain('data-cadence="futures"');
   });
