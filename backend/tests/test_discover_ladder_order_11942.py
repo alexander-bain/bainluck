@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.routes.futures import _format_market_detail, _format_market_summary
 from app.tasks.flow_sentinel import discover_ladder_order_failures
 from app.tasks.polymarket import sub_market_metadata
 from app.utils.deadline_family_story import (
@@ -17,6 +16,7 @@ from app.utils.discover_bundles import assemble_deadline_family_bundles
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
 from app.utils.feed_quality_debug import diagnose_feed_items, summarize_feed_diagnostics
 from app.utils.outcome_display import (
+    drop_incoherent_ladder_outcomes,
     ladder_rungs_out_of_order,
     ladder_treatment_collapsed,
 )
@@ -321,77 +321,49 @@ def test_deadline_family_out_of_order_refuses_bundle_and_serves_plain_legs():
     assert summary["ladder_refused"] == 1
 
 
-def test_denver_december_snow_detail_and_summary_drop_incoherent_rung():
-    def _outcome(oid: int, name: str, prob: float, rank: int):
-        return SimpleNamespace(
-            id=oid,
-            name=name,
-            external_id=f"KXDENSNOWM-26DEC-{oid}",
-            current_probability=prob,
-            current_american_odds=-200,
-            current_yes_bid=max(0.01, prob - 0.02),
-            current_yes_ask=min(0.99, prob + 0.02),
-            rank=rank,
-            rank_change_24h=None,
-            probability_change_24h=None,
-            opening_probability=None,
-            opening_american_odds=None,
-            is_winner=None,
-            resolution_source=None,
-            last_updated=NOW,
-            price_changed_at=NOW,
-            last_traded_price=prob,
-            last_trade_at=NOW,
-        )
+def test_denver_december_snow_ladder_refusal_and_drop_incoherent_rung():
+    outcomes = [
+        {"id": 246319890, "name": "Above 2 inches", "probability": 0.795},
+        {"id": 246319889, "name": "Above 6 inches", "probability": 0.64},
+        {"id": 246319891, "name": "Above 4 inches", "probability": 0.595},
+        {"id": 246319892, "name": "Above 8 inches", "probability": 0.40},
+        {"id": 246319893, "name": "Above 10 inches", "probability": 0.37},
+        {"id": 246319894, "name": "Above 12 inches", "probability": 0.28},
+    ]
+    assert ladder_rungs_out_of_order(
+        outcomes,
+        lambda o: o["name"],
+        lambda o: o["probability"],
+        "Snow in Denver in Dec 2026?",
+    ) is True
 
-    market = SimpleNamespace(
-        id=65536371,
-        name="Snow in Denver in Dec 2026?",
-        description=None,
-        sport=None,
-        category="weather",
-        llm_sport_category="weather",
-        status="open",
-        source="kalshi",
-        external_id="KXDENSNOWM-26DEC",
-        market_type="quantity",
-        mutually_exclusive=False,
-        commence_time=datetime(2027, 1, 1, 6, 59, tzinfo=timezone.utc),
-        resolution_date=datetime(2027, 1, 1, 6, 59, tzinfo=timezone.utc),
-        created_at=NOW,
-        updated_at=NOW,
-        group_id="kalshi:KXDENSNOWM-26DEC",
-        group_type=None,
-        canonical_market_key=None,
-        hook_description=None,
-        hook_generated_at=None,
-        hook_leader_at_generation=None,
-        image_url=None,
-        category_tags=["weather"],
-        market_metadata={},
-        outcomes=[
-            _outcome(246319890, "Above 2 inches", 0.795, 1),
-            _outcome(246319889, "Above 6 inches", 0.64, 2),
-            _outcome(246319891, "Above 4 inches", 0.595, 3),
-            _outcome(246319892, "Above 8 inches", 0.40, 4),
-            _outcome(246319893, "Above 10 inches", 0.37, 5),
-            _outcome(246319894, "Above 12 inches", 0.28, 6),
-        ],
+    cleaned = drop_incoherent_ladder_outcomes(
+        outcomes,
+        lambda o: o["name"],
+        lambda o: o["probability"],
+        "Snow in Denver in Dec 2026?",
     )
-
-    summary = _format_market_summary(market)
-    summary_names = [o["name"] for o in summary["top_outcomes"]]
-    assert "Above 6 inches" not in summary_names
-    assert summary_names[:3] == [
+    cleaned_names = [o["name"] for o in cleaned]
+    assert "Above 6 inches" not in cleaned_names
+    assert cleaned_names == [
         "Above 2 inches",
         "Above 4 inches",
         "Above 8 inches",
+        "Above 10 inches",
+        "Above 12 inches",
     ]
 
-    detail = _format_market_detail(market)
-    detail_names = [o["name"] for o in detail["outcomes"]]
-    assert "Above 6 inches" not in detail_names
-    assert detail_names == [
+    meta = classify_discover_card_archetype(
+        name="Snow in Denver in Dec 2026?",
+        category="weather",
+        outcomes=cleaned,
+        outcome_count=len(cleaned),
+        group_id="kalshi:KXDENSNOWM-26DEC",
+        group_type=None,
+        canonical_market_key=None,
+    )
+    assert meta["suggested_format"] == "threshold_heatmap"
+    assert [p["label"] for p in meta["threshold_points"]] == [
         "Above 2 inches",
         "Above 4 inches",
         "Above 8 inches",

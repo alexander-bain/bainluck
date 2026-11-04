@@ -1381,7 +1381,6 @@ async def browse_futures(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
-        drop_incoherent_ladder_outcomes,
         drop_incoherent_near_certain,
         drop_unbacked_legs,
         is_placeholder_outcome_name,
@@ -1498,13 +1497,6 @@ async def browse_futures(
         # Drop BEFORE the `[:3]` slice, then leader-pick: demotion alone only keeps
         # a row out of a top-N slot while the list is LONGER than N (UX-P163), and
         # the mean browse market has 6.3 outcomes.
-        if getattr(market, "status", None) == "open":
-            display_outcomes = drop_incoherent_ladder_outcomes(
-                display_outcomes,
-                lambda o: o.get("name"),
-                lambda o: o.get("probability"),
-                market.name,
-            )
         display_outcomes = drop_dominant_field_outcomes(
             display_outcomes, lambda o: o.get("name"), lambda o: o.get("probability")
         )
@@ -9980,21 +9972,12 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
         if not _GARBAGE_OUTCOME_RE.match(o.name or "")
     ]
 
-    from app.utils.outcome_display import drop_incoherent_ladder_outcomes
-
     # Sort outcomes by probability
     sorted_outcomes = sorted(
         real_outcomes,
         key=lambda o: o.current_probability or 0,
         reverse=True
     )
-    if getattr(market, "status", None) == "open":
-        sorted_outcomes = drop_incoherent_ladder_outcomes(
-            sorted_outcomes,
-            lambda o: o.name,
-            lambda o: float(o.current_probability) if o.current_probability is not None else None,
-            market.name,
-        )
 
     top_outcomes = [
         {
@@ -10406,7 +10389,6 @@ def _format_market_detail(
         normalize_display_probs,
         leader_pick_order,
         drop_dominant_field_outcomes,
-        drop_incoherent_ladder_outcomes,
         drop_incoherent_near_certain,
         drop_unbacked_legs,
     )
@@ -11267,13 +11249,6 @@ def _format_market_detail(
     def _is_graded_winner(o: dict) -> bool:
         return bool(o.get("is_winner")) and o.get("resolution_source") is not None
 
-    if getattr(market, "status", None) == "open":
-        outcomes = drop_incoherent_ladder_outcomes(
-            outcomes,
-            lambda o: o.get("name"),
-            lambda o: o.get("probability"),
-            market.name,
-        )
     outcomes = drop_dominant_field_outcomes(
         outcomes,
         lambda o: o.get("name"),
