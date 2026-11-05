@@ -35,7 +35,8 @@ websockets>=13.0
 cryptography>=42.0.0
 
 # Background Tasks
-celery>=5.6.3
+# Keep the reviewed task-binding contract; 5.7 requires a separate upgrade.
+celery==5.6.3
 redis>=5.0.1
 
 # Rate Limiting
