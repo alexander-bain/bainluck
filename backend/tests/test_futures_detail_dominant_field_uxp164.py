@@ -67,7 +67,7 @@ def _prob_of(o):
 def _pipeline_before(rows, mutually_exclusive=True):
     """The shipped pre-fix pipeline, shared by detail and search."""
     out = [dict(r) for r in rows]
-    # The pre-11995 overround policy left this historical field raw.
+    normalize_display_probs(out, mutually_exclusive=mutually_exclusive)
     leader_pick_order(out)
     return out
 
@@ -103,7 +103,7 @@ class TestThePreFixOutputIsWhatItClaims:
         assert sum(o["probability"] for o in LIVE_112903) == pytest.approx(2.0)
         out = [dict(r) for r in LIVE_112903]
         normalize_display_probs(out)
-        assert [o["probability"] for o in out] == [0.4275, 0.0725, 0.5]
+        assert [o["probability"] for o in out] == [0.855, 0.145, 1.0]
 
     def test_demotion_alone_cannot_help_a_three_row_list(self):
         # `display_rank_order` is CORRECT and unchanged — it moves the row to the
@@ -183,7 +183,7 @@ class TestTheInformationCarveOutSurvives:
         ]
         assert "Other" in [o["name"] for o in _pipeline_after(below)]
         assert "Other" not in [o["name"] for o in drop_dominant_field_outcomes(at, _name_of, _prob_of)]
-        assert "Other" in [o["name"] for o in _pipeline_after(at)]  # new served value is below the threshold
+        assert "Other" not in [o["name"] for o in _pipeline_after(at)]
 
 
 class TestNeverEmpties:

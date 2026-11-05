@@ -131,27 +131,107 @@ class TestTheFixtureCanActuallyFail:
 
 
 class TestTheSpecimen:
-    """#11995 supersedes #8595: include every price, with one divisor."""
 
-    def test_detail_card_and_history_all_include_the_full_tail(self):
+    def test_the_detail_payload_prints_the_venues_price(self):
+        """The issue's guard: `/api/futures/209` leader within 2 pts of 0.985."""
+        served = _detail(NL_MVP)
+        assert served[LEADER] == pytest.approx(0.985, abs=0.02)
+        assert served[LEADER] != pytest.approx(PAGE_BEFORE, abs=0.01)
+
+    def test_the_squeeze_does_not_fire_at_all(self):
         moved, page = _page(NL_MVP)
+        assert moved is False
+        assert page[LEADER] == 0.985
+        assert page[OHTANI] == 0.015
+        assert page[100] == 0.010
+
+    def test_the_card_prints_the_same_number(self):
         scale, card = _card(NL_MVP)
-        assert moved is True
-        assert scale == pytest.approx(1.51)
-        assert page == card == _detail(NL_MVP)
-        assert page[LEADER] == pytest.approx(0.985 / 1.51)
-        point = devigged_consensus_by_time(
-            {MEASURED_AT: {"kalshi": {i: p for i, _, p in NL_MVP}}},
-            mutually_exclusive=True,
-        )[MEASURED_AT]
-        assert point[LEADER] == pytest.approx(page[LEADER], abs=5e-4)
-
-    def test_divisor_includes_floor_and_subcent_prices(self):
-        assert display_divisor_mass([0.985, 0.015] + [0.01] * 51) == pytest.approx(1.51)
-        assert display_divisor_mass([0.5, 0.4, 0.004, 0.01, 0]) == pytest.approx(0.914)
-
-    @pytest.mark.parametrize("exclusive", [False])
-    def test_nonexclusive_or_unknown_semantics_keep_raw_prices(self, exclusive):
-        scale, card = _card(NL_MVP, mutually_exclusive=exclusive)
-        assert scale == 1
+        assert scale == 1.0
         assert card[LEADER] == 0.985
+
+    def test_the_chart_prints_the_same_number(self):
+        """The Probability Trend runs the page's squeeze per instant (#4992)."""
+        column = {i: p for i, _n, p in NL_MVP}
+        point = devigged_consensus_by_time(
+            {MEASURED_AT: {"kalshi": column}}, mutually_exclusive=True
+        )[MEASURED_AT]
+        assert point[LEADER] == pytest.approx(0.985, abs=5e-4)
+
+
+class TestOnlyTheFloorLeavesTheDivisor:
+    def test_the_predicate_is_exactly_one_cent(self):
+        assert is_venue_floor_price(0.01)
+        assert is_venue_floor_price(0.010000)
+        for p in (0.0099, 0.009901, 0.0066, 0.005, 0.0005, 0.011, 0.0, None):
+            assert not is_venue_floor_price(p), p
+
+    def test_a_sub_cent_tail_is_a_real_price_and_stays_in_the_divisor(self):
+        """De-vigged sportsbook long shots and Polymarket 0.001 ticks sit under a cent.
+
+        The same field with the tail at 0.0066 instead of 0.010 is a coherent
+        distribution with a real tail, and it squeezes exactly as it always did.
+        """
+        rows = NL_MVP[:2] + [(100 + i, f"c{i}", 0.0066) for i in range(51)]
+        moved, page = _page(rows)
+        raw = 0.985 + 0.015 + 51 * 0.0066
+        assert moved is True
+        assert page[LEADER] == pytest.approx(0.985 / raw, abs=1e-4)
+
+    def test_priced_legs_that_overround_are_still_squeezed(self):
+        """The squeeze is kept, not removed: it divides by the priced legs alone."""
+        rows = [(1, "a", 0.70), (2, "b", 0.40)] + [
+            (100 + i, f"c{i}", 0.010) for i in range(30)
+        ]
+        moved, page = _page(rows)
+        assert moved is True
+        assert page[1] == pytest.approx(0.70 / 1.10, abs=1e-4)
+        assert page[2] == pytest.approx(0.40 / 1.10, abs=1e-4)
+        assert page[1] + page[2] == pytest.approx(1.0, abs=1e-3)
+        # The floor legs follow the priced legs' scale: one divisor on the page.
+        assert page[100] == pytest.approx(0.010 / 1.10, abs=1e-4)
+
+    def test_and_the_card_divides_every_leg_by_the_same_mass(self):
+        rows = [(1, "a", 0.70), (2, "b", 0.40)] + [
+            (100 + i, f"c{i}", 0.010) for i in range(30)
+        ]
+        _moved, page = _page(rows)
+        scale, card = _card(rows)
+        assert scale == pytest.approx(1.10, abs=1e-9)
+        for oid in page:
+            assert card[oid] == page[oid], oid
+
+    def test_the_overround_ceiling_still_reads_the_full_sum(self):
+        """#1200 unchanged: past 1.60 with the tail counted, the field prints raw."""
+        rows = NL_MVP[:2] + [(100 + i, f"c{i}", 0.010) for i in range(70)]
+        moved, page = _page(rows)
+        assert moved is False
+        assert page[LEADER] == 0.985
+        scale, _card_legs = _card(rows)
+        assert scale == 1.0
+
+    def test_a_card_that_does_not_know_keeps_the_full_sum(self):
+        """`mutually_exclusive=None` is "caller does not know" and is never widened."""
+        scale, _card_legs = _card(NL_MVP, mutually_exclusive=None)
+        assert scale == pytest.approx(1.51, abs=1e-9)
+
+    def test_the_mass_skips_only_floor_legs(self):
+        assert display_divisor_mass([0.985, 0.015] + [0.01] * 51) == pytest.approx(1.0)
+        assert display_divisor_mass([0.5, None, 0.0, 0.0066]) == pytest.approx(0.5066)
+
+
+class TestEveryPageLegMatchesTheCard:
+    @pytest.mark.parametrize(
+        "rows",
+        [
+            NL_MVP,
+            [(1, "a", 0.55), (2, "b", 0.35), (3, "c", 0.12)]
+            + [(100 + i, f"c{i}", 0.010) for i in range(20)],
+        ],
+        ids=["nl-mvp-209", "priced-overround-with-floor-tail"],
+    )
+    def test_one_divisor(self, rows):
+        _moved, page = _page(rows)
+        _scale, card = _card(rows)
+        for oid in page:
+            assert card[oid] == page[oid], oid

@@ -112,7 +112,7 @@ class TestTheDropIsWhatCreatesTheDefect:
 
     def test_the_stored_field_is_above_the_ceiling_and_would_already_agree(self):
         assert sum(r[2] for r in HOST_2031) == pytest.approx(STORED_SUM, abs=1e-9)
-        assert _feed_display_scale(_legs(), mutually_exclusive=True) == pytest.approx(1.79)
+        assert _feed_display_scale(_legs(), mutually_exclusive=True) == 1.0
 
     def test_but_the_survivors_land_inside_the_band(self):
         assert sum(r[2] for r in HOST_2031 if not r[3]) == pytest.approx(
@@ -169,10 +169,13 @@ class TestTheNonExclusiveFieldIsLeftAlone:
     `None`, and False is pinned raw beside it rather than deleted."""
 
     @pytest.mark.parametrize("exclusivity", [None])
-    def test_it_still_divides_even_with_withheld_legs(self, exclusivity):
-        assert _feed_display_scale(
-            _survivors(), mutually_exclusive=exclusivity, field_complete=False
-        ) == pytest.approx(SURVIVING_SUM, abs=1e-9)
+    def test_unknown_exclusivity_cannot_redistribute_withheld_legs(self, exclusivity):
+        assert (
+            _feed_display_scale(
+                _survivors(), mutually_exclusive=exclusivity, field_complete=False
+            )
+            == 1.0
+        )
 
     def test_a_flagged_non_exclusive_field_is_raw_with_or_without_withheld_legs(self):
         for complete in (True, False):

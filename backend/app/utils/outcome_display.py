@@ -312,8 +312,9 @@ def drop_unbacked_legs(
 
 
 def display_divisor_mass(probs) -> float:
-    """Full one-winner field mass, including small prices and overflow (#11995)."""
-    return sum(float(p) for p in probs if p is not None)
+    """Priced field mass, including overflow but excluding one-cent bounds (#8595)."""
+
+    return sum(float(p) for p in probs if p is not None and not is_venue_floor_price(p))
 
 
 def _field_has_result(outcomes: list[dict]) -> bool:
@@ -335,7 +336,10 @@ def display_probability_divisor(
     """One venue-blind served-number rule; never turn unknown mass into zero.
 
     Alex's clarification: normalize healthy complete one-winner inputs; exclude
-    entries only on evidence, never just because the total is large. Call with
+    entries only on evidence, never just because the total is large. A raw sum
+    above 160% refuses conversion; it does not identify or delete a stale leg.
+    One-cent upper bounds retain their existing exclusion from the divisor.
+    Call with
     the FULL eligible field before any preview/overflow slice. If a real outcome
     lacks a supported price, pass field_complete=False rather than redistributing
     its unknown probability among the survivors.
@@ -345,11 +349,7 @@ def display_probability_divisor(
 
     if _field_has_result(outcomes):
         return None  # a declared result is no longer an uncertain distribution
-    if (
-        mutually_exclusive is False
-        or (mutually_exclusive and not field_complete)
-        or len(outcomes) < 2
-    ):
+    if mutually_exclusive is False or not field_complete or len(outcomes) < 2:
         return None
     if cumulative_outcome_ladder(
         [{"name": o.get("name", o.get("outcome_name", o.get("label", "")))} for o in outcomes],
@@ -362,9 +362,14 @@ def display_probability_divisor(
         for p in values
     ):
         return None
-    mass = display_divisor_mass(values)
+    raw_mass = sum(float(p) for p in values)
+    mass = raw_mass if mutually_exclusive is None else display_divisor_mass(values)
+    if mutually_exclusive and raw_mass > _FIELD_SUM_MAX:
+        return None
+    if mutually_exclusive and mass < 1 and any(is_venue_floor_price(p) for p in values):
+        return None  # upper bounds do not certify a complete under-round field
     # Compatibility for callers that have not supplied semantics. Explicit
-    # non-exclusive sets always refused above; one-winner fields have no band.
+    # non-exclusive sets always refused above; unknown semantics keep their band.
     threshold = 1.01 if sum(bool(p) for p in values[:3]) == 2 else 1.05
     if mutually_exclusive is None and not threshold < mass <= 2:
         return None
@@ -408,6 +413,13 @@ def normalize_display_probs(
     if divisor is None:
         return False
     before = [o[key] for o in outcomes]
+    if any(is_venue_floor_price(p) for p in before):
+        # Preserve the prior upper-bound scale without claiming this is a full
+        # distribution. Healthy complete fields, including under-rounds, use
+        # the whole-percent allocation below.
+        for o, p in zip(outcomes, before):
+            o[key] = round(float(p) / divisor, 8)
+        return any(p != o[key] for p, o in zip(before, outcomes))
     exact = [float(p) / divisor * 100 for p in before]
     whole = [math.floor(p + 1e-10) for p in exact]
     order = sorted(

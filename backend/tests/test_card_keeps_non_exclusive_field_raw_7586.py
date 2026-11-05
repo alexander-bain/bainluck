@@ -177,8 +177,11 @@ class TestTheOneWinnerArmIsUnchanged:
         for name in card:
             assert round(card[name] * 100) == round(page[name] * 100)
 
-    def test_11995_removes_the_one_winner_ceiling(self):
-        assert _feed_display_scale(_legs([("Barcelona", 0.34), ("Real Madrid", 0.8), ("PSG", 0.72)]), mutually_exclusive=True) == pytest.approx(1.86)
+    def test_8224_keeps_the_suspect_one_winner_field_raw(self):
+        assert _feed_display_scale(
+            _legs([("Barcelona", 0.34), ("Real Madrid", 0.8), ("PSG", 0.72)]),
+            mutually_exclusive=True,
+        ) == pytest.approx(1.0)
 
     def test_8237s_withheld_gate_still_keeps_a_one_winner_field_raw(self):
         assert _feed_display_scale(

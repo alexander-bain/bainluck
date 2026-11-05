@@ -38,7 +38,10 @@ from app.services.anchor_channel import market_born_duplicates_on_page
 from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.outcome_display import normalize_display_probs
-from app.utils.futures_market_snapshot import reader_change_24h  # #10248
+from app.utils.futures_market_snapshot import (
+    normalized_field_comparisons,
+    reader_change_24h,
+)
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -2741,19 +2744,25 @@ def _serialize_outcomes(
             # carrier here, not a hypothetical: the NFL page serves ten of
             # "Will Sam Darnold win the Pro Football Championship Game MVP?"
             # under `awards[].top_outcomes[].name`.
-            "name": rewrite_venue_league_vocabulary(
-                (labels or {}).get(o.name, o.name)
+            "name": rewrite_venue_league_vocabulary((labels or {}).get(o.name, o.name)),
+            "probability": (
+                float(o.current_probability) if o.current_probability else None
             ),
-            "probability": float(o.current_probability) if o.current_probability else None,
-            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
+            "opening_probability": (
+                float(o.opening_probability)
+                if o.opening_probability is not None
+                else None
+            ),
             "rank": o.rank,
             # #10248 D5: a DataGolf leg serves its dated day move, not a 90 s
             # poll delta; every other source keeps its stored value.
             "movement_24h": (
                 float(chg)
-                if (chg := reader_change_24h(
-                    market, o.id, o.current_probability, o.probability_change_24h
-                ))
+                if (
+                    chg := reader_change_24h(
+                        market, o.id, o.current_probability, o.probability_change_24h
+                    )
+                )
                 else None
             ),
             "team_id": o.team_id,
@@ -2815,12 +2824,22 @@ def _serialize_outcomes(
     # field into the squeeze band and Agit Kabayel's 87% printed as 77%. The two
     # surfaces have to gate together or the board they now agree on divides by
     # two different numbers again (#7016).
-    if normalize_display_probs(
+    comparisons = normalized_field_comparisons(
+        market,
+        rows,
+        field_complete=prices_withheld == 0,
+    )
+    scaled = normalize_display_probs(
         rows,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=prices_withheld == 0,
         question=getattr(market, "name", None),
-    ):
+    )
+    if comparisons is not None:
+        for row in rows:
+            row["opening_probability"] = comparisons[row["id"]]["opening_probability"]
+            row["movement_24h"] = comparisons[row["id"]]["probability_change_24h"]
+    elif scaled:
         # #5539, inherited with the squeeze rather than invented: once the
         # printed column has moved, a raw opening beside it is a movement the
         # reader can compute and we never observed. Withheld, not rescaled —
@@ -2829,6 +2848,7 @@ def _serialize_outcomes(
         # becomes a forecast we are graded on.
         for row in rows:
             row["opening_probability"] = None
+            row["movement_24h"] = None
 
     return rows[:10]
 

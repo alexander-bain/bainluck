@@ -11,7 +11,7 @@ from app.utils.outcome_display import normalize_display_probs
 
 @pytest.mark.parametrize(
     "prices",
-    [[0.40, 0.39], [0.52, 0.51], [0.9, 0.8, 0.7], [0.985, 0.015] + [0.01] * 51],
+    [[0.40, 0.39], [0.52, 0.51], [0.5, 0.4, 0.3], [0.5, 0.4, 0.004]],
 )
 def test_every_complete_one_winner_field_sums_to_one_and_prints_100(prices):
     rows = [
@@ -29,7 +29,7 @@ def test_every_complete_one_winner_field_sums_to_one_and_prints_100(prices):
 def test_preview_keeps_full_divisor_and_allocation_including_overflow():
     full = [
         SimpleNamespace(id=i, name=f"Candidate {i}", current_probability=p)
-        for i, p in enumerate([0.51, 0.51, 0.51, 0.3, 0.2])
+        for i, p in enumerate([0.35, 0.34, 0.33, 0.2, 0.15])
     ]
     page = [
         {"id": o.id, "name": o.name, "probability": o.current_probability} for o in full
@@ -47,7 +47,12 @@ def test_preview_keeps_full_divisor_and_allocation_including_overflow():
 
 
 @pytest.mark.parametrize(
-    "kwargs", [{"mutually_exclusive": False}, {"field_complete": False}]
+    "kwargs",
+    [
+        {"mutually_exclusive": False},
+        {"field_complete": False},
+        {"mutually_exclusive": None, "field_complete": False},
+    ],
 )
 def test_nonexclusive_or_withheld_field_stays_raw(kwargs):
     rows = [{"name": n, "probability": p} for n, p in [("Alice", 0.8), ("Bob", 0.7)]]
@@ -83,19 +88,26 @@ def test_whole_allocation_does_not_depend_on_card_order():
     assert sum(o["rendered_percent"] for o in rows) == 100
 
 
-def test_search_preview_keeps_the_detail_full_field_divisor():
+@pytest.mark.parametrize("bounded", [False, True])
+def test_search_preview_keeps_the_detail_full_field_divisor(bounded):
     from app.routes.events import _build_search_top_outcomes
     from app.routes.futures import _format_market_detail
     from tests.test_midterms_complete_outcome_prices_11948 import _detail_field
 
     market = _detail_field()
+    if not bounded:
+        for o, price in zip(market.outcomes, [0.45, 0.4, 0.3] + [0.005] * 21):
+            o.current_probability = price
     page = _format_market_detail(market)
     preview = _build_search_top_outcomes(market, limit=5)
     full = {o["name"]: o for o in page["outcomes"]}
     assert len(preview) == 5
     for row in preview:
         assert row["probability"] == full[row["name"]]["probability"]
-        assert row["rendered_percent"] == full[row["name"]]["rendered_percent"]
+        if not bounded:
+            assert row["rendered_percent"] == full[row["name"]]["rendered_percent"]
+        else:
+            assert "rendered_percent" not in row
 
 
 @pytest.mark.parametrize(
@@ -120,8 +132,8 @@ def test_a_refused_history_tick_does_not_turn_unknown_mass_into_zero():
     from app.utils.futures_history_basis import devigged_consensus_by_time
 
     start = datetime(2026, 11, 4, tzinfo=timezone.utc)
-    full = {1: 0.9, 2: 0.8, 3: 0.7}
-    partial = {2: 0.8, 3: 0.7}
+    full = {1: 0.4, 2: 0.3, 3: 0.2}
+    partial = {2: 0.3, 3: 0.2}
     result = devigged_consensus_by_time(
         {
             start: {"polymarket": full},
@@ -189,3 +201,151 @@ def test_feed_allocation_matches_humanized_rows_by_id():
            {"id": 2, "name": "It will not happen", "probability": 0.495}]
     _normalize_feed_probabilities(top, outcomes, mutually_exclusive=True)
     assert [o["rendered_percent"] for o in top] == [50, 50]
+
+
+def _comparison_field():
+    from datetime import datetime, timedelta, timezone
+    from app.utils.futures_market_snapshot import (
+        DATED_BASIS_METADATA_KEY,
+        DATED_BASIS_ELIGIBILITY_METADATA_KEY,
+        DATED_BASIS_PRICED_LEG,
+    )
+    from tests.test_midterms_complete_outcome_prices_11948 import _detail_field
+
+    now = datetime(2026, 11, 4, 20, tzinfo=timezone.utc)
+    market = _detail_field()
+    market.source = "datagolf"
+    market.outcomes = market.outcomes[:3]
+    prior = [0.02, 0.68, 0.3]
+    for row, current, opening in zip(
+        market.outcomes, [0.1505, 0.55, 0.3], [0.3, 0.6, 0.3]
+    ):
+        row.current_probability = current
+        row.opening_probability = opening
+        row.opening_captured_at = now - timedelta(hours=30)
+        row.probability_change_24h = 0.0005
+        row.last_updated = now
+    market.market_metadata = {
+        DATED_BASIS_METADATA_KEY: {
+            str(o.id): [p, (now - timedelta(hours=19)).isoformat()]
+            for o, p in zip(market.outcomes, prior)
+        },
+        DATED_BASIS_ELIGIBILITY_METADATA_KEY: DATED_BASIS_PRICED_LEG,
+    }
+    rows = [
+        {
+            "id": o.id,
+            "name": o.name,
+            "probability": o.current_probability,
+            "opening_probability": o.opening_probability,
+            "probability_change_24h": o.probability_change_24h,
+        }
+        for o in market.outcomes
+    ]
+    return market, rows, now
+
+
+def test_tiny_overround_keeps_normalized_movement_and_opening_at_their_own_instants():
+    from app.utils.futures_market_snapshot import normalized_field_comparisons
+
+    market, rows, now = _comparison_field()
+    before = deepcopy(rows)
+    metadata_before = deepcopy(market.market_metadata)
+    result = normalized_field_comparisons(market, rows, now=now)
+    leader = result[rows[0]["id"]]
+    assert leader["probability"] == pytest.approx(0.1505 / 1.0005)
+    assert leader["probability_change_24h"] == pytest.approx(
+        0.1505 / 1.0005 - 0.02, abs=1e-8
+    )
+    assert leader["opening_probability"] == pytest.approx(0.3 / 1.2)
+    assert rows == before and market.market_metadata == metadata_before
+
+
+@pytest.mark.parametrize(
+    "kind", ["missing peer", "different instant", "invalid peer", "current incomplete"]
+)
+def test_normalized_comparison_refuses_an_incomplete_endpoint(kind):
+    from datetime import timedelta
+    from app.utils.futures_market_snapshot import (
+        DATED_BASIS_METADATA_KEY,
+        normalized_field_comparisons,
+    )
+
+    market, rows, now = _comparison_field()
+    bank = market.market_metadata[DATED_BASIS_METADATA_KEY]
+    peer = str(rows[1]["id"])
+    if kind == "missing peer":
+        bank.pop(peer)
+    if kind == "different instant":
+        bank[peer][1] = (now - timedelta(hours=18)).isoformat()
+    if kind == "invalid peer":
+        bank[peer][0] = None
+    result = normalized_field_comparisons(
+        market, rows, now=now, field_complete=kind != "current incomplete"
+    )
+    if kind == "current incomplete":
+        assert (
+            result is None
+        )  # no normalized current distribution; preserve the raw journey
+        return
+    assert all(row["probability_change_24h"] is None for row in result.values())
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_opening_field_requires_every_member_at_the_same_recorded_instant(missing):
+    from datetime import timedelta
+    from app.utils.futures_market_snapshot import (
+        normalized_field_comparisons,
+        to_plain,
+        from_plain,
+    )
+
+    market, rows, now = _comparison_field()
+    market.outcomes[1].opening_captured_at = (
+        None if missing else now - timedelta(hours=29)
+    )
+    for carrier in [market, from_plain(to_plain([market]))[0]]:
+        result = normalized_field_comparisons(carrier, rows, now=now)
+        assert all(row["opening_probability"] is None for row in result.values())
+        assert result[rows[0]["id"]]["probability_change_24h"] is not None
+
+
+def test_complete_opening_and_dated_fields_survive_the_shared_snapshot():
+    from app.utils.futures_market_snapshot import (
+        normalized_field_comparisons,
+        to_plain,
+        from_plain,
+    )
+
+    market, rows, now = _comparison_field()
+    snapshot = from_plain(to_plain([market]))[0]
+    assert normalized_field_comparisons(
+        snapshot, rows, now=now
+    ) == normalized_field_comparisons(market, rows, now=now)
+    assert snapshot.market_metadata == market.market_metadata
+
+
+@pytest.mark.parametrize("zero_opening", [False, True])
+def test_detail_keeps_the_actual_normalized_move_and_opening(monkeypatch, zero_opening):
+    from datetime import datetime
+    from app.routes import futures
+
+    market, rows, now = _comparison_field()
+    if zero_opening:
+        for row, opening in zip(market.outcomes, [0.0, 0.6, 0.4]):
+            row.opening_probability = opening
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is None else now.astimezone(tz)
+
+    monkeypatch.setattr(futures, "datetime", Clock)
+    detail = futures._format_market_detail(market)
+    leader = next(row for row in detail["outcomes"] if row["id"] == rows[0]["id"])
+    assert leader["probability"] == pytest.approx(0.1505 / 1.0005)
+    assert leader["probability_change_24h"] == pytest.approx(
+        0.1505 / 1.0005 - 0.02, abs=1e-8
+    )
+    assert leader["opening_probability"] == pytest.approx(0.0 if zero_opening else 0.25)
+    assert detail["openings_withheld"] is False

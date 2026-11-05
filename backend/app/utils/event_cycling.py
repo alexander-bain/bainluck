@@ -650,7 +650,7 @@ class CyclingEventAdapter:
             if top is not None and (top["probability"] or 0) >= _WON_PRICE_THRESHOLD:
                 top["won"] = True
 
-        # #11995: a one-winner field uses the shared rule regardless of vig.
+        # #11995: the shared rule also owns the 160% suspect-field refusal.
         normalize_display_probs(competitors)
         competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
 
