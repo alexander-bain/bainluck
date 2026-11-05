@@ -34,6 +34,26 @@ jobs:
                 core.notice('PR closed, became draft, lost tier-b, or moved head; no review.');
                 return;
               }
+              const policy = await github.graphql(`query($owner:String!,$repo:String!,$number:Int!){
+                repository(owner:$owner,name:$repo){pullRequest(number:$number){
+                  headRefOid baseRef{branchProtectionRule{
+                    requiresStatusChecks requiredStatusChecks{context app{databaseId}}
+                  }}
+                }}
+              }`, {...repo, number});
+              const currentPolicy = policy.repository.pullRequest;
+              if (currentPolicy.headRefOid !== head) return;
+              const rule = currentPolicy.baseRef?.branchProtectionRule;
+              if (!rule?.requiresStatusChecks || !rule.requiredStatusChecks?.length) {
+                core.setFailed('Required-check configuration is unavailable; no review.');
+                return;
+              }
+              // Approval is produced after this review; waiting for it deadlocks.
+              const required = rule.requiredStatusChecks.filter(check => check.context !== 'Tier-B approval');
+              if (!required.length) {
+                core.setFailed('No required CI checks are configured; no review.');
+                return;
+              }
               const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo,
                 {...repo, head_sha: head, event: 'pull_request', per_page: 100});
               // A superseded/cancelled suite must not masquerade as red CI.
@@ -42,7 +62,6 @@ jobs:
               for (const run of [...runs].sort((a, b) => b.id - a.id)) {
                 if (run.conclusion !== 'cancelled' && !latest.has(run.path)) latest.set(run.path, run);
               }
-              const ci = latest.get('.github/workflows/ci.yml');
               const ignoredSuites = new Set(runs.filter(run =>
                 run.conclusion === 'cancelled' || latest.get(run.path)?.id !== run.id ||
                 ['.github/workflows/tier-b-review.yml', '.github/workflows/tier-b.yml'].includes(run.path)
@@ -51,19 +70,31 @@ jobs:
                 {...repo, ref: head, filter: 'latest', per_page: 100})).filter(check =>
                   !['review', 'Tier-B approval'].includes(check.name) &&
                   !ignoredSuites.has(check.check_suite?.id));
-              const red = checks.find(check => check.status === 'completed' &&
-                !['success', 'neutral', 'skipped', 'cancelled'].includes(check.conclusion));
-              if (red || (ci?.status === 'completed' && ci.conclusion !== 'success')) {
-                core.setFailed(`CI is red at ${head}: ${red?.name || ci.html_url}; no review.`);
+              const statuses = required.some(check => !check.app)
+                ? await github.paginate(github.rest.repos.listCommitStatusesForRef,
+                    {...repo, ref: head, per_page: 100}) : [];
+              const requiredChecks = required.map(requirement => {
+                const check = checks.find(check => check.name === requirement.context &&
+                  (!requirement.app || check.app?.id === requirement.app.databaseId));
+                if (check) return check;
+                const status = !requirement.app && statuses.find(status => status.context === requirement.context);
+                return status ? {name: status.context,
+                  status: status.state === 'pending' ? 'in_progress' : 'completed',
+                  conclusion: status.state} : null;
+              });
+              const red = requiredChecks.find(check => check?.status === 'completed' &&
+                !['success', 'neutral', 'skipped'].includes(check.conclusion));
+              if (red) {
+                core.setFailed(`Required CI is red at ${head}: ${red.name}; no review.`);
                 return;
               }
-              if (ci?.conclusion === 'success' && checks.length && checks.every(check =>
-                  check.status === 'completed' && ['success', 'neutral', 'skipped'].includes(check.conclusion))) {
+              if (requiredChecks.every(check => check?.status === 'completed' &&
+                  ['success', 'neutral', 'skipped'].includes(check.conclusion))) {
                 const {data: current} = await github.rest.pulls.get({...repo, pull_number: number});
                 if (current.state !== 'open' || current.draft || current.head.sha !== head ||
                     !current.labels.some(label => label.name === 'tier-b')) return;
                 core.setOutput('ready', 'true');
-                core.notice(`CI is green at ${head}: ${ci.html_url}`);
+                core.notice(`Required CI is green at ${head}.`);
                 return;
               }
               core.info(`Waiting for CI at ${head}; reviewer has not started.`);
@@ -87,7 +118,7 @@ jobs:
           show_full_output: true
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
-            CI was verified green at head ${{ github.event.pull_request.head.sha }} before this review. Ignore superseded/cancelled runs and the Tier-B approval check; inspect the latest CI run for this head if needed.
+            Required CI was verified green at head ${{ github.event.pull_request.head.sha }} before this review. Inspect the current required checks if needed; optional failures are evidence to assess, not an automatic refusal. The Tier-B approval check waits for your verdict and is excluded from this pre-review gate.
             Run tests directly, without a pipe: cd backend && python3 -m pytest <files> -q. Use Read/Grep for files. Shell commands may also use an absolute backend path; python/python3 pytest are allowed separately from cd.
             Follow docs/release-loop/tier-b-review-brief.md exactly; it is the whole brief. End with exactly one review: approve or request changes.
           claude_args: '--model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh run view:*),Bash(echo:*),Bash(tail:*)" --max-turns 60'
