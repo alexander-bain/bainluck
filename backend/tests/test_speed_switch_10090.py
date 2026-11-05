@@ -204,9 +204,17 @@ async def test_a_cache_that_stops_refreshing_reads_off():
     s._refresh.cancel()
 
 
-async def test_an_error_turns_the_switch_off_here_for_the_rest_of_the_trial(caplog):
+async def test_an_error_turns_the_switch_off_here_for_the_rest_of_the_trial(caplog, monkeypatch):
+    # This case tests trip persistence, not executor scheduling or the read
+    # timeout (both have their own tests). A delayed fake-store thread could
+    # time out before trip, so no running trial was ever tripped.
+    async def read_fake_store(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(sw.asyncio, "to_thread", read_fake_store)
     s, store, _, mono = _switches([_stored(expires_in=600)])
     await _refreshed(s)
+    assert s.arm(NAME, 2), "trip requires an actual running trial"
     with caplog.at_level(logging.WARNING, logger="app.tasks.speed_switches"):
         s.trip(NAME, RuntimeError("switched path failed"))
         s.trip(NAME, RuntimeError("again"))

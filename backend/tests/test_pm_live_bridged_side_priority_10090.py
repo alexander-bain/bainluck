@@ -382,18 +382,27 @@ async def test_a_pre_game_event_repriced_under_a_saturating_live_stream_is_writt
     wide book refutes its held price, a withdrawal that waits with that price).
     At 0b4954ed it was refused or passed over on every flush (lane1's rig: 0
     pre-game writes after 48 live ones). Now it is written once it has waited
-    the shipped bound, and its withdrawal follows, while the stream keeps going."""
+    the shipped bound, and its withdrawal follows, while the stream keeps going.
+    The milliseconds below are simulated: a busy host may spend the whole bound
+    in four real writes without the writer ever violating priority."""
     monkeypatch.setattr(pm, "PM_BRIDGED_SIDE_FIRST", False)
+    clock = _SimulatedClock()
+    monkeypatch.setattr(pm, "time", clock)
+    monkeypatch.setattr(blend, "_mono", clock.monotonic)
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
     bound = getattr(pm, "PM_PREGAME_BRIDGE_MAX_WAIT_S", 0.5)
     assert bound <= 0.5
     p, x = _bridges(monkeypatch, events=(2, 3, 4, 5), live=(2, 3, 5))
     boundary = p.ns["catalog_boundary"]
     written = []
     original = p.ns["write_chunk"]
+    draining = False
 
     async def write(chunk, **kwargs):
         written.append(sorted(chunk))
-        await asyncio.sleep(0.015)  # several flushes: the writer never idles
+        finished_at = clock.monotonic() + 0.015
+        while not draining and clock.monotonic() < finished_at:
+            await asyncio.sleep(0)  # several simulated flushes per write
         return await original(chunk, **kwargs)
 
     p.ns["write_chunk"] = write
@@ -408,9 +417,10 @@ async def test_a_pre_game_event_repriced_under_a_saturating_live_stream_is_writt
                 p.ns["price_buffer"][oid] = v
                 p.ns["input_marks"][oid] = _mark(oid, eid, v, seq)
         await asyncio.wait_for(
-            p.ns["_flush_prices"](flush_started=time.monotonic()), 2,
+            p.ns["_flush_prices"](flush_started=clock.monotonic()), 2,
         )
-        await asyncio.sleep(0.002)
+        clock.now += 0.002
+        await asyncio.sleep(0)
 
     def done():
         if withdraw:
@@ -422,17 +432,18 @@ async def test_a_pre_game_event_repriced_under_a_saturating_live_stream_is_writt
     try:
         for _ in range(20):
             await live_flush()
-        tick, ticked = len(written), time.monotonic()
+        tick, ticked = len(written), clock.monotonic()
         for oid, v in ((904, 0.61), (905, 0.39)):
             p.ns["price_buffer"][oid] = v
             p.ns["input_marks"][oid] = _mark(oid, 4, v, 99999)
         if withdraw:
             p.ns["withdraw_buffer"][904] = (0.1, 0.9)
-        while not done() and time.monotonic() - ticked < bound + 1.5:
+        while not done() and clock.monotonic() - ticked < bound + 1.5:
             await live_flush()
-        waited = time.monotonic() - ticked
+        waited = clock.monotonic() - ticked
         after = written[tick:]
     finally:
+        draining = True
         await _drain(boundary)
     pregame = [n for n, chunk in enumerate(after) if 904 in chunk]
     assert pregame, (
