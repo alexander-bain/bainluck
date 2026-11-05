@@ -77,7 +77,10 @@ export function buildRoundupCardModel(
   const footer = text(contract.footer);
   if (!footer) return { model: null, refusal: "no_footer" };
   const served = Array.isArray(contract.rows) ? contract.rows : [];
-  if (served.length < ROUNDUP_MIN_ROWS || served.length > ROUNDUP_MAX_ROWS) {
+  const isYardstickPair = kicker.toUpperCase() === "FOR SCALE";
+  const minRows = isYardstickPair ? 2 : ROUNDUP_MIN_ROWS;
+  const maxRows = isYardstickPair ? 2 : ROUNDUP_MAX_ROWS;
+  if (served.length < minRows || served.length > maxRows) {
     return { model: null, refusal: "row_count" };
   }
 
@@ -124,8 +127,11 @@ export function buildRoundupCardModel(
     });
   }
 
-  // Highest first; a tie keeps the served order.
-  readable.sort((a, b) => b.row.probability - a.row.probability || a.index - b.index);
+  // Highest first; a tie keeps the served order. Yardstick pairs ("FOR SCALE")
+  // keep their served [target, anchor] order so the two rows match the headline.
+  if (!isYardstickPair) {
+    readable.sort((a, b) => b.row.probability - a.row.probability || a.index - b.index);
+  }
 
   const stamps = readable.map(({ row }) => (typeof row.observed_at === "string" ? row.observed_at : null));
   const stale = readable.map(({ cadence }, i) =>

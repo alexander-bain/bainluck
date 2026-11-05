@@ -364,6 +364,38 @@ describe("#10357 round-up model", () => {
     expect(html).toMatch(/<a href="\/collections\/snow-first-flakes-2026"[^>]*data-testid="roundup-card"/);
   });
 
+  it("accepts a two-row yardstick_pair ('FOR SCALE') card and preserves [target, anchor] order", () => {
+    const yardstickContract: FeedRoundupContract = {
+      kicker: "FOR SCALE",
+      tag: null,
+      footer: "Two independent markets at the same probability right now.",
+      rows: [
+        {
+          market_id: 113200,
+          label: "The Iranian regime falls before 2027",
+          probability: 0.036,
+          rendered_percent: 4,
+          observed_at: FRESH,
+        },
+        {
+          market_id: 113012,
+          label: "US recession by end of 2026",
+          probability: 0.055,
+          rendered_percent: 6,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const title = "The Iranian regime falls before 2027: as likely as a US recession by end of 2026";
+    const { model, refusal } = buildRoundupCardModel(title, yardstickContract, NOW_MS);
+    expect(refusal).toBeNull();
+    expect(model!.kicker).toBe("FOR SCALE");
+    expect(model!.rows.map((r) => `${r.digits}% ${r.label}`)).toEqual([
+      "4% The Iranian regime falls before 2027",
+      "6% US recession by end of 2026",
+    ]);
+  });
+
   it("ages event_id rows on the 30-minute live cadence while market_id rows keep the 6-hour futures cadence", () => {
     const twoHoursOld = "2026-10-06T19:41:00Z";
     const eventContract: FeedRoundupContract = {
