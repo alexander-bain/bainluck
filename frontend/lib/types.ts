@@ -2750,6 +2750,8 @@ export interface ProgressionParticipant {
   seed: number | null;
   record: string | null;
   probabilities: Record<string, number | null>;
+  /** Complete-field server allocation, carried by the exact golf card receipt. */
+  rendered_percents?: Record<string, number | null>;
   changes_24h: Record<string, number | null>;
   /** null = live/trading. "missing"/"unavailable" come from the championship
    *  grid register cutover (Q295) and render as an honest empty cell. */

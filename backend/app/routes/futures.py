@@ -6887,14 +6887,28 @@ async def get_progression(
     # this process would read now is not necessarily the one on the user's screen.
     applied_card_receipt: Optional[str] = None
     if sport_cat == "golf" and "win" in stage_markets:
-        card_wins, applied_card_receipt = await _golf_card_win_probabilities(
-            source_tournament_name, golf_card_receipt
+        card_wins, applied_card_receipt, card_display = (
+            await _golf_card_win_probabilities(
+                source_tournament_name, golf_card_receipt
+            )
         )
         for merge_key, card_prob in card_wins.items():
             p = participants.get(merge_key)
             if p is None:
                 continue  # on the card, not in this market's field — never a row
             p["probabilities"]["win"] = card_prob
+            display = card_display.get(merge_key)
+            if display:
+                p.setdefault("rendered_percents", {})["win"] = display[
+                    "rendered_percent"
+                ]
+                # A raw live-source delta cannot describe a normalized card.
+                # Adopt that card's complete-field dated comparison, including
+                # its independent refusal, rather than subtract unlike scales.
+                if display["change_24h"] is None:
+                    p["changes_24h"].pop("win", None)
+                else:
+                    p["changes_24h"]["win"] = display["change_24h"]
             # Terminal state is a claim about the number we publish, so it is
             # recomputed from the published value rather than left on the blend's.
             p["status"].pop("win", None)
@@ -6948,10 +6962,12 @@ async def get_progression(
 async def _golf_card_win_probabilities(
     tournament_name: Optional[str],
     requested_receipt: Optional[str] = None,
-) -> tuple[dict[str, float], Optional[str]]:
+) -> tuple[dict[str, float], Optional[str], dict[str, dict]]:
     """The win probabilities the card is publishing, and the receipt they came from.
 
-    Returns `(win_map, applied_receipt)`. The receipt is echoed to the caller so the
+    Returns `(win_map, applied_receipt, display_map)`. The receipt pins both the
+    server integer and its normalized comparison when present, preserving the
+    original receipt for older unallocated cards. It is echoed to the caller so the
     page can tell whether the table bound to the card it is actually holding; see
     the module docstring of `app.utils.golf_card_snapshot` for why that matters.
 
@@ -6999,19 +7015,20 @@ async def _golf_card_win_probabilities(
     numbers — different numbers are a different receipt.
 
     Fails open in every direction — no Redis, no payload, no matching tournament,
-    or a malformed entry all return `({}, None)` and leave the live blend in place.
+    or a malformed entry all return `({}, None, {})` and leave the live blend in place.
     A receipt that cannot be resolved (Redis here is an LRU and may evict) does NOT
     silently fall through to a different snapshot's numbers pretending to be the
     requested one: the current card is adopted and its OWN receipt is echoed, so
     the mismatch is visible to the caller instead of being absorbed here.
     """
     if not tournament_name:
-        return {}, None
+        return {}, None, {}
 
     from app.utils.golf_card_snapshot import (
+        card_win_display_map,
         card_win_map,
         card_win_receipt,
-        resolve_snapshot,
+        resolve_card_snapshot,
         snapshot_key,
     )
 
@@ -7027,23 +7044,23 @@ async def _golf_card_win_probabilities(
             # Only fall back to the current card when it cannot be resolved.
             if requested_receipt:
                 pinned_raw = await rc.get(snapshot_key(requested_receipt))
-                pinned = resolve_snapshot(
+                pinned = resolve_card_snapshot(
                     pinned_raw, requested_receipt, tournament_name
                 )
                 if pinned:
-                    return pinned, requested_receipt
+                    return pinned[0], requested_receipt, pinned[1]
             raw = await rc.get(GOLF_CATEGORY_CACHE_KEY)
         finally:
             await rc.aclose()
         if not raw:
-            return {}, None
+            return {}, None, {}
         payload = _json.loads(raw)
     except Exception:
         logger.debug("golf card authority unavailable", exc_info=True)
-        return {}, None
+        return {}, None, {}
 
     if not isinstance(payload, dict):
-        return {}, None
+        return {}, None, {}
     for entry in payload.get("tournaments") or []:
         if not isinstance(entry, dict):
             continue
@@ -7052,12 +7069,13 @@ async def _golf_card_win_probabilities(
             continue
         published = card_win_map(entry)
         if not published:
-            return {}, None
+            return {}, None, {}
         # Recomputed from the map actually being applied rather than read off the
         # payload's stamped field, so the echoed receipt always describes the
         # numbers this response carries — even if the stamp were stale or absent.
-        return published, card_win_receipt(published)
-    return {}, None
+        display_map = card_win_display_map(entry)
+        return published, card_win_receipt(published, display_map), display_map
+    return {}, None, {}
 
 
 def _progression_merge_key(outcome: FuturesOutcome) -> str:

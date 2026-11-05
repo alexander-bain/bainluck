@@ -10,7 +10,7 @@ import { isPersonFieldDomain, isLikelyPersonName } from "@/lib/eventConceptDispl
 import { legendName } from "@/lib/contenderChart";
 import { probabilityCellText, probabilityChipText } from "@/lib/probabilityCellText";
 import { risingIsGood } from "@/lib/gridColumnPolarity";
-import { formatMovementPointsLikeSentence } from "@/lib/probabilityDisplay";
+import { formatMovementPointsLikeSentence, formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
@@ -326,6 +326,7 @@ function probTextClass(probability: number | null, status?: ProgressionCellStatu
 function cellDisplay(
   probability: number | null,
   status: ProgressionCellStatus,
+  rendered?: number | null,
 ): { text: string; label: string } {
   switch (status) {
     case "clinched":
@@ -342,7 +343,7 @@ function cellDisplay(
       return { text: "—", label: "Unavailable" };
     default:
       return {
-        text: formatProb(probability),
+        text: formatProb(probability, rendered),
         label: probability === null ? "No data" : "Live probability",
       };
   }
@@ -406,8 +407,11 @@ export function decidedCellDisplay(
  * Format probability for display in cells.
  * Shows percentage with appropriate precision.
  */
-function formatProb(p: number | null): string {
+function formatProb(p: number | null, rendered?: number | null): string {
   if (p === null || p === undefined || !Number.isFinite(p)) return "—";
+  if (rendered != null && Number.isInteger(rendered) && rendered >= 0 && rendered <= 100) {
+    return formatProbabilityPercent(p, { rendered });
+  }
   // #7670: this function guarded its FLOOR (`<0.1%` rather than a `0%` that
   // claims impossibility) and rounded its CEILING, which claimed certainty for
   // the mirror reason — Boston printed `100%` at a served 0.9972, two rows
@@ -1036,7 +1040,7 @@ export default function TournamentProgressionTable({
                     // decided cell (in@✓ / out@— / an unconfirmed live number /
                     // awaiting) so it can't read as a live bar.
                     const bw = isResolved ? 0 : barWidth(prob, barScaleMax);
-                    const display = cellDisplay(prob, status);
+                    const display = cellDisplay(prob, status, participant.rendered_percents?.[stage.key]);
                     const decided = isResolved ? decidedCellDisplay(prob, status) : null;
                     return (
                       <td
