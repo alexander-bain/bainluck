@@ -1,0 +1,25 @@
+.pr-stage{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:3px 0 10px;font-size:11px}.pr-stage>span{font-size:9px;letter-spacing:.7px;color:var(--text-secondary)}
+.pr-scoreboard{display:grid;grid-template-columns:1fr 1fr;position:relative;gap:70px}.pr-scoreboard>div:not(.pr-score){display:flex;flex-direction:column;gap:3px}.pr-scoreboard>div:nth-child(2){text-align:right}.pr-scoreboard span{font-size:14px;font-weight:700}.pr-scoreboard strong{font-size:34px;line-height:1.15;letter-spacing:-1px}.pr-home{color:var(--series-home)}.pr-away{color:var(--series-away)}.pr-scoreboard small{font-size:10px;color:var(--text-secondary);white-space:nowrap}.pr-scoreboard small b{color:var(--text-primary)}.pr-score{position:absolute;top:20px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--text-primary)}.pr-score b{font-size:22px;white-space:nowrap}.pr-score span{font-size:9px;font-weight:400;color:var(--text-secondary)}
+.pr-projection{display:flex;justify-content:center;gap:8px;align-items:center;padding-top:12px;font-size:11px;color:var(--text-secondary)}.pr-projection b{color:var(--text-primary);font-size:13px}.pr-history{margin-top:6px!important}.pr-legend{display:flex;align-items:center;gap:12px;font-size:11px;font-weight:650}.pr-legend>span:last-child{margin-left:auto;color:var(--text-secondary);font-weight:400;font-size:10px;display:flex;align-items:center}.pr-legend button{min-width:32px;display:grid;place-items:center}.pr-legend svg{width:14px;height:14px}
+.pr-feed .expectation-profile,.pr-feed .variety-card{padding:16px;border:1px solid var(--surface-border);border-radius:18px;background:var(--surface-card);margin:0}.pr-feed h3{font-size:25px;line-height:1.15;margin-top:6px}.pr-feed .variety-plot{height:195px}.pr-feed .expectation-plot{height:190px}.pr-feed .profile-stat{font-size:11px}.pr-feed .card-caption{font-size:12px}.pr-feed .milestone-readout{margin-top:12px}.pr-feed .milestone-detail strong{font-size:13px}.pr-feed .axis-caption{font-size:11px}.pr-feed .visual-takeaway{font-size:13px;line-height:1.4}.pr-feed .visual-takeaway strong{display:block;margin-bottom:6px}.pr-finish-plot{height:155px}.pr-finish-values{display:flex;flex-direction:column;gap:14px;margin:8px 0 14px}.pr-finish-values>div{display:flex;align-items:center;gap:12px}.pr-finish-values span{font-size:12px;min-width:48px}.pr-finish-values b{display:flex;flex:1;flex-direction:column;font-size:20px}.pr-finish-values small{font-size:10px;font-weight:400;color:var(--text-secondary)}.pr-page .mf-feed-state{font-size:10px}.pr-page .mf-controls>b{font-size:13px}.pr-page .mf-controls>button{font-size:12px}
+.pr-page.mf-large .pr-scoreboard{gap:80px}.pr-page.mf-large .pr-scoreboard small{font-size:12px;white-space:normal}.pr-page.mf-large .pr-legend{flex-wrap:wrap}.pr-page.mf-large .pr-legend>span:last-child{margin-left:0}.pr-page.mf-large .pr-stage{font-size:13px}.pr-page.mf-large .pr-projection{font-size:13px}
+.pr-page.mf-wide .pr-scoreboard{max-width:560px;margin:auto}.pr-page.mf-wide .pr-scoreboard strong{font-size:44px}.pr-page.mf-wide .pr-feed{align-items:start}.pr-page.mf-wide .pr-card{min-width:0}
+
+.pr-library{padding:12px 18px 30px}.pr-library .mf-categories{margin-bottom:18px}.pr-library input{display:block;width:100%;min-height:44px;margin-bottom:18px;padding:10px;border:1px solid var(--surface-border);border-radius:10px;font:inherit}.pr-library .final-catalog-grid{grid-template-columns:1fr}.pr-page.mf-wide .pr-library .final-catalog-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+
+/* Observed history earns the full plot width; the next visual is a clear action. */
+.pr-history-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:18px;font-size:11px;color:var(--text-secondary)}
+.pr-history-heading strong{font-weight:650;color:var(--text-primary)}
+.pr-page .pr-card-invitation{display:flex;width:100%;align-items:center;gap:12px;text-align:left;border-top:1px solid var(--surface-border);margin-top:12px;padding:12px 0 0;min-height:56px}
+.pr-card-invitation svg{width:56px;height:32px;flex:none;stroke:var(--series-home);fill:var(--surface-card);stroke-width:1.2}
+.pr-card-invitation>span:nth-child(2){display:flex;flex:1;flex-direction:column;gap:3px}
+.pr-card-invitation b{font-size:12px;font-weight:650}.pr-card-invitation small{font-size:11px;color:var(--text-secondary)}
+.pr-card-invitation>span:last-child{color:var(--series-home);font-size:21px}
+.pr-page.mf-large .pr-history-heading,.pr-page.mf-large .pr-card-invitation b,.pr-page.mf-large .pr-card-invitation small{font-size:14px}
+.pr-page.mf-large .pr-card-invitation{align-items:flex-start}
+
+/* External replay-control fixture: content dimensions only, not an iOS device claim. */
+.pr-page.pr-compact-preview:not(.mf-wide){width:375px;max-width:100%;height:583px;margin:0 auto}
+
+.pr-page .pr-pending{padding:8px 18px;font-size:12px;color:var(--text-secondary)}
+.pr-page .pr-feed{padding-top:8px}

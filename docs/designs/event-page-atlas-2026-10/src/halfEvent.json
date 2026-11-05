@@ -1,0 +1,2615 @@
+{
+  "key": "nba-half",
+  "label": "NBA \u00b7 halftime expectations",
+  "unit": "points",
+  "detail": {
+    "id": 15321889,
+    "external_id": null,
+    "sport": "basketball_nba",
+    "sport_name": "NBA",
+    "home_team": "Golden State Warriors",
+    "away_team": "Los Angeles Lakers",
+    "commence_time": "2026-10-07T02:00:00+00:00",
+    "start_is_tbd": false,
+    "completed_at": "2026-10-07T04:32:14.364507+00:00",
+    "status": "completed",
+    "started_without_result": false,
+    "home_score": 124,
+    "away_score": 98,
+    "score_source": "espn",
+    "score_observed_at": "2026-10-07T07:59:18.987921+00:00",
+    "home_team_data": {
+      "team_id": 46,
+      "slug": "golden-state-warriors",
+      "primary_color": "#fdb927",
+      "secondary_color": "#1d428a",
+      "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/gs.png",
+      "logo_large": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/gs.png",
+      "record": "2-2",
+      "abbreviation": "GS",
+      "standings": {
+        "pct": ".500",
+        "wins": 2,
+        "losses": 2,
+        "streak": "W1",
+        "last_10": "2-2",
+        "div_rank": 2,
+        "division": "Pacific",
+        "conference": "Western Conference",
+        "home_record": "2-0",
+        "road_record": "0-1",
+        "games_behind": "0.5"
+      }
+    },
+    "away_team_data": {
+      "team_id": 49,
+      "slug": "los-angeles-lakers",
+      "primary_color": "#552583",
+      "secondary_color": "#fdb927",
+      "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/lal.png",
+      "logo_large": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/lal.png",
+      "record": "2-1",
+      "abbreviation": "LAL",
+      "standings": {
+        "pct": ".667",
+        "wins": 2,
+        "losses": 1,
+        "streak": "W1",
+        "last_10": "2-1",
+        "div_rank": 1,
+        "division": "Pacific",
+        "conference": "Western Conference",
+        "home_record": "1-0",
+        "road_record": "1-1",
+        "games_behind": "-"
+      }
+    },
+    "metadata": {
+      "gender": "men",
+      "level": "professional",
+      "league": "NBA",
+      "importance": "exhibition"
+    },
+    "espn": {
+      "espn_id": "401898390",
+      "game_clock": "0.0",
+      "period": "Final",
+      "broadcast": "NBA TV",
+      "win_probability": 0.999,
+      "probability_sources": {
+        "espn": 0.999,
+        "polymarket": 0.999
+      }
+    },
+    "win_probability_sources": {
+      "espn": {
+        "value": 0.999,
+        "display_name": "ESPN",
+        "type": "model",
+        "color": "#f97316",
+        "updated_at": "2026-10-07T04:31:27.124401+00:00",
+        "evidence_status": "not_applicable"
+      },
+      "polymarket": {
+        "value": 0.999,
+        "display_name": "Polymarket",
+        "type": "market",
+        "color": "#3b82f6",
+        "updated_at": "2026-10-07T05:28:51.580554+00:00",
+        "evidence_status": "verified",
+        "verified_scope": "full_event_winner",
+        "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+        "price_evidence": "unproven"
+      }
+    },
+    "event_tags": [
+      "audience:local_interest",
+      "class:pro_major",
+      "competitive_structure:head_to_head",
+      "gender:men",
+      "importance:exhibition",
+      "league:nba",
+      "level:professional",
+      "sport:basketball",
+      "stakes:meaningless",
+      "status:completed",
+      "tier:1",
+      "timing:national_tv",
+      "timing:primetime"
+    ],
+    "standings_context": {
+      "home": "2-2, #2 Pacific",
+      "away": "2-1, #1 Pacific",
+      "stakes": "Division rivals"
+    },
+    "current_odds": {
+      "captured_at": "2026-10-07T04:31:18.749363+00:00",
+      "home_probability": 0.999,
+      "away_probability": 0.001,
+      "away_rendered_percent": 0,
+      "home_rendered_percent": 100,
+      "spread": -23.2,
+      "over_under": 220.1,
+      "projected_home_score": 120.7,
+      "projected_away_score": 99.4,
+      "bookmaker_count": 2
+    },
+    "bookmaker_odds": [
+      {
+        "bookmaker": "betonlineag",
+        "home_moneyline": -255,
+        "away_moneyline": 211,
+        "home_probability": 0.6908,
+        "away_probability": 0.3092,
+        "captured_at": "2026-10-07T01:51:44.401669+00:00",
+        "spread": -6.5,
+        "over_under": 221.0,
+        "projected_home_score": 113.8,
+        "projected_away_score": 107.2
+      },
+      {
+        "bookmaker": "betrivers",
+        "home_moneyline": -245,
+        "away_moneyline": 195,
+        "home_probability": 0.6769,
+        "away_probability": 0.3231,
+        "captured_at": "2026-10-07T00:47:45.878918+00:00",
+        "spread": -3.5,
+        "over_under": 221.5,
+        "projected_home_score": 112.5,
+        "projected_away_score": 109.0
+      },
+      {
+        "bookmaker": "betus",
+        "home_moneyline": -235,
+        "away_moneyline": 200,
+        "home_probability": 0.6779,
+        "away_probability": 0.3221,
+        "captured_at": "2026-10-07T02:02:14.935542+00:00",
+        "spread": -6.5,
+        "over_under": 221.0,
+        "projected_home_score": 113.8,
+        "projected_away_score": 107.2
+      },
+      {
+        "bookmaker": "bovada",
+        "home_moneyline": null,
+        "away_moneyline": null,
+        "home_probability": null,
+        "away_probability": null,
+        "captured_at": "2026-10-07T04:26:20.957465+00:00",
+        "spread": -35.5,
+        "over_under": 219.5,
+        "projected_home_score": 127.5,
+        "projected_away_score": 92.0
+      },
+      {
+        "bookmaker": "draftkings",
+        "home_moneyline": null,
+        "away_moneyline": null,
+        "home_probability": null,
+        "away_probability": null,
+        "captured_at": "2026-10-07T04:30:44.792817+00:00",
+        "spread": -27.5,
+        "over_under": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "bookmaker": "fanduel",
+        "home_moneyline": null,
+        "away_moneyline": null,
+        "home_probability": null,
+        "away_probability": null,
+        "captured_at": "2026-10-07T04:31:18.749363+00:00",
+        "spread": -28.5,
+        "over_under": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      },
+      {
+        "bookmaker": "mybookieag",
+        "home_moneyline": null,
+        "away_moneyline": null,
+        "home_probability": null,
+        "away_probability": null,
+        "captured_at": "2026-10-07T04:21:20.659537+00:00",
+        "spread": -29.5,
+        "over_under": 217.5,
+        "projected_home_score": 123.5,
+        "projected_away_score": 94.0
+      },
+      {
+        "bookmaker": "williamhill_us",
+        "home_moneyline": null,
+        "away_moneyline": null,
+        "home_probability": null,
+        "away_probability": null,
+        "captured_at": "2026-10-07T04:30:44.802369+00:00",
+        "spread": -28.5,
+        "over_under": 221.5,
+        "projected_home_score": 125.0,
+        "projected_away_score": 96.5
+      }
+    ],
+    "opening_odds": {
+      "home_probability": 0.6887,
+      "away_probability": 0.3113,
+      "spread": null,
+      "over_under": null,
+      "favorite": null
+    },
+    "prematch_odds": {
+      "home_probability": 0.685,
+      "away_probability": 0.315,
+      "home_rendered_percent": 69,
+      "away_rendered_percent": 31,
+      "source": "kalshi"
+    },
+    "hero_probability_observed_at": null,
+    "blend_fold_revision": {
+      "15321889": 5027,
+      "15325679": 484
+    },
+    "hero_probability": 1.0,
+    "hero_probability_away": 0.0,
+    "hero_probability_source": "settled",
+    "hero_settled_result": "home",
+    "box_score_data": {
+      "players": {
+        "LJ Cryer": {
+          "blocks": 0.0,
+          "points": 2.0,
+          "steals": 1.0,
+          "assists": 1.0,
+          "minutes": 9.0,
+          "rebounds": 0.0,
+          "turnovers": 2.0,
+          "plus minus": -6.0,
+          "field goals": 1.0,
+          "free throws": 0.0,
+          "personal fouls": 0.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 0.0,
+          "offensive rebounds": 0.0
+        },
+        "AK Okereke": {
+          "blocks": 0.0,
+          "points": 4.0,
+          "steals": 0.0,
+          "assists": 2.0,
+          "minutes": 13.0,
+          "rebounds": 3.0,
+          "turnovers": 0.0,
+          "plus minus": -1.0,
+          "field goals": 1.0,
+          "free throws": 2.0,
+          "personal fouls": 2.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 2.0,
+          "offensive rebounds": 1.0
+        },
+        "Graham Ike": {
+          "blocks": 0.0,
+          "points": 6.0,
+          "steals": 0.0,
+          "assists": 3.0,
+          "minutes": 12.0,
+          "rebounds": 7.0,
+          "turnovers": 2.0,
+          "plus minus": -12.0,
+          "field goals": 1.0,
+          "free throws": 4.0,
+          "personal fouls": 3.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 4.0,
+          "offensive rebounds": 3.0
+        },
+        "Gui Santos": {
+          "blocks": 1.0,
+          "points": 7.0,
+          "steals": 1.0,
+          "assists": 2.0,
+          "minutes": 21.0,
+          "rebounds": 3.0,
+          "turnovers": 1.0,
+          "plus minus": 13.0,
+          "field goals": 2.0,
+          "free throws": 3.0,
+          "personal fouls": 0.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 3.0,
+          "offensive rebounds": 0.0
+        },
+        "Adou Thiero": {
+          "blocks": 0.0,
+          "points": 7.0,
+          "steals": 0.0,
+          "assists": 0.0,
+          "minutes": 17.0,
+          "rebounds": 4.0,
+          "turnovers": 2.0,
+          "plus minus": -12.0,
+          "field goals": 3.0,
+          "free throws": 1.0,
+          "personal fouls": 2.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 4.0,
+          "offensive rebounds": 0.0
+        },
+        "Alex Toohey": {
+          "blocks": 0.0,
+          "points": 3.0,
+          "steals": 0.0,
+          "assists": 0.0,
+          "minutes": 3.0,
+          "rebounds": 1.0,
+          "turnovers": 0.0,
+          "plus minus": 9.0,
+          "field goals": 1.0,
+          "free throws": 0.0,
+          "personal fouls": 0.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 0.0,
+          "offensive rebounds": 1.0
+        },
+        "Chris Manon": {
+          "blocks": 1.0,
+          "points": 7.0,
+          "steals": 2.0,
+          "assists": 0.0,
+          "minutes": 22.0,
+          "rebounds": 4.0,
+          "turnovers": 1.0,
+          "plus minus": -2.0,
+          "field goals": 3.0,
+          "free throws": 0.0,
+          "personal fouls": 2.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 3.0,
+          "offensive rebounds": 1.0
+        },
+        "Cole Swider": {
+          "blocks": 0.0,
+          "points": 9.0,
+          "steals": 0.0,
+          "assists": 0.0,
+          "minutes": 12.0,
+          "rebounds": 2.0,
+          "turnovers": 0.0,
+          "plus minus": -5.0,
+          "field goals": 3.0,
+          "free throws": 0.0,
+          "personal fouls": 1.0,
+          "three pointers": 3.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 1.0
+        },
+        "Dalen Terry": {
+          "blocks": 0.0,
+          "points": 4.0,
+          "steals": 1.0,
+          "assists": 1.0,
+          "minutes": 8.0,
+          "rebounds": 1.0,
+          "turnovers": 1.0,
+          "plus minus": 6.0,
+          "field goals": 1.0,
+          "free throws": 2.0,
+          "personal fouls": 2.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 0.0
+        },
+        "Jaden Hardy": {
+          "blocks": 0.0,
+          "points": 13.0,
+          "steals": 2.0,
+          "assists": 3.0,
+          "minutes": 19.0,
+          "rebounds": 4.0,
+          "turnovers": 5.0,
+          "plus minus": -9.0,
+          "field goals": 4.0,
+          "free throws": 4.0,
+          "personal fouls": 3.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 4.0,
+          "offensive rebounds": 0.0
+        },
+        "Miles Kelly": {
+          "blocks": 1.0,
+          "points": 6.0,
+          "steals": 0.0,
+          "assists": 0.0,
+          "minutes": 6.0,
+          "rebounds": 0.0,
+          "turnovers": 1.0,
+          "plus minus": -1.0,
+          "field goals": 2.0,
+          "free throws": 0.0,
+          "personal fouls": 2.0,
+          "three pointers": 2.0,
+          "defensive rebounds": 0.0,
+          "offensive rebounds": 0.0
+        },
+        "Bronny James": {
+          "blocks": 0.0,
+          "points": 4.0,
+          "steals": 0.0,
+          "assists": 5.0,
+          "minutes": 21.0,
+          "rebounds": 1.0,
+          "turnovers": 3.0,
+          "plus minus": -13.0,
+          "field goals": 2.0,
+          "free throws": 0.0,
+          "personal fouls": 4.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 0.0
+        },
+        "Cameron Carr": {
+          "blocks": 0.0,
+          "points": 5.0,
+          "steals": 2.0,
+          "assists": 0.0,
+          "minutes": 12.0,
+          "rebounds": 0.0,
+          "turnovers": 2.0,
+          "plus minus": -12.0,
+          "field goals": 1.0,
+          "free throws": 2.0,
+          "personal fouls": 2.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 0.0,
+          "offensive rebounds": 0.0
+        },
+        "Jake LaRavia": {
+          "blocks": 1.0,
+          "points": 9.0,
+          "steals": 3.0,
+          "assists": 1.0,
+          "minutes": 22.0,
+          "rebounds": 3.0,
+          "turnovers": 1.0,
+          "plus minus": -24.0,
+          "field goals": 3.0,
+          "free throws": 2.0,
+          "personal fouls": 2.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 3.0,
+          "offensive rebounds": 0.0
+        },
+        "Kevon Looney": {
+          "blocks": 1.0,
+          "points": 0.0,
+          "steals": 0.0,
+          "assists": 2.0,
+          "minutes": 13.0,
+          "rebounds": 3.0,
+          "turnovers": 0.0,
+          "plus minus": -6.0,
+          "field goals": 0.0,
+          "free throws": 0.0,
+          "personal fouls": 3.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 2.0,
+          "offensive rebounds": 1.0
+        },
+        "Malevy Leons": {
+          "blocks": 0.0,
+          "points": 5.0,
+          "steals": 0.0,
+          "assists": 1.0,
+          "minutes": 10.0,
+          "rebounds": 1.0,
+          "turnovers": 1.0,
+          "plus minus": 2.0,
+          "field goals": 2.0,
+          "free throws": 0.0,
+          "personal fouls": 0.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 0.0
+        },
+        "Will Richard": {
+          "blocks": 1.0,
+          "points": 5.0,
+          "steals": 0.0,
+          "assists": 1.0,
+          "minutes": 15.0,
+          "rebounds": 1.0,
+          "turnovers": 0.0,
+          "plus minus": 5.0,
+          "field goals": 2.0,
+          "free throws": 0.0,
+          "personal fouls": 2.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 0.0
+        },
+        "Dalton Knecht": {
+          "blocks": 0.0,
+          "points": 11.0,
+          "steals": 0.0,
+          "assists": 1.0,
+          "minutes": 22.0,
+          "rebounds": 1.0,
+          "turnovers": 3.0,
+          "plus minus": 3.0,
+          "field goals": 3.0,
+          "free throws": 4.0,
+          "personal fouls": 2.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 0.0,
+          "offensive rebounds": 1.0
+        },
+        "Georges Niang": {
+          "blocks": 0.0,
+          "points": 7.0,
+          "steals": 1.0,
+          "assists": 0.0,
+          "minutes": 19.0,
+          "rebounds": 1.0,
+          "turnovers": 0.0,
+          "plus minus": 5.0,
+          "field goals": 2.0,
+          "free throws": 2.0,
+          "personal fouls": 2.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 0.0
+        },
+        "Stephen Curry": {
+          "blocks": 0.0,
+          "points": 16.0,
+          "steals": 0.0,
+          "assists": 5.0,
+          "minutes": 14.0,
+          "rebounds": 2.0,
+          "turnovers": 0.0,
+          "plus minus": 26.0,
+          "field goals": 4.0,
+          "free throws": 5.0,
+          "personal fouls": 2.0,
+          "three pointers": 3.0,
+          "defensive rebounds": 2.0,
+          "offensive rebounds": 0.0
+        },
+        "Charles Bassey": {
+          "blocks": 3.0,
+          "points": 4.0,
+          "steals": 1.0,
+          "assists": 2.0,
+          "minutes": 14.0,
+          "rebounds": 6.0,
+          "turnovers": 0.0,
+          "plus minus": 15.0,
+          "field goals": 2.0,
+          "free throws": 0.0,
+          "personal fouls": 1.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 5.0,
+          "offensive rebounds": 1.0
+        },
+        "Draymond Green": {
+          "blocks": 0.0,
+          "points": 3.0,
+          "steals": 1.0,
+          "assists": 8.0,
+          "minutes": 15.0,
+          "rebounds": 2.0,
+          "turnovers": 2.0,
+          "plus minus": 25.0,
+          "field goals": 1.0,
+          "free throws": 0.0,
+          "personal fouls": 3.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 2.0,
+          "offensive rebounds": 0.0
+        },
+        "Gary Payton II": {
+          "blocks": 0.0,
+          "points": 4.0,
+          "steals": 1.0,
+          "assists": 1.0,
+          "minutes": 16.0,
+          "rebounds": 5.0,
+          "turnovers": 2.0,
+          "plus minus": 14.0,
+          "field goals": 1.0,
+          "free throws": 1.0,
+          "personal fouls": 2.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 2.0,
+          "offensive rebounds": 3.0
+        },
+        "Quentin Grimes": {
+          "blocks": 0.0,
+          "points": 12.0,
+          "steals": 1.0,
+          "assists": 3.0,
+          "minutes": 23.0,
+          "rebounds": 1.0,
+          "turnovers": 3.0,
+          "plus minus": -24.0,
+          "field goals": 3.0,
+          "free throws": 4.0,
+          "personal fouls": 3.0,
+          "three pointers": 2.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 0.0
+        },
+        "Yaxel Lendeborg": {
+          "blocks": 1.0,
+          "points": 17.0,
+          "steals": 0.0,
+          "assists": 2.0,
+          "minutes": 21.0,
+          "rebounds": 9.0,
+          "turnovers": 2.0,
+          "plus minus": 21.0,
+          "field goals": 7.0,
+          "free throws": 1.0,
+          "personal fouls": 1.0,
+          "three pointers": 2.0,
+          "defensive rebounds": 7.0,
+          "offensive rebounds": 2.0
+        },
+        "Brandon Williams": {
+          "blocks": 1.0,
+          "points": 10.0,
+          "steals": 1.0,
+          "assists": 1.0,
+          "minutes": 18.0,
+          "rebounds": 2.0,
+          "turnovers": 5.0,
+          "plus minus": 1.0,
+          "field goals": 3.0,
+          "free throws": 4.0,
+          "personal fouls": 2.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 2.0,
+          "offensive rebounds": 0.0
+        },
+        "William Kyle III": {
+          "blocks": 0.0,
+          "points": 0.0,
+          "steals": 0.0,
+          "assists": 0.0,
+          "minutes": 10.0,
+          "rebounds": 2.0,
+          "turnovers": 0.0,
+          "plus minus": -3.0,
+          "field goals": 0.0,
+          "free throws": 0.0,
+          "personal fouls": 2.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 0.0,
+          "offensive rebounds": 2.0
+        },
+        "De'Anthony Melton": {
+          "blocks": 0.0,
+          "points": 9.0,
+          "steals": 1.0,
+          "assists": 3.0,
+          "minutes": 18.0,
+          "rebounds": 1.0,
+          "turnovers": 2.0,
+          "plus minus": -5.0,
+          "field goals": 2.0,
+          "free throws": 4.0,
+          "personal fouls": 1.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 0.0,
+          "offensive rebounds": 1.0
+        },
+        "Jarred Vanderbilt": {
+          "blocks": 1.0,
+          "points": 2.0,
+          "steals": 3.0,
+          "assists": 1.0,
+          "minutes": 16.0,
+          "rebounds": 5.0,
+          "turnovers": 1.0,
+          "plus minus": -2.0,
+          "field goals": 1.0,
+          "free throws": 0.0,
+          "personal fouls": 0.0,
+          "three pointers": 0.0,
+          "defensive rebounds": 3.0,
+          "offensive rebounds": 2.0
+        },
+        "Brandin Podziemski": {
+          "blocks": 1.0,
+          "points": 16.0,
+          "steals": 1.0,
+          "assists": 1.0,
+          "minutes": 19.0,
+          "rebounds": 2.0,
+          "turnovers": 2.0,
+          "plus minus": 12.0,
+          "field goals": 7.0,
+          "free throws": 1.0,
+          "personal fouls": 1.0,
+          "three pointers": 1.0,
+          "defensive rebounds": 2.0,
+          "offensive rebounds": 0.0
+        },
+        "Sandro Mamukelashvili": {
+          "blocks": 1.0,
+          "points": 15.0,
+          "steals": 0.0,
+          "assists": 2.0,
+          "minutes": 18.0,
+          "rebounds": 2.0,
+          "turnovers": 1.0,
+          "plus minus": -20.0,
+          "field goals": 6.0,
+          "free throws": 0.0,
+          "personal fouls": 1.0,
+          "three pointers": 3.0,
+          "defensive rebounds": 1.0,
+          "offensive rebounds": 1.0
+        }
+      },
+      "home_period_scores": [
+        45,
+        36,
+        15,
+        28
+      ],
+      "away_period_scores": [
+        31,
+        22,
+        22,
+        23
+      ]
+    }
+  },
+  "rows": [
+    {
+      "threshold": 200.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 200.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148369
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:0",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 202.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 202.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148370
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:1",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 204.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 204.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148371
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.02,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:2",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 206.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 206.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148372
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.04,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:3",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 208.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 208.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148373
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:4",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 210.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 210.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148374
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:5",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 212.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 212.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148375
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:6",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 214.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 214.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148376
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:7",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 216.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 216.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148377
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:8",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 218.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 218.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148378
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:9",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 220.5,
+      "over_probability": 1.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 220.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148379
+      ],
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "movement": 0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:10",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 221.5,
+      "over_probability": 1.0,
+      "source": "polymarket",
+      "market_type": "game_total",
+      "market_name": "Lakers vs. Warriors: O/U 221.5",
+      "outcome_name": "Over",
+      "observed_at": "2026-10-07T05:28:51.510849+00:00",
+      "contributor_outcome_ids": [
+        242683006
+      ],
+      "is_winner": true,
+      "resolution_source": "poly_total_score",
+      "movement": 0.515,
+      "period": null,
+      "_market_id": 64511252,
+      "_external_id": "0x6e2c772aa116c8f8af5fdc91eba6a06ba8fa0d2c122e75ce30021c99a5e64146",
+      "key": "nba-half:totals:11",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 222.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 222.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148380
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.05,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:12",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 224.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 224.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148381
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:13",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 226.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 226.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148382
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:14",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 228.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 228.5 points",
+      "observed_at": "2026-10-07T04:31:26+00:00",
+      "contributor_outcome_ids": [
+        243148383
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:15",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 230.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 230.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148384
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:16",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 232.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 232.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148385
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:17",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 234.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 234.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148386
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:18",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 236.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 236.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148387
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.03,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:19",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 238.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 238.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148388
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:20",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 240.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 240.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148389
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:21",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 242.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 242.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148390
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:22",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 244.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 244.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148391
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:23",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 246.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 246.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148392
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:24",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 248.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 248.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148393
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:25",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 250.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 250.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148394
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:26",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 252.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 252.5 points",
+      "observed_at": "2026-10-07T04:31:27+00:00",
+      "contributor_outcome_ids": [
+        243148395
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:27",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 254.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 254.5 points",
+      "observed_at": "2026-10-07T04:31:28+00:00",
+      "contributor_outcome_ids": [
+        243148396
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:28",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 256.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 256.5 points",
+      "observed_at": "2026-10-07T04:31:28+00:00",
+      "contributor_outcome_ids": [
+        243148397
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:29",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 258.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 258.5 points",
+      "observed_at": "2026-10-07T04:31:28+00:00",
+      "contributor_outcome_ids": [
+        243148398
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:30",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "threshold": 260.5,
+      "over_probability": 0.0,
+      "source": "kalshi",
+      "market_type": "game_total",
+      "market_name": "Los Angeles Lakers vs Golden State: Total Points",
+      "outcome_name": "Over 260.5 points",
+      "observed_at": "2026-10-07T04:31:28+00:00",
+      "contributor_outcome_ids": [
+        243148399
+      ],
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "movement": -0.01,
+      "period": null,
+      "_market_id": 64649036,
+      "_external_id": "KXNBATOTAL-26OCT06LALGSW",
+      "key": "nba-half:totals:31",
+      "category": "totals",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Spread: Warriors (-3.5)",
+      "outcome_name": "Warriors",
+      "observed_at": "2026-10-07T05:28:51.580554+00:00",
+      "contributor_outcome_ids": [
+        242683002
+      ],
+      "threshold": null,
+      "probability": 1.0,
+      "source": "polymarket",
+      "is_winner": null,
+      "resolution_source": null,
+      "_market_id": 64511250,
+      "key": "nba-half:spreads:0",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Spread: Warriors (-4.5)",
+      "outcome_name": "Warriors",
+      "observed_at": "2026-10-07T05:28:51.580554+00:00",
+      "contributor_outcome_ids": [
+        243002433
+      ],
+      "threshold": null,
+      "probability": 1.0,
+      "source": "polymarket",
+      "is_winner": null,
+      "resolution_source": null,
+      "_market_id": 64607707,
+      "key": "nba-half:spreads:1",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 1.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148357
+      ],
+      "threshold": 1.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:2",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 1.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148358
+      ],
+      "threshold": 1.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:3",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 2.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148356
+      ],
+      "threshold": 2.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:4",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 2.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148359
+      ],
+      "threshold": 2.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:5",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 3.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148355
+      ],
+      "threshold": 3.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:6",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 3.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148360
+      ],
+      "threshold": 3.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:7",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 4.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148354
+      ],
+      "threshold": 4.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:8",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 4.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148361
+      ],
+      "threshold": 4.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:9",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 5.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148353
+      ],
+      "threshold": 5.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:10",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 5.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148362
+      ],
+      "threshold": 5.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:11",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 6.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148352
+      ],
+      "threshold": 6.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:12",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 7.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148351
+      ],
+      "threshold": 7.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:13",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 7.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148363
+      ],
+      "threshold": 7.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:14",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 8.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148350
+      ],
+      "threshold": 8.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:15",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 9.5 points",
+      "observed_at": "2026-10-07T04:31:24+00:00",
+      "contributor_outcome_ids": [
+        243148364
+      ],
+      "threshold": 9.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:16",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 10.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148349
+      ],
+      "threshold": 10.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:17",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 11.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148365
+      ],
+      "threshold": 11.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:18",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 12.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148348
+      ],
+      "threshold": 12.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:19",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 13.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148366
+      ],
+      "threshold": 13.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:20",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 14.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148347
+      ],
+      "threshold": 14.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:21",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 15.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148367
+      ],
+      "threshold": 15.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:22",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 16.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148346
+      ],
+      "threshold": 16.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:23",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 17.5 points",
+      "observed_at": "2026-10-07T04:31:25+00:00",
+      "contributor_outcome_ids": [
+        243148368
+      ],
+      "threshold": 17.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:24",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 18.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148345
+      ],
+      "threshold": 18.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:25",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 20.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148344
+      ],
+      "threshold": 20.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:26",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 22.5 points",
+      "observed_at": "2026-10-07T04:31:23+00:00",
+      "contributor_outcome_ids": [
+        243148343
+      ],
+      "threshold": 22.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:27",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 24.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148342
+      ],
+      "threshold": 24.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:28",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 26.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148341
+      ],
+      "threshold": 26.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:29",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 28.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148340
+      ],
+      "threshold": 28.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:30",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 30.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148339
+      ],
+      "threshold": 30.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:31",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 32.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148338
+      ],
+      "threshold": 32.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:32",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 34.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148337
+      ],
+      "threshold": 34.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:33",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 36.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148336
+      ],
+      "threshold": 36.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:34",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: Spread",
+      "outcome_name": "Golden State wins by over 38.5 points",
+      "observed_at": "2026-10-07T04:31:22+00:00",
+      "contributor_outcome_ids": [
+        243148335
+      ],
+      "threshold": 38.5,
+      "probability": 0.0,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 64649035,
+      "_score_proves_verdict": true,
+      "key": "nba-half:spreads:35",
+      "category": "spreads",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Golden State wins by over 7.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497244
+      ],
+      "threshold": 7.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:0",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Golden State wins by over 5.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497245
+      ],
+      "threshold": 5.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:1",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Golden State wins by over 3.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497246
+      ],
+      "threshold": 3.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:2",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Golden State wins by over 1.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497247
+      ],
+      "threshold": 1.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:3",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Golden State wins by over 11.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497248
+      ],
+      "threshold": 11.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:4",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Golden State wins by over 9.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497249
+      ],
+      "threshold": 9.5,
+      "probability": 1.0,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:5",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 4.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497252
+      ],
+      "threshold": 4.5,
+      "probability": null,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:6",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 2.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497253
+      ],
+      "threshold": 2.5,
+      "probability": null,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:7",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 8.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497250
+      ],
+      "threshold": 8.5,
+      "probability": null,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:8",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 1.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497254
+      ],
+      "threshold": 1.5,
+      "probability": null,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:9",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State: 1st Half Spread",
+      "outcome_name": "Los Angeles Lakers wins by over 6.5 points",
+      "observed_at": "2026-10-09T11:49:03.277164+00:00",
+      "contributor_outcome_ids": [
+        244497251
+      ],
+      "threshold": 6.5,
+      "probability": null,
+      "source": "kalshi",
+      "market_type": "half_spread",
+      "period": "1H",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65016104,
+      "key": "nba-half:period_markets:10",
+      "category": "period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-1.5)",
+      "outcome_name": "Warriors",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141295
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:0",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-1.5)",
+      "outcome_name": "Lakers",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141296
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:1",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-2.5)",
+      "outcome_name": "Warriors",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141301
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:2",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-2.5)",
+      "outcome_name": "Lakers",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141302
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:3",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-3.5)",
+      "outcome_name": "Warriors",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141305
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:4",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-3.5)",
+      "outcome_name": "Lakers",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141306
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:5",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-4.5)",
+      "outcome_name": "Warriors",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141309
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:6",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "1H Spread: Warriors (-4.5)",
+      "outcome_name": "Lakers",
+      "threshold": null,
+      "source": "polymarket",
+      "market_type": "half_spread",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141310
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:7",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Lakers vs. Warriors: 1H O/U 111.5",
+      "outcome_name": "Over",
+      "threshold": 111.5,
+      "source": "polymarket",
+      "market_type": "half_total",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141299
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:8",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Lakers vs. Warriors: 1H O/U 111.5",
+      "outcome_name": "Under",
+      "threshold": 111.5,
+      "source": "polymarket",
+      "market_type": "half_total",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141300
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:9",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Lakers vs. Warriors: 1H O/U 112.5",
+      "outcome_name": "Over",
+      "threshold": 112.5,
+      "source": "polymarket",
+      "market_type": "half_total",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141297
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:10",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Lakers vs. Warriors: 1H O/U 112.5",
+      "outcome_name": "Under",
+      "threshold": 112.5,
+      "source": "polymarket",
+      "market_type": "half_total",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141298
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:11",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Lakers vs. Warriors: 1H O/U 113.5",
+      "outcome_name": "Over",
+      "threshold": 113.5,
+      "source": "polymarket",
+      "market_type": "half_total",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141307
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:12",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Lakers vs. Warriors: 1H O/U 113.5",
+      "outcome_name": "Under",
+      "threshold": 113.5,
+      "source": "polymarket",
+      "market_type": "half_total",
+      "period": "1H",
+      "contributor_outcome_ids": [
+        243141308
+      ],
+      "probability": null,
+      "window_closed": true,
+      "period_score": {
+        "home": 81,
+        "away": 53
+      },
+      "key": "nba-half:closed_period_markets:13",
+      "category": "closed_period_markets",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State",
+      "outcome_name": "Golden State",
+      "observed_at": "2026-10-12T09:20:32.003997+00:00",
+      "contributor_outcome_ids": [
+        239338414
+      ],
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 63527046,
+      "key": "nba-half:other:0",
+      "category": "other",
+      "source_file": "15321889-markets.json"
+    },
+    {
+      "market_name": "Los Angeles Lakers vs Golden State",
+      "outcome_name": "Los Angeles Lakers",
+      "observed_at": "2026-10-12T09:20:32.003997+00:00",
+      "contributor_outcome_ids": [
+        239338415
+      ],
+      "probability": null,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 63527046,
+      "key": "nba-half:other:1",
+      "category": "other",
+      "source_file": "15321889-markets.json"
+    }
+  ],
+  "series": [],
+  "pregame_projection": null,
+  "source": "Captured app / Kalshi / Polymarket"
+}

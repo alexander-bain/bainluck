@@ -133,12 +133,16 @@ test('the retired alex-approved label has no approval effect or attribution look
 
 const openPRs=()=>Array.from({length:74},(_,i)=>({number:i+1,state:'open',user:{login:'author'},
   head:{sha:`head-${i+1}`},labels:i<6?[{name:'tier-b'}]:[]}));
+const reviewerRun=(overrides={})=>({action:'completed',workflow_run:{
+  name:'Tier-B review',path:'.github/workflows/tier-b-review.yml',event:'pull_request',
+  status:'completed',head_sha:'head-1',pull_requests:[{number:1}],...overrides}});
 
 for (const [eventName,payload] of [
   ['pull_request_target',{pull_request:{number:1}}],
+  ['workflow_run',reviewerRun()],
   ['repository_dispatch',{client_payload:{pull_number:1}}],
   ['workflow_dispatch',{inputs:{pull_number:'1'}}],
-]) test(`${eventName} evaluates only its PR, even with 74 open PRs`,async()=>{
+]) test(`${eventName} ${payload.action || ''} evaluates only its PR, even with 74 open PRs`,async()=>{
   const {evaluate}=require(file);
   const {github,calls,created}=policyClient(openPRs());
   await evaluate(github,{repo,eventName,payload});
@@ -150,14 +154,50 @@ for (const [eventName,payload] of [
   assert.equal(calls.length,5);
 });
 
-test('a Tier-A event skips reviews and files and publishes success',async()=>{
+for (const [eventName,payload] of [
+  ['pull_request_target',{pull_request:{number:74}}],
+  ['workflow_run',reviewerRun({pull_requests:[{number:74}]})],
+]) test(`a Tier-A ${eventName} skips reviews and files and publishes success`,async()=>{
   const {evaluate}=require(file);
   const {github,calls,created}=policyClient(openPRs());
-  await evaluate(github,{repo,eventName:'pull_request_target',payload:{pull_request:{number:74}}});
+  await evaluate(github,{repo,eventName,payload});
   assert.equal(calls.filter(c=>['list','reviews','files'].includes(c.method)).length,0);
   assert.deepEqual(calls.filter(c=>c.method==='get').map(c=>c.pull_number),[74,74]);
   assert.equal(calls.length,4);
   assert.equal(created[0].conclusion,'success');
+});
+
+test('malformed, ambiguous or unrelated reviewer completions refuse before API calls',async()=>{
+  const {evaluate}=require(file);
+  const payloads=[
+    {},reviewerRun({pull_requests:undefined}),reviewerRun({pull_requests:[]}),
+    reviewerRun({pull_requests:[{number:1},{number:2}]}),
+    reviewerRun({path:'.github/workflows/untrusted.yml'}),
+    reviewerRun({name:'Other review'}),reviewerRun({event:'workflow_dispatch'}),
+    reviewerRun({status:'in_progress'}),{...reviewerRun(),action:'requested'},
+    ...[undefined,0,-1,'not-a-number',1.5].map(number=>reviewerRun({pull_requests:[{number}]})),
+  ];
+  for(const payload of payloads) {
+    const {github,calls}=policyClient(openPRs());
+    await assert.rejects(evaluate(github,{repo,eventName:'workflow_run',payload}),/required/);
+    assert.equal(calls.length,0);
+  }
+});
+
+test('a stale reviewer run cannot approve the PR current head',async()=>{
+  const {evaluate}=require(file);
+  const {github,created}=policyClient(openPRs());
+  github.rest.pulls.listReviews=async()=>[
+    {id:1,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'stale'}];
+  const payload=reviewerRun({head_sha:'stale',pull_requests:[{number:1,head:{sha:'stale'}}]});
+  await evaluate(github,{repo,eventName:'workflow_run',payload});
+  assert.equal(created[0].head_sha,'head-1');
+  assert.equal(created[0].conclusion,'failure');
+  github.rest.pulls.listReviews=async()=>[
+    {id:2,user:{login:'claude[bot]'},state:'APPROVED',commit_id:'head-1'}];
+  await evaluate(github,{repo,eventName:'workflow_run',payload});
+  assert.equal(created.at(-1).head_sha,'head-1');
+  assert.equal(created.at(-1).conclusion,'success');
 });
 
 test('a 74-PR sweep stays linear and never refreshes or reads review scope for Tier A',async()=>{
@@ -204,8 +244,12 @@ test('membership churn retries once, then fails every observed head',async()=>{
 
 test('the workflow uses a half-hour sweep and keeps per-PR events from coalescing each other',()=>{
   const workflow=fs.readFileSync(path.resolve(__dirname,'../../.github/workflows/tier-b.yml'),'utf8');
+  assert.doesNotMatch(workflow,/pull_request_review:/);
+  assert.match(workflow,/workflow_run:\n\s+workflows: \[Tier-B review\]\n\s+types: \[completed\]/);
+  assert.match(workflow,/ref: \$\{\{ github.event.repository.default_branch \}\}/);
+  assert.match(workflow,/persist-credentials: false/);
   assert.match(workflow,/cron: '\*\/30 \* \* \* \*'/);
   assert.match(workflow,/cancel-in-progress: false/);
-  assert.ok(workflow.includes("github.event.pull_request.number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));
+  assert.ok(workflow.includes("github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.client_payload.pull_number || github.event.inputs.pull_number || 'sweep'"));
   assert.match(workflow,/pull_number:\s+description: Pull request to evaluate\s+required: true\s+type: number/);
 });

@@ -178,8 +178,11 @@ async def test_relimit_admits_more_other_events_and_rolls_back(recovery, tmp_pat
     assert await fill_other_active(r.client, restored, str(k3.claim_of("kalshi")), 48, 1) == "bucket_full"
 
 
-async def test_a_plan_built_for_other_sizes_than_configured_never_reaches_the_operator(recovery):  # noqa: F811
+async def test_a_plan_built_for_other_sizes_than_configured_never_reaches_the_operator(recovery, monkeypatch):  # noqa: F811
     t, r = tool(), recovery
+    # As in the cap-change case below, this tests plan refusal, not the 150 ms
+    # store deadline. CI 41937899713 timed out ready() before reaching that refusal.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     server, repl = await r.client.info("server"), await r.client.info("replication")
     first = await r.prepare()
     await r.controller.arm(first)
