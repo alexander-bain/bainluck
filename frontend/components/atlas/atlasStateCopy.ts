@@ -1,7 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-
 /**
  * Shared state wording and formatting helpers for the event-page and futures-page
  * atlas adoption (#883, #11974).
@@ -49,20 +47,6 @@ export function resolveAtlasOptIn(
     return val === '1' || val === 'true';
   }
   return false;
-}
-
-export function useAtlasOptIn(): boolean {
-  const [enabled, setEnabled] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return resolveAtlasOptIn(window.location.search);
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    setEnabled(resolveAtlasOptIn(window.location.search));
-  }, []);
-
-  return enabled;
 }
 
 function parseIsoForPT(iso: string | null | undefined): Date | null {
@@ -175,29 +159,29 @@ export function resolveOriginalMarketUrl(params: {
 }): { url: string; label: string; venueName: string } | null {
   const normalizedSource = (params.source || '').trim().toLowerCase();
   const externalId = (params.externalId || '').trim();
+  if (!externalId) return null;
 
   if (normalizedSource === 'kalshi') {
-    const seriesTicker = externalId ? externalId.split('-')[0] : '';
-    if (seriesTicker) {
+    const seriesTicker = externalId.split('-')[0].trim();
+    if (/^[A-Za-z][A-Za-z0-9_]*$/.test(seriesTicker)) {
       return {
         url: `https://kalshi.com/markets/${encodeURIComponent(seriesTicker.toLowerCase())}`,
         label: 'Original market',
         venueName: 'Kalshi',
       };
     }
-    return {
-      url: 'https://kalshi.com/markets',
-      label: 'Original market',
-      venueName: 'Kalshi',
-    };
+    return null;
   }
 
   if (normalizedSource === 'polymarket') {
-    return {
-      url: 'https://polymarket.com',
-      label: 'Original market',
-      venueName: 'Polymarket',
-    };
+    if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/i.test(externalId) && !/^\d+$/.test(externalId)) {
+      return {
+        url: `https://polymarket.com/event/${encodeURIComponent(externalId.toLowerCase())}`,
+        label: 'Original market',
+        venueName: 'Polymarket',
+      };
+    }
+    return null;
   }
 
   return null;

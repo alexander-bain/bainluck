@@ -130,6 +130,8 @@ export default function AtlasDetailsSheet({
     source,
     externalId,
   });
+  const humanExternalId =
+    externalId && !/^\d+$/.test(externalId.trim()) ? externalId.trim() : null;
   const cleanedRules = (rulesText || '').trim();
 
   const hasLastProbability =
@@ -243,7 +245,7 @@ export default function AtlasDetailsSheet({
             </div>
           )}
 
-          {(hasLastProbability || lastObservedLabel) && (
+          {!isSettled && (hasLastProbability || lastObservedLabel) && (
             <div
               className="grid grid-cols-[minmax(0,9.5rem)_minmax(0,1fr)] gap-3 py-3"
               data-testid="atlas-details-last-observation"
@@ -302,21 +304,15 @@ export default function AtlasDetailsSheet({
             </dd>
           </div>
 
-          {(externalId || marketId != null || outcomeId != null || originalLink) && (
+          {(humanExternalId || originalLink) && (
             <div
               className="grid grid-cols-[minmax(0,9.5rem)_minmax(0,1fr)] gap-3 py-3"
               data-testid="atlas-details-original-market"
             >
               <dt className="text-text-muted">Original market</dt>
               <dd className="min-w-0 text-text-primary break-all">
-                {externalId && (
-                  <strong className="block font-semibold">{externalId}</strong>
-                )}
-                {(marketId != null || outcomeId != null) && (
-                  <span className="mt-0.5 block text-text-secondary">
-                    {marketId ?? '—'}
-                    {outcomeId != null ? ` / ${outcomeId}` : ''}
-                  </span>
+                {humanExternalId && (
+                  <strong className="block font-semibold">{humanExternalId}</strong>
                 )}
                 {originalLink && (
                   <a

@@ -83,6 +83,18 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
         label: 'Original market',
         venueName: 'Kalshi',
       });
+      expect(resolveOriginalMarketUrl({ source: 'kalshi', externalId: '' })).toBeNull();
+      expect(resolveOriginalMarketUrl({ source: 'polymarket', externalId: '65536371' })).toBeNull();
+      expect(
+        resolveOriginalMarketUrl({
+          source: 'polymarket',
+          externalId: 'denver-december-snowfall-2026',
+        }),
+      ).toEqual({
+        url: 'https://polymarket.com/event/denver-december-snowfall-2026',
+        label: 'Original market',
+        venueName: 'Polymarket',
+      });
     });
   });
 
@@ -233,9 +245,12 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       expect(html).toContain('href="https://kalshi.com/markets/kxdemswingstategovsweep"');
       expect(html).toContain('If Democrats win the governorships');
       expect(html).not.toContain('data-testid="atlas-details-settled-at"');
+      expect(html).not.toContain('data-testid="atlas-details-last-observation"');
+      expect(html).not.toContain('109918');
+      expect(html).not.toContain('1601726');
     });
 
-    it('withholds opening chance silently when the market is multi-venue (#12043)', () => {
+    it('withholds opening chance silently when the market is multi-venue and omits original-market row for numeric external IDs', () => {
       const html = renderHtml(
         <AtlasDetailsSheet
           open
@@ -244,13 +259,21 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
           marketTitle="Kansas Senate winner"
           openingProbability={0.52}
           lastProbability={0.97}
-          source="kalshi"
+          source="polymarket"
           sourceCount={2}
+          externalId="65536371"
+          marketId={109085}
+          outcomeId={4001}
         />,
       );
 
       expect(html).not.toContain('data-testid="atlas-details-opening"');
       expect(html).toContain('Both Kalshi and Polymarket');
+      expect(html).toContain('data-testid="atlas-details-last-observation"');
+      expect(html).toContain('>97%<');
+      expect(html).not.toContain('data-testid="atlas-details-original-market"');
+      expect(html).not.toContain('65536371');
+      expect(html).not.toContain('109085');
     });
 
     it('opens on one tap from FuturesHero and closes on Close button click', async () => {
