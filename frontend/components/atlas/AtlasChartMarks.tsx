@@ -37,9 +37,11 @@ export interface AtlasSelectedReading {
  */
 export function AtlasChartMarkKey({
   settled = false,
+  showOpening = true,
   openingLabel = "Opening",
 }: {
   settled?: boolean;
+  showOpening?: boolean;
   openingLabel?: string;
 }) {
   return (
@@ -48,13 +50,15 @@ export function AtlasChartMarkKey({
       aria-label="Chart mark key"
       className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-text-secondary"
     >
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          aria-hidden="true"
-          className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-primary bg-surface-card"
-        />
-        <span>{openingLabel}</span>
-      </span>
+      {showOpening && (
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-primary bg-surface-card"
+          />
+          <span>{openingLabel}</span>
+        </span>
+      )}
       <span className="inline-flex items-center gap-1.5">
         <span
           aria-hidden="true"
@@ -93,8 +97,8 @@ export function AtlasChartMarkKey({
 
 /**
  * Renders the SVG mark grammar for one plotted series:
- * - First real observation -> hollow opening mark (`data-testid="atlas-chart-opening-mark"`)
- * - Subsequent real observations -> solid recorded reading marks (`data-testid="atlas-chart-recorded-mark"`)
+ * - First real observation (when `includesOpening` is true) -> hollow opening mark (`data-testid="atlas-chart-opening-mark"`)
+ * - All other real observations -> solid recorded reading marks (`data-testid="atlas-chart-recorded-mark"`)
  * - Tappable hit target on every real observation (`data-testid="atlas-chart-reading-hit"`)
  *
  * When a series has many points (> 36), visual solid dots are thinned to keep
@@ -106,6 +110,7 @@ export function AtlasSeriesReadingMarks({
   points,
   color,
   opacity = 1,
+  includesOpening = true,
   selectedReading,
   onSelectReading,
 }: {
@@ -114,6 +119,7 @@ export function AtlasSeriesReadingMarks({
   points: AtlasChartReadingPoint[];
   color: string;
   opacity?: number;
+  includesOpening?: boolean;
   selectedReading?: AtlasSelectedReading | null;
   onSelectReading?: (reading: AtlasSelectedReading) => void;
 }) {
@@ -128,7 +134,7 @@ export function AtlasSeriesReadingMarks({
       data-outcome-id={outcomeId}
     >
       {points.map((pt, index) => {
-        const isOpening = index === 0;
+        const isOpening = includesOpening && index === 0;
         const isLast = index === points.length - 1;
         const isSelected =
           selectedReading?.outcomeId === outcomeId &&

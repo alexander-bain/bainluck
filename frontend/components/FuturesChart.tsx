@@ -244,6 +244,9 @@ interface FuturesChartProps {
    *  solid recorded readings, result as a word, tap any real reading for exact PT time,
    *  step line shape per decision 11-A). */
   atlas?: boolean;
+  /** Whether the plotted history window includes the market's true opening reading
+   *  (true on full/All range when history is not withheld; false on 24h/7d/30d windows). */
+  atlasIncludesOpening?: boolean;
   /** Optional callback fired when a user taps a real reading on the chart under ?atlas=1. */
   onSelectReading?: (reading: AtlasSelectedReading | null) => void;
 }
@@ -274,12 +277,15 @@ export function FuturesChart({
   seriesOrder,
   historyWithheld = false,
   atlas = false,
+  atlasIncludesOpening = true,
   onSelectReading,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
   // Default to step lines under ?atlas=1 (NOW #11852 Decision 11-A) while preserving false for non-Atlas callers.
   const effectiveStepInterpolation = stepInterpolation ?? atlas;
+  // Only mark index 0 as "Opening" when the plotted history covers the full range and is not partial/withheld.
+  const effectiveAtlasIncludesOpening = atlasIncludesOpening && !historyWithheld;
   const palette = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
 
   // #7813: the label a series prints in the legend and in the hover tooltip.
@@ -692,9 +698,14 @@ export function FuturesChart({
         <div className="space-y-2">
           <AtlasChartMarkKey
             settled={settled || resultMarkSpecs.length > 0}
+            showOpening={effectiveAtlasIncludesOpening}
           />
           <AtlasSelectedReadingReadout
-            reading={selectedReading}
+            reading={
+              selectedReading && !effectiveAtlasIncludesOpening && selectedReading.isOpening
+                ? { ...selectedReading, isOpening: false }
+                : selectedReading
+            }
             onClear={() => handleSelectReading(null)}
           />
         </div>
@@ -986,6 +997,7 @@ export function FuturesChart({
                       points={readingPoints}
                       color={colorFor(outcome, idx)}
                       opacity={strokeOpacity}
+                      includesOpening={effectiveAtlasIncludesOpening}
                       selectedReading={selectedReading}
                       onSelectReading={handleSelectReading}
                     />
