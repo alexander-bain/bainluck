@@ -56,7 +56,6 @@ import {
   formatAtlasMarketHeading,
   formatAtlasTimestampPT,
   resolveAtlasOptIn,
-  useAtlasOptIn,
 } from "@/components/atlas/atlasStateCopy";
 import FuturesShapeBody from "@/components/futures/FuturesShapeBody";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
@@ -176,8 +175,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const [trendView, setTrendView] = useState<"evolution" | "progression">("evolution");
   const [detailsSheetOpen, setDetailsSheetOpen] = useState(false);
   const [atlasSelectedOutcomeId, setAtlasSelectedOutcomeId] = useState<number | null>(null);
-  const atlasFromWindow = useAtlasOptIn();
-  const atlasEnabled = resolveAtlasOptIn(searchParams) || atlasFromWindow;
+  const atlasEnabled = resolveAtlasOptIn(searchParams);
 
   // #7545 — the reader's chosen history rung. `null` means "not chosen yet", which
   // is NOT the same as 1W: until the market loads we cannot tell whether its
@@ -1054,12 +1052,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         ? `Scheduled resolution ${formatAtlasTimestampPT(market.resolution_date)}`
         : formatResolvesLabel(market.resolution_date) || undefined
       : undefined;
-  const atlasLastObserved = formatAtlasTimestampPT(
-    atlasSubjectOutcome?.observed_at ||
-      atlasSubjectOutcome?.last_updated ||
-      market.prices_updated_at ||
-      market.updated_at,
-  );
+  const atlasLastObservedAt =
+    atlasSubjectOutcome?.observed_at || market.prices_updated_at || null;
+  const atlasLastObserved = !isResolved
+    ? formatAtlasTimestampPT(atlasLastObservedAt)
+    : null;
   const heroContributorList = heroNamesNobody
     ? undefined
     : heroContributorLabels(market, heroOutcome);
@@ -1253,12 +1250,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               ? renderedById.get(atlasSubjectOutcome.id)?.current ?? null
               : null
           }
-          lastObservedAt={
-            atlasSubjectOutcome?.observed_at ||
-            atlasSubjectOutcome?.last_updated ||
-            market.prices_updated_at ||
-            market.updated_at
-          }
+          lastObservedAt={atlasLastObservedAt}
           resolutionDate={market.resolution_date}
           source={market.source}
           sourceCount={market.source_count ?? null}
