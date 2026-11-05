@@ -493,9 +493,14 @@ class TestTheDeadTupleReadingIsGenuinelyOptional:
             "expected no qualifying table after dropping the probe tables — "
             "this gate owns its database"
         )
-        # And that absence, paired with the incident's own xmin reading, is
-        # still a page. This is the whole correction, on real evidence.
-        assert classify_vacuum_signals(81_643, None, None)[0] == "page"
+        # And that absence, paired with the incident's held horizon, is still a
+        # page. This is the whole correction, on real evidence. The incident is
+        # ~40 h of held horizon; #2005 read that as 81,643 xids at 0.57 xid/s,
+        # and today's measured rate converts the same hours (#11988 ruling A).
+        from app.tasks.watchdog import VACUUM_XID_RATE_PER_S
+
+        incident_xmin = round(40 * 3600 * VACUUM_XID_RATE_PER_S)
+        assert classify_vacuum_signals(incident_xmin, None, None)[0] == "page"
 
 
 @needs_postgres
