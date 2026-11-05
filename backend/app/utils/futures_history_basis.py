@@ -259,7 +259,7 @@ def devigged_consensus_by_time(
         _ALREADY_PROBABILITY_SOURCES,
         _DEVIGGED_AT_INGEST_SOURCES,
     )
-    from app.utils.odds_math import devig_consensus
+    from app.utils.odds_math import devig_consensus, remove_vig_nway
     from app.utils.outcome_display import normalize_display_probs
     from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 
@@ -310,18 +310,36 @@ def devigged_consensus_by_time(
         if not book_columns:
             continue
 
-        complete_instant = captured_at not in (incomplete_times or set()) and all(
-            expected_ids <= column.keys() for column in book_columns.values()
+        present_ids = {
+            oid
+            for column in book_columns.values()
+            for oid, value in column.items()
+            if value is not None
+        }
+        complete_instant = (
+            captured_at not in (incomplete_times or set())
+            and expected_ids <= present_ids
         )
         if not complete_instant and incomplete_times is not None:
             incomplete_times.add(captured_at)
+        if not complete_instant and not nonexclusive:
+            # Skipping redistribution must not admit a malformed book that
+            # the existing per-book converter would refuse (None/NaN/etc.).
+            book_columns = {
+                bookmaker: column
+                for bookmaker, column in book_columns.items()
+                if bookmaker in _ALREADY_PROBABILITY_SOURCES
+                or remove_vig_nway(column.values()) is not None
+            }
 
         consensus = devig_consensus(
             book_columns,
             method="mean",
-            # A partial column must stay raw at BOTH normalization stages.
+            # An absent field member stays raw at BOTH normalization stages.
             # Carry-forward supplies unchanged quotes before this call; a leg
-            # still absent is unknown mass, never zero (#11995 / #8296).
+            # still absent across every book is unknown mass, never zero.
+            # Books may quote different subsets of a complete combined field;
+            # keep the existing live per-book de-vig before their mean (#4992).
             already_normalized=(
                 book_columns
                 if nonexclusive or not complete_instant
