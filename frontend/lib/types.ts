@@ -2704,6 +2704,7 @@ export interface GolfLeaderboardPlayer {
   thru: string;
   hole: string;
   win_prob: number;
+  rendered_percent?: number | null;
   win_prob_change: number | null;
   position_change: number | null;
   top_5_prob: number | null;

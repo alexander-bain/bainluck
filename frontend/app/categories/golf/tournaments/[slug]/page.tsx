@@ -178,6 +178,7 @@ function buildMergedGolfers(
         thru: p.thru,
         hole: p.hole,
         winProb: p.win_prob,
+        renderedPercent: p.rendered_percent,
         winProbChange: p.win_prob_change,
         top5Prob: p.top_5_prob,
         top10Prob: p.top_10_prob,

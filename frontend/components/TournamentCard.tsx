@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatProbability } from "@/lib/api";
-import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import { formatMovementPoints, isRenderedMove, probabilityParts } from "@/lib/probabilityDisplay";
 import { championRowIndex, isTournamentBeforeStart, isTournamentLive } from "@/lib/tournamentLive";
 import { normalizeCupSideName, resolveCupSideColors } from "@/lib/cupTeamSides";
 import { golfChaserLabels } from "@/lib/golfChaserLabels";
@@ -80,6 +80,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
   const leader = _buildLeader(tournament, leaderboard);
   const chasers = _buildChasers(tournament, leaderboard);
+  const leaderDisplay = leader?.winProb != null && leader.renderedPercent != null
+    ? probabilityParts(leader.winProb / 100, { rendered: leader.renderedPercent })
+    : null;
   // #9750 — surnames, unless two chasers share one ("A. Kim" / "H. Kim"), or a
   // chaser shares the hero's ("Matt Fitzpatrick" above "A. Fitzpatrick").
   const chaserLabels = golfChaserLabels(chasers.map((c) => c.name), leader?.name);
@@ -128,7 +131,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                   beside someone else's name. */}
               {leader.winProb != null && (
                 <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
-                  {leader.renderedPercent ?? leader.winProb.toFixed(1)}
+                  {leaderDisplay
+                    ? `${leaderDisplay.marker ?? ""}${leaderDisplay.digits}`
+                    : leader.winProb.toFixed(1)}
                   <span className="text-base font-semibold">%</span>
                 </div>
               )}
@@ -193,7 +198,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                     {chaserLabels[i]}
                   </div>
                   <div className="text-[15px] font-bold tabular-nums">
-                    {c.renderedPercent ?? c.winProb.toFixed(1)}%
+                    {c.renderedPercent != null
+                      ? formatProbability(c.winProb / 100, { rendered: c.renderedPercent })
+                      : `${c.winProb.toFixed(1)}%`}
                   </div>
                   {(c.score || c.hole) && (
                     <div className="text-[10px] text-text-tertiary">
@@ -377,6 +384,7 @@ function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardP
     return {
       name: lb.name,
       winProb: lb.win_prob,
+      renderedPercent: lb.rendered_percent,
       // 🔴 #5713 — DO NOT DROP THESE TWO LINES AGAIN. #5690's fix replaced them
       // with the comment block below and shipped, so the live Amgen Irish Open
       // card read "Leader +32.4 pts today" where it had read
@@ -432,6 +440,7 @@ function _buildChasers(tournament: GolfTournament, leaderboard?: GolfLeaderboard
     return leaderboard.slice(1, 5).map((lb) => ({
       name: lb.name,
       winProb: lb.win_prob,
+      renderedPercent: lb.rendered_percent,
       score: lb.score,
       hole: lb.thru && lb.thru !== "F" ? `H${lb.thru}` : (lb.thru === "F" ? "F" : undefined),
     }));

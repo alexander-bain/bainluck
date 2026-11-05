@@ -12,6 +12,10 @@ import sys
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.datagolf_api import DataGolfPlayer
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, text, func as sqlfunc
@@ -5078,6 +5082,59 @@ async def get_golf_tournament(
 
 # ============================================================================
 # Live leaderboard (ultra-low-data endpoint)
+
+
+def _allocate_live_win_field(
+    leaderboard: list[dict],
+    players: list["DataGolfPlayer"],
+    baseline: dict[str, dict],
+    *,
+    baseline_is_atomic: bool,
+) -> None:
+    """Use the shared full-field allocation, with an independently scaled day."""
+    from app.utils.outcome_display import normalize_display_probs
+
+    names = [p.player_name.lower() for p in players]
+    rows = [{"name": p.player_name, "probability": p.win} for p in players]
+    normalize_display_probs(
+        rows,
+        field_complete=len(set(names)) == len(names)
+        and all(p.win is not None for p in players),
+    )
+    if (
+        len(rows) != len(players)
+        or not rows
+        or any("rendered_percent" not in row for row in rows)
+    ):
+        return
+
+    reference = None
+    if baseline_is_atomic and set(baseline) == set(names):
+        reference = []
+        for p in players:
+            value = baseline[p.player_name.lower()].get("win_prob")
+            reference.append(
+                {
+                    "name": p.player_name,
+                    "probability": value / 100 if type(value) in (int, float) else None,
+                }
+            )
+        normalize_display_probs(reference)
+        if len(reference) != len(players) or any(
+            "rendered_percent" not in row for row in reference
+        ):
+            reference = None
+
+    for index, (entry, row) in enumerate(zip(leaderboard, rows)):
+        entry["win_prob"] = row["probability"] * 100
+        entry["rendered_percent"] = row["rendered_percent"]
+        entry["win_prob_change"] = (
+            round((row["probability"] - reference[index]["probability"]) * 100, 1)
+            if reference is not None
+            else None
+        )
+
+
 # ============================================================================
 
 # In-process cache for leaderboard (avoid hammering DataGolf on every refresh)
@@ -5172,6 +5229,7 @@ async def get_golf_leaderboard(
     # For subsequent rounds, use start-of-day leaderboard snapshot.
     # ----------------------------------------------------------------
     snapshot_lookup: dict[str, dict] = {}  # player_name -> {position, win_prob, ...}
+    baseline_is_atomic = False
     current_round = info.get("current_round")
     try:
         from app.models.models import GolfLeaderboardSnapshot
@@ -5197,7 +5255,13 @@ async def get_golf_leaderboard(
                     for entry in snapshot.data:
                         name = entry.get("player_name", "")
                         snapshot_lookup[name.lower()] = entry
-                    logger.info("Leaderboard: loaded %d-player start-of-day snapshot", len(snapshot_lookup))
+                    # One stored response is one observation, unlike independently
+                    # selected per-outcome snapshots in the Round1 arm below.
+                    baseline_is_atomic = len(snapshot_lookup) == len(snapshot.data)
+                    logger.info(
+                        "Leaderboard: loaded %d-player start-of-day snapshot",
+                        len(snapshot_lookup),
+                    )
         else:
             # Round 1: use last DataGolf snapshot from before today as baseline
             # (captures pre-tournament odds from close to midnight)
@@ -5252,7 +5316,17 @@ async def get_golf_leaderboard(
                             name = outcome_names.get(snap.outcome_id, "")
                             if name and snap.probability is not None:
                                 wp = round(float(snap.probability) * 100, 1)
-                                snapshot_lookup[name.lower()] = {"win_prob": wp}
+                                snapshot_lookup[name.lower()] = {
+                                    "win_prob": wp,
+                                    "_at": snap.captured_at,
+                                }
+
+                        instants = {entry["_at"] for entry in snapshot_lookup.values()}
+                        baseline_is_atomic = (
+                            len(instants) == 1
+                            and None not in instants
+                            and len(snapshot_lookup) == len(outcomes)
+                        )
 
                     logger.info("Leaderboard R1: loaded %d-player pre-round snapshot (cutoff=%s)",
                                 len(snapshot_lookup), cutoff.isoformat())
@@ -5338,6 +5412,11 @@ async def get_golf_leaderboard(
         win_probs
         and all(wp in (0.0, 100.0) for wp in win_probs)
     )
+
+    if not is_completed:
+        _allocate_live_win_field(
+            leaderboard, players, snapshot_lookup, baseline_is_atomic=baseline_is_atomic
+        )
 
     result = {
         "status": "completed" if is_completed else "live",

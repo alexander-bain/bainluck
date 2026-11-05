@@ -245,3 +245,27 @@ describe("#5713 — the leader line keeps its score and hole, not just its capti
     expect(decode(markup)).toMatch(/\+28\.2 pts today/);
   });
 });
+
+describe("#11995 — live cards consume the server's complete winner allocation", () => {
+  test("the leaderboard hero and chasers preserve a tied 34/33/33 allocation", () => {
+    const players = ["Alice Smith", "Bob Jones", "Casey Reed"].map((name, i) => ({
+      ...lbPlayer(name, 100 / 3, null), rendered_percent: i === 0 ? 34 : 33,
+    }));
+    const html = renderToStaticMarkup(<TournamentCard tournament={tournament("Alice Smith", 0, 1 / 3)} leaderboard={players} />);
+    const visible = html.replace(/<[^>]*>/g, "");
+    const printed = [...visible.matchAll(/(\d+)%/g)].map(match => Number(match[1]));
+    expect(printed).toEqual([34, 33, 33]);
+    expect(printed.reduce((sum, value) => sum + value, 0)).toBe(100);
+  });
+
+  test.each([[99.6, 100, "&gt;99%"], [0.3, 0, "&lt;1%"]])(
+    "the server integer does not turn %s into a certain boundary",
+    (probability, rendered, expected) => {
+      const player = { ...lbPlayer("Alice Smith", probability as number, null), rendered_percent: rendered as number };
+      const html = renderToStaticMarkup(<TournamentCard tournament={tournament("Alice Smith", 0, (probability as number) / 100)} leaderboard={[player]} />);
+      expect(html.replace(/<[^>]*>/g, "")).toContain(expected as string);
+      expect(html).not.toContain(">100%<");
+      expect(html).not.toContain(">0%<");
+    },
+  );
+});
