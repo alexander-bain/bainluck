@@ -1,0 +1,43 @@
+.cf-expand{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;width:100%;border:1px solid var(--surface-border);border-radius:12px;background:var(--surface-card);color:var(--text-primary);font:inherit;font-size:13px;font-weight:650;margin-bottom:10px}.cf-expand svg{width:17px;height:17px}
+.bottom-sheet:has(.cf-view){height:94%}.bottom-sheet:has(.cf-view) .sheet-handle-zone,.bottom-sheet:has(.cf-view) .sheet-header{flex-shrink:0}.bottom-sheet:has(.cf-view) .sheet-content{display:flex;flex:1;min-height:0;padding:0;overflow:hidden}.bottom-sheet:has(.cf-view) .cf-view{flex:1}.bottom-sheet:has(.cf-view) .cf-footer{padding-bottom:calc(var(--device-safe-area-bottom,34px) + 8px)}.bottom-sheet:has(.cf-view) .sheet-header{padding-bottom:6px}.cf-view{display:flex;flex-direction:column;min-height:0;background:var(--surface-card);color:var(--text-primary)}.cf-header{padding:0 18px 12px;border-bottom:1px solid var(--surface-border);flex-shrink:0}.cf-back{display:flex;align-items:center;gap:4px;min-height:44px;font:inherit;font-weight:650;font-size:13px;color:var(--series-home);border:0;background:none;padding:0}.cf-anchor{display:flex;flex-direction:column;gap:4px;font-size:12px;line-height:1.4}.cf-anchor b{font-size:14px}.cf-anchor span{color:var(--text-secondary)}.cf-body{position:relative;flex:1;min-height:0}.cf-carousel{width:100%}.cf-track{gap:12px;padding:16px 14px 20px}.cf-slide{flex-shrink:0;min-width:0}.cf-slide .mf-card{margin:0}.cf-slide .mf-milestone-chart,.cf-slide .expectation-plot,.cf-slide .variety-plot{height:245px}.cf-slide .pr-finish-plot{height:230px}.cf-slide .mf-card h2{font-size:26px}.cf-footer{flex-shrink:0;border-top:1px solid var(--surface-border);padding:8px 14px 0;background:var(--surface-card)}.cf-navigation{display:flex;align-items:center;gap:10px}.cf-navigation>button{display:grid;place-items:center;min-width:44px;min-height:44px;border:1px solid var(--surface-border);border-radius:50%;background:var(--surface-card);color:var(--text-primary)}.cf-navigation>button:disabled{opacity:.3}.cf-navigation>div{flex:1;text-align:center;display:flex;flex-direction:column;gap:4px;font-size:13px}.cf-navigation span{font-size:12px;color:var(--text-secondary)}.cf-dots{display:flex;justify-content:center;gap:6px;margin-top:8px}.cf-dots i{height:5px;width:5px;border-radius:5px;background:var(--surface-border)}.cf-dots i[data-active=true]{width:20px;background:var(--series-home)}.cf-dialog{position:fixed;z-index:10019;top:50%;left:50%;transform:translate(-50%,-50%);width:min(670px,90vw);background:var(--surface-card);border-radius:24px;padding:20px;box-shadow:0 15px 70px #0003}.cf-wide .cf-slide .pr-finish-plot,.cf-wide .cf-slide .expectation-plot,.cf-wide .cf-slide .variety-plot{height:290px}
+.cf-card-content :where(button){font:inherit;color:inherit;background:transparent;border:0;cursor:pointer}.cf-card-content .milestone-readout>button{min-width:44px;background:var(--surface-card);border:1px solid var(--surface-border)}.cf-card-content .milestone-detail{padding:8px}.cf-view button:focus-visible{outline:2px solid var(--series-home);outline-offset:2px}.cf-anchor span{color:var(--text-primary)}
+.cf-large .cf-anchor,.cf-large .cf-anchor b,.cf-large .cf-navigation>div,.cf-large .cf-navigation span{font-size:16px}.cf-large .mf-card h2{font-size:30px}.cf-large .mf-caption,.cf-large .card-caption,.cf-large .mf-detail,.cf-large .profile-stat,.cf-large .milestone-detail>span,.cf-large .milestone-detail strong{font-size:15px}.cf-large .cf-slide .mf-card-top{font-size:13px}.cf-large .cf-card-content .milestone-detail strong span{display:block}.cf-large .cf-back{font-size:16px}
+
+.cf-overlay{position:fixed;inset:0;z-index:10018;background:#0005}
+/* Let vertical wheel/touch scrolling reach the reading pane while the rail
+   continues to contain horizontal overscroll. */
+.cf-view .cf-carousel{overscroll-behavior-x:contain;overscroll-behavior-y:auto}
+.cf-view .cf-track{align-items:flex-start}
+
+.cf-single .cf-track{padding-bottom:calc(var(--device-safe-area-bottom,34px) + 20px)}
+
+/* The reader owns its scroll panes. Prevent focus/scroll-into-view from moving
+   the simulated screen to offscreen carousel or keyboard content. */
+.device-screen:has(.cf-view){overflow:clip}
+
+/* A phone reader already has a named match and a Back control. Keep the dialog
+   title for accessibility without spending a second visible heading row. */
+.bottom-sheet:has(.cf-view) .sheet-header{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.cf-view:not(.cf-wide) .cf-header{display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:12px;align-items:start;padding-top:2px}
+.cf-view:not(.cf-wide) .cf-back{align-self:start;min-width:44px;gap:2px}
+.cf-view:not(.cf-wide) .cf-anchor{padding-top:8px}
+
+.cf-empty{padding:24px 18px;line-height:1.5}.cf-empty h2{font-size:20px}.cf-empty p{color:var(--text-secondary)}
+.cf-refresh{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;font-size:14px}.cf-refresh button{min-height:44px;padding:8px 14px;border:1px solid var(--surface-border);border-radius:12px;background:var(--surface-card);color:var(--text-primary);font:inherit;font-weight:650}
+
+/* Paired Radix dialog content must receive pointer input above its backdrop. */
+.cf-overlay + [role="dialog"]{z-index:10019}
+
+/* Detail sheets use the actual preview/screen height, including compact phones. */
+.bottom-sheet:has(.pk-details,.ds-details){max-height:94%!important}
+
+/* Scrolling long modal content must not scroll the clipped simulated screen. */
+.device-screen:has(.bottom-sheet .pk-details,.bottom-sheet .ds-details){overflow:clip}
+
+/* The phone template suppresses default outlines with !important. The reader
+   explicitly restores a visible keyboard location without changing that runtime. */
+.device-screen .cf-view :is(button,a[href],input,select,textarea,summary,[tabindex="0"]):focus-visible{outline:2px solid var(--series-home)!important;outline-offset:2px}
+
+/* Quantitative pages own their marks. Neighboring axes cannot paint into the
+   selected card; the persistent footer supplies the paging affordance. */
+.cf-view .cf-slide{overflow:clip}

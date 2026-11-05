@@ -396,6 +396,10 @@ async def test_replacement_primary_frees_pending_predecessor_then_recovers(
     recovery, monkeypatch, evict_fence, lose_reply
 ):
     r = recovery
+    # This case tests replacement identity/cleanup, not the 150ms deadline.
+    # CI41970710552 timed out committing initialize on a loaded runner; keep
+    # timeout and uncertain-ack coverage in the dedicated authority cases.
+    monkeypatch.setattr(r.store, "budget_s", 2.0)
     first = await r.prepare()
     await r.controller.arm(first)
     await r.controller.initialize(first)

@@ -12,6 +12,7 @@
 import { GA_CONFIG, getPlatform, getStoredConsent, isAnalyticsConfigured } from './config';
 import { sanitizeEvent } from './sanitize';
 import { dropPendingFirstPartyMirror, mirrorToFirstPartySink } from './firstPartySink';
+import { readLabTraffic } from './labTraffic';
 import type {
   AnalyticsEventMap,
   AnalyticsEventName,
@@ -118,9 +119,11 @@ export function initializeAnalytics(): void {
     },
   });
 
-  // Set platform
+  // Set platform. Our own lab browsers (#12030, `labTraffic.ts`) also mark every
+  // hit internal, so GA4's Internal Traffic filter can keep them out of people.
   window.gtag('set', {
     platform: getPlatform(),
+    ...(readLabTraffic() ? { traffic_type: 'internal' } : {}),
   });
 
   sessionStartTime = Date.now();

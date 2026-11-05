@@ -1,0 +1,36 @@
+{
+  "eventID": 15322123,
+  "eventDate": "2026-10-01",
+  "competition": "FOX Legacy Cup",
+  "stage": "Group B",
+  "game": "Counter-Strike 2",
+  "format": "BO1",
+  "home": "Nice Try",
+  "away": "Flame Hard",
+  "providerOrder": [
+    "Flame Hard",
+    "Nice Try"
+  ],
+  "mapsWon": [
+    0,
+    1
+  ],
+  "map": {
+    "number": 1,
+    "name": "Dust2",
+    "roundsWon": [
+      1,
+      13
+    ]
+  },
+  "status": "finished",
+  "actualStartAt": null,
+  "completedAt": null,
+  "source": {
+    "publisher": "Scores24",
+    "url": "https://scores24.live/ru/csgo/m-01-10-2026-flame-hard-nice-try",
+    "sha256": "e5a5ec1f2adc9bdcf5b0ae552038a073e1b724822b7752d55ce5f6c5af2b3a46",
+    "capturedAt": "2026-10-13T14:24:47.500712+00:00",
+    "kind": "published specialist scoreboard"
+  }
+}

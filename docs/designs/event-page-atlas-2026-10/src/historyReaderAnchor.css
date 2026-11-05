@@ -1,0 +1,23 @@
+.history-reader-anchor{width:100%;min-width:0}
+.history-anchor-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.history-anchor-top>div{display:grid;gap:4px;min-width:0}
+.history-anchor-top button{border:0;background:none;color:var(--text-primary);width:44px;min-height:44px;flex-shrink:0;cursor:pointer}
+.history-anchor-top svg{width:18px;height:18px}
+.history-anchor-baselines{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 14px;margin-top:6px}
+.history-anchor-count-3{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px 10px}
+.history-anchor-basis{grid-column:1/-1;font-size:12px;color:var(--text-secondary)}
+.history-anchor-outcome{display:flex;align-items:baseline;justify-content:space-between;gap:5px;flex-wrap:wrap;border-top:2px solid var(--series-home);padding-top:5px;min-width:0}
+.history-anchor-outcome.away{border-color:var(--series-away);border-top-style:dashed}
+.history-anchor-outcome.unknown{border-color:var(--surface-border);border-top-style:dotted}
+.history-anchor-outcome span{font-size:13px;font-weight:650}
+.history-anchor-outcome strong{font-size:20px;line-height:1.2;color:var(--series-home);white-space:nowrap}
+.history-anchor-outcome.away strong{color:var(--series-away)}
+.history-anchor-outcome strong[data-unavailable=true]{font-size:12px;font-weight:500;color:var(--text-secondary)}
+.cf-view:not(.cf-wide):has(.history-reader-anchor) .cf-anchor,
+.cf-view:not(.cf-wide) .history-reader-anchor{display:contents}
+.cf-view:not(.cf-wide) .history-anchor-top{grid-column:2;padding-top:8px}
+.cf-view:not(.cf-wide) .history-anchor-baselines{grid-column:1/-1}
+.cf-large .history-anchor-basis,.cf-large .history-anchor-outcome span,.cf-large .history-anchor-outcome strong[data-unavailable=true]{font-size:16px}
+.cf-large .history-anchor-outcome strong{font-size:24px}
+.cf-large .history-anchor-outcome{flex-direction:column;align-items:flex-start}
+.history-anchor-count-3 .history-anchor-outcome{flex-direction:column;align-items:flex-start}

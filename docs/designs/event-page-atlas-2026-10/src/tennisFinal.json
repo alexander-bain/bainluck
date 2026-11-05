@@ -1,0 +1,1066 @@
+{
+  "eventID": 15327291,
+  "home": "Alejandro Davidovich Fokina",
+  "away": "Frances Tiafoe",
+  "sets": [
+    [
+      7,
+      6
+    ],
+    [
+      4,
+      6
+    ],
+    [
+      7,
+      6
+    ]
+  ],
+  "homeSets": 2,
+  "awaySets": 1,
+  "homeGames": 18,
+  "awayGames": 18,
+  "totalGames": 36,
+  "scoreAt": "2026-10-11T17:06:47.950466+00:00",
+  "scoreSource": "espn",
+  "openingTotal": 22.5,
+  "openingTotalAt": null,
+  "prematchHome": 0.455,
+  "prematchAway": 0.545,
+  "prematchSource": "kalshi",
+  "prematchAt": null,
+  "bindings": {
+    "setWinner": [
+      65138603,
+      65138604,
+      null
+    ],
+    "exactScore": 65129363,
+    "totals": [
+      65138607,
+      65123147,
+      65123148
+    ],
+    "setHandicaps": [
+      65123150,
+      65123149
+    ],
+    "gameHandicap": 65149801
+  },
+  "rows": [
+    {
+      "threshold": 21.5,
+      "over_probability": 1.0,
+      "source": "polymarket",
+      "market_type": "game_total",
+      "market_name": "Fokina vs. Tiafoe: Match O/U 21.5",
+      "outcome_name": "Over",
+      "observed_at": "2026-10-11T14:06:15.499070+00:00",
+      "contributor_outcome_ids": [
+        244929349
+      ],
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "movement": 0.374,
+      "period": null,
+      "_market_id": 65138607,
+      "_external_id": "0x29771440856d87a051957685d8f4811366cbc4ebdf1a4356b9a36a4faa253110",
+      "original": "{\"_external_id\": \"0x29771440856d87a051957685d8f4811366cbc4ebdf1a4356b9a36a4faa253110\", \"_market_id\": 65138607, \"contributor_outcome_ids\": [244929349], \"is_winner\": true, \"market_name\": \"Fokina vs. Tiafoe: Match O/U 21.5\", \"market_type\": \"game_total\", \"movement\": 0.374, \"observed_at\": \"2026-10-11T14:06:15.499070+00:00\", \"outcome_name\": \"Over\", \"over_probability\": 1.0, \"period\": null, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\", \"threshold\": 21.5}",
+      "key": "tennis-final:totals:0",
+      "category": "totals",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "threshold": 22.5,
+      "over_probability": 1.0,
+      "source": "polymarket",
+      "market_type": "game_total",
+      "market_name": "Fokina vs. Tiafoe: Match O/U 22.5",
+      "outcome_name": "Over",
+      "observed_at": "2026-10-11T14:54:06.778032+00:00",
+      "contributor_outcome_ids": [
+        244876655
+      ],
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "movement": 0.4745,
+      "period": null,
+      "_market_id": 65123147,
+      "_external_id": "0xb2122c728db698a1ea1ec445f7bf855bb499fc5fe2bbb9d3fd852e8351260ec6",
+      "original": "{\"_external_id\": \"0xb2122c728db698a1ea1ec445f7bf855bb499fc5fe2bbb9d3fd852e8351260ec6\", \"_market_id\": 65123147, \"contributor_outcome_ids\": [244876655], \"is_winner\": true, \"market_name\": \"Fokina vs. Tiafoe: Match O/U 22.5\", \"market_type\": \"game_total\", \"movement\": 0.4745, \"observed_at\": \"2026-10-11T14:54:06.778032+00:00\", \"outcome_name\": \"Over\", \"over_probability\": 1.0, \"period\": null, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\", \"threshold\": 22.5}",
+      "key": "tennis-final:totals:1",
+      "category": "totals",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "threshold": 23.5,
+      "over_probability": 1.0,
+      "source": "polymarket",
+      "market_type": "game_total",
+      "market_name": "Fokina vs. Tiafoe: Match O/U 23.5",
+      "outcome_name": "Over",
+      "observed_at": "2026-10-11T14:54:06.778032+00:00",
+      "contributor_outcome_ids": [
+        244876657
+      ],
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "movement": 0.5445,
+      "period": null,
+      "_market_id": 65123148,
+      "_external_id": "0x083e0b7729c83e94070bdb7fd4676d3db2a21e7da52470276d8ba88e33342f1a",
+      "original": "{\"_external_id\": \"0x083e0b7729c83e94070bdb7fd4676d3db2a21e7da52470276d8ba88e33342f1a\", \"_market_id\": 65123148, \"contributor_outcome_ids\": [244876657], \"is_winner\": true, \"market_name\": \"Fokina vs. Tiafoe: Match O/U 23.5\", \"market_type\": \"game_total\", \"movement\": 0.5445, \"observed_at\": \"2026-10-11T14:54:06.778032+00:00\", \"outcome_name\": \"Over\", \"over_probability\": 1.0, \"period\": null, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\", \"threshold\": 23.5}",
+      "key": "tennis-final:totals:2",
+      "category": "totals",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Set Handicap: Frances Tiafoe (-1.5) vs Alejandro Davidovich Fokina (+1.5)",
+      "outcome_name": "Alejandro Davidovich Fokina",
+      "observed_at": "2026-10-11T14:06:15.499070+00:00",
+      "contributor_outcome_ids": [
+        244876662
+      ],
+      "threshold": null,
+      "probability": 0.9995,
+      "source": "polymarket",
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "_market_id": 65123150,
+      "original": "{\"_market_id\": 65123150, \"contributor_outcome_ids\": [244876662], \"is_winner\": true, \"market_name\": \"Set Handicap: Frances Tiafoe (-1.5) vs Alejandro Davidovich Fokina (+1.5)\", \"observed_at\": \"2026-10-11T14:06:15.499070+00:00\", \"outcome_name\": \"Alejandro Davidovich Fokina\", \"probability\": 0.9995, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\", \"threshold\": null}",
+      "key": "tennis-final:spreads:0",
+      "category": "spreads",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Set Handicap: Alejandro Davidovich Fokina (-1.5) vs Frances Tiafoe (+1.5)",
+      "outcome_name": "Frances Tiafoe",
+      "observed_at": "2026-10-11T14:54:06.778032+00:00",
+      "contributor_outcome_ids": [
+        244876660
+      ],
+      "threshold": null,
+      "probability": 0.9995,
+      "source": "polymarket",
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "_market_id": 65123149,
+      "original": "{\"_market_id\": 65123149, \"contributor_outcome_ids\": [244876660], \"is_winner\": true, \"market_name\": \"Set Handicap: Alejandro Davidovich Fokina (-1.5) vs Frances Tiafoe (+1.5)\", \"observed_at\": \"2026-10-11T14:54:06.778032+00:00\", \"outcome_name\": \"Frances Tiafoe\", \"probability\": 0.9995, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\", \"threshold\": null}",
+      "key": "tennis-final:spreads:1",
+      "category": "spreads",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Game Spread: Frances Tiafoe (-0.5) vs Alejandro Davidovich Fokina (+0.5)",
+      "outcome_name": "Alejandro Davidovich Fokina",
+      "observed_at": "2026-10-11T16:20:15.999040+00:00",
+      "contributor_outcome_ids": [
+        244973047
+      ],
+      "threshold": null,
+      "probability": 0.9995,
+      "source": "polymarket",
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "_market_id": 65149801,
+      "original": "{\"_market_id\": 65149801, \"contributor_outcome_ids\": [244973047], \"is_winner\": true, \"market_name\": \"Game Spread: Frances Tiafoe (-0.5) vs Alejandro Davidovich Fokina (+0.5)\", \"observed_at\": \"2026-10-11T16:20:15.999040+00:00\", \"outcome_name\": \"Alejandro Davidovich Fokina\", \"probability\": 0.9995, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\", \"threshold\": null}",
+      "key": "tennis-final:spreads:2",
+      "category": "spreads",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Davidovich Fokina vs Tiafoe",
+      "outcome_name": "Alejandro Davidovich Fokina",
+      "observed_at": "2026-10-11T15:21:26.099516+00:00",
+      "contributor_outcome_ids": [
+        244894423
+      ],
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65129355,
+      "original": "{\"_market_id\": 65129355, \"contributor_outcome_ids\": [244894423], \"is_winner\": true, \"market_name\": \"Davidovich Fokina vs Tiafoe\", \"observed_at\": \"2026-10-11T15:21:26.099516+00:00\", \"outcome_name\": \"Alejandro Davidovich Fokina\", \"probability\": 1.0, \"resolution_source\": \"api_settlement\", \"source\": \"kalshi\"}",
+      "key": "tennis-final:other:0",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Davidovich Fokina vs Tiafoe",
+      "outcome_name": "Frances Tiafoe",
+      "observed_at": "2026-10-11T15:21:26.099516+00:00",
+      "contributor_outcome_ids": [
+        244894424
+      ],
+      "probability": null,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65129355,
+      "original": "{\"_market_id\": 65129355, \"contributor_outcome_ids\": [244894424], \"is_winner\": false, \"market_name\": \"Davidovich Fokina vs Tiafoe\", \"observed_at\": \"2026-10-11T15:21:26.099516+00:00\", \"outcome_name\": \"Frances Tiafoe\", \"probability\": null, \"resolution_source\": \"api_settlement\", \"source\": \"kalshi\"}",
+      "key": "tennis-final:other:1",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Shanghai Rolex Masters: Completed Match: Alejandro Davidovich Fokina vs Frances Tiafoe",
+      "outcome_name": "Yes",
+      "observed_at": "2026-10-11T14:54:06.778032+00:00",
+      "contributor_outcome_ids": [
+        244873262
+      ],
+      "probability": 0.999,
+      "source": "polymarket",
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "_market_id": 65121632,
+      "original": "{\"_market_id\": 65121632, \"contributor_outcome_ids\": [244873262], \"is_winner\": true, \"market_name\": \"Shanghai Rolex Masters: Completed Match: Alejandro Davidovich Fokina vs Frances Tiafoe\", \"observed_at\": \"2026-10-11T14:54:06.778032+00:00\", \"outcome_name\": \"Yes\", \"probability\": 0.999, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\"}",
+      "key": "tennis-final:other:2",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Shanghai Rolex Masters: Completed Match: Alejandro Davidovich Fokina vs Frances Tiafoe",
+      "outcome_name": "No",
+      "observed_at": "2026-10-11T16:20:15.999040+00:00",
+      "contributor_outcome_ids": [
+        244873263
+      ],
+      "probability": null,
+      "source": "polymarket",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65121632,
+      "original": "{\"_market_id\": 65121632, \"contributor_outcome_ids\": [244873263], \"is_winner\": false, \"market_name\": \"Shanghai Rolex Masters: Completed Match: Alejandro Davidovich Fokina vs Frances Tiafoe\", \"observed_at\": \"2026-10-11T16:20:15.999040+00:00\", \"outcome_name\": \"No\", \"probability\": null, \"resolution_source\": \"api_settlement\", \"source\": \"polymarket\"}",
+      "key": "tennis-final:other:3",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Set 2 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe",
+      "outcome_name": "Frances Tiafoe",
+      "observed_at": "2026-10-11T14:54:06.778032+00:00",
+      "contributor_outcome_ids": [
+        244929344
+      ],
+      "probability": 0.9995,
+      "source": "polymarket",
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "_market_id": 65138604,
+      "original": "{\"_market_id\": 65138604, \"contributor_outcome_ids\": [244929344], \"is_winner\": true, \"market_name\": \"Set 2 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe\", \"observed_at\": \"2026-10-11T14:54:06.778032+00:00\", \"outcome_name\": \"Frances Tiafoe\", \"probability\": 0.9995, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\"}",
+      "key": "tennis-final:other:4",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Set 2 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe",
+      "outcome_name": "Alejandro Davidovich Fokina",
+      "observed_at": "2026-10-11T16:20:15.999040+00:00",
+      "contributor_outcome_ids": [
+        244929343
+      ],
+      "probability": null,
+      "source": "polymarket",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65138604,
+      "original": "{\"_market_id\": 65138604, \"contributor_outcome_ids\": [244929343], \"is_winner\": false, \"market_name\": \"Set 2 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe\", \"observed_at\": \"2026-10-11T16:20:15.999040+00:00\", \"outcome_name\": \"Alejandro Davidovich Fokina\", \"probability\": null, \"resolution_source\": \"api_settlement\", \"source\": \"polymarket\"}",
+      "key": "tennis-final:other:5",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Set 1 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe",
+      "outcome_name": "Alejandro Davidovich Fokina",
+      "observed_at": "2026-10-11T14:06:15.499070+00:00",
+      "contributor_outcome_ids": [
+        244929341
+      ],
+      "probability": 0.9995,
+      "source": "polymarket",
+      "is_winner": true,
+      "resolution_source": "clob_authoritative",
+      "_market_id": 65138603,
+      "original": "{\"_market_id\": 65138603, \"contributor_outcome_ids\": [244929341], \"is_winner\": true, \"market_name\": \"Set 1 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe\", \"observed_at\": \"2026-10-11T14:06:15.499070+00:00\", \"outcome_name\": \"Alejandro Davidovich Fokina\", \"probability\": 0.9995, \"resolution_source\": \"clob_authoritative\", \"source\": \"polymarket\"}",
+      "key": "tennis-final:other:6",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Set 1 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe",
+      "outcome_name": "Frances Tiafoe",
+      "observed_at": "2026-10-11T14:54:06.778032+00:00",
+      "contributor_outcome_ids": [
+        244929342
+      ],
+      "probability": null,
+      "source": "polymarket",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65138603,
+      "original": "{\"_market_id\": 65138603, \"contributor_outcome_ids\": [244929342], \"is_winner\": false, \"market_name\": \"Set 1 Winner: Alejandro Davidovich Fokina vs Frances Tiafoe\", \"observed_at\": \"2026-10-11T14:54:06.778032+00:00\", \"outcome_name\": \"Frances Tiafoe\", \"probability\": null, \"resolution_source\": \"api_settlement\", \"source\": \"polymarket\"}",
+      "key": "tennis-final:other:7",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score",
+      "outcome_name": "Alejandro Davidovich Fokina wins 2-1",
+      "observed_at": "2026-10-11T15:21:26.099516+00:00",
+      "contributor_outcome_ids": [
+        244894447
+      ],
+      "probability": 1.0,
+      "source": "kalshi",
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "_market_id": 65129363,
+      "original": "{\"_market_id\": 65129363, \"contributor_outcome_ids\": [244894447], \"is_winner\": true, \"market_name\": \"Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score\", \"observed_at\": \"2026-10-11T15:21:26.099516+00:00\", \"outcome_name\": \"Alejandro Davidovich Fokina wins 2-1\", \"probability\": 1.0, \"resolution_source\": \"api_settlement\", \"source\": \"kalshi\"}",
+      "key": "tennis-final:other:8",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score",
+      "outcome_name": "Frances Tiafoe wins 2-1",
+      "observed_at": "2026-10-11T15:21:26.099516+00:00",
+      "contributor_outcome_ids": [
+        244894448
+      ],
+      "probability": null,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65129363,
+      "original": "{\"_market_id\": 65129363, \"contributor_outcome_ids\": [244894448], \"is_winner\": false, \"market_name\": \"Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score\", \"observed_at\": \"2026-10-11T15:21:26.099516+00:00\", \"outcome_name\": \"Frances Tiafoe wins 2-1\", \"probability\": null, \"resolution_source\": \"api_settlement\", \"source\": \"kalshi\"}",
+      "key": "tennis-final:other:9",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score",
+      "outcome_name": "Frances Tiafoe wins 2-0",
+      "observed_at": "2026-10-11T15:21:26.099516+00:00",
+      "contributor_outcome_ids": [
+        244894446
+      ],
+      "probability": null,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65129363,
+      "original": "{\"_market_id\": 65129363, \"contributor_outcome_ids\": [244894446], \"is_winner\": false, \"market_name\": \"Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score\", \"observed_at\": \"2026-10-11T15:21:26.099516+00:00\", \"outcome_name\": \"Frances Tiafoe wins 2-0\", \"probability\": null, \"resolution_source\": \"api_settlement\", \"source\": \"kalshi\"}",
+      "key": "tennis-final:other:10",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    },
+    {
+      "market_name": "Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score",
+      "outcome_name": "Alejandro Davidovich Fokina wins 2-0",
+      "observed_at": "2026-10-11T15:21:26.099516+00:00",
+      "contributor_outcome_ids": [
+        244894445
+      ],
+      "probability": null,
+      "source": "kalshi",
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "_market_id": 65129363,
+      "original": "{\"_market_id\": 65129363, \"contributor_outcome_ids\": [244894445], \"is_winner\": false, \"market_name\": \"Alejandro Davidovich Fokina vs Frances Tiafoe: Exact Match Score\", \"observed_at\": \"2026-10-11T15:21:26.099516+00:00\", \"outcome_name\": \"Alejandro Davidovich Fokina wins 2-0\", \"probability\": null, \"resolution_source\": \"api_settlement\", \"source\": \"kalshi\"}",
+      "key": "tennis-final:other:11",
+      "category": "other",
+      "source_file": "raw/tennis-15327291-game-markets.json"
+    }
+  ],
+  "series": [
+    {
+      "timestamp": "2026-10-11T12:50:00+00:00",
+      "home_probability": 0.45808
+    },
+    {
+      "timestamp": "2026-10-11T12:51:00+00:00",
+      "home_probability": 0.45484
+    },
+    {
+      "timestamp": "2026-10-11T12:52:00+00:00",
+      "home_probability": 0.434485
+    },
+    {
+      "timestamp": "2026-10-11T12:53:00+00:00",
+      "home_probability": 0.45136
+    },
+    {
+      "timestamp": "2026-10-11T12:54:00+00:00",
+      "home_probability": 0.4598
+    },
+    {
+      "timestamp": "2026-10-11T12:55:00+00:00",
+      "home_probability": 0.464465
+    },
+    {
+      "timestamp": "2026-10-11T12:56:00+00:00",
+      "home_probability": 0.466795
+    },
+    {
+      "timestamp": "2026-10-11T12:57:00+00:00",
+      "home_probability": 0.44929
+    },
+    {
+      "timestamp": "2026-10-11T12:58:00+00:00",
+      "home_probability": 0.44429
+    },
+    {
+      "timestamp": "2026-10-11T12:59:00+00:00",
+      "home_probability": 0.41223
+    },
+    {
+      "timestamp": "2026-10-11T13:00:00+00:00",
+      "home_probability": 0.42497
+    },
+    {
+      "timestamp": "2026-10-11T13:01:00+00:00",
+      "home_probability": 0.460965
+    },
+    {
+      "timestamp": "2026-10-11T13:02:00+00:00",
+      "home_probability": 0.453965
+    },
+    {
+      "timestamp": "2026-10-11T13:03:00+00:00",
+      "home_probability": 0.45125
+    },
+    {
+      "timestamp": "2026-10-11T13:04:00+00:00",
+      "home_probability": 0.43676
+    },
+    {
+      "timestamp": "2026-10-11T13:05:00+00:00",
+      "home_probability": 0.431885
+    },
+    {
+      "timestamp": "2026-10-11T13:06:00+00:00",
+      "home_probability": 0.403045
+    },
+    {
+      "timestamp": "2026-10-11T13:07:00+00:00",
+      "home_probability": 0.32992
+    },
+    {
+      "timestamp": "2026-10-11T13:08:00+00:00",
+      "home_probability": 0.265195
+    },
+    {
+      "timestamp": "2026-10-11T13:09:00+00:00",
+      "home_probability": 0.22432
+    },
+    {
+      "timestamp": "2026-10-11T13:10:00+00:00",
+      "home_probability": 0.23082
+    },
+    {
+      "timestamp": "2026-10-11T13:11:00+00:00",
+      "home_probability": 0.321175
+    },
+    {
+      "timestamp": "2026-10-11T13:12:00+00:00",
+      "home_probability": 0.343835
+    },
+    {
+      "timestamp": "2026-10-11T13:13:00+00:00",
+      "home_probability": 0.28224
+    },
+    {
+      "timestamp": "2026-10-11T13:14:00+00:00",
+      "home_probability": 0.32124
+    },
+    {
+      "timestamp": "2026-10-11T13:15:00+00:00",
+      "home_probability": 0.41598
+    },
+    {
+      "timestamp": "2026-10-11T13:16:00+00:00",
+      "home_probability": 0.39281
+    },
+    {
+      "timestamp": "2026-10-11T13:17:00+00:00",
+      "home_probability": 0.351595
+    },
+    {
+      "timestamp": "2026-10-11T13:18:00+00:00",
+      "home_probability": 0.36663
+    },
+    {
+      "timestamp": "2026-10-11T13:19:00+00:00",
+      "home_probability": 0.35955
+    },
+    {
+      "timestamp": "2026-10-11T13:20:00+00:00",
+      "home_probability": 0.352015
+    },
+    {
+      "timestamp": "2026-10-11T13:21:00+00:00",
+      "home_probability": 0.34789
+    },
+    {
+      "timestamp": "2026-10-11T13:22:00+00:00",
+      "home_probability": 0.370655
+    },
+    {
+      "timestamp": "2026-10-11T13:23:00+00:00",
+      "home_probability": 0.397505
+    },
+    {
+      "timestamp": "2026-10-11T13:24:00+00:00",
+      "home_probability": 0.363665
+    },
+    {
+      "timestamp": "2026-10-11T13:25:00+00:00",
+      "home_probability": 0.35313
+    },
+    {
+      "timestamp": "2026-10-11T13:26:00+00:00",
+      "home_probability": 0.35966
+    },
+    {
+      "timestamp": "2026-10-11T13:27:00+00:00",
+      "home_probability": 0.40761
+    },
+    {
+      "timestamp": "2026-10-11T13:28:00+00:00",
+      "home_probability": 0.39656
+    },
+    {
+      "timestamp": "2026-10-11T13:29:00+00:00",
+      "home_probability": 0.38253
+    },
+    {
+      "timestamp": "2026-10-11T13:30:00+00:00",
+      "home_probability": 0.36737
+    },
+    {
+      "timestamp": "2026-10-11T13:31:00+00:00",
+      "home_probability": 0.392155
+    },
+    {
+      "timestamp": "2026-10-11T13:32:00+00:00",
+      "home_probability": 0.3685
+    },
+    {
+      "timestamp": "2026-10-11T13:33:00+00:00",
+      "home_probability": 0.35863
+    },
+    {
+      "timestamp": "2026-10-11T13:34:00+00:00",
+      "home_probability": 0.36953
+    },
+    {
+      "timestamp": "2026-10-11T13:35:00+00:00",
+      "home_probability": 0.41432
+    },
+    {
+      "timestamp": "2026-10-11T13:36:00+00:00",
+      "home_probability": 0.421045
+    },
+    {
+      "timestamp": "2026-10-11T13:37:00+00:00",
+      "home_probability": 0.361045
+    },
+    {
+      "timestamp": "2026-10-11T13:38:00+00:00",
+      "home_probability": 0.264805
+    },
+    {
+      "timestamp": "2026-10-11T13:39:00+00:00",
+      "home_probability": 0.31193
+    },
+    {
+      "timestamp": "2026-10-11T13:40:00+00:00",
+      "home_probability": 0.392415
+    },
+    {
+      "timestamp": "2026-10-11T13:41:00+00:00",
+      "home_probability": 0.47719
+    },
+    {
+      "timestamp": "2026-10-11T13:42:00+00:00",
+      "home_probability": 0.54165
+    },
+    {
+      "timestamp": "2026-10-11T13:43:00+00:00",
+      "home_probability": 0.61065
+    },
+    {
+      "timestamp": "2026-10-11T13:44:00+00:00",
+      "home_probability": 0.61875
+    },
+    {
+      "timestamp": "2026-10-11T13:45:00+00:00",
+      "home_probability": 0.672185
+    },
+    {
+      "timestamp": "2026-10-11T13:46:00+00:00",
+      "home_probability": 0.672185
+    },
+    {
+      "timestamp": "2026-10-11T13:47:00+00:00",
+      "home_probability": 0.69107
+    },
+    {
+      "timestamp": "2026-10-11T13:48:00+00:00",
+      "home_probability": 0.65588
+    },
+    {
+      "timestamp": "2026-10-11T13:49:00+00:00",
+      "home_probability": 0.682585
+    },
+    {
+      "timestamp": "2026-10-11T13:50:00+00:00",
+      "home_probability": 0.69495
+    },
+    {
+      "timestamp": "2026-10-11T13:51:00+00:00",
+      "home_probability": 0.703075
+    },
+    {
+      "timestamp": "2026-10-11T13:52:00+00:00",
+      "home_probability": 0.749395
+    },
+    {
+      "timestamp": "2026-10-11T13:53:00+00:00",
+      "home_probability": 0.71107
+    },
+    {
+      "timestamp": "2026-10-11T13:54:00+00:00",
+      "home_probability": 0.708725
+    },
+    {
+      "timestamp": "2026-10-11T13:55:00+00:00",
+      "home_probability": 0.691015
+    },
+    {
+      "timestamp": "2026-10-11T13:56:00+00:00",
+      "home_probability": 0.646735
+    },
+    {
+      "timestamp": "2026-10-11T13:57:00+00:00",
+      "home_probability": 0.662585
+    },
+    {
+      "timestamp": "2026-10-11T13:58:00+00:00",
+      "home_probability": 0.70024
+    },
+    {
+      "timestamp": "2026-10-11T13:59:00+00:00",
+      "home_probability": 0.70353
+    },
+    {
+      "timestamp": "2026-10-11T14:00:00+00:00",
+      "home_probability": 0.705155
+    },
+    {
+      "timestamp": "2026-10-11T14:01:00+00:00",
+      "home_probability": 0.70227
+    },
+    {
+      "timestamp": "2026-10-11T14:02:00+00:00",
+      "home_probability": 0.75438
+    },
+    {
+      "timestamp": "2026-10-11T14:03:00+00:00",
+      "home_probability": 0.74015
+    },
+    {
+      "timestamp": "2026-10-11T14:04:00+00:00",
+      "home_probability": 0.73446
+    },
+    {
+      "timestamp": "2026-10-11T14:05:00+00:00",
+      "home_probability": 0.71481
+    },
+    {
+      "timestamp": "2026-10-11T14:06:00+00:00",
+      "home_probability": 0.73009
+    },
+    {
+      "timestamp": "2026-10-11T14:07:00+00:00",
+      "home_probability": 0.70366
+    },
+    {
+      "timestamp": "2026-10-11T14:08:00+00:00",
+      "home_probability": 0.70254
+    },
+    {
+      "timestamp": "2026-10-11T14:09:00+00:00",
+      "home_probability": 0.67992
+    },
+    {
+      "timestamp": "2026-10-11T14:10:00+00:00",
+      "home_probability": 0.706715
+    },
+    {
+      "timestamp": "2026-10-11T14:11:00+00:00",
+      "home_probability": 0.693305
+    },
+    {
+      "timestamp": "2026-10-11T14:12:00+00:00",
+      "home_probability": 0.718045
+    },
+    {
+      "timestamp": "2026-10-11T14:13:00+00:00",
+      "home_probability": 0.714975
+    },
+    {
+      "timestamp": "2026-10-11T14:14:00+00:00",
+      "home_probability": 0.728445
+    },
+    {
+      "timestamp": "2026-10-11T14:15:00+00:00",
+      "home_probability": 0.730855
+    },
+    {
+      "timestamp": "2026-10-11T14:16:00+00:00",
+      "home_probability": 0.70162
+    },
+    {
+      "timestamp": "2026-10-11T14:17:00+00:00",
+      "home_probability": 0.70927
+    },
+    {
+      "timestamp": "2026-10-11T14:18:00+00:00",
+      "home_probability": 0.738725
+    },
+    {
+      "timestamp": "2026-10-11T14:19:00+00:00",
+      "home_probability": 0.737955
+    },
+    {
+      "timestamp": "2026-10-11T14:20:00+00:00",
+      "home_probability": 0.724025
+    },
+    {
+      "timestamp": "2026-10-11T14:21:00+00:00",
+      "home_probability": 0.724635
+    },
+    {
+      "timestamp": "2026-10-11T14:22:00+00:00",
+      "home_probability": 0.71976
+    },
+    {
+      "timestamp": "2026-10-11T14:23:00+00:00",
+      "home_probability": 0.67781
+    },
+    {
+      "timestamp": "2026-10-11T14:24:00+00:00",
+      "home_probability": 0.635205
+    },
+    {
+      "timestamp": "2026-10-11T14:25:00+00:00",
+      "home_probability": 0.539625
+    },
+    {
+      "timestamp": "2026-10-11T14:26:00+00:00",
+      "home_probability": 0.536375
+    },
+    {
+      "timestamp": "2026-10-11T14:27:00+00:00",
+      "home_probability": 0.49954
+    },
+    {
+      "timestamp": "2026-10-11T14:28:00+00:00",
+      "home_probability": 0.46062
+    },
+    {
+      "timestamp": "2026-10-11T14:29:00+00:00",
+      "home_probability": 0.487355
+    },
+    {
+      "timestamp": "2026-10-11T14:30:00+00:00",
+      "home_probability": 0.448335
+    },
+    {
+      "timestamp": "2026-10-11T14:31:00+00:00",
+      "home_probability": 0.427625
+    },
+    {
+      "timestamp": "2026-10-11T14:32:00+00:00",
+      "home_probability": 0.413615
+    },
+    {
+      "timestamp": "2026-10-11T14:33:00+00:00",
+      "home_probability": 0.399935
+    },
+    {
+      "timestamp": "2026-10-11T14:34:00+00:00",
+      "home_probability": 0.40337
+    },
+    {
+      "timestamp": "2026-10-11T14:35:00+00:00",
+      "home_probability": 0.43912
+    },
+    {
+      "timestamp": "2026-10-11T14:36:00+00:00",
+      "home_probability": 0.468785
+    },
+    {
+      "timestamp": "2026-10-11T14:37:00+00:00",
+      "home_probability": 0.454175
+    },
+    {
+      "timestamp": "2026-10-11T14:38:00+00:00",
+      "home_probability": 0.473675
+    },
+    {
+      "timestamp": "2026-10-11T14:39:00+00:00",
+      "home_probability": 0.449175
+    },
+    {
+      "timestamp": "2026-10-11T14:40:00+00:00",
+      "home_probability": 0.42687
+    },
+    {
+      "timestamp": "2026-10-11T14:41:00+00:00",
+      "home_probability": 0.36512
+    },
+    {
+      "timestamp": "2026-10-11T14:42:00+00:00",
+      "home_probability": 0.384965
+    },
+    {
+      "timestamp": "2026-10-11T14:43:00+00:00",
+      "home_probability": 0.337475
+    },
+    {
+      "timestamp": "2026-10-11T14:44:00+00:00",
+      "home_probability": 0.3787
+    },
+    {
+      "timestamp": "2026-10-11T14:45:00+00:00",
+      "home_probability": 0.45072
+    },
+    {
+      "timestamp": "2026-10-11T14:46:00+00:00",
+      "home_probability": 0.458385
+    },
+    {
+      "timestamp": "2026-10-11T14:47:00+00:00",
+      "home_probability": 0.43834
+    },
+    {
+      "timestamp": "2026-10-11T14:48:00+00:00",
+      "home_probability": 0.39507
+    },
+    {
+      "timestamp": "2026-10-11T14:49:00+00:00",
+      "home_probability": 0.34621
+    },
+    {
+      "timestamp": "2026-10-11T14:50:00+00:00",
+      "home_probability": 0.396585
+    },
+    {
+      "timestamp": "2026-10-11T14:51:00+00:00",
+      "home_probability": 0.4465
+    },
+    {
+      "timestamp": "2026-10-11T14:52:00+00:00",
+      "home_probability": 0.448585
+    },
+    {
+      "timestamp": "2026-10-11T14:53:00+00:00",
+      "home_probability": 0.468505
+    },
+    {
+      "timestamp": "2026-10-11T14:54:00+00:00",
+      "home_probability": 0.462435
+    },
+    {
+      "timestamp": "2026-10-11T14:55:00+00:00",
+      "home_probability": 0.44959
+    },
+    {
+      "timestamp": "2026-10-11T14:56:00+00:00",
+      "home_probability": 0.405515
+    },
+    {
+      "timestamp": "2026-10-11T14:57:00+00:00",
+      "home_probability": 0.291545
+    },
+    {
+      "timestamp": "2026-10-11T14:58:00+00:00",
+      "home_probability": 0.19837
+    },
+    {
+      "timestamp": "2026-10-11T14:59:00+00:00",
+      "home_probability": 0.195485
+    },
+    {
+      "timestamp": "2026-10-11T15:00:00+00:00",
+      "home_probability": 0.364975
+    },
+    {
+      "timestamp": "2026-10-11T15:01:00+00:00",
+      "home_probability": 0.423155
+    },
+    {
+      "timestamp": "2026-10-11T15:02:00+00:00",
+      "home_probability": 0.466175
+    },
+    {
+      "timestamp": "2026-10-11T15:03:00+00:00",
+      "home_probability": 0.476875
+    },
+    {
+      "timestamp": "2026-10-11T15:04:00+00:00",
+      "home_probability": 0.540745
+    },
+    {
+      "timestamp": "2026-10-11T15:05:00+00:00",
+      "home_probability": 0.530565
+    },
+    {
+      "timestamp": "2026-10-11T15:06:00+00:00",
+      "home_probability": 0.514235
+    },
+    {
+      "timestamp": "2026-10-11T15:07:00+00:00",
+      "home_probability": 0.488635
+    },
+    {
+      "timestamp": "2026-10-11T15:08:00+00:00",
+      "home_probability": 0.45842
+    },
+    {
+      "timestamp": "2026-10-11T15:09:00+00:00",
+      "home_probability": 0.465595
+    },
+    {
+      "timestamp": "2026-10-11T15:10:00+00:00",
+      "home_probability": 0.45636
+    },
+    {
+      "timestamp": "2026-10-11T15:11:00+00:00",
+      "home_probability": 0.41542
+    },
+    {
+      "timestamp": "2026-10-11T15:12:00+00:00",
+      "home_probability": 0.25751
+    },
+    {
+      "timestamp": "2026-10-11T15:13:00+00:00",
+      "home_probability": 0.4579
+    },
+    {
+      "timestamp": "2026-10-11T15:14:00+00:00",
+      "home_probability": 0.507115
+    },
+    {
+      "timestamp": "2026-10-11T15:15:00+00:00",
+      "home_probability": 0.50918
+    },
+    {
+      "timestamp": "2026-10-11T15:16:00+00:00",
+      "home_probability": 0.54853
+    },
+    {
+      "timestamp": "2026-10-11T15:17:00+00:00",
+      "home_probability": 0.517795
+    },
+    {
+      "timestamp": "2026-10-11T15:18:00+00:00",
+      "home_probability": 0.45362
+    },
+    {
+      "timestamp": "2026-10-11T15:19:00+00:00",
+      "home_probability": 0.396335
+    },
+    {
+      "timestamp": "2026-10-11T15:20:00+00:00",
+      "home_probability": 0.412145
+    },
+    {
+      "timestamp": "2026-10-11T15:21:00+00:00",
+      "home_probability": 0.32771
+    },
+    {
+      "timestamp": "2026-10-11T15:22:00+00:00",
+      "home_probability": 0.453465
+    },
+    {
+      "timestamp": "2026-10-11T15:23:00+00:00",
+      "home_probability": 0.485965
+    },
+    {
+      "timestamp": "2026-10-11T15:24:00+00:00",
+      "home_probability": 0.51255
+    },
+    {
+      "timestamp": "2026-10-11T15:25:00+00:00",
+      "home_probability": 0.480015
+    },
+    {
+      "timestamp": "2026-10-11T15:26:00+00:00",
+      "home_probability": 0.444265
+    },
+    {
+      "timestamp": "2026-10-11T15:27:00+00:00",
+      "home_probability": 0.46773
+    },
+    {
+      "timestamp": "2026-10-11T15:28:00+00:00",
+      "home_probability": 0.37662
+    },
+    {
+      "timestamp": "2026-10-11T15:29:00+00:00",
+      "home_probability": 0.488745
+    },
+    {
+      "timestamp": "2026-10-11T15:30:00+00:00",
+      "home_probability": 0.47113
+    },
+    {
+      "timestamp": "2026-10-11T15:31:00+00:00",
+      "home_probability": 0.716295
+    },
+    {
+      "timestamp": "2026-10-11T15:32:00+00:00",
+      "home_probability": 0.59067
+    },
+    {
+      "timestamp": "2026-10-11T15:33:00+00:00",
+      "home_probability": 0.419385
+    },
+    {
+      "timestamp": "2026-10-11T15:34:00+00:00",
+      "home_probability": 0.301035
+    },
+    {
+      "timestamp": "2026-10-11T15:35:00+00:00",
+      "home_probability": 0.437845
+    },
+    {
+      "timestamp": "2026-10-11T15:36:00+00:00",
+      "home_probability": 0.624405
+    },
+    {
+      "timestamp": "2026-10-11T15:37:00+00:00",
+      "home_probability": 0.650935
+    },
+    {
+      "timestamp": "2026-10-11T15:38:00+00:00",
+      "home_probability": 0.88981
+    },
+    {
+      "timestamp": "2026-10-11T15:39:00+00:00",
+      "home_probability": 0.891273
+    },
+    {
+      "timestamp": "2026-10-11T15:40:00+00:00",
+      "home_probability": 0.891273
+    }
+  ],
+  "settlementEndpoint": {
+    "timestamp": "2026-10-11T15:40:00+00:00",
+    "home_probability": 1.0
+  }
+}

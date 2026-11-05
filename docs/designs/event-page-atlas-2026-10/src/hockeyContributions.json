@@ -1,0 +1,2352 @@
+{
+  "eventID": 15169793,
+  "espnID": "401891814",
+  "start": "2026-10-04T00:00:00+00:00",
+  "verifiedStart": true,
+  "home": "Minnesota Wild",
+  "away": "Boston Bruins",
+  "score": [
+    4,
+    1
+  ],
+  "points": [
+    {
+      "kind": "points",
+      "player": "Joel Eriksson Ek",
+      "key": "nhl-15169793-game-markets.json:player_props:56",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINJERIKSSONEK14-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Joel Eriksson Ek: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945025
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 1.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:56",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Joel Eriksson Ek records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:03:00+00:00",
+          "value": 0.55,
+          "volume": 3.52
+        }
+      ],
+      "actual": {
+        "name": "Joel Eriksson Ek",
+        "id": "3904091",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 1,
+        "points": 1
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Joel Eriksson Ek",
+      "key": "nhl-15169793-game-markets.json:player_props:57",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINJERIKSSONEK14-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Joel Eriksson Ek: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945026
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 1.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:57",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Joel Eriksson Ek records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Joel Eriksson Ek",
+        "id": "3904091",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 1,
+        "points": 1
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Joel Eriksson Ek",
+      "key": "nhl-15169793-game-markets.json:player_props:58",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 3.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINJERIKSSONEK14-3",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Joel Eriksson Ek: 3+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945027
+        ],
+        "threshold": 3.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 1.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:58",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Joel Eriksson Ek records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Joel Eriksson Ek",
+        "id": "3904091",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 1,
+        "points": 1
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Kirill Kaprizov",
+      "key": "nhl-15169793-game-markets.json:player_props:59",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINKKAPRIZOV97-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Kirill Kaprizov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945028
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 2.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:59",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Kirill Kaprizov records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T14:31:00+00:00",
+          "value": 0.69,
+          "volume": 0.07
+        },
+        {
+          "at": "2026-10-03T15:18:00+00:00",
+          "value": 0.69,
+          "volume": 0.93
+        },
+        {
+          "at": "2026-10-03T19:22:00+00:00",
+          "value": 0.72,
+          "volume": 2.0
+        }
+      ],
+      "actual": {
+        "name": "Kirill Kaprizov",
+        "id": "3942335",
+        "team": "Minnesota Wild",
+        "goals": 2,
+        "assists": 0,
+        "points": 2
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Kirill Kaprizov",
+      "key": "nhl-15169793-game-markets.json:player_props:60",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINKKAPRIZOV97-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Kirill Kaprizov: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945029
+        ],
+        "threshold": 2.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 2.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:60",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Kirill Kaprizov records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T16:51:00+00:00",
+          "value": 0.39,
+          "volume": 1.27
+        },
+        {
+          "at": "2026-10-03T19:51:00+00:00",
+          "value": 0.39,
+          "volume": 0.49
+        }
+      ],
+      "actual": {
+        "name": "Kirill Kaprizov",
+        "id": "3942335",
+        "team": "Minnesota Wild",
+        "goals": 2,
+        "assists": 0,
+        "points": 2
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Kirill Kaprizov",
+      "key": "nhl-15169793-game-markets.json:player_props:61",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 3.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINKKAPRIZOV97-3",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Kirill Kaprizov: 3+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945030
+        ],
+        "threshold": 3.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 2.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:61",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Kirill Kaprizov records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Kirill Kaprizov",
+        "id": "3942335",
+        "team": "Minnesota Wild",
+        "goals": 2,
+        "assists": 0,
+        "points": 2
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Max Shabanov",
+      "key": "nhl-15169793-game-markets.json:player_props:62",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMSHABANOV49-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Max Shabanov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945034
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": null,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "key": "nhl-15169793-game-markets.json:player_props:62",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Max Shabanov records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": null
+    },
+    {
+      "kind": "points",
+      "player": "Max Shabanov",
+      "key": "nhl-15169793-game-markets.json:player_props:63",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMSHABANOV49-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Max Shabanov: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945035
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": null,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "key": "nhl-15169793-game-markets.json:player_props:63",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Max Shabanov records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": null
+    },
+    {
+      "kind": "points",
+      "player": "Quinn Hughes",
+      "key": "nhl-15169793-game-markets.json:player_props:64",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINQHUGHES43-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Quinn Hughes: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945040
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 2.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:64",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Quinn Hughes records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:55:00+00:00",
+          "value": 0.69,
+          "volume": 1420.58
+        }
+      ],
+      "actual": {
+        "name": "Quinn Hughes",
+        "id": "4320548",
+        "team": "Minnesota Wild",
+        "goals": 1,
+        "assists": 1,
+        "points": 2
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Quinn Hughes",
+      "key": "nhl-15169793-game-markets.json:player_props:65",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINQHUGHES43-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Quinn Hughes: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945041
+        ],
+        "threshold": 2.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 2.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:65",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Quinn Hughes records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:36:00+00:00",
+          "value": 0.33,
+          "volume": 28.94
+        },
+        {
+          "at": "2026-10-03T23:51:00+00:00",
+          "value": 0.33,
+          "volume": 57.89
+        }
+      ],
+      "actual": {
+        "name": "Quinn Hughes",
+        "id": "4320548",
+        "team": "Minnesota Wild",
+        "goals": 1,
+        "assists": 1,
+        "points": 2
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Quinn Hughes",
+      "key": "nhl-15169793-game-markets.json:player_props:66",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 3.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINQHUGHES43-3",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Quinn Hughes: 3+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945042
+        ],
+        "threshold": 3.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 2.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:66",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Quinn Hughes records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Quinn Hughes",
+        "id": "4320548",
+        "team": "Minnesota Wild",
+        "goals": 1,
+        "assists": 1,
+        "points": 2
+      }
+    },
+    {
+      "kind": "points",
+      "player": "David Pastrnak",
+      "key": "nhl-15169793-game-markets.json:player_props:67",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSDPASTRNAK88-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "David Pastrnak: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945016
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:67",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If David Pastrnak records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T14:31:00+00:00",
+          "value": 0.62,
+          "volume": 0.06
+        },
+        {
+          "at": "2026-10-03T17:53:00+00:00",
+          "value": 0.62,
+          "volume": 31.42
+        },
+        {
+          "at": "2026-10-03T19:51:00+00:00",
+          "value": 0.61,
+          "volume": 0.31
+        },
+        {
+          "at": "2026-10-03T22:16:00+00:00",
+          "value": 0.61,
+          "volume": 1.59
+        }
+      ],
+      "actual": {
+        "name": "David Pastrnak",
+        "id": "3114778",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "David Pastrnak",
+      "key": "nhl-15169793-game-markets.json:player_props:68",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSDPASTRNAK88-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "David Pastrnak: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945017
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:68",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If David Pastrnak records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:15:00+00:00",
+          "value": 0.27,
+          "volume": 24.66
+        }
+      ],
+      "actual": {
+        "name": "David Pastrnak",
+        "id": "3114778",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "David Pastrnak",
+      "key": "nhl-15169793-game-markets.json:player_props:69",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 3.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSDPASTRNAK88-3",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "David Pastrnak: 3+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945018
+        ],
+        "threshold": 3.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:69",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If David Pastrnak records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "David Pastrnak",
+        "id": "3114778",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Elias Lindholm",
+      "key": "nhl-15169793-game-markets.json:player_props:70",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSELINDHOLM28-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Elias Lindholm: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945019
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3041994.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:70",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Elias Lindholm records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T19:01:00+00:00",
+          "value": 0.39,
+          "volume": 6.14
+        },
+        {
+          "at": "2026-10-03T21:02:00+00:00",
+          "value": 0.4,
+          "volume": 2.43
+        }
+      ],
+      "actual": {
+        "name": "Elias Lindholm",
+        "id": "3041994",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Elias Lindholm",
+      "key": "nhl-15169793-game-markets.json:player_props:71",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSELINDHOLM28-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Elias Lindholm: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945020
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3041994.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:71",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Elias Lindholm records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T22:39:00+00:00",
+          "value": 0.1,
+          "volume": 864.11
+        },
+        {
+          "at": "2026-10-03T22:41:00+00:00",
+          "value": 0.13,
+          "volume": 188.46
+        },
+        {
+          "at": "2026-10-03T22:54:00+00:00",
+          "value": 0.12,
+          "volume": 23.5
+        }
+      ],
+      "actual": {
+        "name": "Elias Lindholm",
+        "id": "3041994",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Hampus Lindholm",
+      "key": "nhl-15169793-game-markets.json:player_props:72",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSHLINDHOLM27-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Hampus Lindholm: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945021
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2968818.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:72",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Hampus Lindholm records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Hampus Lindholm",
+        "id": "2968818",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Hampus Lindholm",
+      "key": "nhl-15169793-game-markets.json:player_props:73",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSHLINDHOLM27-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Hampus Lindholm: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945022
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2968818.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:73",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Hampus Lindholm records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Hampus Lindholm",
+        "id": "2968818",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "JJ Peterka",
+      "key": "nhl-15169793-game-markets.json:player_props:74",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSJPETERKA10-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "JJ Peterka: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945023
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4697438.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:74",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If JJ Peterka records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:45:00+00:00",
+          "value": 0.47,
+          "volume": 4.1
+        },
+        {
+          "at": "2026-10-03T23:56:00+00:00",
+          "value": 0.47,
+          "volume": 102.57
+        }
+      ],
+      "actual": {
+        "name": "JJ Peterka",
+        "id": "4697438",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "JJ Peterka",
+      "key": "nhl-15169793-game-markets.json:player_props:75",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSJPETERKA10-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "JJ Peterka: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945024
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4697438.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:75",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If JJ Peterka records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:30:00+00:00",
+          "value": 0.15,
+          "volume": 1.25
+        }
+      ],
+      "actual": {
+        "name": "JJ Peterka",
+        "id": "4697438",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Matt Boldy",
+      "key": "nhl-15169793-game-markets.json:player_props:76",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMBOLDY12-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Matt Boldy: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945031
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:76",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Matt Boldy records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Matt Boldy",
+        "id": "4565233",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Matt Boldy",
+      "key": "nhl-15169793-game-markets.json:player_props:77",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMBOLDY12-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Matt Boldy: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945032
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:77",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Matt Boldy records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T14:31:00+00:00",
+          "value": 0.35,
+          "volume": 2.74
+        },
+        {
+          "at": "2026-10-03T16:51:00+00:00",
+          "value": 0.34,
+          "volume": 1.4
+        }
+      ],
+      "actual": {
+        "name": "Matt Boldy",
+        "id": "4565233",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Matt Boldy",
+      "key": "nhl-15169793-game-markets.json:player_props:78",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 3.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMBOLDY12-3",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Matt Boldy: 3+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945033
+        ],
+        "threshold": 3.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:78",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Matt Boldy records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Matt Boldy",
+        "id": "4565233",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Morgan Geekie",
+      "key": "nhl-15169793-game-markets.json:player_props:79",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSMGEEKIE39-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Morgan Geekie: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945036
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4268466.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:79",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Morgan Geekie records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:40:00+00:00",
+          "value": 0.48,
+          "volume": 40.2
+        }
+      ],
+      "actual": {
+        "name": "Morgan Geekie",
+        "id": "4268466",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Morgan Geekie",
+      "key": "nhl-15169793-game-markets.json:player_props:80",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSMGEEKIE39-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Morgan Geekie: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945037
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4268466.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:80",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Morgan Geekie records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T22:31:00+00:00",
+          "value": 0.17,
+          "volume": 5.52
+        }
+      ],
+      "actual": {
+        "name": "Morgan Geekie",
+        "id": "4268466",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Pavel Zacha",
+      "key": "nhl-15169793-game-markets.json:player_props:81",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSPZACHA18-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Pavel Zacha: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945038
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3899949.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:81",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Pavel Zacha records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Pavel Zacha",
+        "id": "3899949",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "points",
+      "player": "Pavel Zacha",
+      "key": "nhl-15169793-game-markets.json:player_props:82",
+      "marketID": 64871068,
+      "eventTicker": "KXNHLPTS-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSPZACHA18-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Points",
+        "outcome_name": "Pavel Zacha: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243945039
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64871068,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3899949.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:82",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Pavel Zacha records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:30:00+00:00",
+          "value": 0.15,
+          "volume": 1.25
+        }
+      ],
+      "actual": {
+        "name": "Pavel Zacha",
+        "id": "3899949",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Joel Eriksson Ek",
+      "key": "nhl-15169793-game-markets.json:player_props:36",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINJERIKSSONEK14-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Joel Eriksson Ek: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939176
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 1.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:36",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Joel Eriksson Ek records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:55:00+00:00",
+          "value": 0.36,
+          "volume": 5.31
+        }
+      ],
+      "actual": {
+        "name": "Joel Eriksson Ek",
+        "id": "3904091",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 1,
+        "points": 1
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Joel Eriksson Ek",
+      "key": "nhl-15169793-game-markets.json:player_props:37",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINJERIKSSONEK14-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Joel Eriksson Ek: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939177
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 1.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:37",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Joel Eriksson Ek records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Joel Eriksson Ek",
+        "id": "3904091",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 1,
+        "points": 1
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Max Shabanov",
+      "key": "nhl-15169793-game-markets.json:player_props:38",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMSHABANOV49-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Max Shabanov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939182
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": null,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "key": "nhl-15169793-game-markets.json:player_props:38",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Max Shabanov records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T13:23:00+00:00",
+          "value": 0.4,
+          "volume": 11.99
+        },
+        {
+          "at": "2026-10-03T22:47:00+00:00",
+          "value": 0.34,
+          "volume": 1.68
+        }
+      ],
+      "actual": null
+    },
+    {
+      "kind": "assists",
+      "player": "Max Shabanov",
+      "key": "nhl-15169793-game-markets.json:player_props:39",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMSHABANOV49-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Max Shabanov: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939183
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": null,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "key": "nhl-15169793-game-markets.json:player_props:39",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Max Shabanov records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": null
+    },
+    {
+      "kind": "assists",
+      "player": "Quinn Hughes",
+      "key": "nhl-15169793-game-markets.json:player_props:40",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINQHUGHES43-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Quinn Hughes: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939187
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 1.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:40",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Quinn Hughes records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:54:00+00:00",
+          "value": 0.63,
+          "volume": 3.09
+        }
+      ],
+      "actual": {
+        "name": "Quinn Hughes",
+        "id": "4320548",
+        "team": "Minnesota Wild",
+        "goals": 1,
+        "assists": 1,
+        "points": 2
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Quinn Hughes",
+      "key": "nhl-15169793-game-markets.json:player_props:41",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINQHUGHES43-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Quinn Hughes: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939188
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 1.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:41",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Quinn Hughes records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:08:00+00:00",
+          "value": 0.26,
+          "volume": 7.31
+        },
+        {
+          "at": "2026-10-03T23:58:00+00:00",
+          "value": 0.27,
+          "volume": 181.89
+        }
+      ],
+      "actual": {
+        "name": "Quinn Hughes",
+        "id": "4320548",
+        "team": "Minnesota Wild",
+        "goals": 1,
+        "assists": 1,
+        "points": 2
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Quinn Hughes",
+      "key": "nhl-15169793-game-markets.json:player_props:42",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 3.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINQHUGHES43-3",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Quinn Hughes: 3+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939189
+        ],
+        "threshold": 3.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 1.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:42",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Quinn Hughes records 3+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Quinn Hughes",
+        "id": "4320548",
+        "team": "Minnesota Wild",
+        "goals": 1,
+        "assists": 1,
+        "points": 2
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Elias Lindholm",
+      "key": "nhl-15169793-game-markets.json:player_props:43",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSELINDHOLM28-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Elias Lindholm: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939172
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3041994.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:43",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Elias Lindholm records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:28:00+00:00",
+          "value": 0.29,
+          "volume": 16.29
+        }
+      ],
+      "actual": {
+        "name": "Elias Lindholm",
+        "id": "3041994",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Hampus Lindholm",
+      "key": "nhl-15169793-game-markets.json:player_props:44",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSHLINDHOLM27-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Hampus Lindholm: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939173
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2968818.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:44",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Hampus Lindholm records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T12:33:00+00:00",
+          "value": 0.28,
+          "volume": 5.0
+        },
+        {
+          "at": "2026-10-03T14:47:00+00:00",
+          "value": 0.27,
+          "volume": 61.0
+        }
+      ],
+      "actual": {
+        "name": "Hampus Lindholm",
+        "id": "2968818",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Hampus Lindholm",
+      "key": "nhl-15169793-game-markets.json:player_props:45",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSHLINDHOLM27-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Hampus Lindholm: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939174
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2968818.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:45",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Hampus Lindholm records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Hampus Lindholm",
+        "id": "2968818",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "JJ Peterka",
+      "key": "nhl-15169793-game-markets.json:player_props:46",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSJPETERKA10-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "JJ Peterka: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939175
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4697438.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:46",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If JJ Peterka records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:35:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:39:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:41:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:44:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:47:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:50:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:53:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:57:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:59:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        }
+      ],
+      "actual": {
+        "name": "JJ Peterka",
+        "id": "4697438",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Kirill Kaprizov",
+      "key": "nhl-15169793-game-markets.json:player_props:47",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINKKAPRIZOV97-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Kirill Kaprizov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939178
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:47",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Kirill Kaprizov records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T17:29:00+00:00",
+          "value": 0.52,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T18:45:00+00:00",
+          "value": 0.53,
+          "volume": 9.13
+        }
+      ],
+      "actual": {
+        "name": "Kirill Kaprizov",
+        "id": "3942335",
+        "team": "Minnesota Wild",
+        "goals": 2,
+        "assists": 0,
+        "points": 2
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Kirill Kaprizov",
+      "key": "nhl-15169793-game-markets.json:player_props:48",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINKKAPRIZOV97-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Kirill Kaprizov: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939179
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:48",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Kirill Kaprizov records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T14:00:00+00:00",
+          "value": 0.14,
+          "volume": 1.0
+        }
+      ],
+      "actual": {
+        "name": "Kirill Kaprizov",
+        "id": "3942335",
+        "team": "Minnesota Wild",
+        "goals": 2,
+        "assists": 0,
+        "points": 2
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Matt Boldy",
+      "key": "nhl-15169793-game-markets.json:player_props:49",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMBOLDY12-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Matt Boldy: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939180
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:49",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Matt Boldy records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Matt Boldy",
+        "id": "4565233",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Matt Boldy",
+      "key": "nhl-15169793-game-markets.json:player_props:50",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMBOLDY12-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Matt Boldy: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939181
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:50",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Matt Boldy records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Matt Boldy",
+        "id": "4565233",
+        "team": "Minnesota Wild",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Morgan Geekie",
+      "key": "nhl-15169793-game-markets.json:player_props:51",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSMGEEKIE39-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Morgan Geekie: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939184
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4268466.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:51",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Morgan Geekie records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:33:00+00:00",
+          "value": 0.29,
+          "volume": 113.0
+        },
+        {
+          "at": "2026-10-03T23:44:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:47:00+00:00",
+          "value": 0.29,
+          "volume": 43.0
+        },
+        {
+          "at": "2026-10-03T23:50:00+00:00",
+          "value": 0.29,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T23:53:00+00:00",
+          "value": 0.28,
+          "volume": 2.0
+        },
+        {
+          "at": "2026-10-03T23:57:00+00:00",
+          "value": 0.27,
+          "volume": 2.0
+        },
+        {
+          "at": "2026-10-03T23:59:00+00:00",
+          "value": 0.28,
+          "volume": 2.0
+        }
+      ],
+      "actual": {
+        "name": "Morgan Geekie",
+        "id": "4268466",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Morgan Geekie",
+      "key": "nhl-15169793-game-markets.json:player_props:52",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSMGEEKIE39-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Morgan Geekie: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939185
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4268466.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:52",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Morgan Geekie records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Morgan Geekie",
+        "id": "4268466",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "Pavel Zacha",
+      "key": "nhl-15169793-game-markets.json:player_props:53",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSPZACHA18-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "Pavel Zacha: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939186
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3899949.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:53",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If Pavel Zacha records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "Pavel Zacha",
+        "id": "3899949",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "David Pastrnak",
+      "key": "nhl-15169793-game-markets.json:player_props:54",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 1.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSDPASTRNAK88-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "David Pastrnak: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939170
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:54",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If David Pastrnak records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "at": "2026-10-03T23:24:00+00:00",
+          "value": 0.43,
+          "volume": 9.5
+        }
+      ],
+      "actual": {
+        "name": "David Pastrnak",
+        "id": "3114778",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    },
+    {
+      "kind": "assists",
+      "player": "David Pastrnak",
+      "key": "nhl-15169793-game-markets.json:player_props:55",
+      "marketID": 64870807,
+      "eventTicker": "KXNHLAST-26OCT03BOSMIN",
+      "threshold": 2.0,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSDPASTRNAK88-2",
+      "original": {
+        "market_name": "Boston vs Minnesota: Assists",
+        "outcome_name": "David Pastrnak: 2+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243939171
+        ],
+        "threshold": 2.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870807,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:55",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "rules": "If David Pastrnak records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [],
+      "actual": {
+        "name": "David Pastrnak",
+        "id": "3114778",
+        "team": "Boston Bruins",
+        "goals": 0,
+        "assists": 0,
+        "points": 0
+      }
+    }
+  ]
+}

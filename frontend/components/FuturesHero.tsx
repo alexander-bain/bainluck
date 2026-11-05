@@ -2,6 +2,10 @@
 
 import { formatProbabilityPercent, probabilityParts } from "@/lib/probabilityDisplay";
 import { renderedPercent } from "@/lib/renderedPercent";
+import {
+  ATLAS_STATE_COPY,
+  formatAtlasMarketHeading,
+} from "@/components/atlas/atlasStateCopy";
 
 interface FuturesHeroProps {
   name: string;
@@ -47,10 +51,24 @@ interface FuturesHeroProps {
   resolved?: boolean;
   /** Whether the featured outcome won (for the resolved chip styling). */
   resolvedWon?: boolean;
+  /** Whether the featured outcome explicitly lost on a 1-leg or 2-leg settled market. */
+  resolvedLost?: boolean;
   /** #698 — the board is settled but no row states a result (e.g. a 50/50 last
    *  price on both legs). The lifecycle chip stays RESOLVED and one neutral
    *  "Result unknown" sits beside it; nobody is crowned and no live % returns. */
   resultUnknown?: boolean;
+  /** #883 Step F1 — opt into the Nov 3 futures atlas headline (`?atlas=1`). */
+  atlas?: boolean;
+  /** Opening probability of the featured outcome (withheld when multi-venue per #12043). */
+  openingProbability?: number | null;
+  /** Decided integer for `openingProbability` from `renderedById`. */
+  renderedOpening?: number | null;
+  /** Formatted PT scheduled resolution label (`Scheduled resolution <date PT>`). */
+  scheduledResolutionLabel?: string | null;
+  /** Formatted PT observation timestamp for the lead reading. */
+  lastObservedLabel?: string | null;
+  /** Opens the shared `AtlasDetailsSheet`. */
+  onOpenDetails?: () => void;
 }
 
 export function FuturesHero({
@@ -69,7 +87,14 @@ export function FuturesHero({
   isMultiOutcome,
   resolved = false,
   resolvedWon,
+  resolvedLost = false,
   resultUnknown = false,
+  atlas = false,
+  openingProbability = null,
+  renderedOpening = null,
+  scheduledResolutionLabel = null,
+  lastObservedLabel = null,
+  onOpenDetails,
 }: FuturesHeroProps) {
   // #8482 — `Math.round(p * 100)` here printed 57 over a row printing 58 for a
   // wire 0.575 (`/futures/61318328`): the #3867 half-point case. The number is
@@ -93,6 +118,189 @@ export function FuturesHero({
     !resolved && movement != null && Math.abs(movement) >= 0.1
       ? `${movementUp ? "↑" : "↓"} ${Math.abs(movement).toFixed(1)} pts`
       : null;
+
+  if (atlas) {
+    const isMultiVenue =
+      (sourceCount ?? 1) > 1 || (sourceLabels != null && sourceLabels.length > 1);
+    const showSettledOpening =
+      resolved &&
+      !isMultiVenue &&
+      openingProbability != null &&
+      Number.isFinite(openingProbability);
+    const cleanHeading = formatAtlasMarketHeading(name) || name;
+    const resolutionText = !resolved ? scheduledResolutionLabel || resolveDate || null : null;
+
+    return (
+      <div className="mb-6" data-testid="atlas-futures-hero">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 text-[12px] font-medium text-text-secondary">
+            {categoryLabel && <span>{categoryLabel}</span>}
+            {categoryLabel && <span aria-hidden="true">·</span>}
+            <span>{resolved ? "Settled" : "Recorded"}</span>
+          </div>
+          {onOpenDetails && (
+            <button
+              type="button"
+              onClick={onOpenDetails}
+              aria-label="Market details"
+              data-testid="atlas-details-trigger"
+              className="inline-flex items-center gap-1 rounded-full border border-surface-border bg-surface-card px-2.5 py-1 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary"
+            >
+              <span aria-hidden="true">ⓘ</span>
+              <span>Details</span>
+            </button>
+          )}
+        </div>
+
+        {resolved ? (
+          <div
+            data-testid="atlas-futures-headline-lead"
+            className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1"
+          >
+            <span
+              data-testid="hero-resolved-chip"
+              className={
+                resolvedWon
+                  ? "text-[24px] sm:text-[28px] font-bold tracking-tight leading-tight text-accent-live"
+                  : resolvedLost
+                    ? "text-[24px] sm:text-[28px] font-bold tracking-tight leading-tight text-text-secondary"
+                    : "rounded bg-text-muted/15 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-text-secondary"
+              }
+            >
+              {resolvedWon
+                ? ATLAS_STATE_COPY.wonWithCheck
+                : resolvedLost
+                  ? ATLAS_STATE_COPY.lostWithCross
+                  : "Resolved"}
+            </span>
+            {outcomeName && (
+              <span
+                data-testid="hero-resolved-name"
+                className="text-[24px] sm:text-[28px] font-bold tracking-tight leading-tight text-text-primary break-words"
+              >
+                {outcomeName}
+              </span>
+            )}
+            {resultUnknown && !resolvedWon && !resolvedLost && (
+              <span
+                data-testid="hero-result-unknown"
+                className="text-[13px] text-text-secondary"
+              >
+                Result unknown
+              </span>
+            )}
+          </div>
+        ) : (
+          <div
+            data-testid="atlas-futures-headline-lead"
+            className="flex flex-wrap items-baseline gap-x-3 gap-y-1"
+          >
+            {pct != null && parts != null ? (
+              <div className="flex items-baseline gap-[1px] font-bold tracking-[-0.03em] text-text-primary tabular-nums leading-none">
+                {parts.marker && (
+                  <span
+                    data-testid="hero-percent-marker"
+                    className="mr-0.5 text-[22px] sm:text-[26px]"
+                  >
+                    {parts.marker}
+                  </span>
+                )}
+                <span
+                  data-testid="hero-percent"
+                  className="text-[38px] sm:text-[44px]"
+                >
+                  {parts.digits}
+                </span>
+                <span className="text-[22px] sm:text-[26px]">%</span>
+              </div>
+            ) : (
+              <span
+                data-testid="atlas-no-recent-price"
+                className="text-[20px] sm:text-[22px] font-semibold tracking-tight text-text-secondary"
+              >
+                {ATLAS_STATE_COPY.noRecentPrice}
+              </span>
+            )}
+            {outcomeName && (
+              <span
+                data-testid="hero-outcome-name"
+                className="text-[21px] sm:text-[25px] font-semibold tracking-tight leading-tight text-text-primary break-words"
+              >
+                {outcomeName}
+              </span>
+            )}
+          </div>
+        )}
+
+        <h1
+          data-testid="atlas-headline-title"
+          className="mt-1.5 max-w-2xl text-[16px] sm:text-[17px] font-medium leading-snug tracking-tight text-text-secondary"
+        >
+          {cleanHeading}
+        </h1>
+
+        <div
+          data-testid="atlas-headline-context"
+          className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-text-secondary"
+        >
+          {showSettledOpening && (
+            <span data-testid="atlas-opening-chance">
+              Opening chance{" "}
+              <strong className="font-semibold text-text-primary tabular-nums">
+                {formatProbabilityPercent(openingProbability!, {
+                  rendered: renderedOpening,
+                })}
+              </strong>
+            </span>
+          )}
+          {!resolved && lastObservedLabel && (
+            <span data-testid="atlas-recorded-at">
+              Recorded {lastObservedLabel}
+            </span>
+          )}
+          {!resolved && resolutionText && (
+            <span data-testid="atlas-scheduled-resolution">
+              {resolutionText}
+            </span>
+          )}
+          {!resolved && movementStr && (
+            <span
+              data-testid="hero-movement"
+              className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[12px] font-bold ${
+                movementUp
+                  ? "bg-accent-live/15 text-accent-live"
+                  : "bg-accent-danger/15 text-accent-danger"
+              }`}
+            >
+              {movementStr}
+            </span>
+          )}
+          {!resolved && movementStr && movementLabel && (
+            <span
+              data-testid="hero-movement-window"
+              className="text-[11px] text-text-muted"
+            >
+              {movementLabel}
+            </span>
+          )}
+        </div>
+
+        {sourceLabels && sourceLabels.length > 0 && (
+          <div
+            data-testid="hero-contributors"
+            className="mt-3 flex items-center gap-2 border-t border-surface-border pt-3 text-[12px] text-text-secondary"
+          >
+            <span>
+              {sourceLabels.length === 1 ? "From " : "Aggregated from "}
+              <strong className="font-semibold text-text-primary">
+                {sourceLabels.join(" · ")}
+              </strong>
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mb-6">

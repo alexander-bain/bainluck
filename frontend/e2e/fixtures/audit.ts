@@ -701,8 +701,66 @@ export async function measureMainRegion(
   };
 }
 
+/**
+ * #12030 — this audit is our own lab, and says so. 216 of GA4's 224 web users in
+ * 28 days were this pack's daily runs: GitHub's Azure runners, the "Desktop
+ * Chrome" (Windows) and "Pixel 5" (Android) profiles, and a consent pack that
+ * accepts the banner about four times per profile in fresh contexts.
+ *
+ * 1. The context carries the site's lab flag (`lib/analytics/labTraffic.ts`),
+ *    written before any page script so every page and tab of the test is
+ *    marked: GA4 hits go out tagged internal, and Vercel Web Analytics drops
+ *    the visit in its `beforeSend`.
+ * 2. GA4's collect beacons and Vercel's view/event beacons are FULFILLED here
+ *    (204) instead of leaving the runner. Each one is still a request the page
+ *    made, so the ledger's rules (`page_view_exactly_once`, the decline arms'
+ *    zero counts) observe exactly what they did before. What the audit never
+ *    proved — that Google accepted a hit — it still does not claim.
+ */
+export const LAB_TRAFFIC_STORAGE_KEY = "bainluck_lab_traffic";
+export const LAB_NAME = "browser-audit";
+
+export function isCountingBeacon(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname;
+  // Exact host or a dot-delimited subdomain (region1.google-analytics.com), never
+  // a look-alike such as `evilgoogle-analytics.com` (CodeQL, #12039).
+  const isGa4 =
+    host === "google-analytics.com" ||
+    host.endsWith(".google-analytics.com") ||
+    host === "analytics.google.com";
+  if (isGa4) {
+    return parsed.pathname.includes("/collect");
+  }
+  return parsed.pathname === "/_vercel/insights/view" || parsed.pathname === "/_vercel/insights/event";
+}
+
+async function markLabTraffic(page: Page): Promise<void> {
+  const context = page.context();
+  await context.addInitScript(
+    ([key, name]) => {
+      try {
+        window.localStorage.setItem(key, name);
+      } catch {
+        // A spec that breaks storage on purpose still gets the beacon stub below.
+      }
+    },
+    [LAB_TRAFFIC_STORAGE_KEY, LAB_NAME] as const,
+  );
+  await context.route(
+    (url) => isCountingBeacon(url.toString()),
+    (route) => route.fulfill({ status: 204, body: "" }),
+  );
+}
+
 export const test = base.extend<{ journey: JourneyRecorder }>({
   journey: async ({ page }, use, testInfo) => {
+    await markLabTraffic(page);
     const recorder = new JourneyRecorder(
       page,
       testInfo,

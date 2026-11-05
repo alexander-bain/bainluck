@@ -1,0 +1,80 @@
+[
+  {
+    "market": 108629,
+    "headline": "Politics · Recorded archive29%FloridaClosest Governor race in 2026Recorded Nov 3, 6:33 PM PTScheduled resolution Jan 19, 2027, 8:59 PM PT",
+    "height": 1942,
+    "observedRuns": 9,
+    "overflow": false,
+    "shape": "field",
+    "title": "Closest Governor race in 2026",
+    "viewport": {
+      "height": 844,
+      "width": 390
+    }
+  },
+  {
+    "market": 65536371,
+    "headline": "Weather · Recorded archive64%Above 6 inchesSnow in Denver in Dec 2026Recorded Nov 3, 6:33 PM PTScheduled resolution Dec 31, 2026, 10:59 PM PT",
+    "height": 1887,
+    "observedRuns": 1,
+    "overflow": false,
+    "shape": "quantity",
+    "title": "Snow in Denver in Dec 2026",
+    "viewport": {
+      "height": 844,
+      "width": 390
+    }
+  },
+  {
+    "market": 227,
+    "headline": "College football · Recorded archive94%Miami (FL)College Football Playoff QualifiersRecorded Nov 3, 6:33 PM PTScheduled resolution Dec 15, 7:00 AM PT",
+    "height": 1998,
+    "observedRuns": 46,
+    "overflow": false,
+    "shape": "participation",
+    "title": "College Football Playoff Qualifiers",
+    "viewport": {
+      "height": 844,
+      "width": 390
+    }
+  },
+  {
+    "market": 109918,
+    "headline": "Politics · SettledWonYesWill Democrats sweep all swing state Governor racesOpening chance 38%Settled Nov 4, 2:47 AM PT",
+    "height": 1952,
+    "observedRuns": 24,
+    "overflow": false,
+    "shape": "unshaped",
+    "title": "Will Democrats sweep all swing state Governor races",
+    "viewport": {
+      "height": 844,
+      "width": 390
+    }
+  },
+  {
+    "market": 108645,
+    "headline": "Politics · SettledWonKeisha Lance BottomsGeorgia Governor winnerOpening chance 56%Settled Nov 3, 6:27 PM PT",
+    "height": 1866,
+    "observedRuns": 22,
+    "overflow": false,
+    "shape": "duel",
+    "title": "Georgia Governor winner",
+    "viewport": {
+      "height": 844,
+      "width": 390
+    }
+  },
+  {
+    "market": 109085,
+    "headline": "Politics · Recorded archive97%Adam HamiltonKansas Senate winnerRecorded Nov 3, 6:33 PM PTScheduled resolution Jan 4, 2027, 7:00 AM PT",
+    "height": 1898,
+    "observedRuns": 0,
+    "overflow": false,
+    "shape": "duel",
+    "title": "Kansas Senate winner",
+    "viewport": {
+      "height": 844,
+      "width": 390
+    }
+  }
+]

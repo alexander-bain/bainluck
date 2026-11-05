@@ -1,0 +1,5213 @@
+{
+  "eventID": 15169793,
+  "espnID": "401891814",
+  "listedStart": "2026-10-04T00:00:00+00:00",
+  "recordedStart": "2026-10-04T00:14:32+00:00",
+  "recordedEnd": "2026-10-04T02:47:45+00:00",
+  "retrospective": true,
+  "freshnessSeconds": 300,
+  "winnerBaseline": {
+    "index": 2367,
+    "t": 1791071940000,
+    "at": "2026-10-03T23:59:00+00:00",
+    "home": 0.66,
+    "away": 0.33999999999999997,
+    "pregame": true,
+    "segment": 1441
+  },
+  "beforeProps": [
+    {
+      "key": "nhl-15169793-game-markets.json:totals:0",
+      "title": "Over 1.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380538
+      ],
+      "family": "totals",
+      "chance": 0.98,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:1",
+      "title": "Over 2.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380537
+      ],
+      "family": "totals",
+      "chance": 0.975,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 3,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:2",
+      "title": "Over 3.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380539
+      ],
+      "family": "totals",
+      "chance": 0.87,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 4,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:3",
+      "title": "Over 4.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380540
+      ],
+      "family": "totals",
+      "chance": 0.795,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 5,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:4",
+      "title": "Over 5.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380541
+      ],
+      "family": "totals",
+      "chance": 0.585,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 6,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:5",
+      "title": "Over 6.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380542
+      ],
+      "family": "totals",
+      "chance": 0.475,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 7,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:6",
+      "title": "Over 7.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380543
+      ],
+      "family": "totals",
+      "chance": 0.265,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 8,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:7",
+      "title": "Over 8.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380544
+      ],
+      "family": "totals",
+      "chance": 0.18,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 9,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:8",
+      "title": "Over 9.5 goals scored",
+      "market": "Boston vs Minnesota: Total Goals",
+      "source": "kalshi",
+      "marketID": 63539066,
+      "contributors": [
+        239380545
+      ],
+      "family": "totals",
+      "chance": 0.085,
+      "at": "2026-10-03T23:54:43.297293+00:00",
+      "count": 10,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:0",
+      "title": "Tanner Jeannot: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943090
+      ],
+      "family": "scorers",
+      "chance": 0.08,
+      "at": "2026-10-03T21:42:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4064780.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:1",
+      "title": "Jared Spurgeon: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943070
+      ],
+      "family": "scorers",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/5079.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:2",
+      "title": "Kirill Kaprizov: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943074
+      ],
+      "family": "scorers",
+      "chance": 0.43,
+      "at": "2026-10-03T23:57:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:3",
+      "title": "Quinn Hughes: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943087
+      ],
+      "family": "scorers",
+      "chance": 0.19,
+      "at": "2026-10-03T23:57:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:4",
+      "title": "Blake Coleman: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943058
+      ],
+      "family": "scorers",
+      "chance": 0.27,
+      "at": "2026-10-03T23:52:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/2563026.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:5",
+      "title": "Bobby Brink: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943059
+      ],
+      "family": "scorers",
+      "chance": 0.18,
+      "at": "2026-10-03T23:38:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4565257.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:6",
+      "title": "Casey Mittelstadt: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943060
+      ],
+      "family": "scorers",
+      "chance": 0.14,
+      "at": "2026-10-03T23:59:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4233575.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:7",
+      "title": "Connor Clifton: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943061
+      ],
+      "family": "scorers",
+      "chance": 0.05,
+      "at": "2026-10-03T20:58:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3042191.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:8",
+      "title": "Daemon Hunt: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943062
+      ],
+      "family": "scorers",
+      "chance": 0.04,
+      "at": "2026-10-03T23:01:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4697711.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:9",
+      "title": "Danila Yurov: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943063
+      ],
+      "family": "scorers",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/5080172.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:10",
+      "title": "David Pastrnak: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943064
+      ],
+      "family": "scorers",
+      "chance": 0.33,
+      "at": "2026-10-03T23:40:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:11",
+      "title": "Elias Lindholm: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943065
+      ],
+      "family": "scorers",
+      "chance": 0.19,
+      "at": "2026-10-03T20:20:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3041994.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:12",
+      "title": "Fraser Minten: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943066
+      ],
+      "family": "scorers",
+      "chance": 0.17,
+      "at": "2026-10-03T23:28:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/5080207.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:13",
+      "title": "Hampus Lindholm: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943067
+      ],
+      "family": "scorers",
+      "chance": 0.09,
+      "at": "2026-10-03T21:52:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/2968818.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:14",
+      "title": "JJ Peterka: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943068
+      ],
+      "family": "scorers",
+      "chance": 0.23,
+      "at": "2026-10-03T23:53:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4697438.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:15",
+      "title": "James Hagens: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943069
+      ],
+      "family": "scorers",
+      "chance": 0.16,
+      "at": "2026-10-03T22:16:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/5275337.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:16",
+      "title": "Joel Eriksson Ek: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943071
+      ],
+      "family": "scorers",
+      "chance": 0.31,
+      "at": "2026-10-03T23:52:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:17",
+      "title": "Jonas Brodin: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943072
+      ],
+      "family": "scorers",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/2562600.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:18",
+      "title": "Jonathan Aspirot: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943073
+      ],
+      "family": "scorers",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4392308.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:19",
+      "title": "Marat Khusnutdinov: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943075
+      ],
+      "family": "scorers",
+      "chance": 0.11,
+      "at": "2026-10-03T23:55:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4697442.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:20",
+      "title": "Marcus Foligno: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943076
+      ],
+      "family": "scorers",
+      "chance": 0.11,
+      "at": "2026-10-03T23:02:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/5172.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:21",
+      "title": "Mark Kastelic: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943077
+      ],
+      "family": "scorers",
+      "chance": 0.09,
+      "at": "2026-10-03T21:41:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4587985.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:22",
+      "title": "Mason Lohrei: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943078
+      ],
+      "family": "scorers",
+      "chance": 0.06,
+      "at": "2026-10-03T23:24:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4697461.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:23",
+      "title": "Matt Boldy: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943079
+      ],
+      "family": "scorers",
+      "chance": 0.4,
+      "at": "2026-10-03T23:59:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:24",
+      "title": "Max Shabanov: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943080
+      ],
+      "family": "scorers",
+      "chance": 0.23,
+      "at": "2026-10-03T23:52:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:25",
+      "title": "Michael McCarron: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943081
+      ],
+      "family": "scorers",
+      "chance": 0.11,
+      "at": "2026-10-03T23:52:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3042048.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:26",
+      "title": "Morgan Geekie: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943082
+      ],
+      "family": "scorers",
+      "chance": 0.26,
+      "at": "2026-10-03T23:58:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4268466.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:27",
+      "title": "Nick Foligno: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943083
+      ],
+      "family": "scorers",
+      "chance": 0.1,
+      "at": "2026-10-03T23:54:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3535.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:28",
+      "title": "Nikita Zadorov: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943084
+      ],
+      "family": "scorers",
+      "chance": 0.06,
+      "at": "2026-10-03T23:42:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3042021.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:29",
+      "title": "Olli Maatta: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943085
+      ],
+      "family": "scorers",
+      "chance": 0.05,
+      "at": "2026-10-03T23:56:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/2976850.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:30",
+      "title": "Pavel Zacha: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943086
+      ],
+      "family": "scorers",
+      "chance": 0.24,
+      "at": "2026-10-03T23:58:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3899949.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:31",
+      "title": "Ryan Hartman: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943088
+      ],
+      "family": "scorers",
+      "chance": 0.25,
+      "at": "2026-10-03T23:15:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3042063.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:32",
+      "title": "Sean Kuraly: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943089
+      ],
+      "family": "scorers",
+      "chance": 0.08,
+      "at": "2026-10-03T23:29:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/2564154.png",
+      "team": "away",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:33",
+      "title": "William Borgen: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943091
+      ],
+      "family": "scorers",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:34",
+      "title": "Yakov Trenin: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943092
+      ],
+      "family": "scorers",
+      "chance": 0.11,
+      "at": "2026-10-03T23:26:00+00:00",
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/3904188.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:35",
+      "title": "Zach Bogosian: 1+",
+      "market": "Boston vs Minnesota: Goals",
+      "source": "kalshi",
+      "marketID": 64870965,
+      "contributors": [
+        243943093
+      ],
+      "family": "scorers",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": "https://a.espncdn.com/i/headshots/nhl/players/full/4002.png",
+      "team": "home",
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:36",
+      "title": "Joel Eriksson Ek: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939176
+      ],
+      "family": "assists",
+      "chance": 0.36,
+      "at": "2026-10-03T23:55:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Joel Eriksson Ek"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:37",
+      "title": "Joel Eriksson Ek: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939177
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Joel Eriksson Ek"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:38",
+      "title": "Max Shabanov: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939182
+      ],
+      "family": "assists",
+      "chance": 0.34,
+      "at": "2026-10-03T22:47:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": null,
+      "player": "Max Shabanov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:39",
+      "title": "Max Shabanov: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939183
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": null,
+      "player": "Max Shabanov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:40",
+      "title": "Quinn Hughes: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939187
+      ],
+      "family": "assists",
+      "chance": 0.63,
+      "at": "2026-10-03T23:54:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Quinn Hughes"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:41",
+      "title": "Quinn Hughes: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939188
+      ],
+      "family": "assists",
+      "chance": 0.27,
+      "at": "2026-10-03T23:58:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Quinn Hughes"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:42",
+      "title": "Quinn Hughes: 3+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939189
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 3,
+      "portrait": null,
+      "team": "home",
+      "player": "Quinn Hughes"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:43",
+      "title": "Elias Lindholm: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939172
+      ],
+      "family": "assists",
+      "chance": 0.29,
+      "at": "2026-10-03T23:28:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Elias Lindholm"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:44",
+      "title": "Hampus Lindholm: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939173
+      ],
+      "family": "assists",
+      "chance": 0.27,
+      "at": "2026-10-03T14:47:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Hampus Lindholm"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:45",
+      "title": "Hampus Lindholm: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939174
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "Hampus Lindholm"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:46",
+      "title": "JJ Peterka: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939175
+      ],
+      "family": "assists",
+      "chance": 0.29,
+      "at": "2026-10-03T23:59:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "JJ Peterka"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:47",
+      "title": "Kirill Kaprizov: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939178
+      ],
+      "family": "assists",
+      "chance": 0.53,
+      "at": "2026-10-03T18:45:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Kirill Kaprizov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:48",
+      "title": "Kirill Kaprizov: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939179
+      ],
+      "family": "assists",
+      "chance": 0.14,
+      "at": "2026-10-03T14:00:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Kirill Kaprizov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:49",
+      "title": "Matt Boldy: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939180
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Matt Boldy"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:50",
+      "title": "Matt Boldy: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939181
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Matt Boldy"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:51",
+      "title": "Morgan Geekie: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939184
+      ],
+      "family": "assists",
+      "chance": 0.28,
+      "at": "2026-10-03T23:59:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Morgan Geekie"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:52",
+      "title": "Morgan Geekie: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939185
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "Morgan Geekie"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:53",
+      "title": "Pavel Zacha: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939186
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Pavel Zacha"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:54",
+      "title": "David Pastrnak: 1+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939170
+      ],
+      "family": "assists",
+      "chance": 0.43,
+      "at": "2026-10-03T23:24:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "David Pastrnak"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:55",
+      "title": "David Pastrnak: 2+",
+      "market": "Boston vs Minnesota: Assists",
+      "source": "kalshi",
+      "marketID": 64870807,
+      "contributors": [
+        243939171
+      ],
+      "family": "assists",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "David Pastrnak"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:56",
+      "title": "Joel Eriksson Ek: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945025
+      ],
+      "family": "points",
+      "chance": 0.55,
+      "at": "2026-10-03T23:03:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Joel Eriksson Ek"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:57",
+      "title": "Joel Eriksson Ek: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945026
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Joel Eriksson Ek"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:58",
+      "title": "Joel Eriksson Ek: 3+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945027
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 3,
+      "portrait": null,
+      "team": "home",
+      "player": "Joel Eriksson Ek"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:59",
+      "title": "Kirill Kaprizov: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945028
+      ],
+      "family": "points",
+      "chance": 0.72,
+      "at": "2026-10-03T19:22:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Kirill Kaprizov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:60",
+      "title": "Kirill Kaprizov: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945029
+      ],
+      "family": "points",
+      "chance": 0.39,
+      "at": "2026-10-03T19:51:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Kirill Kaprizov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:61",
+      "title": "Kirill Kaprizov: 3+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945030
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 3,
+      "portrait": null,
+      "team": "home",
+      "player": "Kirill Kaprizov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:62",
+      "title": "Max Shabanov: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945034
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 1,
+      "portrait": null,
+      "team": null,
+      "player": "Max Shabanov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:63",
+      "title": "Max Shabanov: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945035
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": null,
+      "player": "Max Shabanov"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:64",
+      "title": "Quinn Hughes: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945040
+      ],
+      "family": "points",
+      "chance": 0.69,
+      "at": "2026-10-03T23:55:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Quinn Hughes"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:65",
+      "title": "Quinn Hughes: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945041
+      ],
+      "family": "points",
+      "chance": 0.33,
+      "at": "2026-10-03T23:51:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Quinn Hughes"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:66",
+      "title": "Quinn Hughes: 3+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945042
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 3,
+      "portrait": null,
+      "team": "home",
+      "player": "Quinn Hughes"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:67",
+      "title": "David Pastrnak: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945016
+      ],
+      "family": "points",
+      "chance": 0.61,
+      "at": "2026-10-03T22:16:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "David Pastrnak"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:68",
+      "title": "David Pastrnak: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945017
+      ],
+      "family": "points",
+      "chance": 0.27,
+      "at": "2026-10-03T23:15:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "David Pastrnak"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:69",
+      "title": "David Pastrnak: 3+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945018
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 3,
+      "portrait": null,
+      "team": "away",
+      "player": "David Pastrnak"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:70",
+      "title": "Elias Lindholm: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945019
+      ],
+      "family": "points",
+      "chance": 0.4,
+      "at": "2026-10-03T21:02:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Elias Lindholm"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:71",
+      "title": "Elias Lindholm: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945020
+      ],
+      "family": "points",
+      "chance": 0.12,
+      "at": "2026-10-03T22:54:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "Elias Lindholm"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:72",
+      "title": "Hampus Lindholm: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945021
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Hampus Lindholm"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:73",
+      "title": "Hampus Lindholm: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945022
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "Hampus Lindholm"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:74",
+      "title": "JJ Peterka: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945023
+      ],
+      "family": "points",
+      "chance": 0.47,
+      "at": "2026-10-03T23:56:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "JJ Peterka"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:75",
+      "title": "JJ Peterka: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945024
+      ],
+      "family": "points",
+      "chance": 0.15,
+      "at": "2026-10-03T23:30:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "JJ Peterka"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:76",
+      "title": "Matt Boldy: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945031
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 1,
+      "portrait": null,
+      "team": "home",
+      "player": "Matt Boldy"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:77",
+      "title": "Matt Boldy: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945032
+      ],
+      "family": "points",
+      "chance": 0.34,
+      "at": "2026-10-03T16:51:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "home",
+      "player": "Matt Boldy"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:78",
+      "title": "Matt Boldy: 3+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945033
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 3,
+      "portrait": null,
+      "team": "home",
+      "player": "Matt Boldy"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:79",
+      "title": "Morgan Geekie: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945036
+      ],
+      "family": "points",
+      "chance": 0.48,
+      "at": "2026-10-03T23:40:00+00:00",
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Morgan Geekie"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:80",
+      "title": "Morgan Geekie: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945037
+      ],
+      "family": "points",
+      "chance": 0.17,
+      "at": "2026-10-03T22:31:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "Morgan Geekie"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:81",
+      "title": "Pavel Zacha: 1+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945038
+      ],
+      "family": "points",
+      "chance": null,
+      "at": null,
+      "count": 1,
+      "portrait": null,
+      "team": "away",
+      "player": "Pavel Zacha"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:82",
+      "title": "Pavel Zacha: 2+",
+      "market": "Boston vs Minnesota: Points",
+      "source": "kalshi",
+      "marketID": 64871068,
+      "contributors": [
+        243945039
+      ],
+      "family": "points",
+      "chance": 0.15,
+      "at": "2026-10-03T23:30:00+00:00",
+      "count": 2,
+      "portrait": null,
+      "team": "away",
+      "player": "Pavel Zacha"
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:0",
+      "title": "Minnesota over 1.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052015
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:1",
+      "title": "Minnesota over 2.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052017
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:2",
+      "title": "Minnesota over 3.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052019
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:3",
+      "title": "Minnesota over 4.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052021
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:4",
+      "title": "Minnesota over 5.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052023
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:5",
+      "title": "Boston over 1.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052016
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:6",
+      "title": "Boston over 2.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052018
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:7",
+      "title": "Boston over 3.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052020
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:8",
+      "title": "Boston over 4.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052022
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:team_totals:9",
+      "title": "Boston over 5.5",
+      "market": "Boston vs Minnesota: Team Total",
+      "source": "kalshi",
+      "marketID": 63728034,
+      "contributors": [
+        240052024
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:0",
+      "title": "Wild",
+      "market": "Spread: Wild (-1.5)",
+      "source": "polymarket",
+      "marketID": 63253211,
+      "contributors": [
+        238404189
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:1",
+      "title": "Minnesota wins by over 1.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        239380483
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:2",
+      "title": "Boston wins by over 1.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        239380485
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:3",
+      "title": "Minnesota wins by over 2.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        239380484
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:4",
+      "title": "Boston wins by over 2.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        239380486
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:5",
+      "title": "Minnesota wins by over 3.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        241249490
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:6",
+      "title": "Boston wins by over 3.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        241261301
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:7",
+      "title": "Minnesota wins by over 4.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        241249491
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:spreads:8",
+      "title": "Boston wins by over 4.5 goals",
+      "market": "Boston vs Minnesota: Spread",
+      "source": "kalshi",
+      "marketID": 63539055,
+      "contributors": [
+        241261300
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:0",
+      "title": "Tanner Jeannot",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940876
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:1",
+      "title": "Blake Coleman",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940844
+      ],
+      "family": "first",
+      "chance": 0.06,
+      "at": "2026-10-03T23:11:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:2",
+      "title": "Bobby Brink",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940845
+      ],
+      "family": "first",
+      "chance": 0.04,
+      "at": "2026-10-03T23:57:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:3",
+      "title": "Casey Mittelstadt",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940846
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:4",
+      "title": "Connor Clifton",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940847
+      ],
+      "family": "first",
+      "chance": 0.01,
+      "at": "2026-10-03T23:52:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:5",
+      "title": "Daemon Hunt",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940848
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:6",
+      "title": "Danila Yurov",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940849
+      ],
+      "family": "first",
+      "chance": 0.05,
+      "at": "2026-10-03T23:10:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:7",
+      "title": "David Pastrnak",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940850
+      ],
+      "family": "first",
+      "chance": 0.06,
+      "at": "2026-10-03T23:44:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:8",
+      "title": "Elias Lindholm",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940851
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:9",
+      "title": "Fraser Minten",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940852
+      ],
+      "family": "first",
+      "chance": 0.03,
+      "at": "2026-10-03T23:01:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:10",
+      "title": "Hampus Lindholm",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940853
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:11",
+      "title": "JJ Peterka",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940854
+      ],
+      "family": "first",
+      "chance": 0.06,
+      "at": "2026-10-03T14:56:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:12",
+      "title": "James Hagens",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940855
+      ],
+      "family": "first",
+      "chance": 0.04,
+      "at": "2026-10-03T19:34:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:13",
+      "title": "Jared Spurgeon",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940856
+      ],
+      "family": "first",
+      "chance": 0.02,
+      "at": "2026-10-03T19:09:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:14",
+      "title": "Joel Eriksson Ek",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940857
+      ],
+      "family": "first",
+      "chance": 0.08,
+      "at": "2026-10-03T23:34:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:15",
+      "title": "Jonas Brodin",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940858
+      ],
+      "family": "first",
+      "chance": 0.01,
+      "at": "2026-10-03T23:01:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:16",
+      "title": "Jonathan Aspirot",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940859
+      ],
+      "family": "first",
+      "chance": 0.01,
+      "at": "2026-10-03T20:33:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:17",
+      "title": "Kirill Kaprizov",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940860
+      ],
+      "family": "first",
+      "chance": 0.1,
+      "at": "2026-10-03T23:57:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:18",
+      "title": "Marat Khusnutdinov",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940861
+      ],
+      "family": "first",
+      "chance": 0.01,
+      "at": "2026-10-03T23:55:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:19",
+      "title": "Marcus Foligno",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940862
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:20",
+      "title": "Mark Kastelic",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940863
+      ],
+      "family": "first",
+      "chance": 0.01,
+      "at": "2026-10-03T23:26:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:21",
+      "title": "Mason Lohrei",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940864
+      ],
+      "family": "first",
+      "chance": 0.02,
+      "at": "2026-10-03T23:04:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:22",
+      "title": "Matt Boldy",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940865
+      ],
+      "family": "first",
+      "chance": 0.09,
+      "at": "2026-10-03T23:50:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:23",
+      "title": "Max Shabanov",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940866
+      ],
+      "family": "first",
+      "chance": 0.08,
+      "at": "2026-10-03T23:53:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:24",
+      "title": "Michael McCarron",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940867
+      ],
+      "family": "first",
+      "chance": 0.02,
+      "at": "2026-10-03T23:37:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:25",
+      "title": "Morgan Geekie",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940868
+      ],
+      "family": "first",
+      "chance": 0.05,
+      "at": "2026-10-03T23:54:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:26",
+      "title": "Nick Foligno",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940869
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:27",
+      "title": "Nikita Zadorov",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940870
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:28",
+      "title": "Olli Maatta",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940871
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:29",
+      "title": "Pavel Zacha",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940872
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:30",
+      "title": "Quinn Hughes",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940873
+      ],
+      "family": "first",
+      "chance": 0.04,
+      "at": "2026-10-03T23:56:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:31",
+      "title": "Ryan Hartman",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940874
+      ],
+      "family": "first",
+      "chance": 0.05,
+      "at": "2026-10-03T22:56:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:32",
+      "title": "Sean Kuraly",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940875
+      ],
+      "family": "first",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:33",
+      "title": "William Borgen",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940877
+      ],
+      "family": "first",
+      "chance": 0.01,
+      "at": "2026-10-03T23:39:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:34",
+      "title": "Yakov Trenin",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940878
+      ],
+      "family": "first",
+      "chance": 0.02,
+      "at": "2026-10-03T23:01:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:35",
+      "title": "Zach Bogosian",
+      "market": "Boston vs Minnesota: First Goalscorer",
+      "source": "kalshi",
+      "marketID": 64870910,
+      "contributors": [
+        243940879
+      ],
+      "family": "first",
+      "chance": 0.01,
+      "at": "2026-10-03T23:42:00+00:00",
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:36",
+      "title": "Minnesota",
+      "market": "Boston vs Minnesota",
+      "source": "kalshi",
+      "marketID": 62661158,
+      "contributors": [
+        236626896
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:other:37",
+      "title": "Boston",
+      "market": "Boston vs Minnesota",
+      "source": "kalshi",
+      "marketID": 62661158,
+      "contributors": [
+        236626897
+      ],
+      "family": "other",
+      "chance": null,
+      "at": null,
+      "count": null,
+      "portrait": null,
+      "team": null,
+      "player": null
+    }
+  ],
+  "contracts": [
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:56",
+      "kind": "points",
+      "player": "Joel Eriksson Ek",
+      "playerID": "3904091",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINJERIKSSONEK14-1",
+      "rules": "If Joel Eriksson Ek records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791076980,
+          "at": "2026-10-04T01:23:00+00:00",
+          "value": 0.97,
+          "volume": 39.0
+        },
+        {
+          "t": 1791077160,
+          "at": "2026-10-04T01:26:00+00:00",
+          "value": 0.99,
+          "volume": 1.01
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:57",
+      "kind": "points",
+      "player": "Joel Eriksson Ek",
+      "playerID": "3904091",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINJERIKSSONEK14-2",
+      "rules": "If Joel Eriksson Ek records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:58",
+      "kind": "points",
+      "player": "Joel Eriksson Ek",
+      "playerID": "3904091",
+      "team": "Minnesota Wild",
+      "threshold": 3,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINJERIKSSONEK14-3",
+      "rules": "If Joel Eriksson Ek records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:59",
+      "kind": "points",
+      "player": "Kirill Kaprizov",
+      "playerID": "3942335",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINKKAPRIZOV97-1",
+      "rules": "If Kirill Kaprizov records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791076980,
+          "at": "2026-10-04T01:23:00+00:00",
+          "value": 0.98,
+          "volume": 305.0
+        },
+        {
+          "t": 1791077040,
+          "at": "2026-10-04T01:24:00+00:00",
+          "value": 0.99,
+          "volume": 185.0
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:60",
+      "kind": "points",
+      "player": "Kirill Kaprizov",
+      "playerID": "3942335",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINKKAPRIZOV97-2",
+      "rules": "If Kirill Kaprizov records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791074520,
+          "at": "2026-10-04T00:42:00+00:00",
+          "value": 0.35,
+          "volume": 5.0
+        },
+        {
+          "t": 1791078240,
+          "at": "2026-10-04T01:44:00+00:00",
+          "value": 0.54,
+          "volume": 44.85
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:61",
+      "kind": "points",
+      "player": "Kirill Kaprizov",
+      "playerID": "3942335",
+      "team": "Minnesota Wild",
+      "threshold": 3,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINKKAPRIZOV97-3",
+      "rules": "If Kirill Kaprizov records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:62",
+      "kind": "points",
+      "player": "Max Shabanov",
+      "playerID": null,
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMSHABANOV49-1",
+      "rules": "If Max Shabanov records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791077040,
+          "at": "2026-10-04T01:24:00+00:00",
+          "value": 0.95,
+          "volume": 2.0
+        },
+        {
+          "t": 1791077160,
+          "at": "2026-10-04T01:26:00+00:00",
+          "value": 0.98,
+          "volume": 1.02
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:63",
+      "kind": "points",
+      "player": "Max Shabanov",
+      "playerID": null,
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMSHABANOV49-2",
+      "rules": "If Max Shabanov records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:64",
+      "kind": "points",
+      "player": "Quinn Hughes",
+      "playerID": "4320548",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINQHUGHES43-1",
+      "rules": "If Quinn Hughes records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791078060,
+          "at": "2026-10-04T01:41:00+00:00",
+          "value": 0.98,
+          "volume": 91.0
+        },
+        {
+          "t": 1791078120,
+          "at": "2026-10-04T01:42:00+00:00",
+          "value": 0.99,
+          "volume": 468.0
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:65",
+      "kind": "points",
+      "player": "Quinn Hughes",
+      "playerID": "4320548",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINQHUGHES43-2",
+      "rules": "If Quinn Hughes records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:66",
+      "kind": "points",
+      "player": "Quinn Hughes",
+      "playerID": "4320548",
+      "team": "Minnesota Wild",
+      "threshold": 3,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINQHUGHES43-3",
+      "rules": "If Quinn Hughes records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:67",
+      "kind": "points",
+      "player": "David Pastrnak",
+      "playerID": "3114778",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSDPASTRNAK88-1",
+      "rules": "If David Pastrnak records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791076500,
+          "at": "2026-10-04T01:15:00+00:00",
+          "value": 0.6,
+          "volume": 19.47
+        },
+        {
+          "t": 1791079380,
+          "at": "2026-10-04T02:03:00+00:00",
+          "value": 0.59,
+          "volume": 1.0
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:68",
+      "kind": "points",
+      "player": "David Pastrnak",
+      "playerID": "3114778",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSDPASTRNAK88-2",
+      "rules": "If David Pastrnak records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791075780,
+          "at": "2026-10-04T01:03:00+00:00",
+          "value": 0.19,
+          "volume": 12.25
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:69",
+      "kind": "points",
+      "player": "David Pastrnak",
+      "playerID": "3114778",
+      "team": "Boston Bruins",
+      "threshold": 3,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSDPASTRNAK88-3",
+      "rules": "If David Pastrnak records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:70",
+      "kind": "points",
+      "player": "Elias Lindholm",
+      "playerID": "3041994",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSELINDHOLM28-1",
+      "rules": "If Elias Lindholm records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:71",
+      "kind": "points",
+      "player": "Elias Lindholm",
+      "playerID": "3041994",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSELINDHOLM28-2",
+      "rules": "If Elias Lindholm records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:72",
+      "kind": "points",
+      "player": "Hampus Lindholm",
+      "playerID": "2968818",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSHLINDHOLM27-1",
+      "rules": "If Hampus Lindholm records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:73",
+      "kind": "points",
+      "player": "Hampus Lindholm",
+      "playerID": "2968818",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSHLINDHOLM27-2",
+      "rules": "If Hampus Lindholm records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:74",
+      "kind": "points",
+      "player": "JJ Peterka",
+      "playerID": "4697438",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSJPETERKA10-1",
+      "rules": "If JJ Peterka records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791073680,
+          "at": "2026-10-04T00:28:00+00:00",
+          "value": 0.98,
+          "volume": 51.67
+        },
+        {
+          "t": 1791077400,
+          "at": "2026-10-04T01:30:00+00:00",
+          "value": 0.36,
+          "volume": 5.0
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:75",
+      "kind": "points",
+      "player": "JJ Peterka",
+      "playerID": "4697438",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSJPETERKA10-2",
+      "rules": "If JJ Peterka records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:76",
+      "kind": "points",
+      "player": "Matt Boldy",
+      "playerID": "4565233",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMBOLDY12-1",
+      "rules": "If Matt Boldy records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791072900,
+          "at": "2026-10-04T00:15:00+00:00",
+          "value": 0.73,
+          "volume": 101.49
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:77",
+      "kind": "points",
+      "player": "Matt Boldy",
+      "playerID": "4565233",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMBOLDY12-2",
+      "rules": "If Matt Boldy records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:78",
+      "kind": "points",
+      "player": "Matt Boldy",
+      "playerID": "4565233",
+      "team": "Minnesota Wild",
+      "threshold": 3,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-MINMBOLDY12-3",
+      "rules": "If Matt Boldy records 3+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:79",
+      "kind": "points",
+      "player": "Morgan Geekie",
+      "playerID": "4268466",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSMGEEKIE39-1",
+      "rules": "If Morgan Geekie records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:80",
+      "kind": "points",
+      "player": "Morgan Geekie",
+      "playerID": "4268466",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSMGEEKIE39-2",
+      "rules": "If Morgan Geekie records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:81",
+      "kind": "points",
+      "player": "Pavel Zacha",
+      "playerID": "3899949",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSPZACHA18-1",
+      "rules": "If Pavel Zacha records 1+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:82",
+      "kind": "points",
+      "player": "Pavel Zacha",
+      "playerID": "3899949",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLPTS-26OCT03BOSMIN-BOSPZACHA18-2",
+      "rules": "If Pavel Zacha records 2+ points in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:36",
+      "kind": "assists",
+      "player": "Joel Eriksson Ek",
+      "playerID": "3904091",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINJERIKSSONEK14-1",
+      "rules": "If Joel Eriksson Ek records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791076980,
+          "at": "2026-10-04T01:23:00+00:00",
+          "value": 0.97,
+          "volume": 39.0
+        },
+        {
+          "t": 1791077160,
+          "at": "2026-10-04T01:26:00+00:00",
+          "value": 0.99,
+          "volume": 1.01
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:37",
+      "kind": "assists",
+      "player": "Joel Eriksson Ek",
+      "playerID": "3904091",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINJERIKSSONEK14-2",
+      "rules": "If Joel Eriksson Ek records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:38",
+      "kind": "assists",
+      "player": "Max Shabanov",
+      "playerID": null,
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMSHABANOV49-1",
+      "rules": "If Max Shabanov records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": [
+        {
+          "t": 1791077040,
+          "at": "2026-10-04T01:24:00+00:00",
+          "value": 0.95,
+          "volume": 11.0
+        },
+        {
+          "t": 1791077160,
+          "at": "2026-10-04T01:26:00+00:00",
+          "value": 0.99,
+          "volume": 1.01
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:39",
+      "kind": "assists",
+      "player": "Max Shabanov",
+      "playerID": null,
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMSHABANOV49-2",
+      "rules": "If Max Shabanov records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:40",
+      "kind": "assists",
+      "player": "Quinn Hughes",
+      "playerID": "4320548",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINQHUGHES43-1",
+      "rules": "If Quinn Hughes records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:41",
+      "kind": "assists",
+      "player": "Quinn Hughes",
+      "playerID": "4320548",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINQHUGHES43-2",
+      "rules": "If Quinn Hughes records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:42",
+      "kind": "assists",
+      "player": "Quinn Hughes",
+      "playerID": "4320548",
+      "team": "Minnesota Wild",
+      "threshold": 3,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINQHUGHES43-3",
+      "rules": "If Quinn Hughes records 3+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:43",
+      "kind": "assists",
+      "player": "Elias Lindholm",
+      "playerID": "3041994",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSELINDHOLM28-1",
+      "rules": "If Elias Lindholm records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:44",
+      "kind": "assists",
+      "player": "Hampus Lindholm",
+      "playerID": "2968818",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSHLINDHOLM27-1",
+      "rules": "If Hampus Lindholm records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:45",
+      "kind": "assists",
+      "player": "Hampus Lindholm",
+      "playerID": "2968818",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSHLINDHOLM27-2",
+      "rules": "If Hampus Lindholm records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:46",
+      "kind": "assists",
+      "player": "JJ Peterka",
+      "playerID": "4697438",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSJPETERKA10-1",
+      "rules": "If JJ Peterka records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:47",
+      "kind": "assists",
+      "player": "Kirill Kaprizov",
+      "playerID": "3942335",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINKKAPRIZOV97-1",
+      "rules": "If Kirill Kaprizov records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:48",
+      "kind": "assists",
+      "player": "Kirill Kaprizov",
+      "playerID": "3942335",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINKKAPRIZOV97-2",
+      "rules": "If Kirill Kaprizov records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:49",
+      "kind": "assists",
+      "player": "Matt Boldy",
+      "playerID": "4565233",
+      "team": "Minnesota Wild",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMBOLDY12-1",
+      "rules": "If Matt Boldy records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:50",
+      "kind": "assists",
+      "player": "Matt Boldy",
+      "playerID": "4565233",
+      "team": "Minnesota Wild",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-MINMBOLDY12-2",
+      "rules": "If Matt Boldy records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:51",
+      "kind": "assists",
+      "player": "Morgan Geekie",
+      "playerID": "4268466",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSMGEEKIE39-1",
+      "rules": "If Morgan Geekie records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:52",
+      "kind": "assists",
+      "player": "Morgan Geekie",
+      "playerID": "4268466",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSMGEEKIE39-2",
+      "rules": "If Morgan Geekie records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:53",
+      "kind": "assists",
+      "player": "Pavel Zacha",
+      "playerID": "3899949",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSPZACHA18-1",
+      "rules": "If Pavel Zacha records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:54",
+      "kind": "assists",
+      "player": "David Pastrnak",
+      "playerID": "3114778",
+      "team": "Boston Bruins",
+      "threshold": 1,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSDPASTRNAK88-1",
+      "rules": "If David Pastrnak records 1+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:55",
+      "kind": "assists",
+      "player": "David Pastrnak",
+      "playerID": "3114778",
+      "team": "Boston Bruins",
+      "threshold": 2,
+      "ticker": "KXNHLAST-26OCT03BOSMIN-BOSDPASTRNAK88-2",
+      "rules": "If David Pastrnak records 2+ assists in the Boston vs Minnesota NHL game originally scheduled for Oct 3, 2026, then the market resolves to Yes.",
+      "observations": []
+    }
+  ],
+  "stages": [
+    {
+      "id": "401891814000000290",
+      "label": "First intermission",
+      "at": "2026-10-04T00:53:13+00:00",
+      "t": 1791075193,
+      "period": 1,
+      "remaining": 0,
+      "intermission": true,
+      "score": [
+        0,
+        1
+      ],
+      "stats": [
+        {
+          "id": "4268466",
+          "name": "Morgan Geekie",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5275337",
+          "name": "James Hagens",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4064780",
+          "name": "Tanner Jeannot",
+          "team": "Boston Bruins",
+          "goals": 1,
+          "assists": 0,
+          "points": 1
+        },
+        {
+          "id": "4587985",
+          "name": "Mark Kastelic",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "4697442",
+          "name": "Marat Khusnutdinov",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2564154",
+          "name": "Sean Kuraly",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3041994",
+          "name": "Elias Lindholm",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5080207",
+          "name": "Fraser Minten",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4233575",
+          "name": "Casey Mittelstadt",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3114778",
+          "name": "David Pastrnak",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4697438",
+          "name": "JJ Peterka",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3899949",
+          "name": "Pavel Zacha",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4392308",
+          "name": "Jonathan Aspirot",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3941946",
+          "name": "Will Borgen",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042191",
+          "name": "Connor Clifton",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "2968818",
+          "name": "Hampus Lindholm",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4697461",
+          "name": "Mason Lohrei",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042021",
+          "name": "Nikita Zadorov",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4392765",
+          "name": "Michael DiPietro",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4565233",
+          "name": "Matt Boldy",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4565257",
+          "name": "Bobby Brink",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2563026",
+          "name": "Blake Coleman",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3904091",
+          "name": "Joel Eriksson Ek",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3535",
+          "name": "Nick Foligno",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5172",
+          "name": "Marcus Foligno",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042063",
+          "name": "Ryan Hartman",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3942335",
+          "name": "Kirill Kaprizov",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042048",
+          "name": "Michael McCarron",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5302535",
+          "name": "Maxim Shabanov",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3904188",
+          "name": "Yakov Trenin",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5080172",
+          "name": "Danila Yurov",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4002",
+          "name": "Zach Bogosian",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2562600",
+          "name": "Jonas Brodin",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4320548",
+          "name": "Quinn Hughes",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4697711",
+          "name": "Daemon Hunt",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2976850",
+          "name": "Olli Maatta",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5079",
+          "name": "Jared Spurgeon",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4874737",
+          "name": "Jesper Wallstedt",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        }
+      ]
+    },
+    {
+      "id": "401891814000006850",
+      "label": "Late second period",
+      "at": "2026-10-04T01:45:25+00:00",
+      "t": 1791078325,
+      "period": 2,
+      "remaining": 249,
+      "intermission": false,
+      "score": [
+        2,
+        1
+      ],
+      "stats": [
+        {
+          "id": "4268466",
+          "name": "Morgan Geekie",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5275337",
+          "name": "James Hagens",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4064780",
+          "name": "Tanner Jeannot",
+          "team": "Boston Bruins",
+          "goals": 1,
+          "assists": 0,
+          "points": 1
+        },
+        {
+          "id": "4587985",
+          "name": "Mark Kastelic",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "4697442",
+          "name": "Marat Khusnutdinov",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2564154",
+          "name": "Sean Kuraly",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3041994",
+          "name": "Elias Lindholm",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5080207",
+          "name": "Fraser Minten",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4233575",
+          "name": "Casey Mittelstadt",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3114778",
+          "name": "David Pastrnak",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4697438",
+          "name": "JJ Peterka",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3899949",
+          "name": "Pavel Zacha",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4392308",
+          "name": "Jonathan Aspirot",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3941946",
+          "name": "Will Borgen",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042191",
+          "name": "Connor Clifton",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "2968818",
+          "name": "Hampus Lindholm",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4697461",
+          "name": "Mason Lohrei",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042021",
+          "name": "Nikita Zadorov",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4392765",
+          "name": "Michael DiPietro",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4565233",
+          "name": "Matt Boldy",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4565257",
+          "name": "Bobby Brink",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "2563026",
+          "name": "Blake Coleman",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3904091",
+          "name": "Joel Eriksson Ek",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "3535",
+          "name": "Nick Foligno",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5172",
+          "name": "Marcus Foligno",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042063",
+          "name": "Ryan Hartman",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "3942335",
+          "name": "Kirill Kaprizov",
+          "team": "Minnesota Wild",
+          "goals": 1,
+          "assists": 0,
+          "points": 1
+        },
+        {
+          "id": "3042048",
+          "name": "Michael McCarron",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5302535",
+          "name": "Maxim Shabanov",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "3904188",
+          "name": "Yakov Trenin",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5080172",
+          "name": "Danila Yurov",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4002",
+          "name": "Zach Bogosian",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2562600",
+          "name": "Jonas Brodin",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4320548",
+          "name": "Quinn Hughes",
+          "team": "Minnesota Wild",
+          "goals": 1,
+          "assists": 0,
+          "points": 1
+        },
+        {
+          "id": "4697711",
+          "name": "Daemon Hunt",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2976850",
+          "name": "Olli Maatta",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5079",
+          "name": "Jared Spurgeon",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4874737",
+          "name": "Jesper Wallstedt",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        }
+      ]
+    },
+    {
+      "id": "401891814000008270",
+      "label": "Early third period",
+      "at": "2026-10-04T02:14:50+00:00",
+      "t": 1791080090,
+      "period": 3,
+      "remaining": 996,
+      "intermission": false,
+      "score": [
+        3,
+        1
+      ],
+      "stats": [
+        {
+          "id": "4268466",
+          "name": "Morgan Geekie",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5275337",
+          "name": "James Hagens",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4064780",
+          "name": "Tanner Jeannot",
+          "team": "Boston Bruins",
+          "goals": 1,
+          "assists": 0,
+          "points": 1
+        },
+        {
+          "id": "4587985",
+          "name": "Mark Kastelic",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "4697442",
+          "name": "Marat Khusnutdinov",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2564154",
+          "name": "Sean Kuraly",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3041994",
+          "name": "Elias Lindholm",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5080207",
+          "name": "Fraser Minten",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4233575",
+          "name": "Casey Mittelstadt",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3114778",
+          "name": "David Pastrnak",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4697438",
+          "name": "JJ Peterka",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3899949",
+          "name": "Pavel Zacha",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4392308",
+          "name": "Jonathan Aspirot",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3941946",
+          "name": "Will Borgen",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042191",
+          "name": "Connor Clifton",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "2968818",
+          "name": "Hampus Lindholm",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4697461",
+          "name": "Mason Lohrei",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042021",
+          "name": "Nikita Zadorov",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4392765",
+          "name": "Michael DiPietro",
+          "team": "Boston Bruins",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4565233",
+          "name": "Matt Boldy",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4565257",
+          "name": "Bobby Brink",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "2563026",
+          "name": "Blake Coleman",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3904091",
+          "name": "Joel Eriksson Ek",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "3535",
+          "name": "Nick Foligno",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5172",
+          "name": "Marcus Foligno",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "3042063",
+          "name": "Ryan Hartman",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "3942335",
+          "name": "Kirill Kaprizov",
+          "team": "Minnesota Wild",
+          "goals": 1,
+          "assists": 0,
+          "points": 1
+        },
+        {
+          "id": "3042048",
+          "name": "Michael McCarron",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "5302535",
+          "name": "Maxim Shabanov",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 1,
+          "points": 1
+        },
+        {
+          "id": "3904188",
+          "name": "Yakov Trenin",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5080172",
+          "name": "Danila Yurov",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4002",
+          "name": "Zach Bogosian",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2562600",
+          "name": "Jonas Brodin",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "4320548",
+          "name": "Quinn Hughes",
+          "team": "Minnesota Wild",
+          "goals": 1,
+          "assists": 1,
+          "points": 2
+        },
+        {
+          "id": "4697711",
+          "name": "Daemon Hunt",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "2976850",
+          "name": "Olli Maatta",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        },
+        {
+          "id": "5079",
+          "name": "Jared Spurgeon",
+          "team": "Minnesota Wild",
+          "goals": 1,
+          "assists": 0,
+          "points": 1
+        },
+        {
+          "id": "4874737",
+          "name": "Jesper Wallstedt",
+          "team": "Minnesota Wild",
+          "goals": 0,
+          "assists": 0,
+          "points": 0
+        }
+      ]
+    }
+  ],
+  "winner": [
+    {
+      "t": 1791072000,
+      "at": "2026-10-04T00:00:00+00:00",
+      "home": 0.65687,
+      "away": 0.34313000000000005
+    },
+    {
+      "t": 1791072060,
+      "at": "2026-10-04T00:01:00+00:00",
+      "home": 0.65687,
+      "away": 0.34313000000000005
+    },
+    {
+      "t": 1791072120,
+      "at": "2026-10-04T00:02:00+00:00",
+      "home": 0.65687,
+      "away": 0.34313000000000005
+    },
+    {
+      "t": 1791072180,
+      "at": "2026-10-04T00:03:00+00:00",
+      "home": 0.65687,
+      "away": 0.34313000000000005
+    },
+    {
+      "t": 1791072300,
+      "at": "2026-10-04T00:05:00+00:00",
+      "home": 0.655995,
+      "away": 0.344005
+    },
+    {
+      "t": 1791072360,
+      "at": "2026-10-04T00:06:00+00:00",
+      "home": 0.655995,
+      "away": 0.344005
+    },
+    {
+      "t": 1791072480,
+      "at": "2026-10-04T00:08:00+00:00",
+      "home": 0.65389,
+      "away": 0.34611000000000003
+    },
+    {
+      "t": 1791072540,
+      "at": "2026-10-04T00:09:00+00:00",
+      "home": 0.658765,
+      "away": 0.34123499999999996
+    },
+    {
+      "t": 1791072600,
+      "at": "2026-10-04T00:10:00+00:00",
+      "home": 0.666395,
+      "away": 0.33360500000000004
+    },
+    {
+      "t": 1791072660,
+      "at": "2026-10-04T00:11:00+00:00",
+      "home": 0.666395,
+      "away": 0.33360500000000004
+    },
+    {
+      "t": 1791072720,
+      "at": "2026-10-04T00:12:00+00:00",
+      "home": 0.66802,
+      "away": 0.33198000000000005
+    },
+    {
+      "t": 1791072780,
+      "at": "2026-10-04T00:13:00+00:00",
+      "home": 0.66802,
+      "away": 0.33198000000000005
+    },
+    {
+      "t": 1791072840,
+      "at": "2026-10-04T00:14:00+00:00",
+      "home": 0.67736,
+      "away": 0.32264000000000004
+    },
+    {
+      "t": 1791072900,
+      "at": "2026-10-04T00:15:00+00:00",
+      "home": 0.672335,
+      "away": 0.327665
+    },
+    {
+      "t": 1791072960,
+      "at": "2026-10-04T00:16:00+00:00",
+      "home": 0.67715,
+      "away": 0.32284999999999997
+    },
+    {
+      "t": 1791073020,
+      "at": "2026-10-04T00:17:00+00:00",
+      "home": 0.666645,
+      "away": 0.33335499999999996
+    },
+    {
+      "t": 1791073080,
+      "at": "2026-10-04T00:18:00+00:00",
+      "home": 0.58786,
+      "away": 0.41213999999999995
+    },
+    {
+      "t": 1791073140,
+      "at": "2026-10-04T00:19:00+00:00",
+      "home": 0.551855,
+      "away": 0.448145
+    },
+    {
+      "t": 1791073200,
+      "at": "2026-10-04T00:20:00+00:00",
+      "home": 0.53111,
+      "away": 0.46889000000000003
+    },
+    {
+      "t": 1791073260,
+      "at": "2026-10-04T00:21:00+00:00",
+      "home": 0.531635,
+      "away": 0.46836500000000003
+    },
+    {
+      "t": 1791073320,
+      "at": "2026-10-04T00:22:00+00:00",
+      "home": 0.5196,
+      "away": 0.48040000000000005
+    },
+    {
+      "t": 1791073380,
+      "at": "2026-10-04T00:23:00+00:00",
+      "home": 0.519,
+      "away": 0.481
+    },
+    {
+      "t": 1791073440,
+      "at": "2026-10-04T00:24:00+00:00",
+      "home": 0.52321,
+      "away": 0.47679000000000005
+    },
+    {
+      "t": 1791073500,
+      "at": "2026-10-04T00:25:00+00:00",
+      "home": 0.51874,
+      "away": 0.48126
+    },
+    {
+      "t": 1791073560,
+      "at": "2026-10-04T00:26:00+00:00",
+      "home": 0.51782,
+      "away": 0.48218000000000005
+    },
+    {
+      "t": 1791073620,
+      "at": "2026-10-04T00:27:00+00:00",
+      "home": 0.52398,
+      "away": 0.47602
+    },
+    {
+      "t": 1791073680,
+      "at": "2026-10-04T00:28:00+00:00",
+      "home": 0.51565,
+      "away": 0.48434999999999995
+    },
+    {
+      "t": 1791073740,
+      "at": "2026-10-04T00:29:00+00:00",
+      "home": 0.528055,
+      "away": 0.47194499999999995
+    },
+    {
+      "t": 1791073800,
+      "at": "2026-10-04T00:30:00+00:00",
+      "home": 0.52686,
+      "away": 0.47314
+    },
+    {
+      "t": 1791073860,
+      "at": "2026-10-04T00:31:00+00:00",
+      "home": 0.518275,
+      "away": 0.48172499999999996
+    },
+    {
+      "t": 1791073920,
+      "at": "2026-10-04T00:32:00+00:00",
+      "home": 0.516295,
+      "away": 0.48370500000000005
+    },
+    {
+      "t": 1791073980,
+      "at": "2026-10-04T00:33:00+00:00",
+      "home": 0.507335,
+      "away": 0.492665
+    },
+    {
+      "t": 1791074040,
+      "at": "2026-10-04T00:34:00+00:00",
+      "home": 0.50744,
+      "away": 0.49256
+    },
+    {
+      "t": 1791074100,
+      "at": "2026-10-04T00:35:00+00:00",
+      "home": 0.50525,
+      "away": 0.49475
+    },
+    {
+      "t": 1791074160,
+      "at": "2026-10-04T00:36:00+00:00",
+      "home": 0.50925,
+      "away": 0.49075
+    },
+    {
+      "t": 1791074220,
+      "at": "2026-10-04T00:37:00+00:00",
+      "home": 0.51109,
+      "away": 0.48890999999999996
+    },
+    {
+      "t": 1791074280,
+      "at": "2026-10-04T00:38:00+00:00",
+      "home": 0.50346,
+      "away": 0.49654
+    },
+    {
+      "t": 1791074340,
+      "at": "2026-10-04T00:39:00+00:00",
+      "home": 0.504675,
+      "away": 0.495325
+    },
+    {
+      "t": 1791074400,
+      "at": "2026-10-04T00:40:00+00:00",
+      "home": 0.50549,
+      "away": 0.49451
+    },
+    {
+      "t": 1791074460,
+      "at": "2026-10-04T00:41:00+00:00",
+      "home": 0.502835,
+      "away": 0.49716499999999997
+    },
+    {
+      "t": 1791074520,
+      "at": "2026-10-04T00:42:00+00:00",
+      "home": 0.499575,
+      "away": 0.500425
+    },
+    {
+      "t": 1791074580,
+      "at": "2026-10-04T00:43:00+00:00",
+      "home": 0.502575,
+      "away": 0.497425
+    },
+    {
+      "t": 1791074640,
+      "at": "2026-10-04T00:44:00+00:00",
+      "home": 0.49554,
+      "away": 0.50446
+    },
+    {
+      "t": 1791074700,
+      "at": "2026-10-04T00:45:00+00:00",
+      "home": 0.489255,
+      "away": 0.510745
+    },
+    {
+      "t": 1791074760,
+      "at": "2026-10-04T00:46:00+00:00",
+      "home": 0.49195,
+      "away": 0.50805
+    },
+    {
+      "t": 1791074820,
+      "at": "2026-10-04T00:47:00+00:00",
+      "home": 0.488345,
+      "away": 0.511655
+    },
+    {
+      "t": 1791074880,
+      "at": "2026-10-04T00:48:00+00:00",
+      "home": 0.49297,
+      "away": 0.50703
+    },
+    {
+      "t": 1791074940,
+      "at": "2026-10-04T00:49:00+00:00",
+      "home": 0.490735,
+      "away": 0.5092650000000001
+    },
+    {
+      "t": 1791075000,
+      "at": "2026-10-04T00:50:00+00:00",
+      "home": 0.48466,
+      "away": 0.51534
+    },
+    {
+      "t": 1791075060,
+      "at": "2026-10-04T00:51:00+00:00",
+      "home": 0.49166,
+      "away": 0.50834
+    },
+    {
+      "t": 1791075120,
+      "at": "2026-10-04T00:52:00+00:00",
+      "home": 0.48261,
+      "away": 0.51739
+    },
+    {
+      "t": 1791075180,
+      "at": "2026-10-04T00:53:00+00:00",
+      "home": 0.484655,
+      "away": 0.5153449999999999
+    },
+    {
+      "t": 1791075240,
+      "at": "2026-10-04T00:54:00+00:00",
+      "home": 0.483255,
+      "away": 0.516745
+    },
+    {
+      "t": 1791075300,
+      "at": "2026-10-04T00:55:00+00:00",
+      "home": 0.48329,
+      "away": 0.51671
+    },
+    {
+      "t": 1791075420,
+      "at": "2026-10-04T00:57:00+00:00",
+      "home": 0.48329,
+      "away": 0.51671
+    },
+    {
+      "t": 1791075480,
+      "at": "2026-10-04T00:58:00+00:00",
+      "home": 0.48329,
+      "away": 0.51671
+    },
+    {
+      "t": 1791075540,
+      "at": "2026-10-04T00:59:00+00:00",
+      "home": 0.484795,
+      "away": 0.515205
+    },
+    {
+      "t": 1791075600,
+      "at": "2026-10-04T01:00:00+00:00",
+      "home": 0.484795,
+      "away": 0.515205
+    },
+    {
+      "t": 1791075720,
+      "at": "2026-10-04T01:02:00+00:00",
+      "home": 0.484795,
+      "away": 0.515205
+    },
+    {
+      "t": 1791075840,
+      "at": "2026-10-04T01:04:00+00:00",
+      "home": 0.484778,
+      "away": 0.5152220000000001
+    },
+    {
+      "t": 1791075900,
+      "at": "2026-10-04T01:05:00+00:00",
+      "home": 0.484639,
+      "away": 0.515361
+    },
+    {
+      "t": 1791075960,
+      "at": "2026-10-04T01:06:00+00:00",
+      "home": 0.482849,
+      "away": 0.517151
+    },
+    {
+      "t": 1791076020,
+      "at": "2026-10-04T01:07:00+00:00",
+      "home": 0.48272,
+      "away": 0.51728
+    },
+    {
+      "t": 1791076080,
+      "at": "2026-10-04T01:08:00+00:00",
+      "home": 0.482647,
+      "away": 0.517353
+    },
+    {
+      "t": 1791076140,
+      "at": "2026-10-04T01:09:00+00:00",
+      "home": 0.482559,
+      "away": 0.517441
+    },
+    {
+      "t": 1791076200,
+      "at": "2026-10-04T01:10:00+00:00",
+      "home": 0.48301,
+      "away": 0.5169900000000001
+    },
+    {
+      "t": 1791076260,
+      "at": "2026-10-04T01:11:00+00:00",
+      "home": 0.48301,
+      "away": 0.5169900000000001
+    },
+    {
+      "t": 1791076320,
+      "at": "2026-10-04T01:12:00+00:00",
+      "home": 0.48496,
+      "away": 0.5150399999999999
+    },
+    {
+      "t": 1791076380,
+      "at": "2026-10-04T01:13:00+00:00",
+      "home": 0.48217,
+      "away": 0.51783
+    },
+    {
+      "t": 1791076440,
+      "at": "2026-10-04T01:14:00+00:00",
+      "home": 0.47746,
+      "away": 0.52254
+    },
+    {
+      "t": 1791076500,
+      "at": "2026-10-04T01:15:00+00:00",
+      "home": 0.481245,
+      "away": 0.5187550000000001
+    },
+    {
+      "t": 1791076560,
+      "at": "2026-10-04T01:16:00+00:00",
+      "home": 0.475945,
+      "away": 0.5240549999999999
+    },
+    {
+      "t": 1791076620,
+      "at": "2026-10-04T01:17:00+00:00",
+      "home": 0.4724,
+      "away": 0.5276000000000001
+    },
+    {
+      "t": 1791076680,
+      "at": "2026-10-04T01:18:00+00:00",
+      "home": 0.448215,
+      "away": 0.551785
+    },
+    {
+      "t": 1791076740,
+      "at": "2026-10-04T01:19:00+00:00",
+      "home": 0.445615,
+      "away": 0.554385
+    },
+    {
+      "t": 1791076800,
+      "at": "2026-10-04T01:20:00+00:00",
+      "home": 0.451085,
+      "away": 0.548915
+    },
+    {
+      "t": 1791076860,
+      "at": "2026-10-04T01:21:00+00:00",
+      "home": 0.467405,
+      "away": 0.5325949999999999
+    },
+    {
+      "t": 1791076920,
+      "at": "2026-10-04T01:22:00+00:00",
+      "home": 0.541215,
+      "away": 0.458785
+    },
+    {
+      "t": 1791076980,
+      "at": "2026-10-04T01:23:00+00:00",
+      "home": 0.63359,
+      "away": 0.36641
+    },
+    {
+      "t": 1791077040,
+      "at": "2026-10-04T01:24:00+00:00",
+      "home": 0.64297,
+      "away": 0.35702999999999996
+    },
+    {
+      "t": 1791077100,
+      "at": "2026-10-04T01:25:00+00:00",
+      "home": 0.64449,
+      "away": 0.35551
+    },
+    {
+      "t": 1791077160,
+      "at": "2026-10-04T01:26:00+00:00",
+      "home": 0.635095,
+      "away": 0.36490500000000003
+    },
+    {
+      "t": 1791077220,
+      "at": "2026-10-04T01:27:00+00:00",
+      "home": 0.640245,
+      "away": 0.35975500000000005
+    },
+    {
+      "t": 1791077280,
+      "at": "2026-10-04T01:28:00+00:00",
+      "home": 0.640945,
+      "away": 0.359055
+    },
+    {
+      "t": 1791077340,
+      "at": "2026-10-04T01:29:00+00:00",
+      "home": 0.63825,
+      "away": 0.36175
+    },
+    {
+      "t": 1791077400,
+      "at": "2026-10-04T01:30:00+00:00",
+      "home": 0.639215,
+      "away": 0.360785
+    },
+    {
+      "t": 1791077460,
+      "at": "2026-10-04T01:31:00+00:00",
+      "home": 0.63463,
+      "away": 0.36537
+    },
+    {
+      "t": 1791077520,
+      "at": "2026-10-04T01:32:00+00:00",
+      "home": 0.6344,
+      "away": 0.36560000000000004
+    },
+    {
+      "t": 1791077580,
+      "at": "2026-10-04T01:33:00+00:00",
+      "home": 0.6384,
+      "away": 0.36160000000000003
+    },
+    {
+      "t": 1791077640,
+      "at": "2026-10-04T01:34:00+00:00",
+      "home": 0.65379,
+      "away": 0.34621
+    },
+    {
+      "t": 1791077700,
+      "at": "2026-10-04T01:35:00+00:00",
+      "home": 0.66439,
+      "away": 0.33560999999999996
+    },
+    {
+      "t": 1791077760,
+      "at": "2026-10-04T01:36:00+00:00",
+      "home": 0.683715,
+      "away": 0.31628500000000004
+    },
+    {
+      "t": 1791077820,
+      "at": "2026-10-04T01:37:00+00:00",
+      "home": 0.674495,
+      "away": 0.32550500000000004
+    },
+    {
+      "t": 1791077880,
+      "at": "2026-10-04T01:38:00+00:00",
+      "home": 0.65952,
+      "away": 0.34048
+    },
+    {
+      "t": 1791077940,
+      "at": "2026-10-04T01:39:00+00:00",
+      "home": 0.76963,
+      "away": 0.23036999999999996
+    },
+    {
+      "t": 1791078000,
+      "at": "2026-10-04T01:40:00+00:00",
+      "home": 0.81953,
+      "away": 0.18047000000000002
+    },
+    {
+      "t": 1791078060,
+      "at": "2026-10-04T01:41:00+00:00",
+      "home": 0.816505,
+      "away": 0.18349499999999996
+    },
+    {
+      "t": 1791078120,
+      "at": "2026-10-04T01:42:00+00:00",
+      "home": 0.814255,
+      "away": 0.18574500000000005
+    },
+    {
+      "t": 1791078180,
+      "at": "2026-10-04T01:43:00+00:00",
+      "home": 0.81795,
+      "away": 0.18205000000000005
+    },
+    {
+      "t": 1791078240,
+      "at": "2026-10-04T01:44:00+00:00",
+      "home": 0.818645,
+      "away": 0.18135500000000004
+    },
+    {
+      "t": 1791078300,
+      "at": "2026-10-04T01:45:00+00:00",
+      "home": 0.81574,
+      "away": 0.18425999999999998
+    },
+    {
+      "t": 1791078360,
+      "at": "2026-10-04T01:46:00+00:00",
+      "home": 0.81609,
+      "away": 0.18391000000000002
+    },
+    {
+      "t": 1791078420,
+      "at": "2026-10-04T01:47:00+00:00",
+      "home": 0.819315,
+      "away": 0.18068499999999998
+    },
+    {
+      "t": 1791078480,
+      "at": "2026-10-04T01:48:00+00:00",
+      "home": 0.81944,
+      "away": 0.18056000000000005
+    },
+    {
+      "t": 1791078540,
+      "at": "2026-10-04T01:49:00+00:00",
+      "home": 0.82679,
+      "away": 0.17320999999999998
+    },
+    {
+      "t": 1791078600,
+      "at": "2026-10-04T01:50:00+00:00",
+      "home": 0.829455,
+      "away": 0.17054499999999995
+    },
+    {
+      "t": 1791078660,
+      "at": "2026-10-04T01:51:00+00:00",
+      "home": 0.830055,
+      "away": 0.169945
+    },
+    {
+      "t": 1791078720,
+      "at": "2026-10-04T01:52:00+00:00",
+      "home": 0.8255,
+      "away": 0.1745
+    },
+    {
+      "t": 1791078780,
+      "at": "2026-10-04T01:53:00+00:00",
+      "home": 0.8276,
+      "away": 0.1724
+    },
+    {
+      "t": 1791078840,
+      "at": "2026-10-04T01:54:00+00:00",
+      "home": 0.8276,
+      "away": 0.1724
+    },
+    {
+      "t": 1791078900,
+      "at": "2026-10-04T01:55:00+00:00",
+      "home": 0.8246,
+      "away": 0.1754
+    },
+    {
+      "t": 1791078960,
+      "at": "2026-10-04T01:56:00+00:00",
+      "home": 0.82418,
+      "away": 0.17581999999999998
+    },
+    {
+      "t": 1791079020,
+      "at": "2026-10-04T01:57:00+00:00",
+      "home": 0.82418,
+      "away": 0.17581999999999998
+    },
+    {
+      "t": 1791079080,
+      "at": "2026-10-04T01:58:00+00:00",
+      "home": 0.82518,
+      "away": 0.17481999999999998
+    },
+    {
+      "t": 1791079140,
+      "at": "2026-10-04T01:59:00+00:00",
+      "home": 0.82518,
+      "away": 0.17481999999999998
+    },
+    {
+      "t": 1791079200,
+      "at": "2026-10-04T02:00:00+00:00",
+      "home": 0.83386,
+      "away": 0.16613999999999995
+    },
+    {
+      "t": 1791079260,
+      "at": "2026-10-04T02:01:00+00:00",
+      "home": 0.830675,
+      "away": 0.16932499999999995
+    },
+    {
+      "t": 1791079320,
+      "at": "2026-10-04T02:02:00+00:00",
+      "home": 0.830603,
+      "away": 0.16939700000000002
+    },
+    {
+      "t": 1791079380,
+      "at": "2026-10-04T02:03:00+00:00",
+      "home": 0.830499,
+      "away": 0.169501
+    },
+    {
+      "t": 1791079440,
+      "at": "2026-10-04T02:04:00+00:00",
+      "home": 0.830385,
+      "away": 0.16961499999999996
+    },
+    {
+      "t": 1791079500,
+      "at": "2026-10-04T02:05:00+00:00",
+      "home": 0.824888,
+      "away": 0.17511200000000005
+    },
+    {
+      "t": 1791079560,
+      "at": "2026-10-04T02:06:00+00:00",
+      "home": 0.824655,
+      "away": 0.17534499999999997
+    },
+    {
+      "t": 1791079620,
+      "at": "2026-10-04T02:07:00+00:00",
+      "home": 0.824522,
+      "away": 0.17547800000000002
+    },
+    {
+      "t": 1791079680,
+      "at": "2026-10-04T02:08:00+00:00",
+      "home": 0.825285,
+      "away": 0.17471499999999995
+    },
+    {
+      "t": 1791079740,
+      "at": "2026-10-04T02:09:00+00:00",
+      "home": 0.824285,
+      "away": 0.17571499999999995
+    },
+    {
+      "t": 1791079800,
+      "at": "2026-10-04T02:10:00+00:00",
+      "home": 0.82411,
+      "away": 0.17589
+    },
+    {
+      "t": 1791079860,
+      "at": "2026-10-04T02:11:00+00:00",
+      "home": 0.825805,
+      "away": 0.174195
+    },
+    {
+      "t": 1791079920,
+      "at": "2026-10-04T02:12:00+00:00",
+      "home": 0.82449,
+      "away": 0.17551000000000005
+    },
+    {
+      "t": 1791079980,
+      "at": "2026-10-04T02:13:00+00:00",
+      "home": 0.824265,
+      "away": 0.17573499999999997
+    },
+    {
+      "t": 1791080040,
+      "at": "2026-10-04T02:14:00+00:00",
+      "home": 0.86258,
+      "away": 0.13742
+    },
+    {
+      "t": 1791080100,
+      "at": "2026-10-04T02:15:00+00:00",
+      "home": 0.941665,
+      "away": 0.058335000000000026
+    },
+    {
+      "t": 1791080160,
+      "at": "2026-10-04T02:16:00+00:00",
+      "home": 0.95104,
+      "away": 0.048960000000000004
+    },
+    {
+      "t": 1791080220,
+      "at": "2026-10-04T02:17:00+00:00",
+      "home": 0.95171,
+      "away": 0.048290000000000055
+    },
+    {
+      "t": 1791080280,
+      "at": "2026-10-04T02:18:00+00:00",
+      "home": 0.95673,
+      "away": 0.04327000000000003
+    },
+    {
+      "t": 1791080340,
+      "at": "2026-10-04T02:19:00+00:00",
+      "home": 0.956975,
+      "away": 0.04302499999999998
+    },
+    {
+      "t": 1791080400,
+      "at": "2026-10-04T02:20:00+00:00",
+      "home": 0.957135,
+      "away": 0.04286500000000004
+    },
+    {
+      "t": 1791080460,
+      "at": "2026-10-04T02:21:00+00:00",
+      "home": 0.957135,
+      "away": 0.04286500000000004
+    },
+    {
+      "t": 1791080520,
+      "at": "2026-10-04T02:22:00+00:00",
+      "home": 0.957585,
+      "away": 0.04241499999999998
+    },
+    {
+      "t": 1791080580,
+      "at": "2026-10-04T02:23:00+00:00",
+      "home": 0.961305,
+      "away": 0.038695000000000035
+    },
+    {
+      "t": 1791080640,
+      "at": "2026-10-04T02:24:00+00:00",
+      "home": 0.958895,
+      "away": 0.04110499999999995
+    },
+    {
+      "t": 1791080700,
+      "at": "2026-10-04T02:25:00+00:00",
+      "home": 0.951045,
+      "away": 0.04895499999999997
+    },
+    {
+      "t": 1791080760,
+      "at": "2026-10-04T02:26:00+00:00",
+      "home": 0.95074,
+      "away": 0.04925999999999997
+    },
+    {
+      "t": 1791080820,
+      "at": "2026-10-04T02:27:00+00:00",
+      "home": 0.95245,
+      "away": 0.04754999999999998
+    },
+    {
+      "t": 1791080880,
+      "at": "2026-10-04T02:28:00+00:00",
+      "home": 0.96371,
+      "away": 0.036290000000000044
+    },
+    {
+      "t": 1791080940,
+      "at": "2026-10-04T02:29:00+00:00",
+      "home": 0.96505,
+      "away": 0.03495000000000004
+    },
+    {
+      "t": 1791081000,
+      "at": "2026-10-04T02:30:00+00:00",
+      "home": 0.96908,
+      "away": 0.030919999999999948
+    },
+    {
+      "t": 1791081060,
+      "at": "2026-10-04T02:31:00+00:00",
+      "home": 0.95855,
+      "away": 0.04144999999999999
+    },
+    {
+      "t": 1791081120,
+      "at": "2026-10-04T02:32:00+00:00",
+      "home": 0.957255,
+      "away": 0.04274500000000003
+    },
+    {
+      "t": 1791081180,
+      "at": "2026-10-04T02:33:00+00:00",
+      "home": 0.96303,
+      "away": 0.03696999999999995
+    },
+    {
+      "t": 1791081240,
+      "at": "2026-10-04T02:34:00+00:00",
+      "home": 0.964535,
+      "away": 0.03546499999999997
+    },
+    {
+      "t": 1791081300,
+      "at": "2026-10-04T02:35:00+00:00",
+      "home": 0.967525,
+      "away": 0.03247500000000003
+    },
+    {
+      "t": 1791081360,
+      "at": "2026-10-04T02:36:00+00:00",
+      "home": 0.972345,
+      "away": 0.027654999999999985
+    },
+    {
+      "t": 1791081420,
+      "at": "2026-10-04T02:37:00+00:00",
+      "home": 0.97876,
+      "away": 0.021240000000000037
+    },
+    {
+      "t": 1791081480,
+      "at": "2026-10-04T02:38:00+00:00",
+      "home": 0.980995,
+      "away": 0.01900500000000005
+    },
+    {
+      "t": 1791081540,
+      "at": "2026-10-04T02:39:00+00:00",
+      "home": 0.980995,
+      "away": 0.01900500000000005
+    },
+    {
+      "t": 1791081600,
+      "at": "2026-10-04T02:40:00+00:00",
+      "home": 0.980995,
+      "away": 0.01900500000000005
+    },
+    {
+      "t": 1791081660,
+      "at": "2026-10-04T02:41:00+00:00",
+      "home": 0.967765,
+      "away": 0.032235000000000014
+    },
+    {
+      "t": 1791081720,
+      "at": "2026-10-04T02:42:00+00:00",
+      "home": 0.967765,
+      "away": 0.032235000000000014
+    },
+    {
+      "t": 1791081780,
+      "at": "2026-10-04T02:43:00+00:00",
+      "home": 0.97977,
+      "away": 0.02022999999999997
+    },
+    {
+      "t": 1791081840,
+      "at": "2026-10-04T02:44:00+00:00",
+      "home": 0.98177,
+      "away": 0.01822999999999997
+    },
+    {
+      "t": 1791081900,
+      "at": "2026-10-04T02:45:00+00:00",
+      "home": 0.98757,
+      "away": 0.012430000000000052
+    },
+    {
+      "t": 1791081960,
+      "at": "2026-10-04T02:46:00+00:00",
+      "home": 0.98757,
+      "away": 0.012430000000000052
+    },
+    {
+      "t": 1791082020,
+      "at": "2026-10-04T02:47:00+00:00",
+      "home": 0.98857,
+      "away": 0.011430000000000051
+    }
+  ],
+  "markers": [
+    {
+      "id": "401891814000000520",
+      "t": 1791072872,
+      "at": "2026-10-04T00:14:32Z",
+      "period": 1,
+      "kind": "period",
+      "label": "P1"
+    },
+    {
+      "id": "401891814000004360",
+      "t": 1791076330,
+      "at": "2026-10-04T01:12:10Z",
+      "period": 2,
+      "kind": "period",
+      "label": "P2"
+    },
+    {
+      "id": "401891814000007920",
+      "t": 1791079769,
+      "at": "2026-10-04T02:09:29Z",
+      "period": 3,
+      "kind": "period",
+      "label": "P3"
+    },
+    {
+      "id": "401891814000000830",
+      "t": 1791073096,
+      "at": "2026-10-04T00:18:16+00:00",
+      "period": 1,
+      "kind": "goal",
+      "label": "Tanner Jeannot \u00b7 BOS goal",
+      "scorer": "4064780"
+    },
+    {
+      "id": "401891814000005630",
+      "t": 1791076929,
+      "at": "2026-10-04T01:22:09+00:00",
+      "period": 2,
+      "kind": "goal",
+      "label": "Kirill Kaprizov \u00b7 MIN goal",
+      "scorer": "3942335"
+    },
+    {
+      "id": "401891814000006480",
+      "t": 1791077924,
+      "at": "2026-10-04T01:38:44+00:00",
+      "period": 2,
+      "kind": "goal",
+      "label": "Quinn Hughes \u00b7 MIN goal",
+      "scorer": "4320548"
+    },
+    {
+      "id": "401891814000008260",
+      "t": 1791080035,
+      "at": "2026-10-04T02:13:55+00:00",
+      "period": 3,
+      "kind": "goal",
+      "label": "Jared Spurgeon \u00b7 MIN goal",
+      "scorer": "5079"
+    },
+    {
+      "id": "401891814000010330",
+      "t": 1791081907,
+      "at": "2026-10-04T02:45:07+00:00",
+      "period": 3,
+      "kind": "goal",
+      "label": "Kirill Kaprizov \u00b7 MIN goal",
+      "scorer": "3942335"
+    }
+  ]
+}
