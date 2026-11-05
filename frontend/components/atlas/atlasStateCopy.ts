@@ -12,15 +12,15 @@ import { useEffect, useState } from 'react';
  *   guards; the page prints the server's numbers and never normalizes on the client;
  *   independent sets are never normalized.
  * - #11990: whole numbers by default; one decimal where DNPL-fed and fast-moving.
- * - NOW #11852 decisions 10, 11, 12: "No recent price", step lines, keep all
- *   production features.
+ * - NOW #11852 decisions 10, 11, 12: "No recent probability" (ruling 10-C),
+ *   step lines (11-A), keep all production features (12-A).
  */
 export const ATLAS_STATE_COPY = {
   loading: 'Loading',
   updateInterrupted: 'Update interrupted',
   postponed: 'Postponed',
   voided: 'Void',
-  noRecentPrice: 'No recent price',
+  noRecentPrice: 'No recent probability',
   won: 'Won',
   lost: 'Lost',
   wonWithCheck: '✓ Won',

@@ -52,11 +52,13 @@ import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
 import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
 import {
+  ATLAS_STATE_COPY,
   formatAtlasMarketHeading,
   formatAtlasTimestampPT,
   resolveAtlasOptIn,
   useAtlasOptIn,
 } from "@/components/atlas/atlasStateCopy";
+import FuturesShapeBody from "@/components/futures/FuturesShapeBody";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import QuantityGroup, { buildThresholdRungs } from "@/components/QuantityGroup";
 import ProgressionTable from "@/components/ProgressionTable";
@@ -173,6 +175,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [trendView, setTrendView] = useState<"evolution" | "progression">("evolution");
   const [detailsSheetOpen, setDetailsSheetOpen] = useState(false);
+  const [atlasSelectedOutcomeId, setAtlasSelectedOutcomeId] = useState<number | null>(null);
   const atlasFromWindow = useAtlasOptIn();
   const atlasEnabled = resolveAtlasOptIn(searchParams) || atlasFromWindow;
 
@@ -1033,7 +1036,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     outcomeRowVerdict(market.outcomes[0], true) === "lost"
       ? market.outcomes[0]
       : null;
-  const atlasSubjectOutcome = gradedChampion ?? settledSingleLostOutcome ?? heroOutcome;
+  const atlasSelectedOutcome =
+    atlasSelectedOutcomeId != null
+      ? market.outcomes.find((o) => o.id === atlasSelectedOutcomeId) ?? null
+      : null;
+  const atlasSubjectOutcome =
+    atlasSelectedOutcome ?? gradedChampion ?? settledSingleLostOutcome ?? heroOutcome;
   const atlasOpeningProbability = atlasSubjectOutcome
     ? readableOpeningProbability(atlasSubjectOutcome)
     : null;
@@ -1587,11 +1595,46 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           decided for the whole page at once because what distinguishes these
           cards is the words their siblings do NOT share — see
           `thresholdLadderTitles`. Each card is still decided on its own first. */}
+      {atlasEnabled && (
+        <FuturesShapeBody
+          outcomes={market.outcomes}
+          sortedOutcomes={sortedOutcomes}
+          pricedOutcomes={pricedOutcomes}
+          renderedById={renderedById}
+          marketName={market.name}
+          marketShape={marketShape}
+          mutuallyExclusive={market.mutually_exclusive}
+          isResolved={isResolved}
+          sourceCount={market.source_count ?? null}
+          hasThresholdGroups={thresholdEntries.length > 0}
+          independenceNote={independenceNote}
+          selectedOutcomeId={atlasSubjectOutcome?.id ?? null}
+          onSelectOutcome={(outcomeId) => {
+            setAtlasSelectedOutcomeId(outcomeId);
+            didInitSelection.current = true;
+            setSelectedOutcomes(new Set([outcomeId]));
+          }}
+          onOpenDetails={() => setDetailsSheetOpen(true)}
+        />
+      )}
+
       {thresholdEntries.map(([stem, outcomes], i) => (
         <QuantityGroup
           key={stem}
           title={thresholdLadderHeadings[i]}
           rungs={buildThresholdRungs(outcomes)}
+          atlas={atlasEnabled}
+          onRungSelect={
+            atlasEnabled
+              ? (rung) => {
+                  if (typeof rung.key === "number") {
+                    setAtlasSelectedOutcomeId(rung.key);
+                    didInitSelection.current = true;
+                    setSelectedOutcomes(new Set([rung.key]));
+                  }
+                }
+              : undefined
+          }
         />
       ))}
 
@@ -1633,6 +1676,18 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               // it can render a resolved market at all.
               hint={!isResolved ? marketAsOf ?? undefined : undefined}
               wideLabels={ladderNeedsWideLabels(pricedRungs)}
+              atlas={atlasEnabled}
+              onRungSelect={
+                atlasEnabled
+                  ? (rung) => {
+                      if (typeof rung.key === "number") {
+                        setAtlasSelectedOutcomeId(rung.key);
+                        didInitSelection.current = true;
+                        setSelectedOutcomes(new Set([rung.key]));
+                      }
+                    }
+                  : undefined
+              }
             />
           )}
           {numberlessRungs.length > 0 && (
@@ -1644,7 +1699,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               <QuantityGroup
                 rungs={numberlessRungs}
                 wideLabels={ladderNeedsWideLabels(numberlessRungs)}
-                missingPriceLabel={!isResolved ? "No current price" : undefined}
+                missingPriceLabel={
+                  !isResolved
+                    ? atlasEnabled
+                      ? ATLAS_STATE_COPY.noRecentPrice
+                      : "No current price"
+                    : undefined
+                }
+                atlas={atlasEnabled}
               />
             </details>
           )}
@@ -1707,7 +1769,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           ladder reads as "extra" instead of as the answer, and the ranked table is
           the wrong one: it prints rank badges and initial avatars over rungs. */}
       {!hasOwnLadder && (
-      <div className="bg-surface-card rounded-card shadow-card p-6">
+      <div
+        data-testid={
+          atlasEnabled && marketShape === SHAPE_QUANTITY && market?.ladder_treatment_refused
+            ? "atlas-refused-ladder-list"
+            : undefined
+        }
+        className="bg-surface-card rounded-card shadow-card p-6"
+      >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
             <span>📊</span>

@@ -116,6 +116,8 @@ interface QuantityGroupProps {
   wideLabels?: boolean;
   /** Copy for a null, ungraded rung; omitted callers keep the dash. */
   missingPriceLabel?: string;
+  /** #883 Step F2 — ?atlas=1 opt-in for true-position threshold profile. */
+  atlas?: boolean;
 }
 
 // #9576 — the rows' boundary rule, not a bare round: a still-trading 0.995
@@ -141,6 +143,7 @@ export default function QuantityGroup({
   maxRungs,
   wideLabels = false,
   missingPriceLabel,
+  atlas = false,
 }: QuantityGroupProps) {
   if (!rungs || rungs.length === 0) return null;
 
@@ -272,6 +275,22 @@ export default function QuantityGroup({
     ? { width: `calc(4ch + 0.5rem)` }
     : undefined;
 
+  const numericRungs = atlas
+    ? ordered.filter(
+        (r) => typeof r.value === "number" && Number.isFinite(r.value),
+      )
+    : [];
+  const minVal =
+    numericRungs.length >= 2
+      ? Math.min(...numericRungs.map((r) => r.value!))
+      : 0;
+  const maxVal =
+    numericRungs.length >= 2
+      ? Math.max(...numericRungs.map((r) => r.value!))
+      : 0;
+  const showTruePositionProfile =
+    atlas && !compact && numericRungs.length >= 2 && maxVal > minVal;
+
   const inner = (
     <>
       {(title || headerHint) && (
@@ -284,6 +303,84 @@ export default function QuantityGroup({
           {headerHint && (
             <span className="ml-auto text-[11px] text-text-muted">{headerHint}</span>
           )}
+        </div>
+      )}
+
+      {showTruePositionProfile && (
+        <div
+          data-testid="atlas-threshold-true-positions"
+          className="mb-3 rounded-lg border border-surface-border bg-surface-deep p-3"
+        >
+          <svg
+            viewBox="0 0 332 136"
+            role="img"
+            aria-label="Thresholds at their true numeric positions. Zero to 100 percent."
+            className="block w-full"
+          >
+            {[0, 0.5, 1].map((p) => {
+              const y = 110 - p * 90;
+              return (
+                <g key={p}>
+                  <line
+                    x1="34"
+                    x2="314"
+                    y1={y}
+                    y2={y}
+                    stroke="#E5E7EB"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x="28"
+                    y={y + 3}
+                    textAnchor="end"
+                    className="fill-text-muted text-[9px]"
+                  >
+                    {p * 100}%
+                  </text>
+                </g>
+              );
+            })}
+            {numericRungs.map((rung) => {
+              const ratio = (rung.value! - minVal) / (maxVal - minVal);
+              const x = Number((38 + ratio * 270).toFixed(2));
+              const hasProb =
+                rung.probability != null &&
+                Number.isFinite(rung.probability) &&
+                rung.probability >= 0 &&
+                rung.probability <= 1;
+              const y = hasProb
+                ? Number((110 - rung.probability! * 90).toFixed(2))
+                : null;
+              return (
+                <g key={rung.key} data-testid="atlas-threshold-position-mark">
+                  <line
+                    x1={x}
+                    x2={x}
+                    y1="110"
+                    y2="114"
+                    stroke="#9CA3AF"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={x}
+                    y="126"
+                    textAnchor="middle"
+                    className="fill-text-secondary text-[9px] font-mono"
+                  >
+                    {rung.value}
+                  </text>
+                  {y != null && (
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={rung.highlighted ? "5" : "4"}
+                      fill="#10B981"
+                    />
+                  )}
+                </g>
+              );
+            })}
+          </svg>
         </div>
       )}
 
