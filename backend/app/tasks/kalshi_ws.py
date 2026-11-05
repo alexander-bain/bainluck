@@ -1544,6 +1544,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         "kalshi", refused_market=lambda market_id: market_id in prices.settled_market_ids,
     )
     blend_refresher.stream_history = stream_history
+    # #11929 27-B: observed spans (a span, not a row). Off unless
+    # `STREAM_OBSERVED_SPANS` names kalshi and its move points are on. Spans a
+    # dead run left open are closed at the venue heartbeat before this run
+    # opens any of its own.
+    from app.utils.stream_observed_spans import ObservedSpans
+
+    observed_spans = ObservedSpans("kalshi")
+    if observed_spans.enabled:
+        await observed_spans.recover(get_task_session)
     # #10090: when this arm is the named preview source, claim its display
     # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
     if getattr(blend_refresher, "preview", False):
@@ -3998,6 +4007,42 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 except Exception:  # noqa: BLE001 — never the stats heartbeat
                     stream_history.stats["history_keepalive_errors"] += 1
                     logger.warning("Kalshi WS: keep-alive pass failed", exc_info=True)
+            # #11929 27-B: observed spans, after the keep-alive, in their own
+            # session and transaction. Failures are counted inside.
+            if observed_spans.enabled:
+                try:
+                    await observed_spans.tick(get_task_session, await span_legs())
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    observed_spans.stats["spans_errors"] += 1
+                    logger.warning("Kalshi WS: observed spans tick failed", exc_info=True)
+                logger.info("Kalshi WS spans: %s", observed_spans.line())
+
+    async def span_legs():
+        """#11929 27-B: outcome ids on a SUBSCRIBED connection that received a
+        frame within `SPAN_LIFE_S` (Alex: a silently dropped subscription never
+        prints "unchanged"). The keep-alive's population, minus silent
+        connections."""
+        from app.utils.stream_observed_spans import SPAN_LIFE_S
+
+        now = time.monotonic()
+        legs = []
+        for clients, ids in (
+            (list(game_clients), ticker_to_ids),
+            (list(open_clients), open_contract_ids),
+        ):
+            for client in clients:
+                sock = client.sock
+                if not getattr(sock, "is_subscribed", False):
+                    continue
+                last = getattr(sock, "last_message_at", None)
+                if last is None or now - last > SPAN_LIFE_S:
+                    continue
+                for ticker in client.tickers:
+                    pair = ids.get(ticker)
+                    if pair is not None:
+                        legs.append(pair[1])
+                await asyncio.sleep(0)
+        return legs
 
     async def keepalive_legs():
         """#11929: (outcome_id, market_id) of every leg a SUBSCRIBED connection
@@ -4578,6 +4623,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             stats["loops_unreaped"] = await reap_stopped_loops(
                 "kalshi", (flush_task, stats_task),
             )
+            # #11929 27-B: after the stats loop is reaped (no tick can race
+            # it), every open span closes at its last tick alive. A failure or
+            # an interrupt leaves them for the next run's `recover`.
+            try:
+                stats["spans_closed_at_exit"] = await observed_spans.close_all(
+                    get_task_session,
+                )
+            except asyncio.CancelledError as exc:
+                interrupted = interrupted or exc
         if interrupted is not None:
             raise interrupted
 
