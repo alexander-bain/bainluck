@@ -312,8 +312,8 @@ def drop_unbacked_legs(
 
 
 def display_divisor_mass(probs) -> float:
-    """Full one-winner field mass, including small prices and overflow (#11995)."""
-    return sum(float(p) for p in probs if p is not None)
+    """Priced field mass, including overflow but excluding one-cent bounds (#8595)."""
+    return sum(float(p) for p in probs if p is not None and not is_venue_floor_price(p))
 
 
 def _field_has_result(outcomes: list[dict]) -> bool:
@@ -334,9 +334,9 @@ def display_probability_divisor(
 ) -> float | None:
     """One venue-blind served-number rule; never turn unknown mass into zero.
 
-    Exclusivity describes the event, not the magnitude of the prices. Alex's
-    #11995 ruling removes the former vig thresholds, ceiling and one-cent
-    exclusion. Call with the FULL field before any preview/overflow slice.
+    Call with the FULL field before any preview/overflow slice. Alex's later
+    decision A retains the 160% raw-mass guard, one-cent bound exclusion and
+    scale-down-only rule: suspect or missing mass must not become a distribution.
     A cumulative ladder is refused even if its stored exclusivity flag is wrong.
     """
     import math
@@ -360,9 +360,12 @@ def display_probability_divisor(
         for p in values
     ):
         return None
-    mass = display_divisor_mass(values)
+    raw_mass = sum(float(p) for p in values)
+    mass = raw_mass if mutually_exclusive is None else display_divisor_mass(values)
+    if mutually_exclusive and (raw_mass > _FIELD_SUM_MAX or mass < 1):
+        return None
     # Compatibility for callers that have not supplied semantics. Explicit
-    # non-exclusive sets always refused above; one-winner fields have no band.
+    # non-exclusive sets always refused above; unknown semantics keep their band.
     threshold = 1.01 if sum(bool(p) for p in values[:3]) == 2 else 1.05
     if mutually_exclusive is None and not threshold < mass <= 2:
         return None
@@ -406,6 +409,12 @@ def normalize_display_probs(
     if divisor is None:
         return False
     before = [o[key] for o in outcomes]
+    if any(is_venue_floor_price(p) for p in before):
+        # Upper bounds do not define a complete probability vector. Preserve
+        # their historical scale without inventing a whole-percent allocation.
+        for o, p in zip(outcomes, before):
+            o[key] = round(float(p) / divisor, 8)
+        return any(p != o[key] for p, o in zip(before, outcomes))
     exact = [float(p) / divisor * 100 for p in before]
     whole = [math.floor(p + 1e-10) for p in exact]
     order = sorted(
