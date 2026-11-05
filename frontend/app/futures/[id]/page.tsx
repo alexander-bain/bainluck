@@ -1257,8 +1257,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           sourceCount={market.source_count ?? null}
           sourceLabels={heroContributorList}
           externalId={market.external_id}
-          marketId={market.id}
-          outcomeId={atlasSubjectOutcome?.id ?? null}
           rulesText={market.description}
         />
       )}
