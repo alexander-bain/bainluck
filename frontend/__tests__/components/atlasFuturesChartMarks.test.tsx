@@ -157,6 +157,8 @@ describe('Step F3 — Atlas chart marks on FuturesChart (#883)', () => {
       expect(openingReadout?.textContent).toContain('22%');
       expect(openingReadout?.textContent).toContain('Opening');
       expect(openingReadout?.textContent).toContain('PT');
+      expect(openingReadout?.innerHTML).toContain('bg-surface-card');
+      expect(openingReadout?.innerHTML).not.toContain('#FFFFFF');
 
       // Tap a recorded reading
       await act(async () => {

@@ -306,6 +306,15 @@ export default function QuantityGroup({
         </div>
       )}
 
+      {atlas && !compact && (
+        <div
+          data-testid="atlas-threshold-eyebrow"
+          className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2"
+        >
+          Independent thresholds · do not add to 100%
+        </div>
+      )}
+
       {showTruePositionProfile && (
         <div
           data-testid="atlas-threshold-true-positions"
@@ -326,8 +335,9 @@ export default function QuantityGroup({
                     x2="314"
                     y1={y}
                     y2={y}
-                    stroke="#E5E7EB"
+                    stroke="currentColor"
                     strokeWidth="1"
+                    className="text-surface-border"
                   />
                   <text
                     x="28"
@@ -358,8 +368,9 @@ export default function QuantityGroup({
                     x2={x}
                     y1="110"
                     y2="114"
-                    stroke="#9CA3AF"
+                    stroke="currentColor"
                     strokeWidth="1"
+                    className="text-text-muted"
                   />
                   <text
                     x={x}
@@ -374,7 +385,8 @@ export default function QuantityGroup({
                       cx={x}
                       cy={y}
                       r={rung.highlighted ? "5" : "4"}
-                      fill="#10B981"
+                      fill="currentColor"
+                      className="text-accent-brand"
                     />
                   )}
                 </g>

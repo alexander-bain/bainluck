@@ -310,11 +310,12 @@ export function AtlasSelectedReadingReadout({
       <div className="flex flex-wrap items-center gap-2 min-w-0">
         <span
           aria-hidden="true"
-          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+          className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${
+            reading.isOpening ? "bg-surface-card" : ""
+          }`}
           style={
             reading.isOpening
               ? {
-                  backgroundColor: "#FFFFFF",
                   border: `2px solid ${reading.color}`,
                 }
               : { backgroundColor: reading.color }

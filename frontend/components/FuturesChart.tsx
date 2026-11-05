@@ -278,6 +278,7 @@ export function FuturesChart({
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
+  // Default to step lines under ?atlas=1 (NOW #11852 Decision 11-A) while preserving false for non-Atlas callers.
   const effectiveStepInterpolation = stepInterpolation ?? atlas;
   const palette = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
 
