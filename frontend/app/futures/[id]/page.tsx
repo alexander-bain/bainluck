@@ -1042,7 +1042,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     !isResolved && !isWithdrawn && formatResolvesLabel(market.resolution_date)
       ? formatAtlasTimestampPT(market.resolution_date)
         ? `Scheduled resolution ${formatAtlasTimestampPT(market.resolution_date)}`
-        : formatResolvesLabel(market.resolution_date) || undefined
+        : undefined
       : undefined;
   const atlasLastObservedAt =
     atlasSubjectOutcome?.observed_at || market.prices_updated_at || null;
