@@ -123,6 +123,66 @@ class TestAlertFingerprintingAndFiling:
         )
 
 
+class TestTheFilerDedupsOnTheOpenList:
+    """#11988: production's token gets 422 from /search/issues, and a failed
+    search read as "no open issue" — nine `vacuum_block:postgres` issues in two
+    hours. The dedup is the REST list of open alert-intake issues."""
+
+    MARKER = "<!-- watchdog-alert-fingerprint:vacuum_block:postgres -->"
+
+    @pytest.fixture
+    def github(self, monkeypatch):
+        import httpx
+
+        import app.tasks.bug_report_github as gh
+        import app.tasks.sentinel_filing as filing
+
+        calls = {"comments": [], "created": [], "listing": filing.OpenIssuesResult(ok=True)}
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "t")
+        monkeypatch.setattr(gh, "comment_on_issue",
+                            lambda n, body: calls["comments"].append(n))
+        monkeypatch.setattr(gh, "create_github_issue",
+                            lambda title, body, labels: calls["created"].append(body) or (99, "N"))
+        monkeypatch.setattr(gh, "add_to_project_board", lambda node: None)
+        monkeypatch.setattr(filing, "fetch_open_alert_issues", lambda: calls["listing"])
+
+        def no_search(url, *a, **k):
+            raise AssertionError(f"the filer called {url}")
+
+        monkeypatch.setattr(httpx, "get", no_search)
+        return calls
+
+    def _file(self):
+        return watchdog._file_watchdog_issue("vacuum_block", "postgres", "title", "body")
+
+    def test_an_open_owner_is_commented_on_and_the_lowest_wins(self, github):
+        import app.tasks.sentinel_filing as filing
+
+        github["listing"] = filing.OpenIssuesResult(ok=True, issues=[
+            {"number": 12004, "body": f"x\n\n{self.MARKER}"},
+            {"number": 7712, "body": f"y\n\n{self.MARKER}"},
+            {"number": 12001, "body": "names `watchdog-alert-fingerprint:vacuum_block:postgres` in prose"},
+            {"number": 11000, "body": "<!-- watchdog-alert-fingerprint:creation_stall:kalshi -->"},
+        ])
+        res = self._file()
+        assert res == {"action": "commented", "issue": 7712,
+                       "fingerprint": "vacuum_block:postgres"}
+        assert github["comments"] == [7712] and github["created"] == []
+
+    def test_no_owner_files_one_issue_carrying_the_marker(self, github):
+        res = self._file()
+        assert res["action"] == "filed" and res["issue"] == 99
+        assert github["created"][0].endswith(self.MARKER)
+
+    def test_an_unreadable_list_files_nothing(self, github):
+        import app.tasks.sentinel_filing as filing
+
+        github["listing"] = filing.OpenIssuesResult(ok=False, error="403")
+        res = self._file()
+        assert res["action"] == "dedup_unknown_no_op"
+        assert github["created"] == [] and github["comments"] == []
+
+
 # ── creation-freshness ────────────────────────────────────────────────
 
 

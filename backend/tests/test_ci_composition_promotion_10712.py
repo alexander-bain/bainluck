@@ -295,7 +295,7 @@ def _validate_current_composed_promotion(
     assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
     assert set(aggregate["needs"]) == {"change-scope", "database-integration"}
-    assert aggregate["if"] == f"always() && {SCOPE_RUNS} && {LIVE}"
+    assert aggregate["if"] == f"${{{{ !cancelled() && {SCOPE_RUNS} && {LIVE} }}}}"
     for name in ("frontend-build", "e2e-contract", "release-required", "deploy"):
         _current_checkout(jobs[name])
     assert jobs["frontend-build"].get("if") == LIVE

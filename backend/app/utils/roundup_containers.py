@@ -431,7 +431,12 @@ async def evaluate_roundup_producer(
 
     is_fixture_seq = isinstance(db, (list, tuple))
     ts = time.time() if now is None else float(now)
-    use_cache = not is_fixture_seq and container_read_cache_enabled()
+    rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
+    no_cache = (
+        rule_cfg.get("cache") == "none"
+        or rule_cfg.get("producer") == "yardstick_pair"
+    )
+    use_cache = not is_fixture_seq and not no_cache and container_read_cache_enabled()
     cache_key = (
         producer.slug,
         "live" if isinstance(db, AsyncSession) else id(db),
@@ -844,6 +849,7 @@ def _register_builtin_producers() -> None:
     import app.utils.same_deadline_board as _same_deadline
     import app.utils.sibling_family as _sibling_family
     import app.utils.window_events_closest as _window_closest
+    import app.utils.yardstick_pair as _yardstick_pair
 
     producer = getattr(_bundles, "NFL_DIVISION_ROUNDUP_PRODUCER", None)
     if producer is not None:
@@ -878,6 +884,15 @@ def _register_builtin_producers() -> None:
     )
     if snow_producer is not None:
         register_roundup_producer(snow_producer)
+
+    for attr in (
+        "FOR_SCALE_SNOW_IN_DC_PRODUCER",
+        "FOR_SCALE_SNOW_IN_BUFFALO_PRODUCER",
+        "FOR_SCALE_US_RECESSION_2026_PRODUCER",
+    ):
+        yardstick_producer = getattr(_yardstick_pair, attr, None)
+        if yardstick_producer is not None:
+            register_roundup_producer(yardstick_producer)
 
 
 _register_builtin_producers()
