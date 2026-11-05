@@ -50,6 +50,12 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { FuturesHero } from "@/components/FuturesHero";
 import { FuturesChart } from "@/components/FuturesChart";
+import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
+import {
+  formatAtlasMarketHeading,
+  formatAtlasTimestampPT,
+  resolveAtlasOptIn,
+} from "@/components/atlas/atlasStateCopy";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import QuantityGroup, { buildThresholdRungs } from "@/components/QuantityGroup";
 import ProgressionTable from "@/components/ProgressionTable";
@@ -165,6 +171,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const [selectedOutcomes, setSelectedOutcomes] = useState<Set<number>>(new Set());
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [trendView, setTrendView] = useState<"evolution" | "progression">("evolution");
+  const [detailsSheetOpen, setDetailsSheetOpen] = useState(false);
+  const atlasEnabled = resolveAtlasOptIn(searchParams);
 
   // #7545 — the reader's chosen history rung. `null` means "not chosen yet", which
   // is NOT the same as 1W: until the market loads we cannot tell whether its
@@ -1012,6 +1020,38 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // keeps every definite row and says so in the caption. A field whose rows all
   // definitely LOST is not unknown (an independent field may have no winner).
   const resultCertainty = boardResultCertainty(market.outcomes, isResolved);
+  // #883 Step F1: on a settled one-leg market where the single supplied side
+  // explicitly lost (`outcomeRowVerdict === "lost"`), lead with "✗ Lost" and that
+  // side's name under `?atlas=1`. Multi-outcome fields with no graded winner keep
+  // `heroNamesNobody` (#6301).
+  const settledSingleLostOutcome =
+    isResolved &&
+    gradedChampion === null &&
+    market.outcomes.length === 1 &&
+    outcomeRowVerdict(market.outcomes[0], true) === "lost"
+      ? market.outcomes[0]
+      : null;
+  const atlasSubjectOutcome = gradedChampion ?? settledSingleLostOutcome ?? heroOutcome;
+  const atlasOpeningProbability = atlasSubjectOutcome
+    ? readableOpeningProbability(atlasSubjectOutcome)
+    : null;
+  const atlasRenderedOpening = atlasSubjectOutcome
+    ? renderedById.get(atlasSubjectOutcome.id)?.opening ?? null
+    : null;
+  const atlasScheduledResolution =
+    !isResolved && !isWithdrawn && formatResolvesLabel(market.resolution_date)
+      ? formatAtlasTimestampPT(market.resolution_date)
+        ? `Scheduled resolution ${formatAtlasTimestampPT(market.resolution_date)}`
+        : undefined
+      : undefined;
+  const atlasLastObservedAt =
+    atlasSubjectOutcome?.observed_at || market.prices_updated_at || null;
+  const atlasLastObserved = !isResolved
+    ? formatAtlasTimestampPT(atlasLastObservedAt)
+    : null;
+  const heroContributorList = heroNamesNobody
+    ? undefined
+    : heroContributorLabels(market, heroOutcome);
   // L2-161 Hero C: the hero outcome's own 7-day curve, drawn as ambient texture
   // behind the numeral. Empty ⇒ the hero falls back to a plain numeral.
   // #10224 — the ambient curve is the requested source's history, so it draws
@@ -1120,9 +1160,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // all-losers fields serve. The day that branch prints a number, it would
         // print "35%" under no name at all.
         outcomeName={
-          heroNamesNobody || !heroOutcome
+          (heroNamesNobody && !(atlasEnabled && settledSingleLostOutcome)) || !heroOutcome
             ? undefined
-            : boardOutcomeLabel(heroOutcome.name, market.name)
+            : boardOutcomeLabel(
+                (settledSingleLostOutcome ?? heroOutcome).name,
+                market.name,
+              )
         }
         movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
         // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
@@ -1135,7 +1178,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // #10224 — on a verified title page, the shown outcome's own contributors
         // (never the market's union; bookmakers stay provenance). Undefined in
         // source mode or on an unlabellable value ⇒ the footer above, unchanged.
-        sourceLabels={heroNamesNobody ? undefined : heroContributorLabels(market, heroOutcome)}
+        sourceLabels={heroContributorList}
         // UX-P054 (#1719) — the third copy of the "Resolves <date>" rule, and the
         // one the authority guard could not see: it named this line as its blind
         // spot because it sits outside `components/` and `lib/`.
@@ -1160,8 +1203,56 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         sparklinePoints={ambientPoints}
         resolved={isResolved}
         resolvedWon={gradedChampion !== null}
+        resolvedLost={settledSingleLostOutcome !== null}
         resultUnknown={resultCertainty === "all"}
+        atlas={atlasEnabled}
+        openingProbability={atlasOpeningProbability}
+        renderedOpening={atlasRenderedOpening}
+        scheduledResolutionLabel={atlasScheduledResolution}
+        lastObservedLabel={atlasLastObserved}
+        onOpenDetails={atlasEnabled ? () => setDetailsSheetOpen(true) : undefined}
       />
+
+      {atlasEnabled && (
+        <AtlasDetailsSheet
+          open={detailsSheetOpen}
+          onClose={() => setDetailsSheetOpen(false)}
+          subjectName={
+            atlasSubjectOutcome
+              ? boardOutcomeLabel(atlasSubjectOutcome.name, market.name)
+              : formatAtlasMarketHeading(editionTitle(market.name, market.edition_year))
+          }
+          marketTitle={
+            formatAtlasMarketHeading(editionTitle(market.name, market.edition_year)) ||
+            editionTitle(market.name, market.edition_year)
+          }
+          isSettled={isResolved}
+          settledResult={
+            gradedChampion !== null
+              ? "won"
+              : settledSingleLostOutcome !== null
+                ? "lost"
+                : null
+          }
+          openingProbability={atlasOpeningProbability}
+          renderedOpening={atlasRenderedOpening}
+          lastProbability={atlasSubjectOutcome?.probability ?? null}
+          renderedLast={
+            atlasSubjectOutcome
+              ? renderedById.get(atlasSubjectOutcome.id)?.current ?? null
+              : null
+          }
+          lastObservedAt={atlasLastObservedAt}
+          resolutionDate={market.resolution_date}
+          source={market.source}
+          sourceCount={market.source_count ?? null}
+          sourceLabels={heroContributorList}
+          externalId={market.external_id}
+          marketId={market.id}
+          outcomeId={atlasSubjectOutcome?.id ?? null}
+          rulesText={market.description}
+        />
+      )}
 
       {/* L2-65 / B7 L2-91: breadcrumb UP into the richer event-concept surface
           (leaderboard, race chart, matchups), or the competition hub when there's no
