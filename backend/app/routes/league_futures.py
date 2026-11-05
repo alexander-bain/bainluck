@@ -2744,7 +2744,9 @@ def _serialize_outcomes(
             # carrier here, not a hypothetical: the NFL page serves ten of
             # "Will Sam Darnold win the Pro Football Championship Game MVP?"
             # under `awards[].top_outcomes[].name`.
-            "name": rewrite_venue_league_vocabulary((labels or {}).get(o.name, o.name)),
+            "name": rewrite_venue_league_vocabulary(
+                (labels or {}).get(o.name, o.name)
+            ),
             "probability": (
                 float(o.current_probability) if o.current_probability else None
             ),

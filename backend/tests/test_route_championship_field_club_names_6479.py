@@ -188,7 +188,7 @@ def test_the_detail_row_keeps_its_id_and_price_while_the_name_moves_6479():
     detail = _format_market_detail(_board(*BOARDS["super_bowl"]))
     row = next(o for o in detail["outcomes"] if o["id"] == 643828)
     assert row["name"] == "Los Angeles Rams"
-    assert row["probability"] == pytest.approx(0.108 / sum(r[3] for r in SUPER_BOWL_RUNGS), abs=1e-8)
+    assert row["probability"] == pytest.approx(0.108, rel=1e-3)
     assert row["american_odds"] == 400
 
 

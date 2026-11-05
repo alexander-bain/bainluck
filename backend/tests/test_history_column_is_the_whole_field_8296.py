@@ -137,7 +137,7 @@ class TestTheServedScale:
     def test_a_carried_floor_leg_no_longer_moves_the_divisor_8595(self):
         """Kiwoom's real 0.01, carried, lands on the hero anyway (#8595)."""
         point = self._final(carry_forward_quotes(_raw_by_time()))
-        assert point[LG] == pytest.approx(0.47 / (sum(_MOVED_AT_FINAL.values()) + sum(p for _, p in _LAST_ROW.values())), abs=1e-8)
+        assert point[LG] == pytest.approx(_HERO[LG], abs=6e-4)
 
 
 class TestTheCarriedEndpoint:

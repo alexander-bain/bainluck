@@ -1343,7 +1343,11 @@ def normalized_field_comparisons(
     from app.utils.outcome_display import normalize_display_probs
 
     state = _instance_dict(market) or {}
-    if state.get("mutually_exclusive") is not True or not field_complete:
+    if (
+        state.get("status") == "resolved"
+        or state.get("mutually_exclusive") is not True
+        or not field_complete
+    ):
         return None
     rows = [dict(row) for row in outcomes]
     normalize_display_probs(

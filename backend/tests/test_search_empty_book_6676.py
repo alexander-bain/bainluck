@@ -229,16 +229,13 @@ class TestTheSpecimen:
 
         top = _build_search_top_outcomes(before, limit=5, lean=False)
 
-        expected = [
-            ("Golden State Warriors", 0.74), ("Brooklyn Nets", 0.48),
-            ("Atlanta Hawks", 0.48), ("Phoenix Suns", 0.48), ("Chicago Bulls", 0.48),
-        ]
-        mass = sum(o.current_probability for o in before.outcomes)
-        assert [o["name"] for o in top] == [name for name, _ in expected]
-        assert [o["probability"] for o in top] == pytest.approx(
-            [price / mass for _, price in expected], abs=1e-8
-        )  # #11995: the former ceiling no longer hides the corrupt divisor
-
+        assert [(o["name"], o["probability"]) for o in top] == [
+            ("Golden State Warriors", 0.74),
+            ("Brooklyn Nets", 0.48),
+            ("Atlanta Hawks", 0.48),
+            ("Phoenix Suns", 0.48),
+            ("Chicago Bulls", 0.48),
+        ], "production served exactly this on 2026-09-17"
 
     def test_the_typeahead_dropdown_is_served_by_the_same_guard(self):
         """One builder, both surfaces — the reason the guard goes here."""

@@ -579,7 +579,9 @@ def test_each_market_and_tour_dates_its_own_legs(monkeypatch) -> None:
     win = _served(monkeypatch, market_ids[("pga", "win")])[outcome_ids[("pga", "win", JORDAN)]]
     t5 = _served(monkeypatch, market_ids[("pga", "top_5")])[outcome_ids[("pga", "top_5", JORDAN)]]
     eu = _served(monkeypatch, market_ids[("euro", "win")])[outcome_ids[("euro", "win", JORDAN)]]
-    assert win is not None and abs(win - _normalized_move(0.15)) < 1e-6, win
+    # The later placement-only poll omits the winner peers, so this current
+    # field is incomplete and stays raw; this arm checks market/tour isolation.
+    assert win is not None and abs(win - 0.13) < 1e-6, win
     assert t5 is not None and abs(t5 - 0.15) < 1e-6, t5
     assert eu is not None and abs(eu - (-0.05)) < 1e-6, eu
 
@@ -1322,7 +1324,8 @@ def _line(prompts: list[str], name: str) -> str:
 def test_d5_league_card_states_the_dated_move(monkeypatch) -> None:
     """`/api/leagues/{sport}` cards: `_serialize_outcomes`, both callers' shape
     (a full ORM market), on the real rows. DataGolf → dated +0.13, not the
-    stored 0; Kalshi → its stored +0.05 exactly as before."""
+    stored 0; the complete winner field uses its normalized day comparison.
+    Kalshi → its stored +0.05 exactly as before."""
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import selectinload
@@ -1348,7 +1351,7 @@ def test_d5_league_card_states_the_dated_move(monkeypatch) -> None:
         return out
 
     cards = asyncio.run(_cards())
-    assert cards["Matthew Jordan"] is not None and abs(cards["Matthew Jordan"] - 0.13) < 1e-6, cards
+    assert cards["Matthew Jordan"] is not None and abs(cards["Matthew Jordan"] - _normalized_move(0.15)) < 1e-6, cards
     assert abs(cards["Player 2001"] - 0.05) < 1e-6, cards
 
 

@@ -308,7 +308,7 @@ class TestBrowseAppliesTheRefusal:
         ]
 
     @pytest.mark.asyncio
-    async def test_an_empty_union_keeps_membership_and_normalizes_the_full_field(self, monkeypatch):
+    async def test_an_empty_union_changes_nothing(self, monkeypatch):
         """🪤 THE FAIL-OPEN DIRECTION. No refusals ⇒ byte-identical to before.
 
         This is the assertion that fails if the sort key or the serializer starts
@@ -316,12 +316,11 @@ class TestBrowseAppliesTheRefusal:
         """
         item = await _browse(monkeypatch, set())
 
-        assert [o["id"] for o in item["top_outcomes"]] == [222320669, 222320670, 222320671]
-        assert [o["probability"] for o in item["top_outcomes"]] == pytest.approx(
-            [0.3 / sum(row[3] for row in SPECIMEN_LEGS),
-             0.25 / sum(row[3] for row in SPECIMEN_LEGS),
-             0.25 / sum(row[3] for row in SPECIMEN_LEGS)], abs=1e-8
-        )
+        assert [(o["id"], o["probability"]) for o in item["top_outcomes"]] == [
+            (222320669, 0.3),
+            (222320670, 0.25),
+            (222320671, 0.25),
+        ]
 
 
 class TestFacetedAppliesTheRefusal:

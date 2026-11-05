@@ -269,7 +269,12 @@ class TestTheSerializerWithholdsWhatTheRuleRefuses:
         assert any(o["probability"] is not None for o in detail["outcomes"])
 
     def test_an_honest_field_keeps_its_openings(self):
-        detail = self._detail(self._market([0.5, 0.3, 0.2]))
+        from datetime import datetime, timezone
+
+        market = self._market([0.5, 0.3, 0.2])
+        for outcome in market.outcomes:
+            outcome.opening_captured_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        detail = self._detail(market)
         assert detail["openings_withheld"] is False
         assert [o["opening_probability"] for o in detail["outcomes"]] == [0.5, 0.3, 0.2]
         assert all(o["opening_american_odds"] == -9900 for o in detail["outcomes"])

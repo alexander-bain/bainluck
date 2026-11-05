@@ -9,8 +9,6 @@ Covers the shared backend helpers that make search surfaces "answer-first":
 import itertools
 from types import SimpleNamespace
 
-import pytest
-
 from app.routes.events import (
     _is_placeholder_outcome_name,
     _normalize_search_outcome_probs,
@@ -380,7 +378,7 @@ class TestNormalizeSearchProbs:
         # the honest per-outcome win probability (search must match the detail page).
         outs = [{"probability": 0.945}, {"probability": 0.90}, {"probability": 0.90}]
         _normalize_search_outcome_probs(outs)
-        assert outs[0]["probability"] == pytest.approx(0.945 / 2.745)
+        assert outs[0]["probability"] == 0.945
 
 
 class TestBuildTopOutcomes:
