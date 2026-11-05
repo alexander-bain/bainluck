@@ -3246,8 +3246,8 @@ export interface SportHierarchyListResponse {
 export interface EventConceptCompetitor {
   name: string;
   probability: number | null;
-  // #6816: the server's decided whole percent for a proven two-sided bout's hero
-  // (combat `co_equal_list`). Both-or-neither via `servedBoutPercents`.
+  // Server allocation for a complete one-winner field, or a proven two-sided
+  // bout's hero (#6816, both-or-neither via `servedBoutPercents`).
   rendered_percent?: number | null;
   // L2-81: authoritative settled winner flag (from resolution). When the event is
   // settled the leaderboard renders the champion as "Won" instead of a stale %.
@@ -3383,6 +3383,7 @@ export interface EventConceptResponse {
     kind: "winner_field" | "co_equal_list";
     label: string;
     competitors: EventConceptCompetitor[];
+    overflow_outcomes?: GolfOverflowOutcome[];
     evolution_market_id?: number | null;
   };
   sections: EventConceptSection[];

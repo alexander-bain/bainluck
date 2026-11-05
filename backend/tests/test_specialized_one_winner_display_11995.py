@@ -320,6 +320,10 @@ async def test_golf_detail_retains_the_same_priced_overflow_as_the_card(monkeypa
         "the-masters", SimpleNamespace(execute=AsyncMock(return_value=empty))
     )
     assert body["overflow_outcomes"] == entry["overflow_outcomes"]
+    from app.utils.event_concept import golf_detail_to_envelope
+
+    envelope = golf_detail_to_envelope("event:golf:the-masters", "the-masters", body)
+    assert envelope["primary"]["overflow_outcomes"] == entry["overflow_outcomes"]
     assert (
         sum(
             row["rendered_percent"]
@@ -327,6 +331,26 @@ async def test_golf_detail_retains_the_same_priced_overflow_as_the_card(monkeypa
         )
         == 100
     )
+
+
+def test_normalized_live_rows_never_subtract_a_raw_single_source_day_column():
+    from app.utils.event_concept import golf_live_deltas
+
+    rows = [
+        {
+            "name": "Alice Smith",
+            "probability": 0.4,
+            "rendered_percent": 40,
+            "opening_probability": 0.3,
+            "movement_24h": 0.02,
+            "prob_delta_live": 99,
+        }
+    ]
+    golf_live_deltas(rows, {"alice smith": 20})
+    assert "prob_delta_live" not in rows[0]
+    assert rows[0]["movement_24h"] == 0.02
+    golf_live_deltas(rows, {})
+    assert rows[0]["prob_delta_live"] == 10.0
 
 
 def comparison_fields():

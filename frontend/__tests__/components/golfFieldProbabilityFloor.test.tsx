@@ -51,6 +51,7 @@ jest.mock("next/link", () => ({
 
 import { GolferRow, GolfOverflowRows } from "@/components/golf/GolferRow";
 import TournamentCard from "@/components/TournamentCard";
+import EventLeaderboard from "@/components/event/EventLeaderboard";
 
 /** Rendered markup with the entities this rule's own output produces decoded. */
 function text(el: React.ReactElement): string {
@@ -81,6 +82,20 @@ const row = (g: GolfGolfer, showSourceBreakdown = false) =>
   );
 
 describe("UX-P161 — the golf field row honours the probability floor", () => {
+  it("#11995 carries the full allocation through the actual event-page leaderboard", () => {
+    const html = text(<EventLeaderboard label="Winner" initialView="full" competitors={[
+      { name: "Alice Smith", probability: 1 / 3, rendered_percent: 34 },
+      { name: "Bob Jones", probability: 1 / 3, rendered_percent: 33 },
+      { name: "Casey Reed", probability: 1 / 3, rendered_percent: 33 },
+    ]} />);
+    expect(html).toContain(">34%<");
+    expect(html.match(/>33%</g)).toHaveLength(2);
+    const overflow = text(<EventLeaderboard label="Winner" competitors={[
+      { name: "Alice Smith", probability: 0.8, rendered_percent: 80 },
+    ]} overflowOutcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />);
+    expect(overflow).toContain("Field");
+    expect(overflow).toContain(">20%<");
+  });
   it("#11995 keeps priced overflow in the visible field without a golfer link", () => {
     const html = text(<>
       {[40, 20, 20].map((percent, index) => <GolferRow key={index}
