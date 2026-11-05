@@ -638,13 +638,15 @@ def test_the_polymarket_minute_line_carries_the_counters(caplog):
 
     stats = {"price_updates": 3, "trade_updates": 0, "resolutions": 0, "errors": 0,
              "price_rows_skipped_locked": 5, "repeats_skipped": 4321,
-             "history_points": 11, "history_capped": 2, "history_skipped": 40,
+             "history_points": 11, "history_keepalive": 7, "history_keepalive_errors": 1,
+             "history_capped": 2, "history_skipped": 40,
              "history_refused": 1, "history_errors": 0}
     blend = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
     with caplog.at_level(logging.INFO, logger=pm.logger.name):
         pm._log_stats_line(stats, {}, blend)
     (line,) = [r.getMessage() for r in caplog.records if "Polymarket WS: " in r.getMessage()]
-    assert ("history_points=11 history_capped=2 history_skipped=40 history_refused=1 "
+    assert ("history_points=11 history_keepalive=7 history_keepalive_errors=1 "
+            "history_capped=2 history_skipped=40 history_refused=1 "
             "history_errors=0 skipped_locked=5 repeats_skipped=4321") in line
     assert line.endswith("repeats_skipped=4321")
 

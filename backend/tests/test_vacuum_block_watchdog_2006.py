@@ -235,6 +235,38 @@ class TestSignalsAreJudgedIndependently:
         assert watchdog.VACUUM_XACT_WARN_S < watchdog.VACUUM_XACT_PAGE_S
 
 
+class TestAHotQueueIsNotEvidence:
+    """#11988 (2026-11-04): `owed_chart_points` — 3–14 live rows, ~6 inserts
+    and ~6 deletes a second, vacuumed every minute — read 99.6% dead between
+    passes and paged ALONE nine times in two hours, with xmin 3,736 and a
+    213-second transaction. A share of a handful of rows is arithmetic."""
+
+    def test_the_read_carries_an_absolute_dead_tuple_floor(self):
+        assert (
+            f"n_dead_tup >= {watchdog.VACUUM_DEAD_MIN_TUPLES}"
+            in watchdog.Q_VACUUM_WORST_DEAD_PCT
+        )
+        assert "n_live_tup + n_dead_tup > 1000" not in watchdog.Q_VACUUM_WORST_DEAD_PCT
+
+    def test_the_floor_sits_above_the_queue_between_two_vacuums(self):
+        """7,189 dead was the most it held in nine minutes of 15-second reads;
+        under a #2005-length hold it passes the floor in under five hours."""
+        queue_peak_between_vacuums = 7_189
+        deletes_per_s = 6
+        assert watchdog.VACUUM_DEAD_MIN_TUPLES > 10 * queue_peak_between_vacuums
+        assert watchdog.VACUUM_DEAD_MIN_TUPLES / deletes_per_s < 5 * 3600
+
+    def test_the_11988_reading_files_nothing(self, rig):
+        """Both horizon signals as #11988 read them, and the queue no longer
+        qualifies, so the worst-table read returns nothing."""
+        result = rig.run(xmin_age=3_736, xact_age_s=213, worst_dead_pct=None)
+
+        assert result["status"] == "ok"
+        assert result["alerted"] is False
+        assert "filed" not in result
+        assert rig.sentry == []
+
+
 # ── the alarm, through the caller the beat actually dispatches ────────────
 
 
