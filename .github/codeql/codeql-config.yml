@@ -1,7 +1,9 @@
-# Adopted by Alex on 10/28 after the trial (#10090). Passed to the Python leg
-# only (see codeql.yml): test code never runs in production, so the Python
-# security scan skips it. Tests only — backend/scripts, tools and frontend stay
-# analysed. Guarded by backend/tests/test_codeql_python_config_10090.py.
-name: "Bain Luck CodeQL (Python skips backend/tests)"
+# Adopted by Alex on 10/28 after the trial (#10090), extended in #12038 (#12016)
+# so CodeQL skips backend/tests/** and docs/designs/** (copied design-authority
+# reference sources, never built or served). Production code, backend/scripts,
+# tools and frontend stay analysed. Guarded by
+# backend/tests/test_codeql_python_config_10090.py.
+name: "Bain Luck CodeQL (skips backend/tests and docs/designs)"
 paths-ignore:
   - "backend/tests/**"
+  - "docs/designs/**"
