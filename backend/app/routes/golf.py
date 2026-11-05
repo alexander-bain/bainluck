@@ -2510,6 +2510,7 @@ def _set_blend_movement(entry: dict) -> None:
 def _aggregate_golfer_outcome(
     outcome, source_label: str, golfer_data: dict[str, dict],
     prob_24h_ago: dict[int, float], prob_scale: float = 1.0,
+    *, include_overflow: bool = False,
 ) -> None:
     """Aggregate a single outcome into golfer_data, tracking sources and movement.
 
@@ -2546,13 +2547,14 @@ def _aggregate_golfer_outcome(
     prob = float(outcome.current_probability) * prob_scale
     raw_name = outcome.name.strip()
 
-    if raw_name.lower() in ("tie", "field", "other", "the field"):
+    is_overflow = raw_name.lower() in ("tie", "field", "other", "the field")
+    if is_overflow and not include_overflow:
         return
     if _PROP_OUTCOME_RE.search(raw_name):
         return
 
-    display_name = _normalize_golfer_name(raw_name)
-    key = _match_key(raw_name)
+    display_name = raw_name if is_overflow else _normalize_golfer_name(raw_name)
+    key = f"overflow:{raw_name.casefold()}" if is_overflow else _match_key(raw_name)
     if not key:
         return
 
@@ -2560,6 +2562,7 @@ def _aggregate_golfer_outcome(
     if key not in golfer_data:
         golfer_data[key] = {
             "name": display_name,
+            "is_field": is_overflow,
             "name_from_datagolf": is_datagolf,
             "sources": {},
             "movement_24h": None,
@@ -2630,10 +2633,12 @@ def _build_tournament_entry(
     if has_datagolf:
         datagolf_keys = {k for k, v in golfer_data.items() if "datagolf_model" in v["sources"]}
         if datagolf_keys:
-            filtered_count = len(golfer_data) - len(datagolf_keys)
+            filtered_count = sum(k not in datagolf_keys and not v.get("is_field")
+                                 for k, v in golfer_data.items())
             if filtered_count > 0:
                 logger.info("Golf invitee filter: removed %d non-field golfers from %s", filtered_count, tourn_key)
-            golfer_data = {k: v for k, v in golfer_data.items() if k in datagolf_keys}
+            golfer_data = {k: v for k, v in golfer_data.items()
+                           if k in datagolf_keys or v.get("is_field")}
 
     golfers = []
     for data in golfer_data.values():
@@ -2641,6 +2646,7 @@ def _build_tournament_entry(
         avg_prob = sum(source_vals) / len(source_vals) if source_vals else 0
         golfers.append({
             "name": data["name"],
+            "is_field": bool(data.get("is_field")),
             "probability": avg_prob,
             "movement_24h": data["movement_24h"],
             # #7179 — whether `movement_24h` is a DATED day's move (a ~24h-ago
@@ -2663,6 +2669,12 @@ def _build_tournament_entry(
             for golfer in golfers:
                 golfer["movement_24h"] = golfer["opening_probability"] = None
                 golfer["movement_is_dated"] = False
+    # A priced overflow contract participates in the same full-field allocation,
+    # but is not a golfer and must not acquire a player rank or profile link.
+    overflow_outcomes, named_golfers = [], []
+    for golfer in golfers:
+        (overflow_outcomes if golfer.pop("is_field") else named_golfers).append(golfer)
+    golfers = named_golfers
     golfers.sort(key=lambda g: g["probability"], reverse=True)
 
     if not golfers:
@@ -2763,6 +2775,7 @@ def _build_tournament_entry(
         "golfers": golfers,
         "prop_markets": prop_markets_list,
         "_all_golfers": all_golfers,
+        **({"overflow_outcomes": overflow_outcomes} if overflow_outcomes else {}),
     }
 
 
@@ -3580,7 +3593,6 @@ async def get_golf(
             winner_field_exclusive &= getattr(market, "mutually_exclusive", None) is True
             winner_field_complete &= all(
                 o.current_probability is not None and not _is_placeholder_price(o, source)
-                and o.name.strip().lower() not in ("tie", "field", "other", "the field")
                 and not _PROP_OUTCOME_RE.search(o.name)
                 for o in market.outcomes
             )
@@ -3602,6 +3614,7 @@ async def get_golf(
                 _aggregate_golfer_outcome(
                     outcome, source_label, golfer_data, market_basis,
                     prob_scale=renorm_factor,
+                    include_overflow=getattr(market, "mutually_exclusive", None) is True,
                 )
             if withheld:
                 logger.debug(

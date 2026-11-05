@@ -141,3 +141,46 @@ def test_golf_abbreviation_merge_keeps_the_venue_result_guard():
     assert winner["resolution_source"] == "api_settlement"
     assert winner["probability"] == 0.95
     assert all("rendered_percent" not in g for g in entry["golfers"])
+
+
+async def golf_overflow_body(monkeypatch, source, overflow_name, overflow_probability=0.27):
+    rows = [outcome(1, "Alice Smith", 0.54), outcome(2, "Bob Jones", 0.27),
+            outcome(3, "Casey Reed", 0.27), outcome(4, overflow_name, overflow_probability)]
+    m = market(rows, name="Masters Tournament Winner", source=source)
+    m.commence_time = m.resolution_date = None
+    m.status, m.llm_sport_category, m.market_tier = "open", "golf", 1
+    result, empty = MagicMock(), MagicMock()
+    result.scalars.return_value.unique.return_value.all.return_value = [m]
+    empty.__iter__ = lambda _: iter(())
+    calls = 0
+
+    async def execute(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return result if calls == 1 else empty
+
+    monkeypatch.setattr(golf, "_get_golf_schedule", AsyncMock(return_value=[]))
+    body = await golf.get_golf(SimpleNamespace(execute=execute))
+    return body["tournaments"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["kalshi", "polymarket"])
+@pytest.mark.parametrize("overflow_name", ["Field", "Other", "The Field", "Tie"])
+async def test_golf_priced_overflow_stays_in_the_full_denominator(monkeypatch, source, overflow_name):
+    entry = await golf_overflow_body(monkeypatch, source, overflow_name)
+    assert [g["rendered_percent"] for g in entry["golfers"]] == [40, 20, 20]
+    overflow = entry["overflow_outcomes"]
+    assert len(overflow) == 1 and overflow[0]["name"] == overflow_name
+    assert overflow[0]["rendered_percent"] == 20
+    assert sum(g["rendered_percent"] for g in entry["_all_golfers"] + overflow) == 100
+    assert entry["golfers"][0]["probability"] == pytest.approx(0.4)
+    assert overflow[0]["sources"] == {source: 0.27}
+
+
+@pytest.mark.asyncio
+async def test_golf_unpriced_overflow_is_unknown_mass_not_zero(monkeypatch):
+    entry = await golf_overflow_body(monkeypatch, "kalshi", "Field", None)
+    assert [g["probability"] for g in entry["golfers"]] == [0.54, 0.27, 0.27]
+    assert all("rendered_percent" not in g for g in entry["golfers"])
+    assert "overflow_outcomes" not in entry

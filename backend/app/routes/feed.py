@@ -16346,7 +16346,8 @@ async def _score_golf_tournaments(
                 {
                     "name": g["name"],
                     "probability": g["probability"],
-                    "rendered_percent": g.get("rendered_percent"),
+                    **({"rendered_percent": g["rendered_percent"]}
+                       if g.get("rendered_percent") is not None else {}),
                     "rank": g["rank"],
                     "movement_24h": g.get("movement_24h"),
                     # #7226 — the flag the `reason` gate 50 lines above already
