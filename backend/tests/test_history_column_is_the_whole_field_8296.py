@@ -103,13 +103,15 @@ class TestTheCarry:
 
 class TestTheServedScale:
     def _final(self, raw):
-        return devigged_consensus_by_time(raw, mutually_exclusive=True)[T_FINAL]
+        return devigged_consensus_by_time(
+            raw, mutually_exclusive=True, graded_outcome_ids={KIWOOM}
+        )[T_FINAL]
 
     def test_the_fixture_really_does_reproduce_the_defect(self):
         """Without the carry the partial column prints raw: LG 47%."""
         point = self._final(_raw_by_time())
         for oid, before in _CHART_BEFORE.items():
-            assert point[oid] == pytest.approx(before / sum(_MOVED_AT_FINAL.values()), abs=5e-4)
+            assert point[oid] == pytest.approx(before, abs=5e-4)
 
     def test_the_chart_ends_where_the_hero_is(self):
         point = self._final(carry_forward_quotes(_raw_by_time(), do_not_carry={KIWOOM}))

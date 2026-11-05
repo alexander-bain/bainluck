@@ -141,7 +141,7 @@ def test_one_winner_detail_matches_the_midterms_priced_mass_with_bound_tail(
     assert detail["mutually_exclusive"] is market.mutually_exclusive is True
 
 
-def test_normalized_field_withholds_raw_opening_and_dated_move():
+def test_normalized_field_withholds_incomplete_opening_and_dated_fields():
     from datetime import datetime, timedelta, timezone
 
     from app.routes.futures import _format_market_detail
@@ -165,6 +165,42 @@ def test_normalized_field_withholds_raw_opening_and_dated_move():
     assert row["opening_probability"] is None
     assert row["probability_change_24h"] is None
     assert detail["openings_withheld"] is True
+
+
+def test_complete_floor_field_keeps_its_normalized_opening_and_dated_move(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.routes import futures
+
+    now = datetime(2026, 11, 5, 15, tzinfo=timezone.utc)
+    market = _detail_field()
+    prior = {o.id: float(o.current_probability) for o in market.outcomes}
+    prior[market.outcomes[0].id] = 0.90
+    for outcome in market.outcomes:
+        outcome.opening_probability = prior[outcome.id]
+        outcome.opening_captured_at = now - timedelta(hours=30)
+        outcome.probability_change_24h = 0.001
+    market.market_metadata = {
+        "dated_movement_basis": {
+            str(oid): [p, (now - timedelta(hours=18)).isoformat()]
+            for oid, p in prior.items()
+        }
+    }
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is None else now.astimezone(tz)
+
+    monkeypatch.setattr(futures, "datetime", Clock)
+    detail = futures._format_market_detail(market)
+    row = next(o for o in detail["outcomes"] if o["name"] == "Kansas")
+    assert row["probability"] == pytest.approx(0.948 / 1.125, abs=1e-8)
+    assert row["opening_probability"] == pytest.approx(0.90 / 1.077, abs=1e-8)
+    assert row["probability_change_24h"] == pytest.approx(
+        0.948 / 1.125 - 0.90 / 1.077, abs=1e-8
+    )
+    assert detail["openings_withheld"] is False
+    assert all("rendered_percent" not in o for o in detail["outcomes"])
 
 
 def test_raw_field_still_withholds_an_unsupported_price():
