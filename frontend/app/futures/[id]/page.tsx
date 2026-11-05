@@ -1505,6 +1505,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 cadenceNoteShown={trendCadenceNote != null}
                 seriesOrder={chartSeriesOrder}
                 historyWithheld={servedPartialHistory(historyData)}
+                atlas={atlasEnabled}
+                atlasIncludesOpening={
+                  (shownHistory.current?.range ?? effectiveRange) === "all" &&
+                  !servedPartialHistory(historyData)
+                }
               />
             </div>
           )}
