@@ -8708,10 +8708,9 @@ def _normalize_feed_probabilities(
                                 field_complete=field_complete)
     for o in top_outcomes:
         row = by_id.get(o.get("id")) or by_name.get(o.get("name"))
-        if row is not None:
+        if row is not None and "rendered_percent" in row:
             o["probability"] = row["probability"]
-            if "rendered_percent" in row:
-                o["rendered_percent"] = row["rendered_percent"]
+            o["rendered_percent"] = row["rendered_percent"]
         elif mutually_exclusive is None:
             o["probability"] = _scale_display_probability(o.get("probability"), scale)
     return top_outcomes

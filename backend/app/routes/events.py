@@ -38727,10 +38727,9 @@ def _build_search_top_outcomes(
     selected_ids = {name: o.id for o, name in named}
     for row in out:
         basis = by_id.get(selected_ids.get(row["name"]))
-        if basis is not None:
+        if basis is not None and "rendered_percent" in basis:
             row["probability"] = basis["probability"]
-            if "rendered_percent" in basis:
-                row["rendered_percent"] = basis["rendered_percent"]
+            row["rendered_percent"] = basis["rendered_percent"]
             if changed:
                 row["movement"] = None
     # UX-P164: search is the OTHER half of the #993 pair and it had the identical

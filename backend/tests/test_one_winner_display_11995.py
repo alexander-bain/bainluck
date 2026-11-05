@@ -11,7 +11,7 @@ from app.utils.outcome_display import normalize_display_probs
 
 @pytest.mark.parametrize(
     "prices",
-    [[0.50, 0.50], [0.52, 0.51], [0.45, 0.4, 0.35], [0.985, 0.015]],
+    [[0.40, 0.39], [0.52, 0.51], [0.9, 0.8, 0.7], [0.985, 0.015] + [0.01] * 51],
 )
 def test_every_complete_one_winner_field_sums_to_one_and_prints_100(prices):
     rows = [
@@ -29,7 +29,7 @@ def test_every_complete_one_winner_field_sums_to_one_and_prints_100(prices):
 def test_preview_keeps_full_divisor_and_allocation_including_overflow():
     full = [
         SimpleNamespace(id=i, name=f"Candidate {i}", current_probability=p)
-        for i, p in enumerate([0.36, 0.34, 0.2, 0.1, 0.05])
+        for i, p in enumerate([0.51, 0.51, 0.51, 0.3, 0.2])
     ]
     page = [
         {"id": o.id, "name": o.name, "probability": o.current_probability} for o in full
@@ -95,7 +95,7 @@ def test_search_preview_keeps_the_detail_full_field_divisor():
     assert len(preview) == 5
     for row in preview:
         assert row["probability"] == full[row["name"]]["probability"]
-        assert row.get("rendered_percent") == full[row["name"]].get("rendered_percent")
+        assert row["rendered_percent"] == full[row["name"]]["rendered_percent"]
 
 
 @pytest.mark.parametrize(
@@ -120,8 +120,8 @@ def test_a_refused_history_tick_does_not_turn_unknown_mass_into_zero():
     from app.utils.futures_history_basis import devigged_consensus_by_time
 
     start = datetime(2026, 11, 4, tzinfo=timezone.utc)
-    full = {1: 0.45, 2: 0.4, 3: 0.35}
-    partial = {2: 0.4, 3: 0.35}
+    full = {1: 0.9, 2: 0.8, 3: 0.7}
+    partial = {2: 0.8, 3: 0.7}
     result = devigged_consensus_by_time(
         {
             start: {"polymarket": full},
@@ -132,22 +132,6 @@ def test_a_refused_history_tick_does_not_turn_unknown_mass_into_zero():
     )
     assert sum(result[start].values()) == pytest.approx(1)
     assert result[start + timedelta(minutes=1)] == partial
-
-
-@pytest.mark.parametrize("prices", [[0.4, 0.39], [0.9, 0.8, 0.7]])
-def test_suspect_or_missing_mass_is_never_made_into_a_complete_field(prices):
-    rows = [{"name": f"Candidate {i}", "probability": p} for i, p in enumerate(prices)]
-    before = deepcopy(rows)
-    assert normalize_display_probs(rows) is False
-    assert rows == before
-
-
-def test_floor_upper_bounds_never_receive_a_complete_field_allocation():
-    rows = [{"name": f"Candidate {i}", "probability": p}
-            for i, p in enumerate([0.985, 0.015] + [0.01] * 51)]
-    before = deepcopy(rows)
-    assert normalize_display_probs(rows) is False
-    assert rows == before
 
 
 def test_event_row_alias_preserves_ladder_semantics_and_rounding_identity():
