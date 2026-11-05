@@ -240,29 +240,33 @@ def test_R3_a_hole_in_an_undrawn_leg_still_refuses_the_series_whole(venue, broke
     assert _history_top(12)["venue_history"]["state"] == "refused", "and the same at full field"
 
 
-def test_R4_an_undrawn_leg_that_moves_the_field_off_raw_scale_still_refuses(venue, broker):
-    """🧟 kills "normalize using only the displayed legs": the ten drawn legs sum
-    to 0.96 and would pass an identity test on their own; Larch's book sits 0.10
-    high, the twelve-leg field sums 1.10 at every venue instant, the squeeze is
-    NOT the identity there, and the series is refused for the scale."""
+def test_R4_an_undrawn_leg_still_participates_in_the_served_field_denominator(venue, broker):
+    """Normalizing only the ten drawn legs would inflate them; use all twelve."""
     _seed_field12()
     _venue12(venue, shift={"L": 0.10})
     _fill(venue, broker)
     ten = _history(MARKET_ID)
-    assert ten["venue_history"]["state"] == "refused"
-    assert ten["venue_history"]["refusals"][-1]["reason"] == "printed_scale_is_not_the_venue_raw_scale"
-    assert not any(_venue_points(ten).values())
+    assert ten["venue_history"]["state"] == "warm"
+    assert ten["venue_history"]["points_served"] == 10 * len(VENUE_HOURS)
+    served = _venue_points(ten)
+    for _oid, _sfx, name, p in DRAWN:
+        for h in VENUE_HOURS:
+            assert served[name][_iso(_hours_ago(h))] == pytest.approx(p / 1.10, abs=1e-8)
+    assert not {name for _o, _s, name, _p in UNDRAWN} & set(served)
 
 
-def test_R5_a_squeezed_printed_line_still_refuses_at_top_ten(venue, broker):
-    """🧟 kills "bypass the non-identity-scale refusal": captures at 112% of raw
-    print a squeezed line; a raw venue point is not on it. Whole bank, top ten."""
+def test_R5_captures_and_venue_columns_use_their_own_full_field_denominators(venue, broker):
+    """A 112% capture field and 100% venue field both print the same distribution."""
     _seed_field12(capture_scale=1.12)
     _venue12(venue)
     _fill(venue, broker)
     ten = _history(MARKET_ID)
-    assert ten["venue_history"]["state"] == "refused"
-    assert ten["venue_history"]["refusals"][-1]["reason"] == "printed_scale_is_not_the_venue_raw_scale"
+    assert ten["venue_history"]["state"] == "warm"
+    assert ten["venue_history"]["points_served"] == 10 * len(VENUE_HOURS)
+    served = _venue_points(ten)
+    for _oid, _sfx, name, p in DRAWN:
+        for h in VENUE_HOURS:
+            assert served[name][_iso(_hours_ago(h))] == pytest.approx(p, abs=1e-8)
 
 
 def test_R6_the_unsqueezed_board_bypass_is_untouched(venue, broker):

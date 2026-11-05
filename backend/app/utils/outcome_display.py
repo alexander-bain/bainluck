@@ -312,43 +312,68 @@ def drop_unbacked_legs(
 
 
 def display_divisor_mass(probs) -> float:
-    """The sum a one-winner field's display squeeze divides by: every priced leg,
-    and no leg at the venue floor (#8595).
+    """Priced field mass, including overflow but excluding one-cent bounds (#8595)."""
 
-    `/futures/209` (*NL MVP Winner?*, Kalshi, 2026-09-25) printed Pete
-    Crow-Armstrong at 65% while Kalshi's book read bid 0.98 / ask 0.99 and our own
-    game page read 99%. The raw field is 0.985 + 0.015 + fifty-one long shots at
-    0.010, and every one of those is Kalshi's one-cent floor: bid 0, ask 0.01. The
-    sum, 1.51, sits under ``_FIELD_SUM_MAX``, so the squeeze read it as a coherent
-    field with 51 points of vig and divided the leader by 1.51.
+    return sum(float(p) for p in probs if p is not None and not is_venue_floor_price(p))
 
-    Those 51 points are not vig. A floor leg's 0.01 is the most it can be worth,
-    not what it is worth, and fifty of them are fifty upper bounds added together.
-    Without them the field sums to exactly 1.00 and there is nothing to squeeze.
-    #1201 made the same call for exact-0.5 untraded midpoints; this is the same
-    placeholder at the other end of the book.
 
-    EXACTLY 0.01, and nothing under it. Sub-cent legs are real prices elsewhere:
-    `/api/futures/7`'s golf field is 150 de-vigged sportsbook long shots, most
-    under 1%, and together they ARE the field's tail; Polymarket prices below a
-    cent in 0.001 ticks. Only a run of legs parked on the one-cent line is the
-    placeholder, which is what Kalshi's floor writes.
+def _field_has_result(outcomes: list[dict]) -> bool:
+    return any(
+        o.get("is_winner") is True
+        and o.get("resolution_source") not in (None, "ungradeable_result")
+        for o in outcomes
+    )
 
-    The floor legs still print — raw, or on the same scale as the priced legs when
-    the priced legs alone overround. They are left out of the DIVISOR only.
 
-    THE CARD AND THE PAGE BOTH CALL THIS, and that is why it is a function. The
-    feed card's `_feed_display_scale` divides by the same mass the page divides by
-    (#7537: the two surfaces owe each other one divisor). A second copy of the
-    floor rule on one side is how the card and the page would print two numbers
-    for one leg again.
+def display_probability_divisor(
+    outcomes: list[dict],
+    key: str = "probability",
+    mutually_exclusive: bool = True,
+    *,
+    field_complete: bool = True,
+    question: str | None = None,
+) -> float | None:
+    """One venue-blind served-number rule; never turn unknown mass into zero.
 
-    The #1200 overround ceiling is NOT judged on this mass. It still reads the full
-    raw sum: a field that overrounds past 1.60 with its floor tail counted is left
-    raw exactly as before, and this function only changes what a field inside the
-    band is divided by.
+    Alex's clarification: normalize healthy complete one-winner inputs; exclude
+    entries only on evidence, never just because the total is large. A raw sum
+    above 160% refuses conversion; it does not identify or delete a stale leg.
+    One-cent upper bounds retain their existing exclusion from the divisor.
+    Call with
+    the FULL eligible field before any preview/overflow slice. If a real outcome
+    lacks a supported price, pass field_complete=False rather than redistributing
+    its unknown probability among the survivors.
+    A cumulative ladder is refused even if its stored exclusivity flag is wrong.
     """
-    return sum(float(p) for p in probs if p and not is_venue_floor_price(p))
+    import math
+
+    if _field_has_result(outcomes):
+        return None  # a declared result is no longer an uncertain distribution
+    if mutually_exclusive is False or not field_complete or len(outcomes) < 2:
+        return None
+    if cumulative_outcome_ladder(
+        [{"name": o.get("name", o.get("outcome_name", o.get("label", "")))} for o in outcomes],
+        dates=True, question=question,
+    ):
+        return None
+    values = [o.get(key) for o in outcomes]
+    if any(
+        p is None or not math.isfinite(float(p)) or not 0 <= float(p) <= 1
+        for p in values
+    ):
+        return None
+    raw_mass = sum(float(p) for p in values)
+    mass = raw_mass if mutually_exclusive is None else display_divisor_mass(values)
+    if mutually_exclusive and raw_mass > _FIELD_SUM_MAX:
+        return None
+    if mutually_exclusive and mass < 1 and any(is_venue_floor_price(p) for p in values):
+        return None  # upper bounds do not certify a complete under-round field
+    # Compatibility for callers that have not supplied semantics. Explicit
+    # non-exclusive sets always refused above; unknown semantics keep their band.
+    threshold = 1.01 if sum(bool(p) for p in values[:3]) == 2 else 1.05
+    if mutually_exclusive is None and not threshold < mass <= 2:
+        return None
+    return mass or None
 
 
 def normalize_display_probs(
@@ -357,137 +382,60 @@ def normalize_display_probs(
     mutually_exclusive: bool = True,
     *,
     field_complete: bool = True,
+    question: str | None = None,
 ) -> bool:
-    """#23: normalize the displayed distribution in place when independent binary
-    outcomes sum >100%. Reuses the SINGLE politics normalizer (percentage-scale)
-    via a 0-1 adapter — do not fork it. Values on ``key`` are 0-1 floats.
+    """Serve a one-winner distribution and its whole percentages (#11995).
 
-    #199: only mutually-exclusive fields (exactly one winner) should be squeezed to
-    sum ~100%. Non-mutually-exclusive PARTICIPATION families — golf make-cut /
-    top-5 / top-N, where many outcomes are simultaneously true and the set sums to
-    several multiples of 100% — must NOT be normalized: doing so squashed an honest
-    86%-to-make-the-cut down to ~1% on The Open's detail/ladder rail. Callers pass
-    ``mutually_exclusive`` from ``FuturesMarket.mutually_exclusive`` (reliable:
-    Kalshi/DataGolf both flag make-cut/top-N False, winner fields True). Default
-    True preserves every existing caller (search, awards/tennis/f1/election, etc.).
-
-    #1200: even when flagged ``mutually_exclusive=True``, a field whose RAW YES
-    prices sum FAR past 100% (> ``_FIELD_SUM_MAX``) is a set of INDEPENDENT
-    candidate binaries (Kalshi 184-way Tour de France GC field ≈ 2.8x), NOT a
-    coherent one-winner field. Squeezing that to ~100% dilutes a near-lock leader
-    into a false coin-flip (Pogačar 94.5% → 33.6%). Only a coherent (~1.0, mild-
-    vig) field gets the #23 squeeze; the overrounded field keeps its raw prices.
-    This mirrors the event_cycling concept-adapter guard and now also protects the
-    raw /api/futures/{id} detail + search surfaces that only had the flag gate.
-
-    #7103: ``field_complete=False`` REFUSES THE SQUEEZE, because a field with
-    withheld members is not a proved-complete distribution. The squeeze's whole
-    premise is that the legs it can see ARE the one-winner field, so dividing by
-    their sum is dividing by 1. Once a caller has withheld legs because their
-    price is UNKNOWN, that premise is false and this function cannot tell:
-    ``o.get(key) or 0`` reads an absent price as ZERO, so a withheld leg silently
-    asserts that its candidate cannot win. On `/api/futures/2951423` (*WBC
-    Heavyweight Title*) eleven withheld legs dropped the field from a raw 2.995 —
-    above ``_FIELD_SUM_MAX``, where #1200 left it alone — to 1.135, INTO this
-    band, and the squeeze restated Agit Kabayel's honest 0.870 as 0.767: a
-    10.3-point move on the one leg whose book actually bounded something.
-
-    Withholding therefore changes WHETHER the squeeze fires at all, not merely
-    what it divides by, and that is why the gate belongs here rather than in the
-    arithmetic. Ruling 051's sentence one case over: absent is not zero, and
-    nothing downstream can tell "this candidate is priced at nothing" from "we
-    have no price for this candidate".
-
-    The survivors print RAW, so a gated field can sum past 100%. That is not a
-    new reader experience — #1200 already prints raw overrounded fields summing
-    to several multiples of 100% — and it is the call
-    ``drop_incoherent_near_certain`` already makes for its own drop, deliberately
-    not re-normalizing what it leaves behind (`routes/futures.py`). Four honest
-    numbers summing to 109% beat a coherent 99% built on eleven fighters we have
-    quietly declared cannot win.
-
-    Default True preserves every existing caller, exactly as ``mutually_exclusive``
-    does; only a caller that KNOWS it withheld legs passes False.
-
-    #5835: RETURNS WHETHER THE PRINTED COLUMN ACTUALLY MOVED, because a caller that
-    prints a SECOND column of un-squeezed prices beside this one needs to know. The
-    answer is MEASURED — the values before against the values after — never
-    re-derived from the thresholds, and that is the whole point. The squeeze fires
-    only when ``_normalize_outcome_probs`` sees a sum past 105 (``politics.py``), so
-    a caller asking "did it fire?" by re-testing ``raw_sum`` here would need to know
-    a constant that lives in another module and can be changed without this one
-    noticing. Three branches return False for three different real reasons — a
-    non-ME family, an overrounded field left raw, and a coherent field already
-    summing under the threshold — and a caller only has to care that nothing moved.
-    Existing callers ignore the return and are unaffected.
+    Keep the precise normalized probability for charts/decimal displays. Allocate
+    whole percentages over the full field by largest remainder, with stable
+    id/name ties, so clients do not round a preview into a different distribution.
+    Unknown/withheld prices and non-exclusive or cumulative sets stay raw.
+    Return whether any probability moved, for raw-history comparison suppression.
     """
-    if not mutually_exclusive:
-        return False  # non-ME participation family — raw per-outcome probs are honest
+    import math
 
-    # #1201: strip Kalshi untraded-midpoint placeholders from a CORRUPTED ME field.
-    # An illiquid Kalshi independent-binary field (e.g. the 79-way Super Bowl MVP,
-    # market 479) parks every UNTRADED candidate at EXACTLY 0.5 — the bid/ask
-    # midpoint with no trades (gotcha #17/#23). Dozens of 0.5s inflate the field
-    # sum to ~19.7 (1967%), tripping the #1200 overround guard so the WHOLE field
-    # renders RAW and a real 0.265 leader (Drake Maye) shows an absurd 26.5% to win
-    # a single-game MVP. Excluding the placeholders first brings the coherent field
-    # back into the normalizable band so the real outcomes squeeze sensibly.
-    #
-    # Predicate is deliberately narrow so nothing else is touched: >=10 outcomes at
-    # EXACTLY 0.5 AND a raw sum far past any coherent field (>3). A legitimate 2-way
-    # Yes/No coin-flip (2 sides at 0.5) is untouched; a coherent one-winner field
-    # (no run of exact-0.5 placeholders, sum near 1.0) is untouched; a genuine
-    # independent-binary field like the Tour de France GC (varied prices, no 0.5
-    # run) is untouched and still keeps its raw prices via the #1200 guard below.
-    half_count = sum(1 for o in outcomes if o.get(key) == 0.5)
-    if half_count >= 10 and sum((o.get(key) or 0) for o in outcomes) > 3.0:
-        kept = [o for o in outcomes if o.get(key) != 0.5]
-        if kept:
-            outcomes[:] = kept  # drop the untraded-midpoint placeholders in place
-
-    # #7103, and BELOW the #1201 strip on purpose. That strip mutates the
-    # caller's list in place — it is what takes a run of untraded 0.5
-    # placeholders off the page — so returning above it would change WHICH ROWS
-    # ARE SERVED on a withheld-bearing field, not just whether they are scaled.
-    # The only behaviour this gate may change is whether the squeeze fires.
-    if not field_complete:
-        return False  # withheld members — the visible legs are not the field
-    raw_sum = sum((o.get(key) or 0) for o in outcomes)
-    if raw_sum > _FIELD_SUM_MAX:
-        return False  # independent-binary overround — raw YES price is the honest prob
-    from app.routes.politics import _normalize_outcome_probs  # shared #23 util
-
-    # Snapshotted BEFORE the write-back, so "did it move" is a fact about what the
-    # reader is handed rather than a prediction from the thresholds. Values that
-    # survive the rounding unchanged (a 0.0005 longshot under a factor of 1.06
-    # rounds back to 0.0005 at 4dp) correctly count as NOT moved: the printed
-    # number is the raw price and there is nothing for a second column to disagree
-    # with. `any` is the right quantifier — one moved row is one false comparison.
-    before = [o.get(key) for o in outcomes]
-    # #8595: the squeeze decides and divides on the PRICED legs only. A leg at the
-    # venue floor is an upper bound, and fifty-one of them turned a 0.985 leader
-    # into 0.65 (`display_divisor_mass`). Floor legs follow the priced legs' scale
-    # below, so every printed number on the page shares one divisor. Both lists
-    # are chosen BEFORE any write: a priced 0.0105 squeezed to 0.01 is not a floor
-    # leg and must not be scaled twice.
-    mass = display_divisor_mass(o.get(key) for o in outcomes)
-    floor = [o for o in outcomes if is_venue_floor_price(o.get(key))]
-    priced = [o for o in outcomes if not is_venue_floor_price(o.get(key))]
-    pct = [{"p": (o.get(key) or 0) * 100} for o in priced]
-    unscaled = [s["p"] for s in pct]
-    # #7586: two decimals of a percent is the feed card's `round(p / sum, 4)`.
-    # The politics default of one decimal is a SECOND rounding the client then
-    # rounds again — 0.88/1.365 = .64469 served as .645 printed 65 beside the
-    # card's 64 for the same leg.
-    _normalize_outcome_probs(pct, key="p", decimals=2)
-    if [s["p"] for s in pct] == unscaled:
-        return False  # the priced legs already sum inside the threshold
-    for o, scaled in zip(priced, pct):
-        if o.get(key):
-            o[key] = round(scaled["p"] / 100, 4)
-    for o in floor:
-        o[key] = round(round(o[key] / mass * 100, 2) / 100, 4)
-    return any(b != o.get(key) for b, o in zip(before, outcomes))
+    if mutually_exclusive is not True or _field_has_result(outcomes):
+        return False
+    # Existing untraded midpoint refusal; this is membership cleanup, not vig.
+    if mutually_exclusive:
+        halves = sum(o.get(key) == 0.5 for o in outcomes)
+        if halves >= 10 and sum(o.get(key) or 0 for o in outcomes) > 3:
+            kept = [o for o in outcomes if o.get(key) != 0.5]
+            if kept:
+                outcomes[:] = kept
+    divisor = display_probability_divisor(
+        outcomes,
+        key,
+        mutually_exclusive,
+        field_complete=field_complete,
+        question=question,
+    )
+    if divisor is None:
+        return False
+    before = [o[key] for o in outcomes]
+    if any(is_venue_floor_price(p) for p in before):
+        # Preserve the prior upper-bound scale without claiming this is a full
+        # distribution. Healthy complete fields, including under-rounds, use
+        # the whole-percent allocation below.
+        for o, p in zip(outcomes, before):
+            o[key] = round(float(p) / divisor, 8)
+        return any(p != o[key] for p, o in zip(before, outcomes))
+    exact = [float(p) / divisor * 100 for p in before]
+    whole = [math.floor(p + 1e-10) for p in exact]
+    order = sorted(
+        range(len(outcomes)),
+        key=lambda i: (
+            -round(exact[i] - whole[i], 10),
+            str(outcomes[i].get("name", outcomes[i].get("outcome_name", outcomes[i].get("label", "")))).casefold(),
+            str(outcomes[i].get("id", "")),
+        ),
+    )
+    for i in order[: 100 - sum(whole)]:
+        whole[i] += 1
+    for o, p, percent in zip(outcomes, before, whole):
+        o[key] = round(float(p) / divisor, 8)
+        o["rendered_percent"] = percent
+    return any(p != o[key] for p, o in zip(before, outcomes))
 
 
 def leader_pick_order(
@@ -519,12 +467,17 @@ def leader_pick_order(
     demote_dominant_field(
         outcomes, name_key=name_key, prob_key=prob_key, is_winner_of=is_winner_of
     )
-    if outcomes and is_field_outcome(outcomes[0].get(name_key, "")) and not (
-        is_winner_of(outcomes[0]) if is_winner_of else False
+    if (
+        outcomes
+        and is_field_outcome(outcomes[0].get(name_key, ""))
+        and not (is_winner_of(outcomes[0]) if is_winner_of else False)
     ):
         named_idx = next(
-            (i for i, o in enumerate(outcomes)
-             if not is_field_outcome(o.get(name_key, ""))),
+            (
+                i
+                for i, o in enumerate(outcomes)
+                if not is_field_outcome(o.get(name_key, ""))
+            ),
             None,
         )
         if named_idx is not None:
@@ -753,7 +706,10 @@ def incoherent_ladder_verdict(
     # (`artifacts/d352-7650/sibling-census.py`). This is a defensive path
     # reaching a new shape, not a population being filtered.
     ladder = cumulative_outcome_ladder(
-        [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)],
+        [
+            {"name": name_of(item) or "", "index": index}
+            for index, item in enumerate(items)
+        ],
         dates=True,
         question=question,
     )
@@ -811,7 +767,9 @@ def incoherent_ladder_verdict(
         probability = ordered[i][1]
         # The rung standing alone is always available and is bounded by its own
         # price — the seed the old `best_length = 1` encoded implicitly.
-        candidates: list[tuple[int, float, tuple[int, int] | None]] = [(1, probability, None)]
+        candidates: list[tuple[int, float, tuple[int, int] | None]] = [
+            (1, probability, None)
+        ]
         for j in range(i):
             for slot, (length, bound, _) in enumerate(states[j]):
                 if falling:
@@ -826,7 +784,9 @@ def incoherent_ladder_verdict(
         # Longest first, and among equal lengths the most permissive bound
         # first — the old tie-break, now a SORT rather than a discard, so the
         # shorter-but-looser states survive beside the longer ones.
-        candidates.sort(key=lambda state: (-state[0], -state[1] if falling else state[1]))
+        candidates.sort(
+            key=lambda state: (-state[0], -state[1] if falling else state[1])
+        )
         frontier: list[tuple[int, float, tuple[int, int] | None]] = []
         for candidate in candidates:
             # Everything already kept is at least as long, so a candidate earns
@@ -906,7 +866,10 @@ def ladder_rungs_out_of_order(
     question: str | None = None,
 ) -> bool:
     """True when a cumulative ladder's priced rungs reverse beyond whole-number rounding (#11942)."""
-    rows = [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)]
+    rows = [
+        {"name": name_of(item) or "", "index": index}
+        for index, item in enumerate(items)
+    ]
     ladder = cumulative_outcome_ladder(
         rows,
         dates=True,
@@ -914,7 +877,9 @@ def ladder_rungs_out_of_order(
     )
     if ladder is None and len(rows) >= 2:
         probs = [float(p) for item in items if (p := prob_of(item)) is not None]
-        if sum(probs) > _FIELD_SUM_MAX and not re.search(r"\bon\b", question or "", re.I):
+        if sum(probs) > _FIELD_SUM_MAX and not re.search(
+            r"\bon\b", question or "", re.I
+        ):
             ladder = cumulative_outcome_ladder(
                 rows,
                 dates=True,
@@ -971,7 +936,8 @@ def ladder_treatment_collapsed(
     ``Above 10`` alone, and this returns True.
     """
     incoherent, priced_rungs = incoherent_ladder_verdict(
-        items, name_of, prob_of, question)
+        items, name_of, prob_of, question
+    )
     if not incoherent:
         if priced_rungs < _LADDER_MIN_PRICED_RUNGS:
             return ladder_rungs_out_of_order(items, name_of, prob_of, question)
@@ -1013,7 +979,8 @@ def drop_incoherent_ladder_outcomes(
     path, not a population.
     """
     incoherent, priced_rungs = incoherent_ladder_verdict(
-        items, name_of, prob_of, question)
+        items, name_of, prob_of, question
+    )
     if not incoherent:
         return list(items)
     if priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS:

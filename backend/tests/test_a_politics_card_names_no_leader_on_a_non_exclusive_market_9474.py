@@ -90,21 +90,21 @@ class TestControls:
     """The over-round removal is RIGHT for a one-winner field and must survive:
     the same three prices on an exclusive market are still divided by 111."""
 
-    def test_a_one_winner_field_is_still_devigged(self):
+    def test_a_one_winner_field_above_the_ceiling_stays_raw(self):
         row = _market_row(_market(SCOTUS_CASES, True), now=NOW)
-        assert _probs(row) == [35.1, 32.4, 32.4]
+        assert _probs(row) == [39.0, 36.0, 36.0]
         assert row["mutually_exclusive"] is True
 
     def test_an_unstamped_row_keeps_todays_behaviour(self):
         """No attribute at all — an older carrier, and every fixture in the
         sibling suites — reads as `None` and is treated as today."""
         row = _market_row(_market(SCOTUS_CASES), now=NOW)
-        assert _probs(row) == [35.1, 32.4, 32.4]
+        assert _probs(row) == [39.0, 36.0, 36.0]
         assert row["mutually_exclusive"] is None
 
     def test_an_explicit_null_keeps_todays_behaviour(self):
         row = _market_row(_market(SCOTUS_CASES, None), now=NOW)
-        assert _probs(row) == [35.1, 32.4, 32.4]
+        assert _probs(row) == [39.0, 36.0, 36.0]
 
 
 class TestTheDefectReproduces:

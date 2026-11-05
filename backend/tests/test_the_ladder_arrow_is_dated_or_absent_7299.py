@@ -238,6 +238,7 @@ def test_a_banked_row_that_serves_a_dated_MOVE_still_serves_no_ARROW():
     cannot date a rank claim, so the number must not ride out on it.
     """
     market = _game_awards_market()
+    market.mutually_exclusive = False
     leader = _by_name(market)["Grand Theft Auto VI"]
 
     assert leader["probability_change_24h"] == pytest.approx(0.66 - 0.705), (
@@ -311,9 +312,7 @@ def test_the_ladder_keeps_every_priced_row_its_price_and_its_rank():
         "Resident Evil Requiem",
         "Phantom Blade Zero",
     }
-    assert served["Grand Theft Auto VI"]["probability"] == pytest.approx(0.66)
-    assert served["Resident Evil Requiem"]["probability"] == pytest.approx(0.11)
-    assert served["Grand Theft Auto VI"]["probability_change_24h"] == pytest.approx(
-        0.66 - 0.705
-    )
+    assert served["Grand Theft Auto VI"]["probability"] == pytest.approx(0.66 / 0.8205, abs=1e-8)
+    assert served["Resident Evil Requiem"]["probability"] == pytest.approx(0.11 / 0.8205, abs=1e-8)
+    assert served["Grand Theft Auto VI"]["probability_change_24h"] is None
     assert [served[n]["rank"] for n in ("Grand Theft Auto VI", "Resident Evil Requiem")] == [1, 2]

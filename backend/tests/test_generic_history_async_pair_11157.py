@@ -255,7 +255,7 @@ def test_every_served_point_is_an_original_observation_at_its_own_clock():
             ts = datetime.fromisoformat(pt["timestamp"])
             assert ts in own[name], f"{name}: {ts} was never observed on this leg"
             assert ts not in other[name], f"{name}: stamped at the partner's clock"
-            assert pt["probability"] == pytest.approx(own[name][ts], abs=1e-9)
+            assert pt.get("raw_probability", pt["probability"]) == pytest.approx(own[name][ts], abs=1e-9)
             # Knowledge time is its OWN field: never earlier than the quote,
             # never more than one grain later, and never written as `timestamp`.
             known = datetime.fromisoformat(pt["pair_known_at"])
@@ -264,6 +264,12 @@ def test_every_served_point_is_an_original_observation_at_its_own_clock():
             if partner_ts is not None:
                 assert partner_ts in other[name], "knowledge time is the partner's real clock"
     assert served_any
+    paired = {}
+    for name in ("Yes", "No"):
+        for point in _venue_points(res, name):
+            paired.setdefault(point["pair_known_at"], []).append(point["probability"])
+    assert all(len(pair) == 2 for pair in paired.values())
+    assert all(sum(pair) == pytest.approx(1.0, abs=1e-8) for pair in paired.values())
     # Freshness is the latest ORIGINAL observation served, not a pair's later knowledge.
     vh = res["venue_history"]
     served_ts = [
@@ -492,9 +498,9 @@ def test_a_bank_with_no_pair_inside_the_bound_keeps_the_old_refusal():
     assert "unpaired_points_withheld" not in vh
 
 
-def test_the_board_level_capture_comparison_still_refuses_whole():
-    # Captures whose squeeze moves the number (0.55 + 0.55) still convict the
-    # board; pairing is no way round the per-capture measurement.
+def test_complete_captures_and_venue_pairs_share_the_normalized_scale():
+    # #11995: normalize each complete historical field at its own instant.
+    # A different field mass in the captures is no reason to erase venue pairs.
     yes = [(_t(m, 21), 0.40) for m in range(4)]
     no = [(_t(m, 18), 0.60) for m in range(4)]
     market = _async_market()
@@ -502,8 +508,11 @@ def test_the_board_level_capture_comparison_still_refuses_whole():
     ts = BASE - timedelta(hours=1)
     res = _read(market, [_snap(YES_ID, ts, 0.55), _snap(NO_ID, ts, 0.55)], payload)
     vh = res["venue_history"]
-    assert vh["points_served"] == 0
-    assert "printed_scale_is_not_the_venue_raw_scale" in json.dumps(vh.get("refusals"))
+    assert vh["points_served"] == 8
+    assert not vh.get("refusals")
+    for outcome in res["outcomes"]:
+        capture = next(p for p in outcome["history"] if p.get("provenance") != "venue_history")
+        assert capture["probability"] == pytest.approx(0.5)
 
 
 def test_unsupported_point_accounting_keeps_its_own_meaning(monkeypatch):

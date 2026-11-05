@@ -417,11 +417,11 @@ def test_the_city_ladder_carries_a_price_for_every_bucket():
     for label in ("63°F or below", "64-65°F"):
         bucket = dist[label]
         assert bucket["prob"] == 0, "the specimen is only interesting while it rounds to 0"
-        assert bucket["probability"] == pytest.approx(FIVE_HUNDREDTHS_OF_A_POINT)
+        assert bucket["probability"] == pytest.approx(FIVE_HUNDREDTHS_OF_A_POINT / 1.0005, abs=1e-8)
 
     # Controls: the buckets that were never wrong keep both fields agreeing.
     assert dist["78-79°F"]["prob"] == 62
-    assert dist["78-79°F"]["probability"] == pytest.approx(0.62)
+    assert dist["78-79°F"]["probability"] == pytest.approx(0.62 / 1.0005, abs=1e-8)
 
 
 def test_hero_climate_and_wildcards_all_carry_the_raw_value():

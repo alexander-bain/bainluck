@@ -186,7 +186,7 @@ class _Market:
         self.llm_sport_category = category
         self.market_tier = 1
         self.market_type = "outright"
-        self.mutually_exclusive = True
+        self.mutually_exclusive = False  # #11995: exercise the raw, non-exclusive movement arm
         self.description = None
         self.canonical_market_key = CANONICAL_KEY
         self.group_id = None
@@ -454,6 +454,7 @@ def test_the_ladder_withholds_the_amount_once_the_SQUEEZE_moves_the_column():
     fails there.
     """
     market = _game_awards_market(basis_at=LIVE_BASIS_AT)
+    market.mutually_exclusive = True
     _reprice(market.outcomes[1], 0.45)
     _reprice(market.outcomes[2], 0.30)
     detail = _format_market_detail(market, ["kalshi"], set())
@@ -824,6 +825,7 @@ def _normalized_market(*, market_id, sports=False):
     variants under one id inside one event loop compare a card with itself.
     """
     market = (_sports_market if sports else _game_awards_market)(market_id=market_id)
+    market.mutually_exclusive = True
     _reprice(market.outcomes[1], 0.45)
     _reprice(market.outcomes[2], 0.30)
     return market
@@ -882,6 +884,26 @@ async def test_the_NORMALIZED_sports_card_is_the_same_refusal():
     _assert_card_is_normalized(card, "Oklahoma City Thunder")
     assert _row(card, "Oklahoma City Thunder")["movement"] is None
     assert _distribution_row(card, "Oklahoma City Thunder")["movement"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sports", [False, True])
+async def test_complete_recorded_fields_keep_movement_on_both_normalized_feed_paths(
+    sports,
+):
+    """Ruling21-A replaces blanket silence; incomplete banks above still refuse."""
+    market = _normalized_market(market_id=58321611 + int(sports), sports=sports)
+    previous = [0.705, 0.2, 0.15]
+    market.market_metadata[DATED_BASIS_METADATA_KEY] = {
+        str(o.id): _cell(p) for o, p in zip(market.outcomes, previous)
+    }
+    card = await (_served_sports_card(market) if sports else _served_card(market))
+    name = "Oklahoma City Thunder" if sports else "Grand Theft Auto VI"
+    expected = 0.66 / 1.41 - 0.705 / sum(previous)
+    assert _row(card, name)["movement"] == pytest.approx(expected, abs=1e-8)
+    assert _distribution_row(card, name)["movement"] == pytest.approx(
+        expected, abs=1e-8
+    )
 
 
 @pytest.mark.asyncio
@@ -957,7 +979,9 @@ def test_the_scale_test_reads_the_cards_OWN_divisor_not_a_second_threshold():
     # — the variable `_feed_display_scale` wrote — and not a locally recomputed
     # one. The counts are exact so a site that quietly reverts to the bare
     # subtraction is a failure rather than a silent survivor.
-    call = re.compile(r"_dated_movement_on_card_scale\(\s*market,\s*o,\s*_display_scale,\s*now\s*\)")
+    call = re.compile(
+        r"_dated_movement_on_card_scale\(\s*market,\s*o,\s*_display_scale,\s*now,\s*_display_comparisons\s*\)"
+    )
     for site, bare_calls in (
         # `_score_futures` keeps exactly one bare call: `matched_outcomes`,
         # whose served probability is raw. See its comment.

@@ -758,6 +758,7 @@ extension FeedEventData {
 
 /// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
+    var fullFieldRendered: Bool? = nil
     let id: Int
     /// Fresh leaf identity; older cached feed bodies may omit it.
     var externalId: String? = nil
@@ -869,6 +870,7 @@ nonisolated struct FeedDiscoverThresholdPoint: Decodable, Identifiable, Sendable
 
 /// Single outcome row for distribution-style cards.
 nonisolated struct FeedDiscoverDistributionOutcome: Decodable, Sendable {
+    var renderedPercent: Int? = nil
     let label: String
     let probability: Double?
     let movement: Double?
@@ -954,6 +956,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
 
 /// Top outcome summary shown on a futures feed card.
 nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
+    var renderedPercent: Int? = nil
     let id: Int
     let name: String
     let probability: Double?

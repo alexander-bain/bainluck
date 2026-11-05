@@ -270,3 +270,22 @@ test('control: with no preview frames the items are exactly what the price book 
   const book = adoptPriceCards(new Map(), groupedLeaves(groups), response, new Set([`futures-${MARKET}`]));
   expect(wire(held.items)).toBe(wire(projectPriceGroups(groups, book)));
 });
+
+
+test('a server-allocated field keeps its shared numbers until the committed API refresh', async () => {
+  const allocated = (p: number, clock: string) => {
+    const data = market(p, clock);
+    data.top_outcomes = [leg(70, 'Alpha', p, clock, 1), leg(71, 'Beta', 0.9 - p, clock, 2), leg(72, 'Gamma', 0.1, clock, 3)];
+    return { ...data, full_field_rendered: true, discover_card: { distribution_outcomes: data.top_outcomes.map(row => ({
+      label: row.name, probability: row.probability, rendered_percent: row.rendered_percent,
+    })) } } as FeedFuturesData;
+  };
+  await visibleCard(allocated(0.4, T0));
+  stream().emit('market_preview', preview());
+  expect(yes()).toEqual(expect.objectContaining({ probability: 0.4, rendered_percent: 40 }));
+  fetcher.mockResolvedValue(card(allocated(0.45, T1)));
+  stream().emit('market', invalidation());
+  await flush(2_000);
+  expect(yes()).toEqual(expect.objectContaining({ probability: 0.45, rendered_percent: 45 }));
+  expect(rows().map(row => row.rendered_percent).reduce<number>((sum, p) => sum + (p ?? 0), 0)).toBe(100);
+});

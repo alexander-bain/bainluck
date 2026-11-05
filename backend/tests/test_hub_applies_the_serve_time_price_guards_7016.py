@@ -216,12 +216,16 @@ def test_an_opening_is_withheld_once_the_printed_column_has_moved():
 
 
 def test_an_opening_survives_a_field_that_did_not_move():
-    """The control for the guard above — it fires on the squeeze, not on every card."""
-    rows = lf._serialize_outcomes(
-        [_Outcome(1, "A", 0.6, opening=0.55), _Outcome(2, "B", 0.4, opening=0.45)],
-        _Market(),
-        set(),
-    )
+    """A complete simultaneous opening remains a supported comparison (Alex21-A)."""
+    from datetime import datetime, timezone
+
+    market = _Market()
+    market.outcomes = [
+        _Outcome(1, "A", 0.6, opening=0.55), _Outcome(2, "B", 0.4, opening=0.45)
+    ]
+    for outcome in market.outcomes:
+        outcome.opening_captured_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rows = lf._serialize_outcomes(market.outcomes, market, set())
     assert [r["opening_probability"] for r in rows] == [0.55, 0.45]
 
 

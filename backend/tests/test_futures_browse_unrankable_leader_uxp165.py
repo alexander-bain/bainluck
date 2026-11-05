@@ -367,8 +367,8 @@ class TestTheScopeDecisionIsAsserted:
         item = (await _browse([market]))[0]
         assert [o["probability"] for o in item["top_outcomes"]] == [0.705, 0.395, 0.095]
 
-    def test_the_route_does_not_call_the_normalizer(self):
-        assert "normalize_display_probs" not in _executable_source(futures.browse_futures)
+    def test_the_route_uses_the_full_field_normalizer_11995(self):
+        assert "normalize_display_probs" in _executable_source(futures.browse_futures)
 
     def test_that_absence_assertion_is_not_vacuous(self):
         # The comments DO name the normalizer, deliberately. If the stripper ever

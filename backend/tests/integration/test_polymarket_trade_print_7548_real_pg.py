@@ -369,6 +369,7 @@ def test_V2_the_venues_own_series_never_reached_the_print_and_prices_it_out():
     assert served[LARSON_OUTCOME_ID][BAD_STAMP] == PRINT
 
 
+
 # ---------------------------------------------------------------------------
 # W — the WRITER
 # ---------------------------------------------------------------------------
@@ -650,6 +651,11 @@ def test_R3_a_row_with_no_recorded_book_is_left_alone(monkeypatch):
     for one export before anyone claims the chart is repaired."""
     _arun(_seed_served_history(bad_book=(None, None, PRINT)))
     served = _series(_get(f"/api/futures/{MARKET_ID}/history?hours=168&top_n=50", monkeypatch))
+    saved = _series(_fx("bainluck-history-56947465.json"))
+    mass = sum(points.get(BAD_STAMP, 0) for points in saved.values())
+    # The book guard is inert. The suspect total also refuses normalization;
+    # dividing this field to 100% would hide the unsupported print (#1200).
+    assert mass > 1.6
     assert served[LARSON_OUTCOME_ID][BAD_STAMP] == PRINT
 
 

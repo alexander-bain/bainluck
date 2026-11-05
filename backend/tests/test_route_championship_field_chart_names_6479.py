@@ -314,7 +314,7 @@ async def test_only_the_prose_moves_ids_and_points_are_untouched_6479():
     row = next(o for o in payload["outcomes"] if o["outcome_id"] == 643828)
     assert row["name"] == "Los Angeles Rams"
     assert len(row["history"]) == 12
-    assert all(p["probability"] == pytest.approx(0.1) for p in row["history"])
+    assert all(p["probability"] == pytest.approx(1 / len(SUPER_BOWL_RUNGS), abs=1e-8) for p in row["history"])
     assert {o["outcome_id"] for o in payload["outcomes"]} == {r[0] for r in SUPER_BOWL_RUNGS}
 
 
@@ -411,4 +411,29 @@ async def test_repairing_the_label_did_not_move_the_champion_MATCH_6479():
     assert champ["name"] == "Los Angeles Rams"
 
     other = next(o for o in payload["outcomes"] if o["outcome_id"] == 643833)
-    assert other["history"][-1]["probability"] == pytest.approx(0.1)
+    assert other["history"][-1]["probability"] == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_an_absent_ungraded_member_never_inflates_the_recorded_points_11995():
+    from app.routes.futures import get_futures_history
+
+    rungs = [
+        (643828, "KXSB-27-LAR", "Los Angeles R"),
+        (643833, "KXSB-27-BUF", "Buffalo"),
+        (643834, "KXSB-27-KC", "Kansas City"),
+    ]
+    market = _market(rungs)
+    at = datetime.now(timezone.utc) - timedelta(hours=1)
+    snapshots = [_snapshot(o.id, at, 0.1) for o in market.outcomes[:2]]
+    payload = await get_futures_history(
+        market_id=market.id,
+        hours=168,
+        outcome_id=None,
+        top_n=10,
+        db=_db(market, snapshots),
+    )
+    points = [
+        point["probability"] for row in payload["outcomes"] for point in row["history"]
+    ]
+    assert points and points == pytest.approx([0.1] * len(points))

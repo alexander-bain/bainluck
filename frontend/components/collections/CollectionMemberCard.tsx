@@ -73,7 +73,7 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
         {shownOutcomes?.map((outcome, index) => {
           const verdict = outcomeRowVerdict(outcome, resolved);
           const party = presentation && !resolved && !verdict ? midtermsOutcomeParty(market.id, outcome) : null;
-          const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability);
+          const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability, { rendered: outcome.rendered_percent });
           const showRowHeadshot = (index === 0 || verdict === "won") && isPersonOutcomeName(outcome.name);
           return <div key={`${outcome.id ?? index}:${outcome.name}`} className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 flex items-center gap-1.5 text-text-secondary">

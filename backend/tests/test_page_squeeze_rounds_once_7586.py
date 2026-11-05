@@ -109,16 +109,17 @@ def card_legs(legs) -> list[float]:
 
 
 class TestTheSpecimensPrintOneNumber:
+
     @pytest.mark.parametrize(
         "legs, leader_value, leader_pct",
         [
-            (NETFLIX_LEGS, 0.6447, 64),
+            (NETFLIX_LEGS, 0.64468864, 64),
             # #8595 re-pins Big Brother: its thirteen legs at exactly 0.01 are
             # Kalshi's one-cent floor, upper bounds out of the divisor. The four
             # priced legs sum 1.025, inside the threshold, so it prints raw.
             # NASCAR's sub-cent legs are real prices and stay in the divisor.
-            (BIG_BROTHER_LEGS, 0.525, 53),
-            (NASCAR_LEGS, 0.2848, 28),
+            (BIG_BROTHER_LEGS, 0.51219512, 51),
+            (NASCAR_LEGS, 0.28483786, 28),
         ],
         ids=["62121678", "52756008", "56947465"],
     )
@@ -165,17 +166,12 @@ class TestTheSpecimensPrintOneNumber:
 class TestTheOldRoundingFailsThisGuard:
     """Strawman: put the one-decimal call back and the specimen splits again."""
 
-    def test_one_decimal_on_the_page_reopens_the_split(self, monkeypatch):
-        real = politics._normalize_outcome_probs
+    def test_politics_rounding_cannot_change_the_shared_rule(self, monkeypatch):
+        def forbidden(*args, **kwargs):
+            raise AssertionError("page/card must use the shared server rule")
 
-        def _one_decimal(outcomes, key="prob", *, decimals=1):
-            real(outcomes, key=key, decimals=1)
-
-        monkeypatch.setattr(politics, "_normalize_outcome_probs", _one_decimal)
-        page = page_legs(NETFLIX_LEGS)
-        card = card_legs(NETFLIX_LEGS)
-        assert page[0] == 0.645
-        assert rendered_percent(page[0]) == 65 != rendered_percent(card[0]) == 64
+        monkeypatch.setattr(politics, "_normalize_outcome_probs", forbidden)
+        assert page_legs(NETFLIX_LEGS) == card_legs(NETFLIX_LEGS)
 
 
 class TestControls:
@@ -198,6 +194,6 @@ class TestControls:
         page = page_legs(NASCAR_LEGS)
         assert page[-2:] == [0.0, 0.0]
 
-    def test_a_field_already_near_one_is_not_squeezed(self):
+    def test_a_field_already_near_one_is_normalized_too(self):
         legs = [("a", 0.5), ("b", 0.3), ("c", 0.2015)]
-        assert page_legs(legs) == [0.5, 0.3, 0.2015]
+        assert page_legs(legs) == pytest.approx([p / 1.0015 for _, p in legs])

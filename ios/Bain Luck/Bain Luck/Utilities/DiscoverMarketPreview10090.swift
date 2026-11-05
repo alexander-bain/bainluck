@@ -111,8 +111,13 @@ nonisolated enum DiscoverMarketPreview {
     /// is admitted — so a card with no preview renders exactly as committed.
     static func overlay(_ market: FeedFuturesData, _ state: DiscoverMarketPreviewState,
                         now: TimeInterval) -> FeedFuturesData? {
-        guard market.displayScale == 1, market.source == state.source,
+        guard market.fullFieldRendered != true, market.displayScale == 1, market.source == state.source,
               !DiscoverPriceRefresh.marketIsResolved(market) else { return nil }
+        // A raw scalar has no complete field or server allocation. Keep the
+        // committed shared numbers until the existing API refresh supplies them.
+        guard !(market.discoverCard?.distributionOutcomes ?? []).contains(where: {
+            $0.renderedPercent != nil
+        }) else { return nil }
         let rows = market.topOutcomes ?? []
         let admitted: [Double?] = rows.map { row in
             let key = String(row.id)

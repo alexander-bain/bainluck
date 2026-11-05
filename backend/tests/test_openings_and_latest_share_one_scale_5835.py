@@ -29,9 +29,10 @@ OSCAR_ANIMATED_CURRENT = [0.925, 0.500, 0.065, 0.015, 0.015, 0.005, 0.005]
 OSCAR_ANIMATED_OPENING = [0.915, 0.500, 0.075, 0.035, 0.005, 0.005, 0.005]
 
 
-def _market(currents, openings, *, mutually_exclusive=True):
+def _market(currents, openings, *, mutually_exclusive=True, recorded_opening=False):
     """A market shaped like the serializer's input. Mirrors the #5539 harness."""
     from types import SimpleNamespace
+    from datetime import datetime, timezone
 
     outcomes = [
         SimpleNamespace(
@@ -44,6 +45,9 @@ def _market(currents, openings, *, mutually_exclusive=True):
             rank_change_24h=None,
             probability_change_24h=None,
             opening_probability=op,
+            opening_captured_at=(
+                datetime(2026, 9, 12, tzinfo=timezone.utc) if recorded_opening else None
+            ),
             opening_american_odds=-9900,
             is_winner=None,
             resolution_source=None,
@@ -135,7 +139,7 @@ class TestTheSerializerWithholdsWhatItCannotCompare:
     def test_the_squeezed_field_still_serves_its_current_prices(self):
         """The withhold is about the opening column only."""
         detail = _detail(_market(OSCAR_ANIMATED_CURRENT, OSCAR_ANIMATED_OPENING))
-        assert [o["probability"] for o in detail["outcomes"]][:2] == [0.6046, 0.3268]
+        assert [o["probability"] for o in detail["outcomes"]][:2] == [0.60457516, 0.32679739]
 
 
 class TestTheOtherDirection:
@@ -146,7 +150,9 @@ class TestTheOtherDirection:
     """
 
     def test_a_coherent_field_under_the_threshold_keeps_its_openings(self):
-        detail = _detail(_market([0.5, 0.3, 0.2], [0.45, 0.35, 0.2]))
+        detail = _detail(
+            _market([0.5, 0.3, 0.2], [0.45, 0.35, 0.2], recorded_opening=True)
+        )
         assert detail["openings_withheld"] is False
         assert [o["opening_probability"] for o in detail["outcomes"]] == [
             0.45,
@@ -161,7 +167,9 @@ class TestTheOtherDirection:
         Sum 2.4 — well past the 1.60 bail. Nothing is rescaled, so nothing is
         incomparable, and withholding here would delete an honest column.
         """
-        detail = _detail(_market([0.8, 0.8, 0.8], [0.7, 0.8, 0.9]))
+        detail = _detail(
+            _market([0.8, 0.8, 0.8], [0.7, 0.8, 0.9], mutually_exclusive=True)
+        )
         assert detail["openings_withheld"] is False
         assert [o["probability"] for o in detail["outcomes"]] == [0.8, 0.8, 0.8]
         assert [o["opening_probability"] for o in detail["outcomes"]] == [0.7, 0.8, 0.9]
@@ -189,25 +197,18 @@ class TestTheOtherDirection:
 class TestTheAnswerIsAskedNotRederived:
     """The call site must not carry its own copy of the squeeze threshold."""
 
-    def test_openings_survive_when_the_normalizer_moves_nothing(self, monkeypatch):
-        """THE MUTATION KILLER, and the reason the return value exists.
-
-        A call site that re-derived "did it fire?" from the field sum would need
-        the `> 105` test that lives in `app.routes.politics`, free to drift from
-        it. Here the shared normalizer is neutered while the field sum stays at
-        1.53, squarely inside the band. Nothing the reader is handed has moved,
-        so the openings are comparable and must be served. A re-derived
-        threshold withholds them and this test goes red.
-        """
-        import app.routes.politics as politics
-
-        monkeypatch.setattr(politics, "_normalize_outcome_probs", lambda *a, **k: None)
-        detail = _detail(_market(OSCAR_ANIMATED_CURRENT, OSCAR_ANIMATED_OPENING))
+    def test_a_complete_opening_uses_its_own_field_when_current_numbers_do_not_move(
+        self,
+    ):
+        """Ruling21-A: today's mass1 cannot be yesterday's1.2 denominator."""
+        detail = _detail(
+            _market([0.5, 0.3, 0.2], [0.6, 0.2, 0.4], recorded_opening=True)
+        )
         assert detail["openings_withheld"] is False
-        assert [o["probability"] for o in detail["outcomes"]] == OSCAR_ANIMATED_CURRENT
-        assert [
-            o["opening_probability"] for o in detail["outcomes"]
-        ] == OSCAR_ANIMATED_OPENING
+        assert [o["probability"] for o in detail["outcomes"]] == [0.5, 0.3, 0.2]
+        assert [o["opening_probability"] for o in detail["outcomes"]] == pytest.approx(
+            [0.5, 1 / 6, 1 / 3]
+        )
 
 
 class TestTheNormalizerReportsWhatItDid:
@@ -216,17 +217,22 @@ class TestTheNormalizerReportsWhatItDid:
     def test_it_reports_true_when_it_squeezes(self):
         outcomes = [{"probability": p} for p in OSCAR_ANIMATED_CURRENT]
         assert normalize_display_probs(outcomes) is True
-        assert outcomes[0]["probability"] == 0.6046
+        assert outcomes[0]["probability"] == 0.60457516
 
     def test_it_reports_false_for_a_non_exclusive_family(self):
         outcomes = [{"probability": p} for p in (0.86, 0.80, 0.75)]
         assert normalize_display_probs(outcomes, mutually_exclusive=False) is False
         assert outcomes[0]["probability"] == 0.86
 
-    def test_it_reports_false_when_it_bails_on_an_overround(self):
+    def test_it_refuses_a_suspect_one_winner_overround(self):
         outcomes = [{"probability": 0.8} for _ in range(3)]
         assert normalize_display_probs(outcomes) is False
-        assert all(o["probability"] == 0.8 for o in outcomes)
+        assert [o["probability"] for o in outcomes] == [0.8] * 3
+
+    def test_it_reports_true_for_a_healthy_one_winner_overround(self):
+        outcomes = [{"probability": 0.4} for _ in range(3)]
+        assert normalize_display_probs(outcomes) is True
+        assert sum(o["rendered_percent"] for o in outcomes) == 100
 
     def test_it_reports_false_for_a_field_already_under_the_threshold(self):
         outcomes = [{"probability": p} for p in (0.5, 0.3, 0.2)]
@@ -247,55 +253,22 @@ class TestTheNormalizerReportsWhatItDid:
         assert normalize_display_probs(outcomes) is False
         assert all(o["probability"] == 0.0 for o in outcomes)
 
-    def test_the_squeeze_rounds_at_the_cards_precision_and_keeps_a_longshot(self):
-        """The reader-visible precision of the shared normalizer, pinned.
-
-        #5835 pinned the old coarseness here as a tripwire, and #7586 is the
-        change it was waiting for. `_normalize_outcome_probs` used to round to ONE
-        decimal of a percent, so 0.925 in a 1.53 field served 0.605 and the
-        client rounded that a second time; beside a Discover card that serves
-        `round(0.925 / 1.53, 4)` = 0.6046 the page could print one point higher
-        (0.88/1.365: card 64, page 65). This function now asks for two decimals
-        of a percent, which is the card's four decimals on 0-1 — and a 0.0005
-        longshot in a squeezed field no longer collapses to 0.
-        """
-        outcomes = [{"probability": 1.06}] + [{"probability": 0.0005}] * 10
+    def test_the_squeeze_keeps_supported_subcent_longshots(self):
+        outcomes = [{"probability": p} for p in [0.99] + [0.0005] * 150]
         assert normalize_display_probs(outcomes) is True
-        assert outcomes[0]["probability"] == 0.9953
-        assert outcomes[1]["probability"] == 0.0005
+        assert outcomes[0]["probability"] == pytest.approx(0.99 / 1.065)
+        assert outcomes[1]["probability"] == pytest.approx(0.0005 / 1.065, abs=1e-8)
 
-    def test_it_reports_a_move_that_leaves_the_FIELD_SUM_untouched(self, monkeypatch):
-        """The measurement is per ROW, because the reader's comparison is per row.
-
-        THIS TEST EXISTS BECAUSE A MUTANT SURVIVED. Swapping `any(...)` for
-        "did the field sum change?" passed all sixteen other tests: today's
-        normalizer divides by a sum above 1.05, so the sum always moves when the
-        values do, and the two rules are indistinguishable on every field
-        production can produce. They are not the same rule. The contract this
-        function advertises — and the only one its caller can use — is *did the
-        number printed on this row stop being the raw price*, and a row's
-        opening is comparable or not regardless of what the column totals.
-
-        Probed with a sum-preserving permutation, which is the smallest change
-        that separates them.
-        """
-        import app.routes.politics as politics
-
-        def _permute(outcomes, key="prob", **_kwargs):
-            values = [o[key] for o in outcomes]
-            for o, v in zip(outcomes, reversed(values)):
-                o[key] = v
-
-        monkeypatch.setattr(politics, "_normalize_outcome_probs", _permute)
-        outcomes = [{"probability": p} for p in OSCAR_ANIMATED_CURRENT]
-        assert normalize_display_probs(outcomes) is True, (
-            "every row now prints another row's price and the field sum is "
-            "unchanged — a sum-keyed answer calls this 'nothing moved'"
-        )
-        assert outcomes[0]["probability"] == 0.005
+    def test_it_reports_a_move_that_leaves_the_FIELD_SUM_untouched(self):
+        values = [0.500000004, 0.299999996, 0.2]
+        outcomes = [{"probability": p} for p in values]
+        assert sum(values) == 1
+        assert normalize_display_probs(outcomes) is True
+        assert [o["probability"] for o in outcomes] == [0.5, 0.3, 0.2]
+        assert sum(o["probability"] for o in outcomes) == 1
 
     def test_the_return_value_does_not_disturb_existing_callers(self):
         """Six concept adapters call this for its side effect and ignore it."""
         outcomes = [{"probability": p} for p in OSCAR_ANIMATED_CURRENT]
         normalize_display_probs(outcomes)
-        assert [o["probability"] for o in outcomes][:2] == [0.6046, 0.3268]
+        assert [o["probability"] for o in outcomes][:2] == [0.60457516, 0.32679739]

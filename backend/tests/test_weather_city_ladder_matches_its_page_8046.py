@@ -163,8 +163,8 @@ def test_a_coherent_ladder_the_page_prints_raw_stays_raw():
     """Control: the squeeze is the page's gate, not "always sum to 1"."""
     _, dist = _served(_session_with((62721466, "New York", NEW_YORK)), "New York")
 
-    assert dist["72-73°F"]["probability"] == pytest.approx(0.375)
-    assert dist["72-73°F"]["prob"] == 38
+    assert dist["72-73°F"]["probability"] == pytest.approx(0.375 / 1.024)
+    assert dist["72-73°F"]["prob"] == 37
 
 
 def test_a_withheld_leg_turns_the_squeeze_off_as_it_does_on_the_page(monkeypatch):

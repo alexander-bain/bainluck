@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.routes import events as events_route
 from app.routes.events import (
     _SEARCH_LADDER_LIMIT,
@@ -103,7 +105,7 @@ def test_ohtani_is_on_the_home_runs_card():
     pinned = rows[0]
     assert pinned["query_match"] is True
     assert pinned["matched_rank"] == 7  # its place on the board, not row 1
-    assert pinned["probability"] == 0.03
+    assert pinned["probability"] == pytest.approx(0.03 / 0.95, abs=1e-8)
     assert not any(r.get("query_match") for r in rows[1:])
 
 

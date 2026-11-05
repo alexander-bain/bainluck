@@ -128,7 +128,9 @@ class TestTheSerializer:
             return {o["name"]: o["probability"] for o in d["outcomes"]}
 
         for name in ("NL Central", "AL East"):
-            assert round(price(after)[name], 2) == round(price(before)[name], 2)
+            assert price(after)[name] / price(after)["NL Central"] == pytest.approx(
+                price(before)[name] / price(before)["NL Central"]
+            )  # removing a field member changes the denominator, not its odds ratio
 
     def test_strawman_without_labels_the_page_still_prints_it(self):
         """Today's payload: the defect the reader saw is in the fixture."""

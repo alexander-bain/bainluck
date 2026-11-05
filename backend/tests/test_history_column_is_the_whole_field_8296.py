@@ -103,7 +103,9 @@ class TestTheCarry:
 
 class TestTheServedScale:
     def _final(self, raw):
-        return devigged_consensus_by_time(raw, mutually_exclusive=True)[T_FINAL]
+        return devigged_consensus_by_time(
+            raw, mutually_exclusive=True, graded_outcome_ids={KIWOOM}
+        )[T_FINAL]
 
     def test_the_fixture_really_does_reproduce_the_defect(self):
         """Without the carry the partial column prints raw: LG 47%."""

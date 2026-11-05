@@ -589,9 +589,13 @@ export default function RelatedByTag({
           const derivedField = renderedFieldRowPercents(
             field.map((outcome) => outcome.probability),
           );
-          const fieldPercents = derivedField.every((percent) => percent !== null)
-            ? derivedField
-            : field.map((outcome) => outcome.rendered_percent ?? null);
+          // #11995's full-field allocation survives a preview slice. Older
+          // payloads retain the visible-pair fallback described above.
+          const fieldPercents = d.full_field_rendered && field.every(outcome => outcome.rendered_percent != null)
+            ? field.map(outcome => outcome.rendered_percent ?? null)
+            : derivedField.every(percent => percent !== null)
+              ? derivedField
+              : field.map(outcome => outcome.rendered_percent ?? null);
           /* #8837 — THE REST OF THE FIELD IS COUNTED THE WAY DISCOVER COUNTS IT.
              `outcome_count` is every stored leg (128 on the French election);
              the Discover card for the same market says "Field and 39 more"

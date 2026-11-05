@@ -1,4 +1,4 @@
-"""#11948: the served collection carries the complete field at venue prices."""
+"""#11995 replaces #11948: normalize the complete field on card and page."""
 
 import pytest
 
@@ -13,7 +13,8 @@ PRICES = [
     ("Nevada", 0.0905),
     ("Pennsylvania", 0.07),
 ]
-PRICES += [(f"State {index}", 0.01) for index in range(17)] + [
+# A healthy complete fixture; the real one-cent-bound venue field is below.
+PRICES += [(f"State {index}", 0.004) for index in range(17)] + [
     ("Zero-priced state", 0.0)
 ]
 
@@ -32,17 +33,21 @@ def full_field(monkeypatch):
     monkeypatch.setattr(proof, "_market", market)
 
 
-def test_full_http_read_carries_all_24_prices_without_scaling_the_top_five(
+def test_full_http_read_normalizes_all_24_prices_before_the_top_five(
     served, full_field
 ):
     _, read = served
     _, cards = read()
     outcomes = cards[108629]["top_outcomes"]
     assert len(outcomes) == 24
-    assert {o["name"]: o["probability"] for o in outcomes} == dict(PRICES)
+    mass = sum(p for _, p in PRICES)
+    assert {o["name"]: o["probability"] for o in outcomes} == pytest.approx(
+        {n: p / mass for n, p in PRICES}
+    )
+    assert sum(o["rendered_percent"] for o in outcomes) == 100
     assert outcomes[0]["name"] == "Nebraska"
-    assert outcomes[0]["probability"] == 0.91
-    assert sum(o["probability"] for o in outcomes) > 1
+    assert outcomes[0]["probability"] == pytest.approx(0.91 / mass)
+    assert sum(o["probability"] for o in outcomes) == pytest.approx(1)
     assert len({o["id"] for o in outcomes}) == 24
 
 
@@ -113,7 +118,7 @@ def _detail_field(*, market_id=108629, source="kalshi", winner=None):
     return market
 
 
-def test_one_winner_detail_matches_every_raw_midterms_price_in_the_squeeze_band(
+def test_one_winner_detail_matches_the_midterms_priced_mass_with_bound_tail(
     served, raw_governor_field
 ):
     from app.routes.futures import _format_market_detail
@@ -125,13 +130,18 @@ def test_one_winner_detail_matches_every_raw_midterms_price_in_the_squeeze_band(
     card_prices = {o["name"]: o["probability"] for o in cards[108629]["top_outcomes"]}
     detail_prices = {o["name"]: o["probability"] for o in detail["outcomes"]}
 
-    assert sum(card_prices.values()) == pytest.approx(1.185)
+    assert all("rendered_percent" not in o for o in detail["outcomes"])
+    assert all("rendered_percent" not in o for o in cards[108629]["top_outcomes"])
+    assert sum(card_prices.values()) == pytest.approx(1.185 / 1.125)
     assert len(detail_prices) == 24
-    assert detail_prices == card_prices == dict(VENUE_FIELD_PRICES)
+    assert detail_prices == card_prices
+    assert detail_prices == pytest.approx(
+        {n: p / 1.125 for n, p in VENUE_FIELD_PRICES}, abs=1e-8
+    )
     assert detail["mutually_exclusive"] is market.mutually_exclusive is True
 
 
-def test_raw_field_keeps_a_supported_opening_and_dated_move():
+def test_normalized_field_withholds_incomplete_opening_and_dated_fields():
     from datetime import datetime, timedelta, timezone
 
     from app.routes.futures import _format_market_detail
@@ -151,10 +161,46 @@ def test_raw_field_keeps_a_supported_opening_and_dated_move():
     detail = _format_market_detail(market)
     row = next(o for o in detail["outcomes"] if o["name"] == "Kansas")
 
-    assert row["probability"] == 0.948
-    assert row["opening_probability"] == 0.90
-    assert row["probability_change_24h"] == pytest.approx(0.048)
+    assert row["probability"] == pytest.approx(0.948 / 1.125)
+    assert row["opening_probability"] is None
+    assert row["probability_change_24h"] is None
+    assert detail["openings_withheld"] is True
+
+
+def test_complete_floor_field_keeps_its_normalized_opening_and_dated_move(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.routes import futures
+
+    now = datetime(2026, 11, 5, 15, tzinfo=timezone.utc)
+    market = _detail_field()
+    prior = {o.id: float(o.current_probability) for o in market.outcomes}
+    prior[market.outcomes[0].id] = 0.90
+    for outcome in market.outcomes:
+        outcome.opening_probability = prior[outcome.id]
+        outcome.opening_captured_at = now - timedelta(hours=30)
+        outcome.probability_change_24h = 0.001
+    market.market_metadata = {
+        "dated_movement_basis": {
+            str(oid): [p, (now - timedelta(hours=18)).isoformat()]
+            for oid, p in prior.items()
+        }
+    }
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is None else now.astimezone(tz)
+
+    monkeypatch.setattr(futures, "datetime", Clock)
+    detail = futures._format_market_detail(market)
+    row = next(o for o in detail["outcomes"] if o["name"] == "Kansas")
+    assert row["probability"] == pytest.approx(0.948 / 1.125, abs=1e-8)
+    assert row["opening_probability"] == pytest.approx(0.90 / 1.077, abs=1e-8)
+    assert row["probability_change_24h"] == pytest.approx(
+        0.948 / 1.125 - 0.90 / 1.077, abs=1e-8
+    )
     assert detail["openings_withheld"] is False
+    assert all("rendered_percent" not in o for o in detail["outcomes"])
 
 
 def test_raw_field_still_withholds_an_unsupported_price():
@@ -173,12 +219,12 @@ def test_raw_field_still_withholds_an_unsupported_price():
 @pytest.mark.parametrize(
     "market_id,source", [(108630, "kalshi"), (108629, "polymarket")]
 )
-def test_other_fields_keep_their_existing_display_policy(market_id, source):
+def test_other_fields_use_the_same_venue_blind_display_policy(market_id, source):
     from app.routes.futures import _format_market_detail
 
     detail = _format_market_detail(_detail_field(market_id=market_id, source=source))
     kansas = next(o for o in detail["outcomes"] if o["name"] == "Kansas")
-    assert kansas["probability"] == pytest.approx(0.8427)
+    assert kansas["probability"] == pytest.approx(0.948 / 1.125)
     assert detail["mutually_exclusive"] is True
 
 

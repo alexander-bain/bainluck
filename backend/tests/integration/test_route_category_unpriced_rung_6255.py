@@ -280,7 +280,7 @@ class TestAnUnpricedRungLeavesTheServedSlice:
         """
         row = _row(_politics_row, _colorado_governor())
         rungs = {o["name"]: o["prob"] for o in row["top_outcomes"]}
-        assert rungs == {"Democrat": 96.7, "Republican": 3.8}
+        assert rungs == {"Democrat": 96.7, "Republican": 3.75}
         assert row["prob"] == 96.7
         assert row["outcome_count"] == 3
 
@@ -289,7 +289,7 @@ class TestAnUnpricedRungLeavesTheServedSlice:
         card. `E` is an unpriced rung whose name is one character."""
         row = _row(_politics_row, _mi_02_house())
         rungs = {o["name"]: o["prob"] for o in row["top_outcomes"]}
-        assert rungs == {"Republican Party": 98.0, "Democratic Party": 0.8}
+        assert rungs == {"Republican Party": 97.95, "Democratic Party": 0.8}
         assert row["outcome_count"] == 8
 
     def test_no_served_rung_is_ever_a_null_on_either_sibling(self):

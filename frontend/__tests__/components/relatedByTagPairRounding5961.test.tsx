@@ -190,6 +190,17 @@ describe("#5961 — a two-row related card rounds its pair once", () => {
     expect(card.rows.map((r) => r.printed)).toEqual(["58%", "42%"]);
   });
 
+  it("#11995 preserves a complete server allocation across a tied remainder and a zero leg", () => {
+    const payload = JSON.parse(JSON.stringify(TENNIS));
+    const market = payload.items.find((item: { data: { id: number } }) => item.data.id === 34277822).data;
+    market.full_field_rendered = true;
+    [0.505, 0.495, 0].forEach((probability, i) => Object.assign(market.top_outcomes[i], {
+      probability, rendered_percent: [50, 50, 0][i],
+    }));
+    const card = cardNamed(render(payload, "More Tennis"), "US Open Men's Singles Winner");
+    expect(card.rows.map(row => row.printed)).toEqual(["50%", "50%", "0%"]);
+  });
+
   /**
    * ARM 4 — THE PAIRS THAT MUST NOT MOVE. Each of these is two independently
    * quoted questions whose total is a fact about the venue, not a rounding

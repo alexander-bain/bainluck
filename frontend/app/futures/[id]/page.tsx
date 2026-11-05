@@ -564,7 +564,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // #8313: a side-swapped opening is withheld from the pair, not paired with its sibling.
     const opening = renderedOutcomeRowPercents(outs.map((o) => readableOpeningProbability(o)));
     return new Map(
-      outs.map((o, i) => [o.id, { current: current[i] ?? null, opening: opening[i] ?? null }]),
+      outs.map((o, i) => [o.id, { current: o.rendered_percent ?? current[i] ?? null, opening: opening[i] ?? null }]),
     );
   }, [market?.outcomes]);
 

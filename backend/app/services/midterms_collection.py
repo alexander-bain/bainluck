@@ -128,6 +128,7 @@ async def load_midterms_cards(
     for mid, market in all_markets.items():
         try:
             card = _format_futures_for_search(market, withheld.get(mid))
+            card["mutually_exclusive"] = getattr(market, "mutually_exclusive", True)
             card["settled_at"] = (
                 market.settled_at.isoformat() if market.settled_at else None
             )
