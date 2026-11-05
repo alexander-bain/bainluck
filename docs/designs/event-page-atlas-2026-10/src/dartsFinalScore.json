@@ -1,0 +1,36 @@
+{
+  "eventTicker": "KXDARTSMATCH-26OCT120850JMCESOCK",
+  "date": "2026-10-12",
+  "competition": "MODUS Super Series",
+  "stage": "Week 11 \u00b7 Group A \u00b7 Day 1",
+  "status": "final",
+  "unit": "legs",
+  "scores": [
+    {
+      "ticker": "KXDARTSMATCH-26OCT120850JMCESOCK-JMCE",
+      "marketName": "Jim McEwan",
+      "reportName": "Jim McEwan",
+      "legs": 0
+    },
+    {
+      "ticker": "KXDARTSMATCH-26OCT120850JMCESOCK-SOCK",
+      "marketName": "Sander van Ockenburg",
+      "reportName": "Sander Van Ockenburg-Zwaan",
+      "legs": 4
+    }
+  ],
+  "actualStart": null,
+  "actualEnd": null,
+  "legTimes": null,
+  "sets": null,
+  "projection": null,
+  "provenance": {
+    "url": "https://dartsworld.com/2026/10/morris-grabs-early-super-series-lead/",
+    "publisher": "Darts World",
+    "capturedAt": "2026-10-13T13:29:25.623274+00:00",
+    "status": 200,
+    "sha256": "aee417a0f781b9cc7a926fe568939ead815453389a2f85e99beb6a38125bcaf1",
+    "reportedResult": "Sander Van Ockenburg-Zwaan 4-0 Jim McEwan",
+    "correspondence": "Isolated design fixture: exact October 12 pairing and competition; report uses the full Ockenburg-Zwaan surname. Not a production registry merge."
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "eventID": 15324784,
+  "sport": "aussierules_aflw",
+  "eventDate": "2026-10-11",
+  "home": "Sydney Swans",
+  "away": "Carlton Blues",
+  "venue": "Henson Park",
+  "round": 9,
+  "state": "final",
+  "homeQuarters": [
+    [
+      1,
+      3
+    ],
+    [
+      2,
+      4
+    ],
+    [
+      3,
+      4
+    ],
+    [
+      4,
+      8
+    ]
+  ],
+  "awayQuarters": [
+    [
+      4,
+      3
+    ],
+    [
+      5,
+      6
+    ],
+    [
+      6,
+      10
+    ],
+    [
+      8,
+      11
+    ]
+  ],
+  "actualStartAt": null,
+  "completedAt": null,
+  "source": {
+    "publisher": "AFL",
+    "url": "https://www.afl.com.au/aflw/news/1630336/carlton-blues-cruise-past-sydney-swans-to-as-good-as-lock-in-finals",
+    "capturedAt": "2026-10-13T15:51:03.713648+00:00",
+    "sha256": "1d497d3bbe090ca88d1bfa11c254055f640c1fc733a93afa07ea1b772a08cf7a",
+    "file": "sources/aflw-official.html",
+    "status": 200
+  }
+}

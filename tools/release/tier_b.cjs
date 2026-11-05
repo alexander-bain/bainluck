@@ -53,14 +53,24 @@ async function publish(github,repo,sha,result) {
 
 async function evaluate(github, context) {
   const repo=context.repo;
+  const run=context.payload.workflow_run;
+  if (context.eventName === 'workflow_run' && (
+    context.payload.action !== 'completed' || run?.status !== 'completed' ||
+    run.name !== 'Tier-B review' || run.path !== '.github/workflows/tier-b-review.yml' ||
+    run.event !== 'pull_request' || !Array.isArray(run.pull_requests) || run.pull_requests.length !== 1
+  )) {
+    throw new Error('A completed installed Tier-B reviewer run with exactly one associated PR is required.');
+  }
   const eventNumber=context.eventName === 'schedule' ? undefined : Number(
-    context.payload.pull_request?.number ?? context.payload.client_payload?.pull_number ?? context.payload.inputs?.pull_number);
+    context.eventName === 'workflow_run' ? run.pull_requests[0].number :
+      context.payload.pull_request?.number ?? context.payload.client_payload?.pull_number ?? context.payload.inputs?.pull_number);
   if (eventNumber !== undefined && (!Number.isSafeInteger(eventNumber) || eventNumber < 1)) {
     throw new Error('A pull request number is required outside the scheduled sweep.');
   }
   const observed=new Set();
-  // Events touch their PR only. The half-hour sweep also reconciles review
-  // dismissals and events coalesced by GitHub's per-PR concurrency queue.
+  // Events touch their PR only. Reviewer runs only identify that PR: current
+  // heads and reviews come from GitHub, never run artifacts, outputs or SHA.
+  // The half-hour sweep also reconciles dismissals and coalesced events.
   for (let attempt=0;attempt<2;attempt++) {
     const current=await currentOpen(github,repo,eventNumber);
     const groups=new Map();

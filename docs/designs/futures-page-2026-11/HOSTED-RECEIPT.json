@@ -1,0 +1,49 @@
+{
+  "capturedAtPT": "2026-11-04T06:06:49.692557-08:00",
+  "deploymentId": "dpl_CHQ5dcEiy882J89hqifHLpg2yjCn",
+  "deploymentURL": "https://bainluck-r4wu1cqa4-alexander-bain.vercel.app",
+  "codeCommit": "686c82300f",
+  "branch": "design/futures-page-proto",
+  "build": "PASS",
+  "typecheck": {
+    "result": "PASS",
+    "baseline": 65,
+    "actual": 65
+  },
+  "frontendFocusedTests": {
+    "passed": 33
+  },
+  "backendStartup": {
+    "passed": 4
+  },
+  "initialPhoneAndWideRenders": {
+    "pages": 6,
+    "widths": [
+      390,
+      1280
+    ],
+    "horizontalOverflow": false
+  },
+  "extraStates": [
+    "one-leg archived open",
+    "No recent price",
+    "full-field search",
+    "enlarged text",
+    "gap refusal",
+    "exact observation",
+    "sheet/dialog focus and Escape"
+  ],
+  "consoleErrorsAndWarnings": [],
+  "productionAndProtectedFileIdentityAgainstBranchBase": {
+    "frontend/app/futures/[id]/page.tsx": true,
+    "frontend/app/events/[id]/page.tsx": true,
+    "frontend/components/FuturesChart.tsx": true,
+    "frontend/components/event/MatchupsRail.tsx": true,
+    "backend/app/routes/events.py": true,
+    "backend/app/routes/feed_collections.py": "not present at this exact path",
+    "backend/app/utils/feed_collections.py": true
+  },
+  "atlasInputsUnchanged": true,
+  "native": "NOT_RUN; prepared source mapping only",
+  "previewShare": "30-day deployment-scoped capability is on NOW only; not committed"
+}

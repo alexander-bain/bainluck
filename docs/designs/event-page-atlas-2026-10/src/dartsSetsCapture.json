@@ -1,0 +1,163 @@
+{
+  "eventID": "1128105",
+  "marketID": "5263083",
+  "condition": "0x956e7aba0296fe77c918134d53f361e929187522cdd046d0fff0dfb01c078c80",
+  "title": "World Grand Prix: Gerwyn Price vs Luke Humphries",
+  "providerURL": "https://polymarket.com/event/pdcdarts-price-humphri-2026-10-04",
+  "rules": "This market refers to the darts match between Gerwyn Price and Luke Humphries in the World Grand Prix, originally scheduled for October 4 at 2:00PM ET.\n\nThis market will resolve to 'Gerwyn Price' if Gerwyn Price wins against Luke Humphries. This market will resolve to 'Luke Humphries' if Luke Humphries wins against Gerwyn Price.\n\nIf the match is canceled (not played at all), ends in a tie, or is delayed beyond 7 days from the scheduled date without a winner determined, this market will resolve to 50-50.\n\nIf the match begins but is not completed, and one player advances due to the opponent's retirement, default, or disqualification, this market will resolve to the player who advances.\n\nIf the match ends in a walkover (player withdraws before the start and the other advances automatically), this market will resolve to 50-50.\n\nResolution will be based on official PDC results.",
+  "scheduledStart": 1791136800,
+  "actualStart": null,
+  "actualEnd": null,
+  "reportAt": 1791151500,
+  "setWallClocks": null,
+  "projection": null,
+  "players": [
+    {
+      "id": "77616035823760463744825756450493662050911352744116903639399747436459540222844",
+      "name": "Gerwyn Price",
+      "points": [
+        {
+          "t": 1791122669,
+          "p": 0.4699999944,
+          "size": 21.276596,
+          "tx": "0x915184c18e3590e28a730cf90c206ac34e0a23a37378087557ee3cddb824ae32",
+          "token": "77616035823760463744825756450493662050911352744116903639399747436459540222844"
+        },
+        {
+          "t": 1791126269,
+          "p": 0.47,
+          "size": 206.106383,
+          "tx": "0xf1bb9f7c0caf2a85a9adda7ebed365650f852d9318047bba895b1c193a2f59b9",
+          "token": "77616035823760463744825756450493662050911352744116903639399747436459540222844"
+        },
+        {
+          "t": 1791144481,
+          "p": 0.5999999976,
+          "size": 83.333332,
+          "tx": "0xaa0ec37ee24b516ebed95ba35566c9a12c3776044ab4f7f7667097b2e8345860",
+          "token": "77616035823760463744825756450493662050911352744116903639399747436459540222844"
+        },
+        {
+          "t": 1791145033,
+          "p": 0.5,
+          "size": 50,
+          "tx": "0x2d47b0f3dde1b953b5129453b0720b9996bc122a5f172021828bf02248548969",
+          "token": "77616035823760463744825756450493662050911352744116903639399747436459540222844"
+        },
+        {
+          "t": 1791147763,
+          "p": 0.01,
+          "size": 100,
+          "tx": "0x36c921e108e4a2e0284b9016d2ee5a78af393145f01a26d427a48d6b4d07c102",
+          "token": "77616035823760463744825756450493662050911352744116903639399747436459540222844"
+        }
+      ],
+      "resolvedWinner": false
+    },
+    {
+      "id": "12592960662531790896288371028211542189310855716633384850751024654749890811962",
+      "name": "Luke Humphries",
+      "points": [
+        {
+          "t": 1791150784,
+          "p": 0.999,
+          "size": 133.33,
+          "tx": "0x1b82b456783dc72ec6d73f7bb9eb014aa23d6e06c011145898875669dff916c5",
+          "token": "12592960662531790896288371028211542189310855716633384850751024654749890811962"
+        }
+      ],
+      "resolvedWinner": true
+    }
+  ],
+  "sets": [
+    {
+      "set": 1,
+      "winner": 0,
+      "scores": [
+        1,
+        0
+      ]
+    },
+    {
+      "set": 2,
+      "winner": 0,
+      "scores": [
+        2,
+        0
+      ]
+    },
+    {
+      "set": 3,
+      "winner": 0,
+      "scores": [
+        3,
+        0
+      ]
+    },
+    {
+      "set": 4,
+      "winner": 1,
+      "scores": [
+        3,
+        1
+      ]
+    },
+    {
+      "set": 5,
+      "winner": 1,
+      "scores": [
+        3,
+        2
+      ]
+    },
+    {
+      "set": 6,
+      "winner": 1,
+      "scores": [
+        3,
+        3
+      ]
+    },
+    {
+      "set": 7,
+      "winner": 1,
+      "scores": [
+        3,
+        4
+      ]
+    },
+    {
+      "set": 8,
+      "winner": 0,
+      "scores": [
+        4,
+        4
+      ]
+    },
+    {
+      "set": 9,
+      "winner": 1,
+      "scores": [
+        4,
+        5
+      ]
+    },
+    {
+      "set": 10,
+      "winner": 1,
+      "scores": [
+        4,
+        6
+      ]
+    }
+  ],
+  "resultSource": "https://www.skysports.com/darts/news/13595109/world-grand-prix-darts-luke-humphries-beats-gerwyn-price-6-4-after-epic-comeback-to-claim-major-title",
+  "actualUnit": "sets",
+  "sourceTextBindings": {
+    "firstThree": "rallied from 3-0 down",
+    "fourThroughSeven": "four consecutive sets from Humphries",
+    "eighth": "sweeping the eighth set",
+    "ninthAndTenth": "racing through the next set in straight legs"
+  },
+  "sampledQuoteAdmission": "252 CLOB price samples retained only in source evidence. Book age/spread unavailable; they do not become trusted traded probabilities."
+}

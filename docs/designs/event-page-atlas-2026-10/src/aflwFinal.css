@@ -1,0 +1,60 @@
+.aflw-final-head{padding:22px}.aflw-final-head h1{font-size:25px;letter-spacing:-.6px;margin:16px 0 22px}.aflw-score-pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}.aflw-score-pair>div{display:flex;flex-direction:column;gap:8px;min-width:0}.aflw-score-pair strong{font-size:15px}.aflw-score-pair b{font-size:46px;letter-spacing:-1.8px;line-height:1.15;color:var(--series-home)}.aflw-score-pair .aflw-score-away b{color:var(--series-away)}.aflw-score-pair b small{font-size:12px;font-weight:500;letter-spacing:0;margin-left:6px;color:var(--text-secondary)}.aflw-score-pair span{font-size:12px;color:var(--text-secondary)}.aflw-score-parts{display:flex;gap:3px;height:9px}.aflw-score-parts i{background:var(--series-home);border-radius:2px}.aflw-score-away .aflw-score-parts i{background:var(--series-away)}.aflw-score-parts i+ i{opacity:.3}.aflw-score-pair .aflw-score-equation{font-size:11px}.aflw-final-chances{display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--surface-border);margin-top:22px;padding-top:16px}.aflw-final-chances h2{font-size:16px;margin:0}.aflw-final-chances span{font-size:12px;color:var(--text-secondary)}.aflw-final-chances strong{font-size:16px}.aflw-final-reader{display:flex;flex-direction:column;gap:7px}.aflw-final-reader>div{display:flex;align-items:center;justify-content:space-between;gap:8px}.large-text .aflw-score-pair{grid-template-columns:1fr}.large-text .aflw-score-pair span,.large-text .aflw-final-chances span{font-size:16px}.large-text .aflw-final-head h1{font-size:30px}
+.aflw-final-head{background:var(--surface-card);border:1px solid var(--surface-border);border-radius:20px}
+.wide-stage .aflw-final-head{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:0 36px}
+.wide-stage .aflw-final-head>.hero-head,.wide-stage .aflw-final-head>h1{grid-column:1/-1}
+.wide-stage .aflw-final-chances{margin:0;padding:0 0 0 28px;border-top:0;border-left:1px solid var(--surface-border);justify-content:center}
+/* The probability journey leads; actuals remain compact, visible match context. */
+.aflw-final-head{display:flex;flex-direction:column}.aflw-final-head h1{font-size:21px;margin:12px 0}.aflw-score-pair{gap:16px}.aflw-score-pair>div{gap:5px}.aflw-score-pair b{font-size:30px}.aflw-score-parts,.aflw-score-equation{display:none!important}.aflw-final-chances{margin-top:16px;padding-top:12px}.aflw-final-chances .tennis-journey{border:0;padding:0}.aflw-price-state{font-size:12px!important;color:var(--text-secondary);font-weight:500}.aflw-final-chances .tennis-journey-plot{height:225px}.aflw-final-chances .tennis-history-readout span{font-size:12px}.aflw-final-chances .tennis-history-readout strong{font-size:16px}.aflw-final-reader .tennis-journey{margin-top:8px}.wide-stage .aflw-final-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr)}.wide-stage .aflw-final-head>.hero-head{grid-column:1/-1}.wide-stage .aflw-final-head>h1{grid-column:1;grid-row:2}.wide-stage .aflw-score-pair{grid-column:1;grid-row:3;align-self:start}.wide-stage .aflw-final-chances{grid-column:2;grid-row:2/5;justify-content:start}.wide-stage .aflw-final-chances .tennis-journey-plot{height:270px}.large-text .aflw-final-chances .tennis-history-readout span{font-size:16px}
+.aflw-final-head>.hero-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+.aflw-history-focus .tennis-journey{padding:0;border:0;margin:0}
+.aflw-history-focus .tennis-journey-heading h3{font-size:22px}
+.aflw-history-focus .tennis-journey-plot{height:290px}
+.cf-wide .aflw-history-focus .tennis-journey-plot{height:350px}
+.aflw-history-focus .tennis-history-readout>div{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.aflw-history-focus .tennis-history-readout strong{font-size:19px}
+.aflw-history-focus .tennis-history-readout span{font-size:12px}
+.aflw-history-focus.large-text .tennis-history-readout span{font-size:16px}
+.aflw-history-focus.large-text .tennis-history-readout strong{font-size:21px}
+.aflw-history-focus.large-text .tennis-history-scopes button{font-size:16px}
+.aflw-final-chances .tennis-journey-heading,.aflw-capture-history .tennis-journey-heading{flex-wrap:wrap;align-items:center}
+.aflw-final-chances .tennis-journey-heading>span,.aflw-capture-history .tennis-journey-heading>span{flex-basis:100%}
+.aflw-final-chances .tennis-journey-heading .cf-expand,.aflw-capture-history .tennis-journey-heading .cf-expand{width:auto;min-height:44px;margin:0;padding:0 8px}
+
+/* v363: actual score gives context without displacing probability history. */
+.aflw-final-head.aflw-probability-anchor{padding:16px;display:flex;gap:0}
+.aflw-probability-anchor .aflw-result-line{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.aflw-result-line>div{min-width:0}.aflw-result-line>div>span{font-size:10px;letter-spacing:.06em;color:var(--text-secondary)}
+.aflw-final-head.aflw-probability-anchor h1{font-size:16px;line-height:1.4;margin:4px 0 0;letter-spacing:0}
+.aflw-result-line h1 b{font-size:28px;letter-spacing:-.04em;margin:0 8px;white-space:nowrap}
+.aflw-probability-anchor .aflw-final-chances{margin:10px 0 0;padding:0;border:0;display:block}
+.aflw-probability-anchor .tennis-journey-heading{margin:0 0 8px}
+.aflw-probability-anchor .combat-winner-baseline{margin:0 0 8px;padding:10px}
+.aflw-probability-anchor .combat-winner-baseline>div{margin-top:5px}
+.aflw-probability-anchor .tennis-history-scopes{margin:8px 0 4px}
+.aflw-probability-anchor .tennis-journey-plot{height:225px}
+.large-text .aflw-probability-anchor .aflw-result-line>div>span{font-size:14px}
+.large-text .aflw-final-head.aflw-probability-anchor h1{font-size:20px}
+.large-text .aflw-probability-anchor .aflw-result-line h1 b{font-size:30px}
+.large-text .aflw-probability-anchor .tennis-journey-plot{height:270px}
+.wide-stage .aflw-probability-anchor .tennis-journey-plot{height:300px}
+
+.aflw-result-line>div{flex:1}
+.aflw-final-head.aflw-probability-anchor h1{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.aflw-result-line h1>span{display:flex;align-items:baseline;gap:6px;white-space:nowrap}
+.aflw-result-line h1 b{margin:0;font-size:28px}
+.large-text .aflw-probability-anchor .tennis-journey-heading .cf-expand{font-size:0;min-width:44px;padding:0}
+.large-text .aflw-probability-anchor .tennis-journey-heading .cf-expand svg{width:20px;height:20px}
+
+.aflw-history-expanded .tennis-journey-heading{margin:0 0 8px}
+.aflw-history-expanded .combat-winner-baseline{margin:8px 0;padding:10px}
+
+.wide-stage .aflw-probability-anchor .aflw-result-line>div{flex:none;width:min(400px,85%)}
+.wide-stage .aflw-probability-anchor .tennis-journey{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 20px}
+.wide-stage .aflw-probability-anchor .tennis-journey-heading{grid-column:1/-1}
+.wide-stage .aflw-probability-anchor .combat-winner-baseline{grid-column:1;grid-row:2;margin:0}
+.wide-stage .aflw-probability-anchor .tennis-history-scopes{grid-column:2;grid-row:2;align-self:center;margin:0}
+.wide-stage .aflw-probability-anchor .tennis-journey-plot{grid-column:1/-1;height:270px}
+.wide-stage .aflw-probability-anchor .tennis-history-inspect{min-width:260px;align-self:center}
+.wide-stage .aflw-probability-anchor .tennis-journey>details{grid-column:1/-1}
+.wide-stage .large-text .aflw-probability-anchor .tennis-journey{display:block}
