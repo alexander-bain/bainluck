@@ -152,7 +152,7 @@ export function formatAtlasAttribution(
     return options.sourceLabels.join(' · ');
   }
   if ((options?.sourceCount ?? 0) >= 2) {
-    return 'Kalshi and Polymarket';
+    return 'Both Kalshi and Polymarket';
   }
   const normalized = (source || '').trim().toLowerCase();
   if (normalized === 'kalshi') return 'Kalshi';
@@ -181,13 +181,13 @@ export function resolveOriginalMarketUrl(params: {
     if (seriesTicker) {
       return {
         url: `https://kalshi.com/markets/${encodeURIComponent(seriesTicker.toLowerCase())}`,
-        label: 'Original market on Kalshi',
+        label: 'Original market',
         venueName: 'Kalshi',
       };
     }
     return {
       url: 'https://kalshi.com/markets',
-      label: 'Original market on Kalshi',
+      label: 'Original market',
       venueName: 'Kalshi',
     };
   }
@@ -195,7 +195,7 @@ export function resolveOriginalMarketUrl(params: {
   if (normalizedSource === 'polymarket') {
     return {
       url: 'https://polymarket.com',
-      label: 'Original market on Polymarket',
+      label: 'Original market',
       venueName: 'Polymarket',
     };
   }
