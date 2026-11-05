@@ -34,22 +34,39 @@ jobs:
                 core.notice('PR closed, became draft, lost tier-b, or moved head; no review.');
                 return;
               }
-              const policy = await github.graphql(`query($owner:String!,$repo:String!,$number:Int!){
-                repository(owner:$owner,name:$repo){pullRequest(number:$number){
-                  headRefOid baseRef{branchProtectionRule{
-                    requiresStatusChecks requiredStatusChecks{context app{databaseId}}
+              // refUpdateRule is GitHub's non-admin view. isRequired also
+              // resolves each check's expected App without administration access.
+              const nodes = [], cursors = new Set();
+              let cursor = null, currentPolicy;
+              do {
+                const policy = await github.graphql(`query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
+                  repository(owner:$owner,name:$repo){pullRequest(number:$number){
+                    headRefOid baseRef{refUpdateRule{requiredStatusCheckContexts}}
+                    commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100,after:$cursor){
+                      nodes{__typename ... on CheckRun{databaseId isRequired(pullRequestNumber:$number)}
+                        ... on StatusContext{context isRequired(pullRequestNumber:$number)}}
+                      pageInfo{hasNextPage endCursor}
+                    }}}}}
                   }}
-                }}
-              }`, {...repo, number});
-              const currentPolicy = policy.repository.pullRequest;
-              if (currentPolicy.headRefOid !== head) return;
-              const rule = currentPolicy.baseRef?.branchProtectionRule;
-              if (!rule?.requiresStatusChecks || !rule.requiredStatusChecks?.length) {
+                }`, {...repo, number, cursor});
+                currentPolicy = policy.repository.pullRequest;
+                if (currentPolicy.headRefOid !== head) return;
+                const page = currentPolicy.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
+                if (!page) break; // Missing checks remain missing, never green.
+                nodes.push(...page.nodes);
+                if (page.pageInfo.hasNextPage && !page.pageInfo.endCursor) throw new Error('Required-check page is incomplete');
+                cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+                if (cursor && cursors.has(cursor)) throw new Error('Required-check cursor repeated');
+                if (cursor) cursors.add(cursor);
+                if (cursor && cursors.size >= 10) throw new Error('Required-check page budget exhausted');
+              } while (cursor);
+              const requiredNames = currentPolicy.baseRef?.refUpdateRule?.requiredStatusCheckContexts;
+              if (!requiredNames?.length) {
                 core.setFailed('Required-check configuration is unavailable; no review.');
                 return;
               }
               // Approval is produced after this review; waiting for it deadlocks.
-              const required = rule.requiredStatusChecks.filter(check => check.context !== 'Tier-B approval');
+              const required = requiredNames.filter(name => name !== 'Tier-B approval');
               if (!required.length) {
                 core.setFailed('No required CI checks are configured; no review.');
                 return;
@@ -70,14 +87,15 @@ jobs:
                 {...repo, ref: head, filter: 'latest', per_page: 100})).filter(check =>
                   !['review', 'Tier-B approval'].includes(check.name) &&
                   !ignoredSuites.has(check.check_suite?.id));
-              const statuses = required.some(check => !check.app)
+              const requiredCheckIds = new Set(nodes.filter(node => node.isRequired && node.__typename === 'CheckRun').map(node => node.databaseId));
+              const requiredStatuses = new Set(nodes.filter(node => node.isRequired && node.__typename === 'StatusContext').map(node => node.context));
+              const statuses = requiredStatuses.size
                 ? await github.paginate(github.rest.repos.listCommitStatusesForRef,
                     {...repo, ref: head, per_page: 100}) : [];
-              const requiredChecks = required.map(requirement => {
-                const check = checks.find(check => check.name === requirement.context &&
-                  (!requirement.app || check.app?.id === requirement.app.databaseId));
+              const requiredChecks = required.map(name => {
+                const check = checks.find(check => check.name === name && requiredCheckIds.has(check.id));
                 if (check) return check;
-                const status = !requirement.app && statuses.find(status => status.context === requirement.context);
+                const status = requiredStatuses.has(name) && statuses.find(status => status.context === name);
                 return status ? {name: status.context,
                   status: status.state === 'pending' ? 'in_progress' : 'completed',
                   conclusion: status.state} : null;

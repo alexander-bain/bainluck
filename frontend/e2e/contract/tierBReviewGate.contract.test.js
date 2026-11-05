@@ -9,8 +9,9 @@ const wait = new (Object.getPrototypeOf(async function(){}).constructor)(
   'github', 'context', 'core', 'Date', 'setTimeout', source);
 const app = {databaseId: 15368};
 const requirement = context => ({context, app});
+let nextId = 1;
 const check = (name, conclusion = 'success', more = {}) => ({
-  name, conclusion, status: 'completed', app: {id: 15368}, check_suite: {id: 2}, ...more,
+  id: nextId++, name, conclusion, status: 'completed', app: {id: 15368}, check_suite: {id: 2}, ...more,
 });
 const required = Array.from({length: 8}, (_, i) => requirement(`backend-tests (${i + 1})`));
 
@@ -35,10 +36,25 @@ async function run(options = {}) {
     },
     graphql: async (query, args) => {
       queries++;
-      assert.match(query, /requiredStatusChecks\{context app\{databaseId\}\}/);
-      assert.deepEqual(args, {owner: 'owner', repo: 'repo', number: 61});
+      assert.match(query, /refUpdateRule\{requiredStatusCheckContexts\}/);
+      assert.match(query, /isRequired\(pullRequestNumber:\$number\)/);
+      assert.doesNotMatch(query, /branchProtectionRule/);
+      assert.deepEqual(args, {owner: 'owner', repo: 'repo', number: 61, cursor: args.cursor});
       if (options.apiError) throw options.apiError;
-      return {repository: {pullRequest: {headRefOid: options.policyHead || 'head', baseRef: {branchProtectionRule: rule}}}};
+      const specifications = rule?.requiresStatusChecks ? rule.requiredStatusChecks || [] : [];
+      const all = rounds[Math.min(polls, rounds.length - 1)].checks.map(check => ({
+        __typename: 'CheckRun', databaseId: check.id,
+        isRequired: specifications.some(r => r.context === check.name && (!r.app || check.app?.id === r.app.databaseId)),
+      }));
+      all.push(...(options.statuses || []).map(status => ({__typename: 'StatusContext', context: status.context,
+        isRequired: specifications.some(r => r.context === status.context && !r.app)})));
+      const nodes = options.paginated ? (args.cursor ? all.slice(4) : all.slice(0, 4)) : all;
+      return {repository: {pullRequest: {headRefOid: options.policyHead || 'head',
+        baseRef: {refUpdateRule: rule ? {requiredStatusCheckContexts: specifications.map(r => r.context)} : null},
+        commits: {nodes: [{commit: {statusCheckRollup: {contexts: {nodes,
+          pageInfo: options.pageInfo || {hasNextPage: !!options.paginated && !args.cursor, endCursor: args.cursor ? null : 'rest'},
+        }}}}]},
+      }}};
     },
     paginate: async (fn, args) => {
       assert.equal(args.head_sha || args.ref, 'head');
@@ -156,4 +172,18 @@ test('the installed action is gated and pytest uses separate narrow executable p
   }
   assert.ok(!workflow.includes('Bash(python3:*)'));
   assert.ok(!workflow.includes('--dangerously-skip-permissions'));
+});
+
+
+test('native non-admin required-check discovery reads later pages before approving', async () => {
+  const checks = required.map((r, i) => check(r.context, i === 7 ? 'failure' : 'success'));
+  const result = await run({checks, paginated: true});
+  assert.deepEqual(result.ready, []);
+  assert.match(result.failures[0], /backend-tests \(8\)/);
+  assert.equal(result.queries, 2);
+});
+
+test('truncated and repeating required-check pages refuse without reviewing', async () => {
+  await assert.rejects(run({pageInfo: {hasNextPage: true, endCursor: null}}), /incomplete/);
+  await assert.rejects(run({pageInfo: {hasNextPage: true, endCursor: 'same'}}), /repeated/);
 });
