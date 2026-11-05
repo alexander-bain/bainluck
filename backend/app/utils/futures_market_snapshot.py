@@ -467,7 +467,9 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: The version is part of the shared-cache key, so the bump is self-cleaning —
 #: v7 entries are unreachable rather than stale, and the first read after deploy
 #: is a MISS that rebuilds.
-SNAPSHOT_SCHEMA_VERSION = 8
+# v9 carries whether every opening belongs to the one recorded field instant.
+# Older cache entries cannot prove that complete normalized comparison.
+SNAPSHOT_SCHEMA_VERSION = 9
 
 
 class _Snapshot:
@@ -493,6 +495,7 @@ class SportSnapshot(_Snapshot):
 
 _SNAPSHOT_OUTCOME_SETTLEMENT_KEY = "_snapshot_outcome_settlement"
 _SNAPSHOT_METADATA_WAS_NONE_KEY = "_snapshot_metadata_was_none"
+_SNAPSHOT_OPENING_COMPLETE_KEY = "_snapshot_opening_field_complete"
 _MARKET_METADATA_COLUMN_INDEX = MARKET_COLUMNS.index("market_metadata")
 
 
@@ -530,6 +533,12 @@ class FuturesMarketSnapshot(_Snapshot):
         for name, value in zip(MARKET_ROW_COLUMNS, values):
             self.__dict__[name] = value
         raw_meta = self.__dict__.get("market_metadata")
+        if isinstance(raw_meta, dict) and _SNAPSHOT_OPENING_COMPLETE_KEY in raw_meta:
+            raw_meta = dict(raw_meta)
+            self.__dict__["_opening_field_complete"] = raw_meta.pop(
+                _SNAPSHOT_OPENING_COMPLETE_KEY
+            )
+            self.__dict__["market_metadata"] = raw_meta
         if isinstance(raw_meta, dict) and _SNAPSHOT_OUTCOME_SETTLEMENT_KEY in raw_meta:
             meta = dict(raw_meta)
             settlement_map = meta.pop(_SNAPSHOT_OUTCOME_SETTLEMENT_KEY, None)
@@ -1316,6 +1325,126 @@ def reader_change_24h(
     return stored_change
 
 
+def normalized_field_comparisons(
+    market: Any,
+    outcomes: list[dict],
+    *,
+    field_complete: bool = True,
+    now: datetime | None = None,
+) -> dict[int, dict] | None:
+    """Compare complete distributions at their own recorded instants (ruling21-A).
+
+    The dated bank already carries each leg's observed price and instant. It
+    defines a historical FIELD only when every member is present at one instant;
+    never sum staggered observations, use today's divisor for yesterday, or turn
+    a missing leg into zero. The existing raw bank and stored columns are intact.
+    """
+    from app.utils.field_opening_coherence import field_openings_publishable
+    from app.utils.outcome_display import normalize_display_probs
+
+    state = _instance_dict(market) or {}
+    if (
+        state.get("status") == "resolved"
+        or state.get("mutually_exclusive") is not True
+        or not field_complete
+    ):
+        return None
+    rows = [dict(row) for row in outcomes]
+    normalize_display_probs(
+        rows, field_complete=field_complete, question=state.get("name")
+    )
+    if not rows or any(
+        row.get("id") is None or "rendered_percent" not in row for row in rows
+    ):
+        return None
+
+    def reference(values):
+        column = [
+            {
+                "id": row["id"],
+                "name": row.get("name", ""),
+                "probability": values.get(row["id"]),
+            }
+            for row in rows
+        ]
+        normalize_display_probs(column, question=state.get("name"))
+        if any("rendered_percent" not in row for row in column):
+            return {}
+        return {row["id"]: row["probability"] for row in column}
+
+    bank = dated_movement_basis(market)
+    cells = {
+        row["id"]: read_dated_basis_entry(bank.get(str(row["id"]))) for row in rows
+    }
+    instants = {
+        at for value, at in cells.values() if value is not None and at is not None
+    }
+    historical = (
+        reference({oid: value for oid, (value, _) in cells.items()})
+        if (
+            len(instants) == 1
+            and all(
+                value is not None and at is not None for value, at in cells.values()
+            )
+        )
+        else {}
+    )
+
+    complete_opening = state.get("_opening_field_complete")
+    if complete_opening is None:
+        own = {
+            getattr(row, "id", None): (_instance_dict(row) or {}).get(
+                "opening_captured_at"
+            )
+            for row in state.get("outcomes") or []
+        }
+        stamps = list(own.values())
+        complete_opening = (
+            bool(stamps)
+            and all(at is not None for at in stamps)
+            and len(set(stamps)) == 1
+        )
+    openings = {row["id"]: row.get("opening_probability") for row in rows}
+    refused = unpriced_opening_ids(market)
+    opening = (
+        reference(openings)
+        if (
+            complete_opening
+            and not refused.intersection(openings)
+            and field_openings_publishable(
+                list(openings.values()), mutually_exclusive=True
+            )
+        )
+        else {}
+    )
+    result = {}
+    stored_changes = {
+        getattr(row, "id", None): getattr(row, "probability_change_24h", None)
+        for row in state.get("outcomes") or []
+    }
+    raw_by_id = {row["id"]: row for row in outcomes}
+    for row in rows:
+        oid = row["id"]
+        raw = raw_by_id[oid]
+        dated = dated_movement_points(
+            market,
+            oid,
+            raw.get("probability"),
+            stored_changes.get(oid, raw.get("probability_change_24h")),
+            now=now,
+        )
+        result[oid] = {
+            "probability": row["probability"],
+            "opening_probability": opening.get(oid),
+            "probability_change_24h": (
+                row["probability"] - historical[oid]
+                if dated is not None and oid in historical
+                else None
+            ),
+        }
+    return result
+
+
 def opening_baseline_stamp(market: Any) -> Any:
     """`opening_baseline_at` for a market on EITHER carrier shape (#4758).
 
@@ -1669,13 +1798,21 @@ def to_plain(
                     bool(is_winner_val) if is_winner_val is not None else None,
                     str(res_source_val) if res_source_val is not None else None,
                 ]
-        if settlement_by_outcome:
+        if settlement_by_outcome or outcomes:
             raw_meta = market_row[_MARKET_METADATA_COLUMN_INDEX]
             if isinstance(raw_meta, dict):
                 folded_meta = dict(raw_meta)
             else:
                 folded_meta = {_SNAPSHOT_METADATA_WAS_NONE_KEY: True}
             folded_meta[_SNAPSHOT_OUTCOME_SETTLEMENT_KEY] = settlement_by_outcome
+            opening_stamps = [
+                (_instance_dict(o) or {}).get("opening_captured_at") for o in outcomes
+            ]
+            folded_meta[_SNAPSHOT_OPENING_COMPLETE_KEY] = (
+                bool(opening_stamps)
+                and all(at is not None for at in opening_stamps)
+                and len(set(opening_stamps)) == 1
+            )
             market_row[_MARKET_METADATA_COLUMN_INDEX] = folded_meta
         rows.append(
             [

@@ -229,7 +229,9 @@ def test_one_winner_quotes_use_11995_full_field_rule(probs):
     rows = legs()
     rows[0].current_probability, rows[1].current_probability = probs
     quote = build(outcomes=rows)["open_winner_quote"]
-    assert [r["probability"] for r in quote["outcomes"]] == pytest.approx([p / sum(probs) for p in probs])
+    assert [r["probability"] for r in quote["outcomes"]] == pytest.approx(
+        list(probs) if sum(probs) > 1.6 else [p / sum(probs) for p in probs]
+    )
 
 
 def test_selected_whole_market_owns_the_normalization_metadata():

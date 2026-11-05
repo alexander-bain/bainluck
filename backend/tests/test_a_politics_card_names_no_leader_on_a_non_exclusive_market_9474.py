@@ -17,8 +17,6 @@ labelling the top rung of a ladder "Leader" (57 of 68 cards that minute).
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pytest
-
 from app.routes.politics import _market_row
 
 NOW = datetime(2026, 9, 28, 22, 10, 0, tzinfo=timezone.utc)
@@ -92,21 +90,21 @@ class TestControls:
     """The over-round removal is RIGHT for a one-winner field and must survive:
     the same three prices on an exclusive market are still divided by 111."""
 
-    def test_a_one_winner_field_is_still_devigged(self):
+    def test_a_one_winner_field_above_the_ceiling_stays_raw(self):
         row = _market_row(_market(SCOTUS_CASES, True), now=NOW)
-        assert _probs(row) == pytest.approx([100 * p / sum(p for _, p in SCOTUS_CASES) for _, p in SCOTUS_CASES[:3]])
+        assert _probs(row) == [39.0, 36.0, 36.0]
         assert row["mutually_exclusive"] is True
 
     def test_an_unstamped_row_keeps_todays_behaviour(self):
         """No attribute at all — an older carrier, and every fixture in the
         sibling suites — reads as `None` and is treated as today."""
         row = _market_row(_market(SCOTUS_CASES), now=NOW)
-        assert _probs(row) == pytest.approx([100 * p / sum(p for _, p in SCOTUS_CASES) for _, p in SCOTUS_CASES[:3]])
+        assert _probs(row) == [39.0, 36.0, 36.0]
         assert row["mutually_exclusive"] is None
 
     def test_an_explicit_null_keeps_todays_behaviour(self):
         row = _market_row(_market(SCOTUS_CASES, None), now=NOW)
-        assert _probs(row) == pytest.approx([100 * p / sum(p for _, p in SCOTUS_CASES) for _, p in SCOTUS_CASES[:3]])
+        assert _probs(row) == [39.0, 36.0, 36.0]
 
 
 class TestTheDefectReproduces:

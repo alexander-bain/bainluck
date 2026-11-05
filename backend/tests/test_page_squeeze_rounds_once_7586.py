@@ -109,6 +109,7 @@ def card_legs(legs) -> list[float]:
 
 
 class TestTheSpecimensPrintOneNumber:
+
     @pytest.mark.parametrize(
         "legs, leader_value, leader_pct",
         [
@@ -117,7 +118,7 @@ class TestTheSpecimensPrintOneNumber:
             # Kalshi's one-cent floor, upper bounds out of the divisor. The four
             # priced legs sum 1.025, inside the threshold, so it prints raw.
             # NASCAR's sub-cent legs are real prices and stay in the divisor.
-            (BIG_BROTHER_LEGS, 0.45454545, 45),
+            (BIG_BROTHER_LEGS, 0.51219512, 51),
             (NASCAR_LEGS, 0.28483786, 28),
         ],
         ids=["62121678", "52756008", "56947465"],

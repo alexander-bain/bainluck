@@ -37,7 +37,11 @@ from app.utils.futures_history_basis import (
     carry_forward_quotes,
     devigged_consensus_by_time,
 )
-from app.utils.futures_market_snapshot import dated_movement_points, reader_change_24h
+from app.utils.futures_market_snapshot import (
+    dated_movement_points,
+    normalized_field_comparisons,
+    reader_change_24h,
+)
 from app.utils.futures_verified_title import (
     CONTRIBUTOR_SOURCES as VERIFIED_TITLE_SOURCES,
     SOURCE as REPRESENTATION_SOURCE,
@@ -1509,11 +1513,21 @@ async def browse_futures(
         display_outcomes = drop_dominant_field_outcomes(
             display_outcomes, lambda o: o.get("name"), lambda o: o.get("probability")
         )
-        if normalize_display_probs(
+        comparisons = normalized_field_comparisons(
+            market,
+            display_outcomes,
+            field_complete=not withheld,
+        )
+        scaled = normalize_display_probs(
             display_outcomes,
             mutually_exclusive=getattr(market, "mutually_exclusive", False),
-            field_complete=not withheld, question=market.name,
-        ):
+            field_complete=not withheld,
+            question=market.name,
+        )
+        if comparisons is not None:
+            for o in display_outcomes:
+                o["movement"] = comparisons[o["id"]]["probability_change_24h"]
+        elif scaled:
             for o in display_outcomes:
                 o["movement"] = None
         leader_pick_order(display_outcomes)
@@ -10518,7 +10532,11 @@ def _format_market_detail(
                 )
                 or o.name
             ),
-            "probability": float(o.current_probability) if o.current_probability is not None else None,
+            "probability": (
+                float(o.current_probability)
+                if o.current_probability is not None
+                else None
+            ),
             "american_odds": o.current_american_odds,
             # The stored column is the SEED here, not the served answer: #2556
             # overwrites this from the display order at `assign_display_ranks`
@@ -10637,7 +10655,11 @@ def _format_market_detail(
             "probability_change_24h": dated_movement_points(
                 market, o.id, o.current_probability, o.probability_change_24h
             ),
-            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
+            "opening_probability": (
+                float(o.opening_probability)
+                if o.opening_probability is not None
+                else None
+            ),
             "opening_american_odds": o.opening_american_odds,
             "is_winner": o.is_winner,
             # #4788/#4783: `is_winner` ALONE cannot say whether anyone graded this
@@ -11139,38 +11161,44 @@ def _format_market_detail(
         is_winner_of=_is_graded_winner,
     )
     raw_dominant_dropped = raw_outcome_count - len(outcomes)
-    # #11995 supersedes the raw Midterms pin: one shared full-field rule.
-    if normalize_numbers and normalize_display_probs(
+    # Ruling21-A: each end uses its own complete, recorded field. A raw
+    # historical delta or today's divisor cannot stand in for that comparison.
+    comparisons = (
+        normalized_field_comparisons(
+            market,
+            outcomes,
+            field_complete=prices_withheld == 0,
+            now=datetime.now(timezone.utc),
+        )
+        if normalize_numbers
+        else None
+    )
+    scaled = normalize_numbers and normalize_display_probs(
         outcomes,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=prices_withheld == 0,
         question=market.name,
-    ):
+    )
+    if comparisons is not None:
+        had_openings = any(o.get("opening_probability") is not None for o in outcomes)
+        for o in outcomes:
+            comparison = comparisons[o["id"]]
+            prior_opening = o["opening_probability"]
+            o["opening_probability"] = comparison["opening_probability"]
+            if comparison["opening_probability"] is None:
+                o["opening_american_odds"] = None
+            elif comparison["opening_probability"] != prior_opening:
+                o["opening_american_odds"] = probability_to_american(
+                    comparison["opening_probability"]
+                )
+            o["probability_change_24h"] = comparison["probability_change_24h"]
+        openings_withheld |= had_openings and all(
+            o["opening_probability"] is None for o in outcomes
+        )
+    elif scaled:
+        # Upper-bound/refused fields have no proved normalized historic field.
         _withhold_openings()
         openings_withheld = True
-        # #4079 (N3), codex's scale ruling 2026-09-19: THE DATED MOVE CANNOT
-        # SURVIVE THE SQUEEZE EITHER, AND FOR THE BLOCK ABOVE'S OWN REASON.
-        #
-        # The squeeze has just divided every printed `probability` by the field
-        # sum. `probability_change_24h` above is raw − raw off the bank, which
-        # holds a PRICE, so leaving it here reproduces exactly the harm #5835
-        # named one statement earlier: two numbers on one row, on two scales,
-        # and the reader invited to read one as the change in the other.
-        #
-        # Withheld rather than rescaled, for the same two reasons. Dividing the
-        # delta by TODAY's sum asserts a historic DISPLAYED percent nobody
-        # observed — the denominator moves whenever any leg moves — and no
-        # column stores one. Codex ruled that arithmetic out by name. The
-        # honest answer on a squeezed board is that there is no supported claim
-        # about the change in the number on screen.
-        #
-        # ASKED OF THE SAME CALL, not re-derived: this rides
-        # `normalize_display_probs`'s measured return, so the dated move and the
-        # openings can never disagree about whether the column moved.
-        #
-        # Present and null, never omitted — the clients test `!== null` and
-        # `undefined !== null` is true, so an omitted key would be read as a
-        # number that never arrived rather than as a refusal.
         for o in outcomes:
             o["probability_change_24h"] = None
     # UX-P164: concept derivation reads the count this serializer saw BEFORE the

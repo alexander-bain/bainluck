@@ -125,13 +125,12 @@ class TestTheCardsThatMustNotMove:
         out = _squeeze_exclusive_field_markets(rows, [_market(1, name, mex=True)])
         assert out == rows
 
-    def test_a_known_one_winner_field_has_no_overround_ceiling(self):
+    def test_a_field_past_the_overround_ceiling_stays_raw(self):
         name = "Field"
         p = (_FIELD_SUM_MAX + 0.3) / 3
         rows = _rows(2, name, [("A", p), ("B", p), ("C", p)])
         out = _squeeze_exclusive_field_markets(rows, [_market(2, name, mex=True)])
-        assert [r["probability"] for r in out] == pytest.approx([1 / 3] * 3, abs=1e-8)
-        assert sum(r["rendered_percent"] for r in out) == 100
+        assert out == rows
 
     def test_a_market_seen_through_a_merged_row_abstains(self):
         # Four legs, so three single-market legs remain once the merged one is set

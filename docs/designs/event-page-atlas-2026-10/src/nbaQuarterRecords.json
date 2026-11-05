@@ -1,0 +1,113 @@
+{
+  "eventID": 15320337,
+  "providerID": "401918010",
+  "listedStart": "2026-10-04T23:00Z",
+  "home": {
+    "id": "12",
+    "name": "Los Angeles Clippers",
+    "score": 104
+  },
+  "away": {
+    "id": "9",
+    "name": "Golden State Warriors",
+    "score": 101
+  },
+  "completed": true,
+  "openingTip": {
+    "id": "4019180104",
+    "sequenceNumber": "4",
+    "type": {
+      "id": "615",
+      "text": "Jumpball"
+    },
+    "text": "Al Horford vs. Isaiah Jackson (Draymond Green gains possession)",
+    "period": {
+      "number": 1,
+      "displayValue": "1st Quarter"
+    },
+    "clock": {
+      "displayValue": "12:00"
+    },
+    "wallclock": "2026-10-04T23:11:12Z",
+    "homeScore": 0,
+    "awayScore": 0
+  },
+  "periodEnds": [
+    {
+      "id": "401918010191",
+      "sequenceNumber": "191",
+      "type": {
+        "id": "412",
+        "text": "End Period"
+      },
+      "text": "End of the 1st Quarter",
+      "period": {
+        "number": 1,
+        "displayValue": "1st Quarter"
+      },
+      "clock": {
+        "displayValue": "0.0"
+      },
+      "wallclock": "2026-10-04T23:40:57Z",
+      "homeScore": 23,
+      "awayScore": 24
+    },
+    {
+      "id": "401918010388",
+      "sequenceNumber": "388",
+      "type": {
+        "id": "412",
+        "text": "End Period"
+      },
+      "text": "End of the 2nd Quarter",
+      "period": {
+        "number": 2,
+        "displayValue": "2nd Quarter"
+      },
+      "clock": {
+        "displayValue": "0.0"
+      },
+      "wallclock": "2026-10-05T00:10:59Z",
+      "homeScore": 55,
+      "awayScore": 43
+    },
+    {
+      "id": "401918010577",
+      "sequenceNumber": "577",
+      "type": {
+        "id": "412",
+        "text": "End Period"
+      },
+      "text": "End of the 3rd Quarter",
+      "period": {
+        "number": 3,
+        "displayValue": "3rd Quarter"
+      },
+      "clock": {
+        "displayValue": "0.0"
+      },
+      "wallclock": "2026-10-05T00:55:17Z",
+      "homeScore": 77,
+      "awayScore": 73
+    },
+    {
+      "id": "401918010783",
+      "sequenceNumber": "783",
+      "type": {
+        "id": "412",
+        "text": "End Period"
+      },
+      "text": "End of the 4th Quarter",
+      "period": {
+        "number": 4,
+        "displayValue": "4th Quarter"
+      },
+      "clock": {
+        "displayValue": "0.0"
+      },
+      "wallclock": "2026-10-05T01:33:38Z",
+      "homeScore": 104,
+      "awayScore": 101
+    }
+  ]
+}

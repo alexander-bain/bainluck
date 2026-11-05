@@ -653,8 +653,10 @@ def test_R3_a_row_with_no_recorded_book_is_left_alone(monkeypatch):
     served = _series(_get(f"/api/futures/{MARKET_ID}/history?hours=168&top_n=50", monkeypatch))
     saved = _series(_fx("bainluck-history-56947465.json"))
     mass = sum(points.get(BAD_STAMP, 0) for points in saved.values())
-    # The book guard is inert; the surviving complete field still normalizes.
-    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == pytest.approx(PRINT / mass, abs=1e-8)
+    # The book guard is inert. The suspect total also refuses normalization;
+    # dividing this field to 100% would hide the unsupported print (#1200).
+    assert mass > 1.6
+    assert served[LARSON_OUTCOME_ID][BAD_STAMP] == PRINT
 
 
 def test_R4_the_timeline_reader_agrees_with_the_chart(monkeypatch):

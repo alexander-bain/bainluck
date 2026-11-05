@@ -27,6 +27,15 @@ must still fail the existing price guards; a newer writer or captured closing
 line refuses withdrawal. It banks the quote before-image and clears current
 quote fields only, keeping the legs open/ungraded and preserving price clocks.
 
+--reconcile-appendix (#12013) requires exact reviewed ids. A fresh public event
+listing supplies each stored ticker's result: explicit binary results restore
+venue grades; pending contracts reopen with the venue's latest close (past for
+awaiting-result); real scalar settlements remain ungradeable. Existing venue
+grades, including archived legs, are preserved. The original backup is retained
+and the locked before-image for this operation is appended in its own key.
+Missing ungraded tickers are looked up in the same event's public archive;
+only exact binary settlements with their venue timestamp can supplement it.
+
     python3 scripts/repair_11947_clock_settled_kalshi_markets_still_trading.py --census-only
     python3 scripts/repair_11947_clock_settled_kalshi_markets_still_trading.py --only-ids 109918
     python3 scripts/repair_11947_clock_settled_kalshi_markets_still_trading.py --only-ids 109918 --apply
@@ -195,11 +204,17 @@ def fingerprint(market, legs):
     )
 
 
-async def census(session, only_ids=None, *, refresh_close_time=False):
+async def census(
+    session, only_ids=None, *, refresh_close_time=False, include_partial=False
+):
     """Keyset pages bound each read; an empty eligible page is not exhaustion."""
     if refresh_close_time and not only_ids:
         raise ValueError("--refresh-close-time requires --only-ids")
-    predicate = reopened_eligible if refresh_close_time else eligible
+    predicate = (
+        appendix_eligible
+        if include_partial
+        else reopened_eligible if refresh_close_time else eligible
+    )
     found = []
     after_id = 0
     while True:
@@ -595,6 +610,420 @@ async def run_quote_withdrawal(*, apply=False, only_ids=None):
     )
 
 
+def appendix_eligible(market, legs):
+    """#12013: mixed rows retain every existing authoritative venue grade."""
+    return (
+        market is not None
+        and market["source"] == "kalshi"
+        and market["status"] == "resolved"
+        and market["settled_at"] is not None
+        and bool(legs)
+        and any(o["resolution_source"] == "ungradeable_result" for o in legs)
+        and all(o["is_winner"] not in (True, 1) for o in legs)
+        and all(
+            o["resolution_source"] in (None, "api_settlement", "ungradeable_result")
+            for o in legs
+        )
+    )
+
+
+def appendix_plan(market, legs, payload):
+    """Adopt exact venue evidence; an empty result is never a losing side."""
+    from app.utils.kalshi_market_status import gradeable_winner
+
+    if not appendix_eligible(market, legs):
+        return {"verdict": "no_longer_eligible"}
+    event = payload.get("event") if isinstance(payload, dict) else None
+    if (
+        not isinstance(event, dict)
+        or event.get("event_ticker") != market["external_id"]
+    ):
+        return {"verdict": "venue_event_mismatch"}
+    records = event.get("markets")
+    if not isinstance(records, list) or not records:
+        return {"verdict": "venue_markets_missing"}
+    by_ticker = defaultdict(list)
+    for record in records:
+        if isinstance(record, dict):
+            by_ticker[record.get("ticker")].append(record)
+    grades, pending, scalar, closes, settlements = [], [], [], [], []
+    for leg in legs:
+        # Already authoritative rows, including archived/absent tickers, are
+        # outside this repair's write set. They remain byte-for-byte intact.
+        if leg["resolution_source"] == "api_settlement":
+            continue
+        matches = by_ticker.get(leg["external_id"], [])
+        if len(matches) != 1:
+            return {
+                "verdict": "venue_leg_missing_or_duplicated",
+                "outcome_id": leg["id"],
+            }
+        record = matches[0]
+        winner = gradeable_winner(record.get("status"), record.get("result"))
+        if winner is not None:
+            stamp = instant(record.get("settlement_ts"))
+            if stamp is None:
+                return {
+                    "verdict": "venue_settlement_time_missing",
+                    "outcome_id": leg["id"],
+                }
+            settlements.append(stamp)
+            grades.append({"id": leg["id"], "is_winner": winner})
+        elif (
+            record.get("status") in {"finalized", "settled", "determined"}
+            and record.get("result") == "scalar"
+        ):
+            scalar.append(leg["id"])
+        elif (
+            record.get("status") in {"active", "open", "closed"}
+            and record.get("result") == ""
+        ):
+            close = instant(record.get("close_time"))
+            if close is None:
+                return {"verdict": "venue_close_time_missing", "outcome_id": leg["id"]}
+            if record["status"] == "closed" and close > utc_now():
+                return {"verdict": "closed_with_future_cutoff", "outcome_id": leg["id"]}
+            closes.append(close)
+            pending.append(leg["id"])
+        else:
+            return {"verdict": "venue_result_unknown", "outcome_id": leg["id"]}
+    if scalar and not grades and not pending:
+        return {"verdict": "venue_settled_scalar", "scalar": scalar}
+    if scalar:
+        return {"verdict": "mixed_scalar_refused", "scalar": scalar}
+    return {
+        "verdict": "would_reconcile",
+        "grades": grades,
+        "pending": pending,
+        "status": "open" if pending else "resolved",
+        "resolution_date": (
+            max(closes).isoformat() if pending else market["resolution_date"]
+        ),
+        "settled_at": None if pending else max(settlements).isoformat(),
+        "state": (
+            ("still_trading" if max(closes) > utc_now() else "awaiting_result")
+            if pending
+            else "venue_graded"
+        ),
+    }
+
+
+async def appendix_snapshot(session, market_id, *, lock=False):
+    market, legs = await snapshot(session, market_id, lock=lock)
+    extras = (
+        (
+            await session.execute(
+                text(
+                    "SELECT id, current_american_odds, price_changed_at FROM futures_outcomes WHERE market_id = :id ORDER BY id"
+                ),
+                {"id": market_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    by_id = {o["id"]: dict(o) for o in extras}
+    return market, [{**o, **by_id[o["id"]]} for o in legs]
+
+
+async def reconcile_appendix_market(session, market_id, read_event, *, apply=False):
+    before, legs = await appendix_snapshot(session, market_id)
+    if not appendix_eligible(before, legs):
+        return {"id": market_id, "verdict": "no_longer_eligible"}
+    payload = await read_event(before["external_id"])
+    plan = appendix_plan(before, legs, payload)
+    report = {"id": market_id, **plan}
+    if plan["verdict"] != "would_reconcile" or not apply:
+        return report
+    await session.rollback()
+    current, current_legs = await appendix_snapshot(session, market_id, lock=True)
+    if not appendix_eligible(current, current_legs) or fingerprint(
+        current, current_legs
+    ) != fingerprint(before, legs):
+        await session.rollback()
+        return {"id": market_id, "verdict": "concurrent_drift"}
+    banked = await read_backup(session, market_id)
+    image = {"market": current, "legs": current_legs}
+    if banked is None:
+        await session.execute(
+            text(
+                f"INSERT INTO {BACKUP_TABLE} (market_id,before_json) VALUES (:id,:before)"
+            ),
+            {"id": market_id, "before": json.dumps(image, default=str)},
+        )
+    else:
+        banked.setdefault("appendix_repair_befores", []).append(image)
+        await session.execute(
+            text(
+                f"UPDATE {BACKUP_TABLE} SET before_json = :before WHERE market_id = :id"
+            ),
+            {"id": market_id, "before": json.dumps(banked, default=str)},
+        )
+    by_id = {o["id"]: o for o in current_legs}
+    observed = utc_now()
+    for grade in plan["grades"]:
+        price = 1.0 if grade["is_winner"] else 0.0
+        written = await session.execute(
+            text(
+                "UPDATE futures_outcomes SET is_winner = :winner, resolution_source = 'api_settlement', "
+                "current_probability = :price, current_american_odds = NULL, last_updated = :observed, "
+                "price_changed_at = CASE WHEN current_probability IS NULL OR current_probability <> :price "
+                "THEN :observed ELSE price_changed_at END "
+                "WHERE id = :id AND is_winner IS NOT TRUE AND "
+                "(resolution_source = 'ungradeable_result' OR resolution_source IS NULL)"
+            ),
+            {
+                "id": grade["id"],
+                "winner": grade["is_winner"],
+                "price": price,
+                "observed": observed,
+            },
+        )
+        if written.rowcount != 1:
+            await session.rollback()
+            return {"id": market_id, "verdict": "concurrent_drift"}
+    for outcome_id in plan["pending"]:
+        if by_id[outcome_id]["resolution_source"] == "ungradeable_result":
+            written = await session.execute(
+                text(
+                    "UPDATE futures_outcomes SET is_winner = NULL, resolution_source = NULL "
+                    "WHERE id = :id AND is_winner IS NOT TRUE AND resolution_source = 'ungradeable_result'"
+                ),
+                {"id": outcome_id},
+            )
+            if written.rowcount != 1:
+                await session.rollback()
+                return {"id": market_id, "verdict": "concurrent_drift"}
+    await session.execute(
+        text(
+            "UPDATE futures_markets SET status = :status, settled_at = :settled, resolution_date = :close WHERE id = :id"
+        ),
+        {
+            "id": market_id,
+            "status": plan["status"],
+            "settled": instant(plan["settled_at"]),
+            "close": instant(plan["resolution_date"]),
+        },
+    )
+    _, after_legs = await appendix_snapshot(session, market_id)
+    await session.commit()
+    return {
+        **report,
+        "verdict": "reconciled",
+        "backup_table": BACKUP_TABLE,
+        "before_clock_legs": sum(
+            o["resolution_source"] == "ungradeable_result" for o in current_legs
+        ),
+        "after_clock_legs": sum(
+            o["resolution_source"] == "ungradeable_result" for o in after_legs
+        ),
+    }
+
+
+async def read_appendix_archive(
+    client: httpx.AsyncClient, event_ticker: str, missing: set[str]
+) -> list[dict]:
+    """Supplement missing legs with exact venue settlements, never inferred losses."""
+    from app.services.kalshi_api import (
+        historical_markets_params,
+        parse_historical_markets,
+    )
+    from app.utils.kalshi_market_status import gradeable_winner
+
+    found, seen, cursor = [], set(), None
+    for _ in range(10):
+        response = await client.get(
+            "/historical/markets",
+            params=historical_markets_params(
+                event_ticker=event_ticker, series_ticker=None, limit=200, cursor=cursor
+            ),
+            headers=tagged(PUBLIC_API),
+        )
+        response.raise_for_status()
+        print(
+            json.dumps(
+                {
+                    "venue_archive_read": event_ticker,
+                    "cursor": cursor,
+                    "http_status": response.status_code,
+                    "at": utc_now().isoformat(),
+                }
+            ),
+            flush=True,
+        )
+        records, next_cursor = parse_historical_markets(response.json())
+        for record in records:
+            if record.get("ticker") not in missing:
+                continue
+            if (
+                record.get("event_ticker") != event_ticker
+                or gradeable_winner(record.get("status"), record.get("result")) is None
+                or instant(record.get("settlement_ts")) is None
+            ):
+                raise ValueError("Archive leg lacks an exact binary venue settlement")
+            found.append(record)  # Keep duplicates: the planner must refuse them.
+            print(
+                json.dumps(
+                    {
+                        "venue_archive_event": event_ticker,
+                        "venue_leg": {
+                            key: record.get(key)
+                            for key in (
+                                "ticker",
+                                "status",
+                                "result",
+                                "close_time",
+                                "settlement_ts",
+                            )
+                        },
+                    }
+                ),
+                flush=True,
+            )
+        if not next_cursor:
+            return found
+        if next_cursor in seen:
+            raise ValueError("Archive cursor repeated; incomplete evidence")
+        seen.add(next_cursor)
+        cursor = next_cursor
+    raise ValueError("Archive page budget exhausted; incomplete evidence")
+
+
+async def run_appendix(*, only_ids, apply=False, census_only=False):
+    from app.tasks.base import get_task_session
+
+    if not only_ids:
+        raise ValueError("--reconcile-appendix requires --only-ids")
+    async with get_task_session(
+        statement_timeout_ms=15000, lock_timeout_ms=5000
+    ) as session:
+        requested = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id,source FROM futures_markets WHERE id IN :ids"
+                    ).bindparams(bindparam("ids", expanding=True)),
+                    {"ids": sorted(only_ids)},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if {r["id"] for r in requested} != set(only_ids) or any(
+            r["source"] != "kalshi" for r in requested
+        ):
+            raise ValueError(
+                "--only-ids must name existing Kalshi markets; scope read is not complete"
+            )
+        population = await census(session, only_ids, include_partial=True)
+        print(
+            json.dumps(
+                {
+                    "repair": 12013,
+                    "mode": "APPLY" if apply else "DRY_RUN",
+                    "at": datetime.now(ZoneInfo("America/Los_Angeles")).isoformat(),
+                    "census_count": len(population),
+                    "scope": sorted(only_ids),
+                    "census": [r["market"] for r in population],
+                },
+                default=str,
+            ),
+            flush=True,
+        )
+        if census_only:
+            return 0
+        if apply:
+            await session.execute(
+                text(
+                    f"CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} ("
+                    "market_id BIGINT PRIMARY KEY, before_json TEXT NOT NULL, "
+                    "banked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+            await session.commit()
+        required = defaultdict(set)
+        for row in population:
+            required[row["market"]["external_id"]].update(
+                leg["external_id"]
+                for leg in row["legs"]
+                if leg["resolution_source"] != "api_settlement"
+            )
+        counts = defaultdict(int)
+        async with httpx.AsyncClient(base_url=PUBLIC_API, timeout=15) as client:
+
+            async def read_event(ticker):
+                response = await client.get(
+                    "/events/" + quote(ticker, safe=""),
+                    params={"with_nested_markets": "true"},
+                    headers=tagged(PUBLIC_API),
+                )
+                response.raise_for_status()
+                payload = response.json()
+                event = payload.get("event", {})
+                print(
+                    json.dumps(
+                        {
+                            "venue_read": ticker,
+                            "http_status": response.status_code,
+                            "at": utc_now().isoformat(),
+                        }
+                    ),
+                    flush=True,
+                )
+                for record in event.get("markets", []):
+                    print(
+                        json.dumps(
+                            {
+                                "venue_event": ticker,
+                                "venue_leg": {
+                                    key: record.get(key)
+                                    for key in (
+                                        "ticker",
+                                        "status",
+                                        "result",
+                                        "close_time",
+                                        "settlement_ts",
+                                    )
+                                },
+                            }
+                        ),
+                        flush=True,
+                    )
+                if event.get("event_ticker") == ticker and isinstance(
+                    event.get("markets"), list
+                ):
+                    missing = required[ticker] - {
+                        record.get("ticker") for record in event["markets"]
+                    }
+                    if missing:
+                        event["markets"].extend(
+                            await read_appendix_archive(client, ticker, missing)
+                        )
+                return payload
+
+            for row in population:
+                try:
+                    report = await reconcile_appendix_market(
+                        session, row["market"]["id"], read_event, apply=apply
+                    )
+                except Exception as exc:
+                    await session.rollback()
+                    report = {
+                        "id": row["market"]["id"],
+                        "verdict": "error",
+                        "error": str(exc),
+                    }
+                counts[report["verdict"]] += 1
+                print(json.dumps(report, default=str), flush=True)
+                await session.rollback()
+                if report["verdict"] == "error":
+                    break  # Rate-limit/transport failures stop, never retry or count green.
+                await asyncio.sleep(1)
+        print(json.dumps({"counts": dict(counts)}), flush=True)
+        allowed = {"reconciled", "would_reconcile", "venue_settled_scalar"}
+        return int(any(verdict not in allowed for verdict in counts))
+
+
 async def run(
     *, apply=False, census_only=False, only_ids=None, refresh_close_time=False
 ):
@@ -703,6 +1132,11 @@ def main():
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--census-only", action="store_true")
     parser.add_argument(
+        "--reconcile-appendix",
+        action="store_true",
+        help="Adopt exact venue results or reopen pending Appendix A contracts (#12013)",
+    )
+    parser.add_argument(
         "--refresh-close-time",
         action="store_true",
         help="Only refresh the cutoff of banked, already-reopened ids",
@@ -723,6 +1157,16 @@ def main():
         parser.error("--only-ids requires positive market ids")
     if args.apply and args.census_only:
         parser.error("--apply and --census-only are mutually exclusive")
+    if args.reconcile_appendix:
+        if not only_ids or args.refresh_close_time or args.withdraw_refused_quotes:
+            parser.error("--reconcile-appendix requires only explicit --only-ids")
+        raise SystemExit(
+            asyncio.run(
+                run_appendix(
+                    only_ids=only_ids, apply=args.apply, census_only=args.census_only
+                )
+            )
+        )
     if args.refresh_close_time and only_ids is None:
         parser.error("--refresh-close-time requires --only-ids")
     if args.withdraw_refused_quotes:

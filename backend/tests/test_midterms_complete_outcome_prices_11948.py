@@ -13,7 +13,8 @@ PRICES = [
     ("Nevada", 0.0905),
     ("Pennsylvania", 0.07),
 ]
-PRICES += [(f"State {index}", 0.01) for index in range(17)] + [
+# A healthy complete fixture; the real one-cent-bound venue field is below.
+PRICES += [(f"State {index}", 0.004) for index in range(17)] + [
     ("Zero-priced state", 0.0)
 ]
 
@@ -117,7 +118,7 @@ def _detail_field(*, market_id=108629, source="kalshi", winner=None):
     return market
 
 
-def test_one_winner_detail_matches_every_normalized_midterms_price(
+def test_one_winner_detail_matches_the_midterms_priced_mass_with_bound_tail(
     served, raw_governor_field
 ):
     from app.routes.futures import _format_market_detail
@@ -129,15 +130,13 @@ def test_one_winner_detail_matches_every_normalized_midterms_price(
     card_prices = {o["name"]: o["probability"] for o in cards[108629]["top_outcomes"]}
     detail_prices = {o["name"]: o["probability"] for o in detail["outcomes"]}
 
-    assert sum(card_prices.values()) == pytest.approx(1)
-    assert sum(o["rendered_percent"] for o in detail["outcomes"]) == 100
-    assert {o["name"]: o["rendered_percent"] for o in detail["outcomes"]} == {
-        o["name"]: o["rendered_percent"] for o in cards[108629]["top_outcomes"]
-    }
+    assert all("rendered_percent" not in o for o in detail["outcomes"])
+    assert all("rendered_percent" not in o for o in cards[108629]["top_outcomes"])
+    assert sum(card_prices.values()) == pytest.approx(1.185 / 1.125)
     assert len(detail_prices) == 24
     assert detail_prices == card_prices
     assert detail_prices == pytest.approx(
-        {n: p / 1.185 for n, p in VENUE_FIELD_PRICES}, abs=1e-8
+        {n: p / 1.125 for n, p in VENUE_FIELD_PRICES}, abs=1e-8
     )
     assert detail["mutually_exclusive"] is market.mutually_exclusive is True
 
@@ -162,7 +161,7 @@ def test_normalized_field_withholds_raw_opening_and_dated_move():
     detail = _format_market_detail(market)
     row = next(o for o in detail["outcomes"] if o["name"] == "Kansas")
 
-    assert row["probability"] == 0.8
+    assert row["probability"] == pytest.approx(0.948 / 1.125)
     assert row["opening_probability"] is None
     assert row["probability_change_24h"] is None
     assert detail["openings_withheld"] is True
@@ -189,7 +188,7 @@ def test_other_fields_use_the_same_venue_blind_display_policy(market_id, source)
 
     detail = _format_market_detail(_detail_field(market_id=market_id, source=source))
     kansas = next(o for o in detail["outcomes"] if o["name"] == "Kansas")
-    assert kansas["probability"] == pytest.approx(0.8)
+    assert kansas["probability"] == pytest.approx(0.948 / 1.125)
     assert detail["mutually_exclusive"] is True
 
 

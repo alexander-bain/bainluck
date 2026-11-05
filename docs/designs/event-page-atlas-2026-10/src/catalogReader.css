@@ -1,0 +1,7 @@
+.catalog-reader-content .atlas-card h3{font-size:25px;line-height:1.2;overflow-wrap:anywhere}
+.catalog-reader-content .card-link{font-size:15px;min-height:44px}
+.catalog-reader-content.large-text .card-link,.catalog-reader-content.large-text .catalog-selected,.catalog-reader-content.large-text .catalog-plot-caption{font-size:18px;line-height:1.45}
+.catalog-reader-content.large-text .catalog-evidence-tiles{grid-template-columns:1fr}
+.catalog-reader-content.large-text .catalog-evidence-tiles button{min-height:64px;font-size:18px}
+.cf-view:has(.catalog-reader-content) .cf-navigation b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.catalog-expand-slot{margin-bottom:8px}

@@ -1,0 +1,291 @@
+{
+  "schemaVersion": 1,
+  "family": "futures",
+  "pillar": [
+    "FORMATTING",
+    "TRUTH",
+    "DISCOVER"
+  ],
+  "ship": "Alex can review six real futures examples as atlas pages before production adoption.",
+  "status": "BROWSER_PROTOTYPE_ONLY; additive selection record; no v473/source/owner/release mutation",
+  "authority": {
+    "path": "atlas-v6/COMPONENT-CONTRACT.md",
+    "sha256": "299e2ce2a52428b7c75575cc12d0ba2b108c4b4ac1a04f41e642df468757696a"
+  },
+  "selectionBase": {
+    "path": "event-system-adoption-current-v473/ADOPTION-MAP.json",
+    "sha256": "58d5ae1f0ca0a54379a71733089c5c52973f22f776d6d38d7161384efab45061"
+  },
+  "selectionRule": "Select one compatible native composition per host. The block mapping is not a union or a new compiled source roster. Every futures-data adapter and app qualification remains unexecuted.",
+  "routes": [
+    {
+      "id": 109085,
+      "path": "/kernels-preview/futures/109085",
+      "shape": "duel",
+      "comparison": "nba-live"
+    },
+    {
+      "id": 108629,
+      "path": "/kernels-preview/futures/108629",
+      "shape": "field",
+      "comparison": "ceremony-hub / before awards day"
+    },
+    {
+      "id": 65536371,
+      "path": "/kernels-preview/futures/65536371",
+      "shape": "quantity",
+      "comparison": "weather-range / before day"
+    },
+    {
+      "id": 227,
+      "path": "/kernels-preview/futures/227",
+      "shape": "independent field / participation",
+      "comparison": "lacrosse-field"
+    },
+    {
+      "id": 109918,
+      "path": "/kernels-preview/futures/109918",
+      "shape": "unshaped one-leg",
+      "comparison": "economics"
+    },
+    {
+      "id": 108645,
+      "path": "/kernels-preview/futures/108645",
+      "shape": "settled duel",
+      "comparison": "nba / final"
+    }
+  ],
+  "blocks": [
+    {
+      "block": "headline",
+      "prototype": "Prototype.tsx / Market headline",
+      "atlas": "Hero / CapturedFieldHeader; HEADLINE-PHASE-CONTRACT",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "CapturedFieldHeader + NativeHeadlineInfoButton",
+        "source": {
+          "path": "live-history-baselines-v295/native-candidate/native/CapturedFieldFocus.swift",
+          "sha256": "05e03430965c61e48b2cfd503bbb6edbc24372c6b82658b0718896c1465466b5"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "Futures identity, schedule, served lead and authoritative grade. A result leads with opening context; no terminal quote."
+    },
+    {
+      "block": "journey",
+      "prototype": "AtlasJourney.tsx",
+      "atlas": "Hero / NativeProbabilityJourney / CapturedFieldJourney; straight segments, real observation selection, fixed 0\u2013100",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "CapturedFieldJourney + NativeRetainedReaderSurface",
+        "source": {
+          "path": "live-history-baselines-v295/native-candidate/native/CapturedFieldFocus.swift",
+          "sha256": "05e03430965c61e48b2cfd503bbb6edbc24372c6b82658b0718896c1465466b5"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "FuturesOutcomeHistory, filtered before domain/inspection. No registered-twin history means no path. Existing cadence kernel splits runs; dotted bridges are omitted."
+    },
+    {
+      "block": "duel",
+      "prototype": "Prototype.tsx / BinaryDial",
+      "atlas": "BinaryProbabilityDial from binary-side-comparison-20261026 (26px opening/recorded columns + semicircle)",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "NativeBinaryProbabilityDial",
+        "source": {
+          "path": "local-time-clarity-v381/native-local/BinaryCatalogDial.swift",
+          "sha256": "07d854458d5b8caf8289214fd6d710713ee09b2cdb86b48a7c8ef683a407f8bf"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "optionalReplacement": {
+        "selection": {
+          "path": "binary-side-comparison-20261026/native/REPLACEMENTS.json",
+          "sha256": "8bd2d79c11bc2f382c89453651f6ddf047b9212cebb52a24223c33f1090b7d64"
+        },
+        "source": {
+          "path": "binary-side-comparison-20261026/native/BinaryCatalogDial.swift",
+          "sha256": "a18733a5ba24b386f8c45e09c646fb631528cf4a8a04601dbd1bc3cb365193cb"
+        },
+        "rule": "Use one host-compatible replacement, not both hosts. This is a later prepared alternative, not an executed roster."
+      },
+      "adapter": "Actual named independent rows. Multi-venue opening absent: withhold hollow mark and connector. Never normalize 97/2 into 98/2."
+    },
+    {
+      "block": "field",
+      "prototype": "Prototype.tsx / named leader Movement rows + full-field sheet",
+      "atlas": "FieldEventHeader / FieldStories / named outcome field",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "FieldEventHeader + CapturedFieldCatalogHost",
+        "source": {
+          "path": "scorer-context-v66/native/FieldEventHeader.swift",
+          "sha256": "607a801bc4146bc4c56213cb03d3ca73fdff977062144870b6a9b8da07d9487b"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "Three leaders and 21 more; full shares unchanged; all 24 names selectable."
+    },
+    {
+      "block": "quantity",
+      "prototype": "Prototype.tsx / Snowfall thresholds",
+      "atlas": "football-total-points-ladder-20261023 / TotalPointsLadder, quantity milestone profile",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "TotalPointsLadder (optional external family reference)",
+        "source": {
+          "path": "local-time-clarity-v381/native-local/FinalTotalCatalogVisual.swift",
+          "sha256": "3cd6f79edd08bf5cedc31f6d20657b8a20c3e76f2b2ea31f52b55bb756eb4941"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "optionalFamilySource": {
+        "path": "football-total-points-ladder-20261023/native/TotalPointsLadder.swift",
+        "sha256": "3c4475ff0e728fe4805dfba0f89437d5f911a060956f364a1f019f1ed84af49e"
+      },
+      "acceptance": {
+        "path": "football-total-points-ladder-20261023/native/ADOPTION.md",
+        "sha256": "09d6f6400dbddaefd5e2b3ab76efe5b7db3ca7832b5a90275a429c6566ff89a4"
+      },
+      "adapter": "Over-count model must be adapted to continuous inches, not reused as integer totals. Six supplied thresholds at true numeric positions; five sparse history points. No actual, projection, density, interpolation or monotonic repair."
+    },
+    {
+      "block": "participation",
+      "prototype": "Prototype.tsx / independent qualification band",
+      "atlas": "QualificationQuiet / PlacementFieldCard / independent placement field",
+      "native": {
+        "v473Alternative": "qualification",
+        "preparedComposition": {
+          "path": "lacrosse-no-trades-v352/composed-sources.json",
+          "sha256": "4a4a945fd8dc3f62e8b4718ad7d6bfdd6121496507ed0a318db7993cc3f437bf"
+        },
+        "symbol": "QualificationQuietPage",
+        "source": {
+          "path": "lacrosse-no-trades-v352/native-qualification/QualificationQuiet.swift",
+          "sha256": "f4f0b986180091fe7e8b42623eee0d903002d42a7035e64dd33c514eb6e2d48b"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "pricedPrimitive": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "PlacementFieldCard",
+        "source": {
+          "path": "scorer-context-v66/native/PlacementFieldCard.swift",
+          "sha256": "0a22a296a37918bf4b9d9f06f7aaf2bb999ef0cc1bd4367e64c9e44b0909408a"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "Choose ONE compatible host. QualificationQuiet is a no-trades specimen, not a priced host. Priced 54-team CFP band needs a futures adapter around the independent-field primitive; never normalize. This remains native integration work, not claimed done."
+    },
+    {
+      "block": "one-leg fallback",
+      "prototype": "Prototype.tsx / one supplied BinaryDial side",
+      "atlas": "Original predicate fallback + binary movement primitive",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "CatalogGroupCard + CatalogDetail + NativeBinaryProbabilityDial",
+        "source": {
+          "path": "local-time-clarity-v381/native-local/CatalogReference.swift",
+          "sha256": "36f8ad10e53662d7b76a8602786f76698f21820b7daafcb4890abccebedd2e7f"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "Only supplied Yes. Archived open study retains real 58% quote; refreshed api_settlement yields Won with 38% opening. No invented No."
+    },
+    {
+      "block": "result",
+      "prototype": "Prototype.tsx / Result; _model.ts / payloadVerdict + observations",
+      "atlas": "settled-history-result-mark-20261022 / check-cross plus result word",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "CapturedClosedContracts / CapturedFieldHeader",
+        "source": {
+          "path": "live-history-baselines-v295/native-candidate/native/CapturedFieldFocus.swift",
+          "sha256": "05e03430965c61e48b2cfd503bbb6edbc24372c6b82658b0718896c1465466b5"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "Separate authoritative result from last recorded observation. ungradeable_result never establishes loss. Remove bookmaker=settlement before chart processing."
+    },
+    {
+      "block": "details + all outcomes",
+      "prototype": "Prototype.tsx / dialog",
+      "atlas": "CatalogBrowser / CatalogDetail / HeadlineInfo; native sheet, desktop modal",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "CatalogBrowser + CatalogDetail",
+        "source": {
+          "path": "local-time-clarity-v381/native-local/CatalogReference.swift",
+          "sha256": "36f8ad10e53662d7b76a8602786f76698f21820b7daafcb4890abccebedd2e7f"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "Retain selected ID, search, exact observation, complete original rules when supplied, clocks, provenance; native dialog focus/escape/return. Source-method sheet #11920 is not built."
+    },
+    {
+      "block": "related + attribution",
+      "prototype": "Prototype.tsx / Related markets + attribution footer",
+      "atlas": "AtlasCard / catalog navigation and source labels",
+      "native": {
+        "v473Alternative": "earnings-context",
+        "preparedComposition": {
+          "path": "native-weather-ranges-v428/composed-sources.json",
+          "sha256": "af01b422b937037d92ab6f67b2b8c40863bf9b437e6c26df10fc7fe135bfefea"
+        },
+        "symbol": "AtlasCardWithEvidence / CatalogContent",
+        "source": {
+          "path": "local-time-clarity-v381/native-local/AtlasCards.swift",
+          "sha256": "430d53dacfeba7c278756d618fa529eb960a8e2f05b1c47e91e61da082c6575b"
+        },
+        "status": "REFERENCE_SOURCE_PREPARED; futures binding and native execution NOT_RUN"
+      },
+      "adapter": "New futures-only related links from retained production collections. Attribution names only, no venue prices or comparison rows."
+    }
+  ],
+  "browserSourceRoot": "frontend/app/kernels-preview/futures",
+  "nativeDelivery": {
+    "sourceMapping": "prepared references named, new futures adapters not implemented",
+    "compiled": "NOT_RUN",
+    "rendered": "NOT_RUN",
+    "appIntegrated": "NOT_RUN",
+    "deviceAndTestFlight": "NOT_RUN"
+  },
+  "selectionEntry": "This file is the futures-family extension for the v473 selection process. Do not modify the frozen v473 map to consume it."
+}

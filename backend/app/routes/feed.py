@@ -7891,7 +7891,6 @@ def _effective_resolution_thresholds(sport_category: str | None) -> tuple[float,
     return 0.95, 0.85
 
 
-
 from app.utils.market_staleness import (
     expired_ladder_rungs as _expired_ladder_rungs,
     infer_market_real_world_end as _infer_market_real_world_end,
@@ -7927,6 +7926,7 @@ from app.utils.market_staleness import (
 from app.utils.futures_market_snapshot import (
     CARD_PRICE_AGE_LEG_COUNT,
     dated_movement_points,
+    normalized_field_comparisons,
     opening_baseline_stamp,
     unpriced_opening_ids,
     price_poll_stamp as _price_poll_stamp,
@@ -7934,7 +7934,6 @@ from app.utils.futures_market_snapshot import (
     outcome_observed_at as _outcome_observed_at,
     outcome_prints_a_price as _outcome_prints_a_price,
 )
-
 
 def _drop_stale_observation_legs(market, outcomes: list, stale_ids=None) -> list:
     """Legs not observed alongside the rest of their own board, gone (#7537).
@@ -8519,7 +8518,7 @@ def _scale_display_probability(prob, scale: float):
     return round(float(prob) / scale, 8)
 
 
-def _dated_movement_on_card_scale(market, outcome, scale: float, now):
+def _dated_movement_on_card_scale(market, outcome, scale: float, now, comparisons=None):
     """The dated 24h move for a printed card row — or `None` when the card's
     own normalization has put the printed percent on a scale the history
     cannot be read on (#4079, codex's scale ruling 2026-09-19).
@@ -8567,6 +8566,8 @@ def _dated_movement_on_card_scale(market, outcome, scale: float, now):
     there and it goes on calling `dated_movement_points` directly — the rule is
     about the pairing, not about the subtraction.
     """
+    if comparisons is not None:
+        return comparisons.get(outcome.id, {}).get("probability_change_24h")
     if scale != 1.0:
         return None
     return dated_movement_points(
@@ -8708,9 +8709,10 @@ def _normalize_feed_probabilities(
                                 field_complete=field_complete)
     for o in top_outcomes:
         row = by_id.get(o.get("id")) or by_name.get(o.get("name"))
-        if row is not None and "rendered_percent" in row:
+        if row is not None:
             o["probability"] = row["probability"]
-            o["rendered_percent"] = row["rendered_percent"]
+            if "rendered_percent" in row:
+                o["rendered_percent"] = row["rendered_percent"]
         elif mutually_exclusive is None:
             o["probability"] = _scale_display_probability(o.get("probability"), scale)
     return top_outcomes
@@ -9058,6 +9060,7 @@ def _top_outcomes_for_trace(
 def _biggest_move_from_opening(
     outcomes_data: list[dict],
     market: Any = None,
+    comparisons=None,
 ) -> tuple[str | None, float | None, datetime | None]:
     """The lifetime move a card may talk about, WITH the day it is measured from.
 
@@ -9111,6 +9114,20 @@ def _biggest_move_from_opening(
     anything is refused, the next leg must itself clear the moderate surprise
     rung — the guarantee the biggest mover used to give by being the biggest.
     """
+    if comparisons is not None:
+        outcomes_data = [
+            {
+                **row,
+                **comparisons.get(
+                    row.get("id"),
+                    {
+                        "probability": None,
+                        "opening_probability": None,
+                    },
+                ),
+            }
+            for row in outcomes_data
+        ]
     opened_at: datetime | None = opening_baseline_stamp(market) if market else None
     refused = unpriced_opening_ids(market) if market is not None else frozenset()
 
@@ -9143,6 +9160,7 @@ def _dated_movement_change(
     outcomes_data: list[dict],
     top_mover_name: str | None,
     now: datetime | None = None,
+    comparisons=None,
 ) -> float | None:
     """The move a card may state as TODAY'S, or None (#4079).
 
@@ -9218,12 +9236,16 @@ def _dated_movement_change(
     if row is None:
         return None
 
-    move = dated_movement_points(
-        market,
-        row.get("id"),
-        row.get("probability"),
-        row.get("probability_change_24h"),
-        now=now,
+    move = (
+        comparisons.get(row.get("id"), {}).get("probability_change_24h")
+        if comparisons is not None
+        else dated_movement_points(
+            market,
+            row.get("id"),
+            row.get("probability"),
+            row.get("probability_change_24h"),
+            now=now,
+        )
     )
     if move is None:
         return None
@@ -12863,6 +12885,25 @@ async def _score_sports_mode_futures(
             field_complete=not _field_incomplete,
         )
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
+        _display_comparisons = normalized_field_comparisons(
+            market,
+            [
+                {
+                    "id": o.id,
+                    "name": o.name,
+                    "probability": o.current_probability,
+                    "opening_probability": getattr(o, "opening_probability", None),
+                    "probability_change_24h": getattr(
+                        o, "probability_change_24h", None
+                    ),
+                    "is_winner": getattr(o, "is_winner", None),
+                    "resolution_source": getattr(o, "resolution_source", None),
+                }
+                for o in card_outcomes
+            ],
+            field_complete=not _field_incomplete,
+            now=now,
+        )
 
         probs_available = [
             o["probability"] for o in outcomes_data if o["probability"] is not None
@@ -13026,14 +13067,18 @@ async def _score_sports_mode_futures(
         # still what `max_movement_24h` ranks on; it is simply not the number a
         # card may print beside the word "today".
         top_mover_change = _dated_movement_change(
-            market, outcomes_data, top_mover_name, now=now
+            market,
+            outcomes_data,
+            top_mover_name,
+            now=now,
+            comparisons=_display_comparisons,
         )
 
         (
             top_surprise_name,
             top_surprise_change,
             top_surprise_opened_at,
-        ) = _biggest_move_from_opening(outcomes_data, market)
+        ) = _biggest_move_from_opening(outcomes_data, market, _display_comparisons)
 
         # #6219 — decided on the RAW names, before the humanization below; the
         # card's rows carry raw outcome names.
@@ -13098,7 +13143,7 @@ async def _score_sports_mode_futures(
                 # `_dated_movement_on_card_scale` carries that reasoning and the
                 # production measurement behind it.
                 "movement": _dated_movement_on_card_scale(
-                    market, o, _display_scale, now
+                    market, o, _display_scale, now, _display_comparisons
                 ),
             }
             for position, o in enumerate(printed_outcomes, start=1)
@@ -13303,9 +13348,11 @@ async def _score_sports_mode_futures(
                 # Printed as `discover_card.distribution_outcomes[].label`.
                 "name": _card_outcome_name(o),
                 "probability": _scale_display_probability(
-                    float(o.current_probability)
-                    if o.current_probability is not None
-                    else None,
+                    (
+                        float(o.current_probability)
+                        if o.current_probability is not None
+                        else None
+                    ),
                     _display_scale,
                 ),
                 # #4079 numeric half — `distribution_outcomes[].movement` is a
@@ -13315,7 +13362,7 @@ async def _score_sports_mode_futures(
                 # this `_display_scale`, which is why the movement beside it
                 # cannot be raw when that divisor is not 1.0.
                 "movement": _dated_movement_on_card_scale(
-                    market, o, _display_scale, now
+                    market, o, _display_scale, now, _display_comparisons
                 ),
                 # NOT served — `_distribution_outcomes` copies three named keys.
                 # The archetype's format choice (`probability_timeline`) is a
@@ -14633,6 +14680,25 @@ async def _score_futures(
                 field_complete=not _field_incomplete,
             )
             display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
+            _display_comparisons = normalized_field_comparisons(
+                market,
+                [
+                    {
+                        "id": o.id,
+                        "name": o.name,
+                        "probability": o.current_probability,
+                        "opening_probability": getattr(o, "opening_probability", None),
+                        "probability_change_24h": getattr(
+                            o, "probability_change_24h", None
+                        ),
+                        "is_winner": getattr(o, "is_winner", None),
+                        "resolution_source": getattr(o, "resolution_source", None),
+                    }
+                    for o in card_outcomes
+                ],
+                field_complete=not _field_incomplete,
+                now=now,
+            )
 
             # --- Staleness filters ---
             # Keep serving-time exclusions on the same helper used by admin trace
@@ -14732,14 +14798,18 @@ async def _score_futures(
             # `US bank failure`) were composed here, off the per-write delta
             # this loop used to read. See `_dated_movement_change`.
             top_mover_change = _dated_movement_change(
-                market, outcomes_data, top_mover_name, now=now
+                market,
+                outcomes_data,
+                top_mover_name,
+                now=now,
+                comparisons=_display_comparisons,
             )
 
             (
                 top_surprise_name,
                 top_surprise_change,
                 top_surprise_opened_at,
-            ) = _biggest_move_from_opening(outcomes_data, market)
+            ) = _biggest_move_from_opening(outcomes_data, market, _display_comparisons)
 
             # #6219 — decided on the RAW names, before the humanization below;
             # the card's rows carry raw outcome names.
@@ -14793,7 +14863,9 @@ async def _score_futures(
                     # tenths is still not a mover (#235 item 2), and the dating
                     # and the scale test each narrow that set further.
                     "movement": (
-                        _dated_movement_on_card_scale(market, o, _display_scale, now)
+                        _dated_movement_on_card_scale(
+                            market, o, _display_scale, now, _display_comparisons
+                        )
                         if float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
                         else None
                     ),
@@ -15307,9 +15379,11 @@ async def _score_futures(
                     # Printed as `discover_card.distribution_outcomes[].label`.
                     "name": _card_outcome_name(o),
                     "probability": _scale_display_probability(
-                        float(o.current_probability)
-                        if o.current_probability is not None
-                        else None,
+                        (
+                            float(o.current_probability)
+                            if o.current_probability is not None
+                            else None
+                        ),
                         _display_scale,
                     ),
                     # #4079 numeric half — the served distribution number is
@@ -15317,7 +15391,9 @@ async def _score_futures(
                     # `_display_scale` that scaled the probability one line up,
                     # or it is absent.
                     "movement": (
-                        _dated_movement_on_card_scale(market, o, _display_scale, now)
+                        _dated_movement_on_card_scale(
+                            market, o, _display_scale, now, _display_comparisons
+                        )
                         if float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
                         else None
                     ),

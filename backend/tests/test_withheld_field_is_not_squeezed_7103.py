@@ -109,11 +109,13 @@ def test_the_same_field_IS_squeezed_when_nothing_was_withheld():
     moved = normalize_display_probs(outcomes, field_complete=True)
 
     assert moved is True
-    # #11995 includes the entire tail in one divisor.
-    assert sum(o["probability"] for o in outcomes) == pytest.approx(1)
-    assert sum(o["rendered_percent"] for o in outcomes) == 100
-    assert outcomes[0]["probability"] == pytest.approx(0.870 / 1.135)
-    assert outcomes[2]["probability"] == pytest.approx(0.010 / 1.135, abs=1e-8)
+    # Upper bounds are not vig; only the priced mass defines this legacy scale.
+    assert outcomes[0]["probability"] + outcomes[1]["probability"] == pytest.approx(
+        1.0, abs=1e-8
+    )
+    assert all("rendered_percent" not in o for o in outcomes)
+    assert outcomes[0]["probability"] == pytest.approx(0.870 / 1.095, abs=1e-8)
+    assert outcomes[2]["probability"] == pytest.approx(0.010 / 1.095, abs=1e-8)
 
 
 def test_the_default_is_complete_so_every_existing_caller_is_unmoved():

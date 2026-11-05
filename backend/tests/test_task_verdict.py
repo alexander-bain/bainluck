@@ -568,6 +568,11 @@ class TestEnforcementScope:
             # the wrap, `complete` otherwise. Terminal comes from
             # `_repair_openings_from_first_snapshot`.
             "opening_repair_drain",
+            # #11929 PR-A: the settled-market venue history backfill, enrolled
+            # with its terminal. A run that selected nothing is `no_work` and a
+            # run stopped by its budget or a 429 is `partial`; neither is GREEN.
+            # Terminal comes from `venue_history_backfill._terminal`.
+            "venue_history_backfill",
         }
 
     def test_enforced_task_partial_blocks_success(self):

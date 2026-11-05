@@ -1,0 +1,1085 @@
+{
+  "eventID": 15327807,
+  "title": "Fils \u00b7 van de Zandschulp",
+  "start": "2026-10-12T10:55:00+00:00",
+  "scoreAt": "2026-10-12T12:20:44.471140+00:00",
+  "sets": [
+    [
+      5,
+      7
+    ],
+    [
+      3,
+      3
+    ]
+  ],
+  "homeSets": 0,
+  "awaySets": 1,
+  "homeGames": 8,
+  "awayGames": 10,
+  "scoreTotal": 18,
+  "baseline": {
+    "value": 0.795,
+    "at": "2026-10-12T10:54:00+00:00"
+  },
+  "headline": {
+    "home": 0.205895,
+    "away": 0.794105,
+    "at": "2026-10-12T12:23:57.169564+00:00",
+    "source": "blend"
+  },
+  "points": [
+    {
+      "at": "2026-10-12T10:54:00+00:00",
+      "home": 0.795,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T10:56:00+00:00",
+      "home": 0.786711,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T10:57:00+00:00",
+      "home": 0.793395,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T10:58:00+00:00",
+      "home": 0.794447,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T10:59:00+00:00",
+      "home": 0.804211,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:00:00+00:00",
+      "home": 0.797553,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:01:00+00:00",
+      "home": 0.776974,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:02:00+00:00",
+      "home": 0.781368,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:03:00+00:00",
+      "home": 0.790211,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:04:00+00:00",
+      "home": 0.813658,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:05:00+00:00",
+      "home": 0.792868,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:06:00+00:00",
+      "home": 0.778184,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:07:00+00:00",
+      "home": 0.790947,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:08:00+00:00",
+      "home": 0.800211,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:09:00+00:00",
+      "home": 0.791289,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:10:00+00:00",
+      "home": 0.789711,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:11:00+00:00",
+      "home": 0.793842,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:12:00+00:00",
+      "home": 0.786263,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:13:00+00:00",
+      "home": 0.800526,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:14:00+00:00",
+      "home": 0.837579,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:15:00+00:00",
+      "home": 0.847026,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:16:00+00:00",
+      "home": 0.835158,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:17:00+00:00",
+      "home": 0.801184,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:18:00+00:00",
+      "home": 0.7965,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:19:00+00:00",
+      "home": 0.771026,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:20:00+00:00",
+      "home": 0.781316,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:21:00+00:00",
+      "home": 0.794579,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:22:00+00:00",
+      "home": 0.791,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:23:00+00:00",
+      "home": 0.791447,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:24:00+00:00",
+      "home": 0.785211,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:25:00+00:00",
+      "home": 0.772711,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:26:00+00:00",
+      "home": 0.760974,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:27:00+00:00",
+      "home": 0.763132,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:28:00+00:00",
+      "home": 0.783132,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:29:00+00:00",
+      "home": 0.760395,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:30:00+00:00",
+      "home": 0.768211,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:31:00+00:00",
+      "home": 0.767158,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:32:00+00:00",
+      "home": 0.792368,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:33:00+00:00",
+      "home": 0.822421,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:34:00+00:00",
+      "home": 0.821895,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:35:00+00:00",
+      "home": 0.820868,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:36:00+00:00",
+      "home": 0.786105,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:37:00+00:00",
+      "home": 0.757132,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:38:00+00:00",
+      "home": 0.760026,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:39:00+00:00",
+      "home": 0.756632,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:40:00+00:00",
+      "home": 0.773842,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:41:00+00:00",
+      "home": 0.776158,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:42:00+00:00",
+      "home": 0.746053,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:43:00+00:00",
+      "home": 0.726447,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:44:00+00:00",
+      "home": 0.688737,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:45:00+00:00",
+      "home": 0.613763,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:46:00+00:00",
+      "home": 0.518737,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:47:00+00:00",
+      "home": 0.5035,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:48:00+00:00",
+      "home": 0.478763,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:49:00+00:00",
+      "home": 0.502816,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:50:00+00:00",
+      "home": 0.5155,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:51:00+00:00",
+      "home": 0.553921,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:52:00+00:00",
+      "home": 0.545289,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:53:00+00:00",
+      "home": 0.596711,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:54:00+00:00",
+      "home": 0.535868,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:55:00+00:00",
+      "home": 0.465158,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:56:00+00:00",
+      "home": 0.486158,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:57:00+00:00",
+      "home": 0.479211,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:58:00+00:00",
+      "home": 0.508158,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T11:59:00+00:00",
+      "home": 0.509,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:00:00+00:00",
+      "home": 0.502053,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:01:00+00:00",
+      "home": 0.487263,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:02:00+00:00",
+      "home": 0.481184,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:03:00+00:00",
+      "home": 0.449737,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:04:00+00:00",
+      "home": 0.379947,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:05:00+00:00",
+      "home": 0.428026,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:06:00+00:00",
+      "home": 0.272237,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:07:00+00:00",
+      "home": 0.235316,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:08:00+00:00",
+      "home": 0.240605,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:09:00+00:00",
+      "home": 0.285816,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:10:00+00:00",
+      "home": 0.382,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:11:00+00:00",
+      "home": 0.464658,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:12:00+00:00",
+      "home": 0.496842,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:13:00+00:00",
+      "home": 0.524658,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:14:00+00:00",
+      "home": 0.517342,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:15:00+00:00",
+      "home": 0.543947,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:16:00+00:00",
+      "home": 0.524342,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:17:00+00:00",
+      "home": 0.540316,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:18:00+00:00",
+      "home": 0.502105,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:19:00+00:00",
+      "home": 0.406789,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:20:00+00:00",
+      "home": 0.319684,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:21:00+00:00",
+      "home": 0.310237,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:22:00+00:00",
+      "home": 0.224132,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:23:00+00:00",
+      "home": 0.203605,
+      "kind": "aggregate"
+    },
+    {
+      "at": "2026-10-12T12:23:57.169564+00:00",
+      "home": 0.205895,
+      "kind": "pinned-observation"
+    }
+  ],
+  "rows": [
+    {
+      "key": "65197799:245152784",
+      "marketID": 65197799,
+      "outcomeID": 245152784,
+      "label": "Under 22.5 games",
+      "category": "Total games",
+      "baseline": {
+        "value": 0.55,
+        "at": "2026-10-12T07:54:53.005454+00:00"
+      },
+      "lastQuote": {
+        "value": 0.535,
+        "at": "2026-10-12T12:23:57.848353+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "threshold": 22.5,
+        "over_probability": 0.465,
+        "source": "polymarket",
+        "market_type": "game_total",
+        "market_name": "Fils vs. Zandschulp: Match O/U 22.5",
+        "outcome_name": "Under",
+        "observed_at": "2026-10-12T12:23:57.848353+00:00",
+        "contributor_outcome_ids": [
+          245152784
+        ],
+        "is_winner": null,
+        "resolution_source": null,
+        "movement": -0.01,
+        "period": null,
+        "_market_id": 65197799,
+        "_external_id": "0xa7fd4cc530a883d5c3246baa8284696c935d8649ce02241c4a18a023d67aa988"
+      },
+      "laterDetail": {
+        "id": 245152784,
+        "name": "Under",
+        "probability": 0.73,
+        "american_odds": -122,
+        "rank": 1,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.545,
+        "opening_american_odds": -120,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:26:21.569917+00:00",
+        "price_changed_at": "2026-10-12T12:26:21.569917+00:00"
+      }
+    },
+    {
+      "key": "65197800:245152786",
+      "marketID": 65197800,
+      "outcomeID": 245152786,
+      "label": "Under 23.5 games",
+      "category": "Total games",
+      "baseline": {
+        "value": 0.605,
+        "at": "2026-10-12T07:54:53.005454+00:00"
+      },
+      "lastQuote": {
+        "value": 0.55,
+        "at": "2026-10-12T12:24:01.665942+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "threshold": 23.5,
+        "over_probability": 0.45,
+        "source": "polymarket",
+        "market_type": "game_total",
+        "market_name": "Fils vs. Zandschulp: Match O/U 23.5",
+        "outcome_name": "Under",
+        "observed_at": "2026-10-12T12:24:01.665942+00:00",
+        "contributor_outcome_ids": [
+          245152786
+        ],
+        "is_winner": null,
+        "resolution_source": null,
+        "movement": -0.055,
+        "period": null,
+        "_market_id": 65197800,
+        "_external_id": "0x640f378707fe030b677dc74ea2e0a85bd2acbc1a3b6ce84e5c399e7ee9a25e89"
+      },
+      "laterDetail": {
+        "id": 245152786,
+        "name": "Under",
+        "probability": null,
+        "american_odds": null,
+        "rank": 1,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.605,
+        "opening_american_odds": -153,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:24:42.083432+00:00",
+        "price_changed_at": "2026-10-12T12:24:47.192295+00:00"
+      }
+    },
+    {
+      "key": "65197801:245152788",
+      "marketID": 65197801,
+      "outcomeID": 245152788,
+      "label": "Zandschulp +1.5 sets",
+      "category": "Handicaps",
+      "baseline": {
+        "value": 0.435,
+        "at": "2026-10-12T06:58:25.957874+00:00"
+      },
+      "lastQuote": {
+        "value": 0.9995,
+        "at": "2026-10-12T12:01:17.024578+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Set Handicap: Arthur Fils (-1.5) vs Botic van de Zandschulp (+1.5)",
+        "outcome_name": "Botic van de Zandschulp",
+        "observed_at": "2026-10-12T12:01:17.024578+00:00",
+        "contributor_outcome_ids": [
+          245152788
+        ],
+        "threshold": null,
+        "probability": 0.9995,
+        "source": "polymarket",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65197801
+      },
+      "laterDetail": {
+        "id": 245152788,
+        "name": "Botic van de Zandschulp",
+        "probability": 0.9995,
+        "american_odds": 130,
+        "rank": 1,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.47,
+        "opening_american_odds": 113,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:01:17.024578+00:00",
+        "price_changed_at": "2026-10-12T12:01:17.024578+00:00"
+      }
+    },
+    {
+      "key": "65212323:245201950",
+      "marketID": 65212323,
+      "outcomeID": 245201950,
+      "label": "Zandschulp +4.5 games",
+      "category": "Handicaps",
+      "baseline": {
+        "value": 0.545,
+        "at": "2026-10-12T06:58:25.957874+00:00"
+      },
+      "lastQuote": {
+        "value": 0.87,
+        "at": "2026-10-12T12:18:15.628011+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Game Spread: Arthur Fils (-4.5) vs Botic van de Zandschulp (+4.5)",
+        "outcome_name": "Botic van de Zandschulp",
+        "observed_at": "2026-10-12T12:18:15.628011+00:00",
+        "contributor_outcome_ids": [
+          245201950
+        ],
+        "threshold": null,
+        "probability": 0.87,
+        "source": "polymarket",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65212323
+      },
+      "laterDetail": {
+        "id": 245201950,
+        "name": "Botic van de Zandschulp",
+        "probability": 0.87,
+        "american_odds": -120,
+        "rank": 1,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.545,
+        "opening_american_odds": -120,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:18:15.628011+00:00",
+        "price_changed_at": "2026-10-12T12:18:15.628011+00:00"
+      }
+    },
+    {
+      "key": "65197795:245152776",
+      "marketID": 65197795,
+      "outcomeID": 245152776,
+      "label": "Zandschulp",
+      "category": "First set",
+      "baseline": {
+        "value": 0.285,
+        "at": "2026-10-12T06:58:25.957874+00:00"
+      },
+      "lastQuote": {
+        "value": 0.999,
+        "at": "2026-10-12T11:59:24.344917+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Set 1 Winner: Arthur Fils vs Botic van de Zandschulp",
+        "outcome_name": "Botic van de Zandschulp",
+        "observed_at": "2026-10-12T11:59:24.344917+00:00",
+        "contributor_outcome_ids": [
+          245152776
+        ],
+        "probability": 0.999,
+        "source": "polymarket",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65197795
+      },
+      "laterDetail": {
+        "id": 245152776,
+        "name": "Botic van de Zandschulp",
+        "probability": 0.999,
+        "american_odds": 251,
+        "rank": 1,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.31,
+        "opening_american_odds": 223,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T11:59:24.344917+00:00",
+        "price_changed_at": "2026-10-12T11:59:24.344917+00:00"
+      }
+    },
+    {
+      "key": "65197795:245152775",
+      "marketID": 65197795,
+      "outcomeID": 245152775,
+      "label": "Fils",
+      "category": "First set",
+      "baseline": {
+        "value": 0.715,
+        "at": "2026-10-12T06:58:25.957874+00:00"
+      },
+      "lastQuote": {
+        "value": 0.0005,
+        "at": "2026-10-12T11:59:14.942512+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Set 1 Winner: Arthur Fils vs Botic van de Zandschulp",
+        "outcome_name": "Arthur Fils",
+        "observed_at": "2026-10-12T11:59:14.942512+00:00",
+        "contributor_outcome_ids": [
+          245152775
+        ],
+        "probability": 0.0005,
+        "source": "polymarket",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65197795
+      },
+      "laterDetail": {
+        "id": 245152775,
+        "name": "Arthur Fils",
+        "probability": 0.0005,
+        "american_odds": -251,
+        "rank": 2,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.69,
+        "opening_american_odds": -223,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T11:59:14.942512+00:00",
+        "price_changed_at": "2026-10-12T11:59:14.942512+00:00"
+      }
+    },
+    {
+      "key": "65197794:245152774",
+      "marketID": 65197794,
+      "outcomeID": 245152774,
+      "label": "Zandschulp",
+      "category": "Match winner",
+      "baseline": {
+        "value": 0.205,
+        "at": "2026-10-12T06:58:25.957874+00:00"
+      },
+      "lastQuote": {
+        "value": 0.74,
+        "at": "2026-10-12T12:24:01.645538+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Shanghai Rolex Masters: Arthur Fils vs Botic van de Zandschulp",
+        "outcome_name": "Botic van de Zandschulp",
+        "observed_at": "2026-10-12T12:24:01.645538+00:00",
+        "contributor_outcome_ids": [
+          245152774
+        ],
+        "probability": 0.74,
+        "source": "polymarket",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65197794
+      },
+      "laterDetail": {
+        "id": 245152774,
+        "name": "Botic van de Zandschulp",
+        "probability": 0.885,
+        "american_odds": 388,
+        "rank": 1,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.225,
+        "opening_american_odds": 344,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:26:17.986804+00:00",
+        "price_changed_at": "2026-10-12T12:26:17.986804+00:00"
+      }
+    },
+    {
+      "key": "65197794:245152773",
+      "marketID": 65197794,
+      "outcomeID": 245152773,
+      "label": "Fils",
+      "category": "Match winner",
+      "baseline": {
+        "value": 0.795,
+        "at": "2026-10-12T06:58:25.957874+00:00"
+      },
+      "lastQuote": {
+        "value": 0.255,
+        "at": "2026-10-12T12:23:57.067532+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Shanghai Rolex Masters: Arthur Fils vs Botic van de Zandschulp",
+        "outcome_name": "Arthur Fils",
+        "observed_at": "2026-10-12T12:23:57.067532+00:00",
+        "contributor_outcome_ids": [
+          245152773
+        ],
+        "probability": 0.255,
+        "source": "polymarket",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65197794
+      },
+      "laterDetail": {
+        "id": 245152773,
+        "name": "Arthur Fils",
+        "probability": 0.115,
+        "american_odds": -388,
+        "rank": 2,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.775,
+        "opening_american_odds": -344,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:26:17.986804+00:00",
+        "price_changed_at": "2026-10-12T12:26:17.986804+00:00"
+      }
+    },
+    {
+      "key": "65176060:245059341",
+      "marketID": 65176060,
+      "outcomeID": 245059341,
+      "label": "Zandschulp 2\u20130",
+      "category": "Exact finish",
+      "baseline": {
+        "value": 0.1,
+        "at": "2026-10-12T09:20:32.003997+00:00"
+      },
+      "lastQuote": {
+        "value": 0.6667,
+        "at": "2026-10-12T12:23:56.174931+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+        "outcome_name": "Botic Van de Zandschulp wins 2-0",
+        "observed_at": "2026-10-12T12:23:56.174931+00:00",
+        "contributor_outcome_ids": [
+          245059341
+        ],
+        "probability": 0.6667,
+        "source": "kalshi",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65176060
+      },
+      "laterDetail": {
+        "id": 245059341,
+        "name": "Botic Van de Zandschulp wins 2-0",
+        "probability": 0.85,
+        "american_odds": 1329,
+        "rank": 1,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.105,
+        "opening_american_odds": 852,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:26:26.162423+00:00",
+        "price_changed_at": "2026-10-12T12:26:18.334213+00:00"
+      }
+    },
+    {
+      "key": "65176060:245059339",
+      "marketID": 65176060,
+      "outcomeID": 245059339,
+      "label": "Fils 2\u20131",
+      "category": "Exact finish",
+      "baseline": {
+        "value": 0.235,
+        "at": "2026-10-12T09:20:32.003997+00:00"
+      },
+      "lastQuote": {
+        "value": 0.2438,
+        "at": "2026-10-12T12:23:56.174931+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+        "outcome_name": "Arthur Fils wins 2-1",
+        "observed_at": "2026-10-12T12:23:56.174931+00:00",
+        "contributor_outcome_ids": [
+          245059339
+        ],
+        "probability": 0.2438,
+        "source": "kalshi",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65176060
+      },
+      "laterDetail": {
+        "id": 245059339,
+        "name": "Arthur Fils wins 2-1",
+        "probability": 0.11,
+        "american_odds": 292,
+        "rank": 2,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.235,
+        "opening_american_odds": 326,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:26:26.162423+00:00",
+        "price_changed_at": "2026-10-12T12:26:26.162423+00:00"
+      }
+    },
+    {
+      "key": "65176060:245059340",
+      "marketID": 65176060,
+      "outcomeID": 245059340,
+      "label": "Zandschulp 2\u20131",
+      "category": "Exact finish",
+      "baseline": {
+        "value": 0.105,
+        "at": "2026-10-12T09:20:32.003997+00:00"
+      },
+      "lastQuote": {
+        "value": 0.0796,
+        "at": "2026-10-12T12:23:56.174931+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": false,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+        "outcome_name": "Botic Van de Zandschulp wins 2-1",
+        "observed_at": "2026-10-12T12:23:56.174931+00:00",
+        "contributor_outcome_ids": [
+          245059340
+        ],
+        "probability": 0.0796,
+        "source": "kalshi",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65176060
+      },
+      "laterDetail": {
+        "id": 245059340,
+        "name": "Botic Van de Zandschulp wins 2-1",
+        "probability": 0.035,
+        "american_odds": 900,
+        "rank": 3,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.11,
+        "opening_american_odds": 809,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:26:26.162423+00:00",
+        "price_changed_at": "2026-10-12T12:26:26.162423+00:00"
+      }
+    },
+    {
+      "key": "65176060:245059338",
+      "marketID": 65176060,
+      "outcomeID": 245059338,
+      "label": "Fils 2\u20130",
+      "category": "Exact finish",
+      "baseline": {
+        "value": 0.56,
+        "at": "2026-10-12T09:20:32.003997+00:00"
+      },
+      "lastQuote": {
+        "value": 0.01,
+        "at": "2026-10-12T11:55:06.745445+00:00"
+      },
+      "current": null,
+      "currentLabel": "No recent price",
+      "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+      "impossible": true,
+      "result": "Result pending",
+      "original": {
+        "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+        "outcome_name": "Arthur Fils wins 2-0",
+        "observed_at": "2026-10-12T11:55:06.745445+00:00",
+        "contributor_outcome_ids": [
+          245059338
+        ],
+        "probability": 0.01,
+        "source": "kalshi",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 65176060
+      },
+      "laterDetail": {
+        "id": 245059338,
+        "name": "Arthur Fils wins 2-0",
+        "probability": 0.01,
+        "american_odds": -133,
+        "rank": 4,
+        "rank_change_24h": null,
+        "probability_change_24h": null,
+        "opening_probability": 0.54,
+        "opening_american_odds": -117,
+        "is_winner": null,
+        "resolution_source": null,
+        "last_updated": "2026-10-12T12:15:08.721687+00:00",
+        "price_changed_at": "2026-10-12T11:55:06.745445+00:00"
+      }
+    }
+  ],
+  "streamMarketCount": 14,
+  "projection": null,
+  "excludedHistory": [
+    {
+      "timestamp": "2026-10-12T12:24:00+00:00",
+      "home_probability": 0.39729
+    },
+    {
+      "timestamp": "2026-10-12T12:24:06.030278+00:00",
+      "home_probability": 0.205895
+    }
+  ]
+}

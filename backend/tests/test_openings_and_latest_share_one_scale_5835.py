@@ -29,9 +29,10 @@ OSCAR_ANIMATED_CURRENT = [0.925, 0.500, 0.065, 0.015, 0.015, 0.005, 0.005]
 OSCAR_ANIMATED_OPENING = [0.915, 0.500, 0.075, 0.035, 0.005, 0.005, 0.005]
 
 
-def _market(currents, openings, *, mutually_exclusive=True):
+def _market(currents, openings, *, mutually_exclusive=True, recorded_opening=False):
     """A market shaped like the serializer's input. Mirrors the #5539 harness."""
     from types import SimpleNamespace
+    from datetime import datetime, timezone
 
     outcomes = [
         SimpleNamespace(
@@ -44,6 +45,9 @@ def _market(currents, openings, *, mutually_exclusive=True):
             rank_change_24h=None,
             probability_change_24h=None,
             opening_probability=op,
+            opening_captured_at=(
+                datetime(2026, 9, 12, tzinfo=timezone.utc) if recorded_opening else None
+            ),
             opening_american_odds=-9900,
             is_winner=None,
             resolution_source=None,
@@ -146,7 +150,9 @@ class TestTheOtherDirection:
     """
 
     def test_a_coherent_field_under_the_threshold_keeps_its_openings(self):
-        detail = _detail(_market([0.5, 0.3, 0.2], [0.45, 0.35, 0.2]))
+        detail = _detail(
+            _market([0.5, 0.3, 0.2], [0.45, 0.35, 0.2], recorded_opening=True)
+        )
         assert detail["openings_withheld"] is False
         assert [o["opening_probability"] for o in detail["outcomes"]] == [
             0.45,
@@ -161,7 +167,9 @@ class TestTheOtherDirection:
         Sum 2.4 — well past the 1.60 bail. Nothing is rescaled, so nothing is
         incomparable, and withholding here would delete an honest column.
         """
-        detail = _detail(_market([0.8, 0.8, 0.8], [0.7, 0.8, 0.9], mutually_exclusive=False))
+        detail = _detail(
+            _market([0.8, 0.8, 0.8], [0.7, 0.8, 0.9], mutually_exclusive=True)
+        )
         assert detail["openings_withheld"] is False
         assert [o["probability"] for o in detail["outcomes"]] == [0.8, 0.8, 0.8]
         assert [o["opening_probability"] for o in detail["outcomes"]] == [0.7, 0.8, 0.9]
@@ -189,26 +197,18 @@ class TestTheOtherDirection:
 class TestTheAnswerIsAskedNotRederived:
     """The call site must not carry its own copy of the squeeze threshold."""
 
-    def test_openings_survive_when_the_normalizer_moves_nothing(self, monkeypatch):
-        """THE MUTATION KILLER, and the reason the return value exists.
-
-        A call site that re-derived "did it fire?" from the field sum would need
-        the `> 105` test that lives in `app.routes.politics`, free to drift from
-        it. Here the shared normalizer is neutered while the field sum stays at
-        1.53, squarely inside the band. Nothing the reader is handed has moved,
-        so the openings are comparable and must be served. A re-derived
-        threshold withholds them and this test goes red.
-        """
-        import app.routes.politics as politics
-
-        import app.utils.outcome_display as display
-        monkeypatch.setattr(display, "display_probability_divisor", lambda *a, **k: 1.0)
-        detail = _detail(_market(OSCAR_ANIMATED_CURRENT, OSCAR_ANIMATED_OPENING))
+    def test_a_complete_opening_uses_its_own_field_when_current_numbers_do_not_move(
+        self,
+    ):
+        """Ruling21-A: today's mass1 cannot be yesterday's1.2 denominator."""
+        detail = _detail(
+            _market([0.5, 0.3, 0.2], [0.6, 0.2, 0.4], recorded_opening=True)
+        )
         assert detail["openings_withheld"] is False
-        assert [o["probability"] for o in detail["outcomes"]] == OSCAR_ANIMATED_CURRENT
-        assert [
-            o["opening_probability"] for o in detail["outcomes"]
-        ] == OSCAR_ANIMATED_OPENING
+        assert [o["probability"] for o in detail["outcomes"]] == [0.5, 0.3, 0.2]
+        assert [o["opening_probability"] for o in detail["outcomes"]] == pytest.approx(
+            [0.5, 1 / 6, 1 / 3]
+        )
 
 
 class TestTheNormalizerReportsWhatItDid:
@@ -224,8 +224,13 @@ class TestTheNormalizerReportsWhatItDid:
         assert normalize_display_probs(outcomes, mutually_exclusive=False) is False
         assert outcomes[0]["probability"] == 0.86
 
-    def test_it_reports_true_for_a_one_winner_overround(self):
+    def test_it_refuses_a_suspect_one_winner_overround(self):
         outcomes = [{"probability": 0.8} for _ in range(3)]
+        assert normalize_display_probs(outcomes) is False
+        assert [o["probability"] for o in outcomes] == [0.8] * 3
+
+    def test_it_reports_true_for_a_healthy_one_winner_overround(self):
+        outcomes = [{"probability": 0.4} for _ in range(3)]
         assert normalize_display_probs(outcomes) is True
         assert sum(o["rendered_percent"] for o in outcomes) == 100
 
