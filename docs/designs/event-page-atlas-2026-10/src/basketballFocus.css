@@ -1,0 +1,14 @@
+.basketball-focus-content .atlas-card h3{font-size:26px;line-height:1.18;letter-spacing:-.03em;margin:8px 0 18px}
+.basketball-focus-content .margin-expectation>svg,.basketball-focus-content .total-expectation-card>svg{width:100%;height:auto;min-height:220px}
+.basketball-focus-content .expectation-selected{gap:12px}
+.basketball-focus-content .expectation-selected strong{font-size:22px}
+.basketball-focus-content .expectation-selected span,.basketball-focus-content .expectation-coverage,.basketball-focus-content .margin-caption,.basketball-focus-content .expectation-axis-title{font-size:13px}
+.basketball-focus-content .atlas-plot{height:240px}
+.basketball-focus-content .margin-picker select{min-width:0;flex:1}
+.basketball-focus-content.large-text .atlas-card h3{font-size:30px}
+.basketball-focus-content.large-text .expectation-selected,.basketball-focus-content.large-text .expectation-score,.basketball-focus-content.large-text .margin-finish{display:grid;grid-template-columns:1fr;gap:16px}
+.basketball-focus-content.large-text .expectation-selected strong{font-size:26px}
+.basketball-focus-content.large-text .expectation-selected span,.basketball-focus-content.large-text .margin-picker select,.basketball-focus-content.large-text .expectation-disclosure,.basketball-focus-content.large-text .expectation-coverage,.basketball-focus-content.large-text .margin-caption,.basketball-focus-content.large-text .expectation-axis-title,.basketball-focus-content.large-text .atlas-note{font-size:16px}
+
+.basketball-score-forecast>svg{display:block;width:100%;height:auto}.basketball-score-forecast .basketball-team{font-size:14px;font-weight:600;fill:var(--text-primary)}.basketball-score-forecast .basketball-number{font-size:19px;font-weight:700;fill:currentColor}.basketball-score-track{stroke:var(--surface-border);stroke-width:1.5}.basketball-score-forecast .basketball-delta{font-size:13px;font-weight:600;fill:currentColor}.basketball-score-forecast .basketball-axis{font-size:12px;fill:var(--text-secondary)}.basketball-forecast-legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px}.large-text .basketball-forecast-legend{font-size:16px}
+.basketball-moment-reason{font-size:13px;line-height:1.45;color:var(--text-secondary);margin:4px 0 12px}.large-text .basketball-moment-reason{font-size:16px}

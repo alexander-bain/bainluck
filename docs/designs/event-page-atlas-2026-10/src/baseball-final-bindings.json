@@ -1,0 +1,1064 @@
+{
+  "63525368": {
+    "title": "Andrew Benintendi: Hits O/U 0.5",
+    "player": "Andrew Benintendi",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525369": {
+    "title": "Kyle Teel: Hits O/U 0.5",
+    "player": "Kyle Teel",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525370": {
+    "title": "Kyle Teel: Hits O/U 1.5",
+    "player": "Kyle Teel",
+    "unit": "hits",
+    "threshold": 1.5
+  },
+  "63525372": {
+    "title": "Sam Antonacci: Hits O/U 0.5",
+    "player": "Sam Antonacci",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525373": {
+    "title": "Sam Antonacci: Hits O/U 2.5",
+    "player": "Sam Antonacci",
+    "unit": "hits",
+    "threshold": 2.5
+  },
+  "63525374": {
+    "title": "Tristan Peters: Hits O/U 0.5",
+    "player": "Tristan Peters",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525375": {
+    "title": "Andrew Benintendi: RBIs O/U 0.5",
+    "player": "Andrew Benintendi",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63525376": {
+    "title": "Andrew Benintendi: RBIs O/U 2.5",
+    "player": "Andrew Benintendi",
+    "unit": "RBIs",
+    "threshold": 2.5
+  },
+  "63525377": {
+    "title": "Kyle Teel: RBIs O/U 0.5",
+    "player": "Kyle Teel",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63525379": {
+    "title": "Tristan Peters: RBIs O/U 0.5",
+    "player": "Tristan Peters",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63363782": {
+    "title": "Jeremy Peña: Home Runs O/U 0.5",
+    "player": "Jeremy Peña",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63525382": {
+    "title": "Jeremy Peña: Home Runs O/U 1.5",
+    "player": "Jeremy Peña",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63369558": {
+    "title": "Jose Altuve: Home Runs O/U 0.5",
+    "player": "Jose Altuve",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411966": {
+    "title": "Jose Altuve: Home Runs O/U 1.5",
+    "player": "Jose Altuve",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63525387": {
+    "title": "Sean Burke: Strikeouts O/U 3.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 3.5
+  },
+  "63433312": {
+    "title": "Sean Burke: Strikeouts O/U 4.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 4.5
+  },
+  "63433313": {
+    "title": "Sean Burke: Strikeouts O/U 5.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 5.5
+  },
+  "63433314": {
+    "title": "Sean Burke: Strikeouts O/U 6.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 6.5
+  },
+  "63369560": {
+    "title": "Sean Burke: Strikeouts O/U 7.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 7.5
+  },
+  "63380848": {
+    "title": "Sean Burke: Strikeouts O/U 8.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 8.5
+  },
+  "63369561": {
+    "title": "Sean Burke: Strikeouts O/U 9.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 9.5
+  },
+  "63478946": {
+    "title": "Sean Burke: Strikeouts O/U 10.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 10.5
+  },
+  "63478947": {
+    "title": "Sean Burke: Strikeouts O/U 11.5",
+    "player": "Sean Burke",
+    "unit": "strikeouts",
+    "threshold": 11.5
+  },
+  "63525395": {
+    "title": "Jeremy Peña: Total Bases O/U 1.5",
+    "player": "Jeremy Peña",
+    "unit": "total bases",
+    "threshold": 1.5
+  },
+  "63525396": {
+    "title": "Jeremy Peña: Total Bases O/U 2.5",
+    "player": "Jeremy Peña",
+    "unit": "total bases",
+    "threshold": 2.5
+  },
+  "63525397": {
+    "title": "Jeremy Peña: Total Bases O/U 3.5",
+    "player": "Jeremy Peña",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525398": {
+    "title": "Jeremy Peña: Total Bases O/U 4.5",
+    "player": "Jeremy Peña",
+    "unit": "total bases",
+    "threshold": 4.5
+  },
+  "63525399": {
+    "title": "Jeremy Peña: Total Bases O/U 5.5",
+    "player": "Jeremy Peña",
+    "unit": "total bases",
+    "threshold": 5.5
+  },
+  "63525400": {
+    "title": "Jeremy Peña: Hits O/U 0.5",
+    "player": "Jeremy Peña",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525401": {
+    "title": "Jeremy Peña: Hits O/U 1.5",
+    "player": "Jeremy Peña",
+    "unit": "hits",
+    "threshold": 1.5
+  },
+  "63525402": {
+    "title": "Jose Altuve: Hits O/U 0.5",
+    "player": "Jose Altuve",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525403": {
+    "title": "Jose Altuve: Hits O/U 1.5",
+    "player": "Jose Altuve",
+    "unit": "hits",
+    "threshold": 1.5
+  },
+  "63525405": {
+    "title": "Jeremy Peña: RBIs O/U 0.5",
+    "player": "Jeremy Peña",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63525406": {
+    "title": "Jose Altuve: RBIs O/U 0.5",
+    "player": "Jose Altuve",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63525409": {
+    "title": "Hunter Brown: Hits Allowed O/U 1.5",
+    "player": "Hunter Brown",
+    "unit": "hits allowed",
+    "threshold": 1.5
+  },
+  "63525410": {
+    "title": "Hunter Brown: Hits Allowed O/U 2.5",
+    "player": "Hunter Brown",
+    "unit": "hits allowed",
+    "threshold": 2.5
+  },
+  "63433320": {
+    "title": "Hunter Brown: Hits Allowed O/U 3.5",
+    "player": "Hunter Brown",
+    "unit": "hits allowed",
+    "threshold": 3.5
+  },
+  "63525440": {
+    "title": "Sean Burke: Hits Allowed O/U 1.5",
+    "player": "Sean Burke",
+    "unit": "hits allowed",
+    "threshold": 1.5
+  },
+  "63525412": {
+    "title": "Sean Burke: Hits Allowed O/U 2.5",
+    "player": "Sean Burke",
+    "unit": "hits allowed",
+    "threshold": 2.5
+  },
+  "63525413": {
+    "title": "Sean Burke: Hits Allowed O/U 3.5",
+    "player": "Sean Burke",
+    "unit": "hits allowed",
+    "threshold": 3.5
+  },
+  "63433321": {
+    "title": "Sean Burke: Hits Allowed O/U 4.5",
+    "player": "Sean Burke",
+    "unit": "hits allowed",
+    "threshold": 4.5
+  },
+  "63525414": {
+    "title": "Hunter Brown: Earned Runs Allowed O/U 0.5",
+    "player": "Hunter Brown",
+    "unit": "earned runs allowed",
+    "threshold": 0.5
+  },
+  "63433322": {
+    "title": "Hunter Brown: Earned Runs Allowed O/U 1.5",
+    "player": "Hunter Brown",
+    "unit": "earned runs allowed",
+    "threshold": 1.5
+  },
+  "63525416": {
+    "title": "Hunter Brown: Walks Allowed O/U 0.5",
+    "player": "Hunter Brown",
+    "unit": "walks allowed",
+    "threshold": 0.5
+  },
+  "63525417": {
+    "title": "Hunter Brown: Walks Allowed O/U 2.5",
+    "player": "Hunter Brown",
+    "unit": "walks allowed",
+    "threshold": 2.5
+  },
+  "63525421": {
+    "title": "Jeremy Peña: Hits + Runs + RBIs O/U 0.5",
+    "player": "Jeremy Peña",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525422": {
+    "title": "Jeremy Peña: Hits + Runs + RBIs O/U 1.5",
+    "player": "Jeremy Peña",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525423": {
+    "title": "Jeremy Peña: Hits + Runs + RBIs O/U 2.5",
+    "player": "Jeremy Peña",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525424": {
+    "title": "Jeremy Peña: Hits + Runs + RBIs O/U 3.5",
+    "player": "Jeremy Peña",
+    "unit": "hits + runs + RBIs",
+    "threshold": 3.5
+  },
+  "63525425": {
+    "title": "Jose Altuve: Hits + Runs + RBIs O/U 0.5",
+    "player": "Jose Altuve",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525426": {
+    "title": "Jose Altuve: Hits + Runs + RBIs O/U 1.5",
+    "player": "Jose Altuve",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525427": {
+    "title": "Jose Altuve: Hits + Runs + RBIs O/U 2.5",
+    "player": "Jose Altuve",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525428": {
+    "title": "Jose Altuve: Hits + Runs + RBIs O/U 3.5",
+    "player": "Jose Altuve",
+    "unit": "hits + runs + RBIs",
+    "threshold": 3.5
+  },
+  "63525429": {
+    "title": "Miguel Vargas: Hits + Runs + RBIs O/U 0.5",
+    "player": "Miguel Vargas",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525430": {
+    "title": "Miguel Vargas: Hits + Runs + RBIs O/U 3.5",
+    "player": "Miguel Vargas",
+    "unit": "hits + runs + RBIs",
+    "threshold": 3.5
+  },
+  "63525431": {
+    "title": "Miguel Vargas: Hits + Runs + RBIs O/U 5.5",
+    "player": "Miguel Vargas",
+    "unit": "hits + runs + RBIs",
+    "threshold": 5.5
+  },
+  "63525432": {
+    "title": "Sam Antonacci: Hits + Runs + RBIs O/U 0.5",
+    "player": "Sam Antonacci",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525433": {
+    "title": "Sam Antonacci: Hits + Runs + RBIs O/U 1.5",
+    "player": "Sam Antonacci",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525434": {
+    "title": "Sam Antonacci: Hits + Runs + RBIs O/U 4.5",
+    "player": "Sam Antonacci",
+    "unit": "hits + runs + RBIs",
+    "threshold": 4.5
+  },
+  "63525435": {
+    "title": "Sam Antonacci: Hits + Runs + RBIs O/U 5.5",
+    "player": "Sam Antonacci",
+    "unit": "hits + runs + RBIs",
+    "threshold": 5.5
+  },
+  "63525441": {
+    "title": "Sean Burke: Earned Runs Allowed O/U 0.5",
+    "player": "Sean Burke",
+    "unit": "earned runs allowed",
+    "threshold": 0.5
+  },
+  "63433325": {
+    "title": "Sean Burke: Earned Runs Allowed O/U 1.5",
+    "player": "Sean Burke",
+    "unit": "earned runs allowed",
+    "threshold": 1.5
+  },
+  "63433326": {
+    "title": "Sean Burke: Earned Runs Allowed O/U 2.5",
+    "player": "Sean Burke",
+    "unit": "earned runs allowed",
+    "threshold": 2.5
+  },
+  "63525444": {
+    "title": "Andrew Benintendi: Hits + Runs + RBIs O/U 0.5",
+    "player": "Andrew Benintendi",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525445": {
+    "title": "Andrew Benintendi: Hits + Runs + RBIs O/U 1.5",
+    "player": "Andrew Benintendi",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525446": {
+    "title": "Andrew Benintendi: Hits + Runs + RBIs O/U 2.5",
+    "player": "Andrew Benintendi",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525447": {
+    "title": "Kyle Teel: Hits + Runs + RBIs O/U 0.5",
+    "player": "Kyle Teel",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525448": {
+    "title": "Kyle Teel: Hits + Runs + RBIs O/U 1.5",
+    "player": "Kyle Teel",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525449": {
+    "title": "Kyle Teel: Hits + Runs + RBIs O/U 2.5",
+    "player": "Kyle Teel",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525450": {
+    "title": "Kyle Teel: Hits + Runs + RBIs O/U 3.5",
+    "player": "Kyle Teel",
+    "unit": "hits + runs + RBIs",
+    "threshold": 3.5
+  },
+  "63525451": {
+    "title": "Tristan Peters: Hits + Runs + RBIs O/U 0.5",
+    "player": "Tristan Peters",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525452": {
+    "title": "Tristan Peters: Hits + Runs + RBIs O/U 1.5",
+    "player": "Tristan Peters",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525453": {
+    "title": "Tristan Peters: Hits + Runs + RBIs O/U 2.5",
+    "player": "Tristan Peters",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525454": {
+    "title": "Tristan Peters: Hits + Runs + RBIs O/U 5.5",
+    "player": "Tristan Peters",
+    "unit": "hits + runs + RBIs",
+    "threshold": 5.5
+  },
+  "63525459": {
+    "title": "Jose Altuve: Total Bases O/U 1.5",
+    "player": "Jose Altuve",
+    "unit": "total bases",
+    "threshold": 1.5
+  },
+  "63525460": {
+    "title": "Jose Altuve: Total Bases O/U 2.5",
+    "player": "Jose Altuve",
+    "unit": "total bases",
+    "threshold": 2.5
+  },
+  "63525461": {
+    "title": "Jose Altuve: Total Bases O/U 3.5",
+    "player": "Jose Altuve",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525462": {
+    "title": "Jose Altuve: Total Bases O/U 4.5",
+    "player": "Jose Altuve",
+    "unit": "total bases",
+    "threshold": 4.5
+  },
+  "63525463": {
+    "title": "Jose Altuve: Total Bases O/U 5.5",
+    "player": "Jose Altuve",
+    "unit": "total bases",
+    "threshold": 5.5
+  },
+  "63525473": {
+    "title": "Tristan Peters: Stolen Bases O/U 0.5",
+    "player": "Tristan Peters",
+    "unit": "stolen bases",
+    "threshold": 0.5
+  },
+  "63525474": {
+    "title": "Sam Antonacci: Total Bases O/U 1.5",
+    "player": "Sam Antonacci",
+    "unit": "total bases",
+    "threshold": 1.5
+  },
+  "63525478": {
+    "title": "Chase Meidroth: Hits + Runs + RBIs O/U 0.5",
+    "player": "Chase Meidroth",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525479": {
+    "title": "Chase Meidroth: Hits + Runs + RBIs O/U 1.5",
+    "player": "Chase Meidroth",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525480": {
+    "title": "Chase Meidroth: Hits + Runs + RBIs O/U 2.5",
+    "player": "Chase Meidroth",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525481": {
+    "title": "Chase Meidroth: Hits + Runs + RBIs O/U 3.5",
+    "player": "Chase Meidroth",
+    "unit": "hits + runs + RBIs",
+    "threshold": 3.5
+  },
+  "63525482": {
+    "title": "Chase Meidroth: Hits + Runs + RBIs O/U 4.5",
+    "player": "Chase Meidroth",
+    "unit": "hits + runs + RBIs",
+    "threshold": 4.5
+  },
+  "63525483": {
+    "title": "Chase Meidroth: Hits + Runs + RBIs O/U 5.5",
+    "player": "Chase Meidroth",
+    "unit": "hits + runs + RBIs",
+    "threshold": 5.5
+  },
+  "63525486": {
+    "title": "Chase Meidroth: Total Bases O/U 1.5",
+    "player": "Chase Meidroth",
+    "unit": "total bases",
+    "threshold": 1.5
+  },
+  "63525487": {
+    "title": "Chase Meidroth: Total Bases O/U 2.5",
+    "player": "Chase Meidroth",
+    "unit": "total bases",
+    "threshold": 2.5
+  },
+  "63525488": {
+    "title": "Chase Meidroth: Total Bases O/U 3.5",
+    "player": "Chase Meidroth",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525489": {
+    "title": "Chase Meidroth: Total Bases O/U 4.5",
+    "player": "Chase Meidroth",
+    "unit": "total bases",
+    "threshold": 4.5
+  },
+  "63525492": {
+    "title": "Chase Meidroth: Hits O/U 0.5",
+    "player": "Chase Meidroth",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525493": {
+    "title": "Chase Meidroth: Hits O/U 1.5",
+    "player": "Chase Meidroth",
+    "unit": "hits",
+    "threshold": 1.5
+  },
+  "63525495": {
+    "title": "Chase Meidroth: RBIs O/U 0.5",
+    "player": "Chase Meidroth",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63525496": {
+    "title": "Chase Meidroth: RBIs O/U 1.5",
+    "player": "Chase Meidroth",
+    "unit": "RBIs",
+    "threshold": 1.5
+  },
+  "63525497": {
+    "title": "Chase Meidroth: RBIs O/U 2.5",
+    "player": "Chase Meidroth",
+    "unit": "RBIs",
+    "threshold": 2.5
+  },
+  "63525499": {
+    "title": "Cam Smith: Home Runs O/U 0.5",
+    "player": "Cam Smith",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63525501": {
+    "title": "Cam Smith: Hits + Runs + RBIs O/U 0.5",
+    "player": "Cam Smith",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525502": {
+    "title": "Cam Smith: Hits + Runs + RBIs O/U 1.5",
+    "player": "Cam Smith",
+    "unit": "hits + runs + RBIs",
+    "threshold": 1.5
+  },
+  "63525503": {
+    "title": "Cam Smith: Hits + Runs + RBIs O/U 2.5",
+    "player": "Cam Smith",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525505": {
+    "title": "Cam Smith: Total Bases O/U 1.5",
+    "player": "Cam Smith",
+    "unit": "total bases",
+    "threshold": 1.5
+  },
+  "63525506": {
+    "title": "Cam Smith: Total Bases O/U 2.5",
+    "player": "Cam Smith",
+    "unit": "total bases",
+    "threshold": 2.5
+  },
+  "63525507": {
+    "title": "Cam Smith: Total Bases O/U 3.5",
+    "player": "Cam Smith",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525508": {
+    "title": "Cam Smith: Hits O/U 0.5",
+    "player": "Cam Smith",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525472": {
+    "title": "Kyle Teel: Stolen Bases O/U 0.5",
+    "player": "Kyle Teel",
+    "unit": "stolen bases",
+    "threshold": 0.5
+  },
+  "63525510": {
+    "title": "Nick Allen: Hits O/U 2.5",
+    "player": "Nick Allen",
+    "unit": "hits",
+    "threshold": 2.5
+  },
+  "63363781": {
+    "title": "Isaac Paredes: Home Runs O/U 0.5",
+    "player": "Isaac Paredes",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411963": {
+    "title": "Isaac Paredes: Home Runs O/U 1.5",
+    "player": "Isaac Paredes",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63525393": {
+    "title": "Isaac Paredes: Total Bases O/U 4.5",
+    "player": "Isaac Paredes",
+    "unit": "total bases",
+    "threshold": 4.5
+  },
+  "63525394": {
+    "title": "Isaac Paredes: Total Bases O/U 5.5",
+    "player": "Isaac Paredes",
+    "unit": "total bases",
+    "threshold": 5.5
+  },
+  "63525500": {
+    "title": "Yainer Diaz: Home Runs O/U 1.5",
+    "player": "Yainer Diaz",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63433307": {
+    "title": "Hunter Brown: Strikeouts O/U 5.5",
+    "player": "Hunter Brown",
+    "unit": "strikeouts",
+    "threshold": 5.5
+  },
+  "63433308": {
+    "title": "Hunter Brown: Strikeouts O/U 6.5",
+    "player": "Hunter Brown",
+    "unit": "strikeouts",
+    "threshold": 6.5
+  },
+  "63433309": {
+    "title": "Hunter Brown: Strikeouts O/U 7.5",
+    "player": "Hunter Brown",
+    "unit": "strikeouts",
+    "threshold": 7.5
+  },
+  "63369559": {
+    "title": "Hunter Brown: Strikeouts O/U 8.5",
+    "player": "Hunter Brown",
+    "unit": "strikeouts",
+    "threshold": 8.5
+  },
+  "63398595": {
+    "title": "Hunter Brown: Strikeouts O/U 9.5",
+    "player": "Hunter Brown",
+    "unit": "strikeouts",
+    "threshold": 9.5
+  },
+  "63525386": {
+    "title": "Hunter Brown: Strikeouts O/U 11.5",
+    "player": "Hunter Brown",
+    "unit": "strikeouts",
+    "threshold": 11.5
+  },
+  "63411958": {
+    "title": "Tristan Peters: Home Runs O/U 0.5",
+    "player": "Tristan Peters",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411959": {
+    "title": "Tristan Peters: Home Runs O/U 1.5",
+    "player": "Tristan Peters",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63478950": {
+    "title": "Braden Montgomery: Home Runs O/U 0.5",
+    "player": "Braden Montgomery",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63478951": {
+    "title": "Braden Montgomery: Home Runs O/U 1.5",
+    "player": "Braden Montgomery",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63478952": {
+    "title": "Chase Meidroth: Home Runs O/U 0.5",
+    "player": "Chase Meidroth",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63478953": {
+    "title": "Chase Meidroth: Home Runs O/U 1.5",
+    "player": "Chase Meidroth",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63478954": {
+    "title": "Colson Montgomery: Home Runs O/U 0.5",
+    "player": "Colson Montgomery",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63478955": {
+    "title": "Colson Montgomery: Home Runs O/U 1.5",
+    "player": "Colson Montgomery",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63525408": {
+    "title": "Sean Burke: Outs Recorded O/U 12.5",
+    "player": "Sean Burke",
+    "unit": "outs recorded",
+    "threshold": 12.5
+  },
+  "63433319": {
+    "title": "Sean Burke: Outs Recorded O/U 14.5",
+    "player": "Sean Burke",
+    "unit": "outs recorded",
+    "threshold": 14.5
+  },
+  "63525468": {
+    "title": "Sean Burke: Outs Recorded O/U 15.5",
+    "player": "Sean Burke",
+    "unit": "outs recorded",
+    "threshold": 15.5
+  },
+  "63386735": {
+    "title": "Taylor Trammell: Home Runs O/U 0.5",
+    "player": "Taylor Trammell",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411974": {
+    "title": "Taylor Trammell: Home Runs O/U 1.5",
+    "player": "Taylor Trammell",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63525455": {
+    "title": "Andrew Benintendi: Total Bases O/U 2.5",
+    "player": "Andrew Benintendi",
+    "unit": "total bases",
+    "threshold": 2.5
+  },
+  "63525456": {
+    "title": "Andrew Benintendi: Total Bases O/U 3.5",
+    "player": "Andrew Benintendi",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525457": {
+    "title": "Andrew Benintendi: Total Bases O/U 4.5",
+    "player": "Andrew Benintendi",
+    "unit": "total bases",
+    "threshold": 4.5
+  },
+  "63348828": {
+    "title": "Munetaka Murakami: Home Runs O/U 0.5",
+    "player": "Munetaka Murakami",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411955": {
+    "title": "Munetaka Murakami: Home Runs O/U 1.5",
+    "player": "Munetaka Murakami",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63363783": {
+    "title": "Yordan Alvarez: Home Runs O/U 0.5",
+    "player": "Yordan Alvarez",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411967": {
+    "title": "Yordan Alvarez: Home Runs O/U 1.5",
+    "player": "Yordan Alvarez",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63411950": {
+    "title": "Kyle Teel: Home Runs O/U 0.5",
+    "player": "Kyle Teel",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411951": {
+    "title": "Kyle Teel: Home Runs O/U 1.5",
+    "player": "Kyle Teel",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63411956": {
+    "title": "Sam Antonacci: Home Runs O/U 0.5",
+    "player": "Sam Antonacci",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411957": {
+    "title": "Sam Antonacci: Home Runs O/U 1.5",
+    "player": "Sam Antonacci",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63525407": {
+    "title": "Hunter Brown: Outs Recorded O/U 12.5",
+    "player": "Hunter Brown",
+    "unit": "outs recorded",
+    "threshold": 12.5
+  },
+  "63433318": {
+    "title": "Hunter Brown: Outs Recorded O/U 14.5",
+    "player": "Hunter Brown",
+    "unit": "outs recorded",
+    "threshold": 14.5
+  },
+  "63525371": {
+    "title": "Miguel Vargas: Hits O/U 0.5",
+    "player": "Miguel Vargas",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525378": {
+    "title": "Miguel Vargas: RBIs O/U 1.5",
+    "player": "Miguel Vargas",
+    "unit": "RBIs",
+    "threshold": 1.5
+  },
+  "63525404": {
+    "title": "Yordan Alvarez: Hits O/U 2.5",
+    "player": "Yordan Alvarez",
+    "unit": "hits",
+    "threshold": 2.5
+  },
+  "63525418": {
+    "title": "Christian Walker: Hits + Runs + RBIs O/U 5.5",
+    "player": "Christian Walker",
+    "unit": "hits + runs + RBIs",
+    "threshold": 5.5
+  },
+  "63525419": {
+    "title": "Isaac Paredes: Hits + Runs + RBIs O/U 2.5",
+    "player": "Isaac Paredes",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525420": {
+    "title": "Isaac Paredes: Hits + Runs + RBIs O/U 4.5",
+    "player": "Isaac Paredes",
+    "unit": "hits + runs + RBIs",
+    "threshold": 4.5
+  },
+  "63525436": {
+    "title": "Taylor Trammell: Hits + Runs + RBIs O/U 4.5",
+    "player": "Taylor Trammell",
+    "unit": "hits + runs + RBIs",
+    "threshold": 4.5
+  },
+  "63525437": {
+    "title": "Yordan Alvarez: Hits + Runs + RBIs O/U 2.5",
+    "player": "Yordan Alvarez",
+    "unit": "hits + runs + RBIs",
+    "threshold": 2.5
+  },
+  "63525438": {
+    "title": "Yordan Alvarez: Hits + Runs + RBIs O/U 5.5",
+    "player": "Yordan Alvarez",
+    "unit": "hits + runs + RBIs",
+    "threshold": 5.5
+  },
+  "63525439": {
+    "title": "Taylor Trammell: RBIs O/U 0.5",
+    "player": "Taylor Trammell",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63525458": {
+    "title": "Christian Walker: Total Bases O/U 3.5",
+    "player": "Christian Walker",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525464": {
+    "title": "Kyle Teel: Total Bases O/U 1.5",
+    "player": "Kyle Teel",
+    "unit": "total bases",
+    "threshold": 1.5
+  },
+  "63525465": {
+    "title": "Kyle Teel: Total Bases O/U 2.5",
+    "player": "Kyle Teel",
+    "unit": "total bases",
+    "threshold": 2.5
+  },
+  "63525466": {
+    "title": "Miguel Vargas: Total Bases O/U 1.5",
+    "player": "Miguel Vargas",
+    "unit": "total bases",
+    "threshold": 1.5
+  },
+  "63525467": {
+    "title": "Munetaka Murakami: Total Bases O/U 3.5",
+    "player": "Munetaka Murakami",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525469": {
+    "title": "Braden Montgomery: Stolen Bases O/U 0.5",
+    "player": "Braden Montgomery",
+    "unit": "stolen bases",
+    "threshold": 0.5
+  },
+  "63525470": {
+    "title": "Jeremy Peña: Stolen Bases O/U 0.5",
+    "player": "Jeremy Peña",
+    "unit": "stolen bases",
+    "threshold": 0.5
+  },
+  "63525471": {
+    "title": "Jose Altuve: Stolen Bases O/U 0.5",
+    "player": "Jose Altuve",
+    "unit": "stolen bases",
+    "threshold": 0.5
+  },
+  "63525484": {
+    "title": "Colson Montgomery: Hits + Runs + RBIs O/U 0.5",
+    "player": "Colson Montgomery",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525485": {
+    "title": "Braden Montgomery: Total Bases O/U 2.5",
+    "player": "Braden Montgomery",
+    "unit": "total bases",
+    "threshold": 2.5
+  },
+  "63525490": {
+    "title": "Colson Montgomery: Total Bases O/U 3.5",
+    "player": "Colson Montgomery",
+    "unit": "total bases",
+    "threshold": 3.5
+  },
+  "63525491": {
+    "title": "Braden Montgomery: Hits O/U 0.5",
+    "player": "Braden Montgomery",
+    "unit": "hits",
+    "threshold": 0.5
+  },
+  "63525494": {
+    "title": "Braden Montgomery: RBIs O/U 1.5",
+    "player": "Braden Montgomery",
+    "unit": "RBIs",
+    "threshold": 1.5
+  },
+  "63525498": {
+    "title": "Colson Montgomery: RBIs O/U 2.5",
+    "player": "Colson Montgomery",
+    "unit": "RBIs",
+    "threshold": 2.5
+  },
+  "63525504": {
+    "title": "Nick Allen: Hits + Runs + RBIs O/U 0.5",
+    "player": "Nick Allen",
+    "unit": "hits + runs + RBIs",
+    "threshold": 0.5
+  },
+  "63525509": {
+    "title": "Lucas Spence: Hits O/U 1.5",
+    "player": "Lucas Spence",
+    "unit": "hits",
+    "threshold": 1.5
+  },
+  "63525511": {
+    "title": "Cam Smith: RBIs O/U 0.5",
+    "player": "Cam Smith",
+    "unit": "RBIs",
+    "threshold": 0.5
+  },
+  "63525512": {
+    "title": "Cam Smith: RBIs O/U 2.5",
+    "player": "Cam Smith",
+    "unit": "RBIs",
+    "threshold": 2.5
+  },
+  "63411948": {
+    "title": "Andrew Benintendi: Home Runs O/U 0.5",
+    "player": "Andrew Benintendi",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411949": {
+    "title": "Andrew Benintendi: Home Runs O/U 1.5",
+    "player": "Andrew Benintendi",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63348827": {
+    "title": "Miguel Vargas: Home Runs O/U 0.5",
+    "player": "Miguel Vargas",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411953": {
+    "title": "Miguel Vargas: Home Runs O/U 1.5",
+    "player": "Miguel Vargas",
+    "unit": "home runs",
+    "threshold": 1.5
+  },
+  "63363780": {
+    "title": "Christian Walker: Home Runs O/U 0.5",
+    "player": "Christian Walker",
+    "unit": "home runs",
+    "threshold": 0.5
+  },
+  "63411961": {
+    "title": "Christian Walker: Home Runs O/U 1.5",
+    "player": "Christian Walker",
+    "unit": "home runs",
+    "threshold": 1.5
+  }
+}

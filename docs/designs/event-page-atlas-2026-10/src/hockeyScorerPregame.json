@@ -1,0 +1,1809 @@
+{
+  "eventID": 15169793,
+  "marketID": 64870965,
+  "eventTicker": "KXNHLGOAL-26OCT03BOSMIN",
+  "start": "2026-10-04T00:00:00+00:00",
+  "verifiedStart": true,
+  "basis": "Kalshi last traded Yes price in a one-minute candle ending before verified start",
+  "points": [
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:0",
+      "contributor": 243943090,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSTJEANNOT84-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Tanner Jeannot: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943090
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 1.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4064780.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:0",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Tanner Jeannot: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943090],\"threshold\":1.0,\"over_probability\":1.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":1.0,\"hit\":true,\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4064780.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:0\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T15:19:00+00:00",
+          "value": 0.09,
+          "volume": 42.29
+        },
+        {
+          "at": "2026-10-03T16:30:00+00:00",
+          "value": 0.09,
+          "volume": 261.65
+        },
+        {
+          "at": "2026-10-03T18:17:00+00:00",
+          "value": 0.09,
+          "volume": 55.48
+        },
+        {
+          "at": "2026-10-03T21:42:00+00:00",
+          "value": 0.08,
+          "volume": 58.71
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T21:42:00+00:00",
+        "value": 0.08,
+        "volume": 58.71
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:1",
+      "contributor": 243943070,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINJSPURGEON46-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Jared Spurgeon: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943070
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 1.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/5079.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:1",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Jared Spurgeon: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943070],\"threshold\":1.0,\"over_probability\":1.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":1.0,\"hit\":true,\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/5079.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:1\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [],
+      "baseline": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:2",
+      "contributor": 243943074,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINKKAPRIZOV97-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Kirill Kaprizov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943074
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 2.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:2",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Kirill Kaprizov: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943074],\"threshold\":1.0,\"over_probability\":1.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":2.0,\"hit\":true,\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3942335.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:2\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:17:00+00:00",
+          "value": 0.44,
+          "volume": 10.93
+        },
+        {
+          "at": "2026-10-03T23:19:00+00:00",
+          "value": 0.43,
+          "volume": 3485.0
+        },
+        {
+          "at": "2026-10-03T23:27:00+00:00",
+          "value": 0.42,
+          "volume": 11.44
+        },
+        {
+          "at": "2026-10-03T23:29:00+00:00",
+          "value": 0.43,
+          "volume": 11.18
+        },
+        {
+          "at": "2026-10-03T23:37:00+00:00",
+          "value": 0.43,
+          "volume": 11.18
+        },
+        {
+          "at": "2026-10-03T23:41:00+00:00",
+          "value": 0.42,
+          "volume": 242.85
+        },
+        {
+          "at": "2026-10-03T23:44:00+00:00",
+          "value": 0.42,
+          "volume": 36.84
+        },
+        {
+          "at": "2026-10-03T23:45:00+00:00",
+          "value": 0.43,
+          "volume": 44.72
+        },
+        {
+          "at": "2026-10-03T23:49:00+00:00",
+          "value": 0.43,
+          "volume": 223.63
+        },
+        {
+          "at": "2026-10-03T23:53:00+00:00",
+          "value": 0.43,
+          "volume": 15.65
+        },
+        {
+          "at": "2026-10-03T23:55:00+00:00",
+          "value": 0.43,
+          "volume": 2236.35
+        },
+        {
+          "at": "2026-10-03T23:57:00+00:00",
+          "value": 0.43,
+          "volume": 89.45
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:57:00+00:00",
+        "value": 0.43,
+        "volume": 89.45
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:3",
+      "contributor": 243943087,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINQHUGHES43-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Quinn Hughes: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943087
+        ],
+        "threshold": 1.0,
+        "over_probability": 1.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 1.0,
+        "hit": true,
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:3",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Quinn Hughes: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943087],\"threshold\":1.0,\"over_probability\":1.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":1.0,\"hit\":true,\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4320548.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:3\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:01:00+00:00",
+          "value": 0.18,
+          "volume": 10.5
+        },
+        {
+          "at": "2026-10-03T23:03:00+00:00",
+          "value": 0.18,
+          "volume": 199.95
+        },
+        {
+          "at": "2026-10-03T23:14:00+00:00",
+          "value": 0.19,
+          "volume": 129.49
+        },
+        {
+          "at": "2026-10-03T23:29:00+00:00",
+          "value": 0.19,
+          "volume": 24.9
+        },
+        {
+          "at": "2026-10-03T23:33:00+00:00",
+          "value": 0.17,
+          "volume": 194.0
+        },
+        {
+          "at": "2026-10-03T23:35:00+00:00",
+          "value": 0.17,
+          "volume": 151.0
+        },
+        {
+          "at": "2026-10-03T23:38:00+00:00",
+          "value": 0.19,
+          "volume": 9.96
+        },
+        {
+          "at": "2026-10-03T23:39:00+00:00",
+          "value": 0.17,
+          "volume": 151.0
+        },
+        {
+          "at": "2026-10-03T23:41:00+00:00",
+          "value": 0.17,
+          "volume": 4.0
+        },
+        {
+          "at": "2026-10-03T23:46:00+00:00",
+          "value": 0.19,
+          "volume": 249.03
+        },
+        {
+          "at": "2026-10-03T23:49:00+00:00",
+          "value": 0.19,
+          "volume": 24.9
+        },
+        {
+          "at": "2026-10-03T23:57:00+00:00",
+          "value": 0.19,
+          "volume": 124.51
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:57:00+00:00",
+        "value": 0.19,
+        "volume": 124.51
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:4",
+      "contributor": 243943058,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINBCOLEMAN20-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Blake Coleman: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943058
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2563026.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:4",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Blake Coleman: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943058],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/2563026.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:4\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:26:00+00:00",
+          "value": 0.27,
+          "volume": 35.23
+        },
+        {
+          "at": "2026-10-03T23:52:00+00:00",
+          "value": 0.27,
+          "volume": 7.04
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:52:00+00:00",
+        "value": 0.27,
+        "volume": 7.04
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:5",
+      "contributor": 243943059,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINBBRINK10-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Bobby Brink: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943059
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4565257.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:5",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Bobby Brink: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943059],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4565257.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:5\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:38:00+00:00",
+          "value": 0.18,
+          "volume": 52.53
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:38:00+00:00",
+        "value": 0.18,
+        "volume": 52.53
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:6",
+      "contributor": 243943060,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSCMITTELSTADT11-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Casey Mittelstadt: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943060
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4233575.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:6",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Casey Mittelstadt: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943060],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4233575.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:6\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:04:00+00:00",
+          "value": 0.14,
+          "volume": 13.47
+        },
+        {
+          "at": "2026-10-03T23:58:00+00:00",
+          "value": 0.14,
+          "volume": 168.43
+        },
+        {
+          "at": "2026-10-03T23:59:00+00:00",
+          "value": 0.14,
+          "volume": 10.0
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:59:00+00:00",
+        "value": 0.14,
+        "volume": 10.0
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:7",
+      "contributor": 243943061,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSCCLIFTON75-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Connor Clifton: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943061
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3042191.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:7",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Connor Clifton: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943061],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3042191.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:7\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T13:19:00+00:00",
+          "value": 0.05,
+          "volume": 1.0
+        },
+        {
+          "at": "2026-10-03T20:45:00+00:00",
+          "value": 0.05,
+          "volume": 47.0
+        },
+        {
+          "at": "2026-10-03T20:58:00+00:00",
+          "value": 0.05,
+          "volume": 1.0
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T20:58:00+00:00",
+        "value": 0.05,
+        "volume": 1.0
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:8",
+      "contributor": 243943062,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINDHUNT48-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Daemon Hunt: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943062
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4697711.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:8",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Daemon Hunt: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943062],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4697711.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:8\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:01:00+00:00",
+          "value": 0.04,
+          "volume": 46.0
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:01:00+00:00",
+        "value": 0.04,
+        "volume": 46.0
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:9",
+      "contributor": 243943063,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINDYUROV22-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Danila Yurov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943063
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/5080172.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:9",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Danila Yurov: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943063],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/5080172.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:9\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [],
+      "baseline": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:10",
+      "contributor": 243943064,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSDPASTRNAK88-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "David Pastrnak: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943064
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:10",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"David Pastrnak: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943064],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:10\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:28:00+00:00",
+          "value": 0.32,
+          "volume": 473.0
+        },
+        {
+          "at": "2026-10-03T23:30:00+00:00",
+          "value": 0.34,
+          "volume": 14.05
+        },
+        {
+          "at": "2026-10-03T23:40:00+00:00",
+          "value": 0.33,
+          "volume": 14.47
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:40:00+00:00",
+        "value": 0.33,
+        "volume": 14.47
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:11",
+      "contributor": 243943065,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSELINDHOLM28-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Elias Lindholm: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943065
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3041994.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:11",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Elias Lindholm: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943065],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3041994.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:11\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T15:19:00+00:00",
+          "value": 0.2,
+          "volume": 40.39
+        },
+        {
+          "at": "2026-10-03T17:37:00+00:00",
+          "value": 0.2,
+          "volume": 5.0
+        },
+        {
+          "at": "2026-10-03T20:20:00+00:00",
+          "value": 0.19,
+          "volume": 44.0
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T20:20:00+00:00",
+        "value": 0.19,
+        "volume": 44.0
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:12",
+      "contributor": 243943066,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSFMINTEN93-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Fraser Minten: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943066
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/5080207.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:12",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Fraser Minten: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943066],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/5080207.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:12\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:18:00+00:00",
+          "value": 0.17,
+          "volume": 42.0
+        },
+        {
+          "at": "2026-10-03T23:28:00+00:00",
+          "value": 0.17,
+          "volume": 26.26
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:28:00+00:00",
+        "value": 0.17,
+        "volume": 26.26
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:13",
+      "contributor": 243943067,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSHLINDHOLM27-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Hampus Lindholm: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943067
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2968818.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:13",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Hampus Lindholm: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943067],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/2968818.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:13\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T21:52:00+00:00",
+          "value": 0.09,
+          "volume": 26.11
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T21:52:00+00:00",
+        "value": 0.09,
+        "volume": 26.11
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:14",
+      "contributor": 243943068,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSJPETERKA10-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "JJ Peterka: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943068
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4697438.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:14",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"JJ Peterka: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943068],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4697438.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:14\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:08:00+00:00",
+          "value": 0.23,
+          "volume": 20.62
+        },
+        {
+          "at": "2026-10-03T23:53:00+00:00",
+          "value": 0.23,
+          "volume": 20.62
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:53:00+00:00",
+        "value": 0.23,
+        "volume": 20.62
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:15",
+      "contributor": 243943069,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSJHAGENS44-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "James Hagens: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943069
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/5275337.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:15",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"James Hagens: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943069],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/5275337.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:15\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T17:36:00+00:00",
+          "value": 0.16,
+          "volume": 5.5
+        },
+        {
+          "at": "2026-10-03T22:16:00+00:00",
+          "value": 0.16,
+          "volume": 59.02
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T22:16:00+00:00",
+        "value": 0.16,
+        "volume": 59.02
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:16",
+      "contributor": 243943071,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINJERIKSSONEK14-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Joel Eriksson Ek: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943071
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:16",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Joel Eriksson Ek: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943071],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3904091.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:16\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:12:00+00:00",
+          "value": 0.31,
+          "volume": 76.92
+        },
+        {
+          "at": "2026-10-03T23:13:00+00:00",
+          "value": 0.31,
+          "volume": 3.07
+        },
+        {
+          "at": "2026-10-03T23:28:00+00:00",
+          "value": 0.31,
+          "volume": 15.38
+        },
+        {
+          "at": "2026-10-03T23:36:00+00:00",
+          "value": 0.31,
+          "volume": 923.15
+        },
+        {
+          "at": "2026-10-03T23:39:00+00:00",
+          "value": 0.31,
+          "volume": 2000.0
+        },
+        {
+          "at": "2026-10-03T23:43:00+00:00",
+          "value": 0.31,
+          "volume": 175.39
+        },
+        {
+          "at": "2026-10-03T23:52:00+00:00",
+          "value": 0.31,
+          "volume": 15.38
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:52:00+00:00",
+        "value": 0.31,
+        "volume": 15.38
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:17",
+      "contributor": 243943072,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINJBRODIN25-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Jonas Brodin: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943072
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2562600.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:17",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Jonas Brodin: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943072],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/2562600.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:17\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [],
+      "baseline": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:18",
+      "contributor": 243943073,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSJASPIROT45-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Jonathan Aspirot: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943073
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4392308.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:18",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Jonathan Aspirot: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943073],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4392308.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:18\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [],
+      "baseline": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:19",
+      "contributor": 243943075,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSMKHUSNUTDINOV92-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Marat Khusnutdinov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943075
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4697442.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:19",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Marat Khusnutdinov: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943075],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4697442.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:19\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:55:00+00:00",
+          "value": 0.11,
+          "volume": 427.88
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:55:00+00:00",
+        "value": 0.11,
+        "volume": 427.88
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:20",
+      "contributor": 243943076,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINMFOLIGNO17-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Marcus Foligno: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943076
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/5172.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:20",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Marcus Foligno: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943076],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/5172.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:20\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:02:00+00:00",
+          "value": 0.11,
+          "volume": 1000.0
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:02:00+00:00",
+        "value": 0.11,
+        "volume": 1000.0
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:21",
+      "contributor": 243943077,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSMKASTELIC47-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Mark Kastelic: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943077
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4587985.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:21",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Mark Kastelic: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943077],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4587985.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:21\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T16:29:00+00:00",
+          "value": 0.1,
+          "volume": 235.18
+        },
+        {
+          "at": "2026-10-03T21:41:00+00:00",
+          "value": 0.09,
+          "volume": 52.22
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T21:41:00+00:00",
+        "value": 0.09,
+        "volume": 52.22
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:22",
+      "contributor": 243943078,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSMLOHREI6-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Mason Lohrei: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943078
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4697461.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:22",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Mason Lohrei: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943078],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4697461.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:22\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:24:00+00:00",
+          "value": 0.06,
+          "volume": 445.99
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:24:00+00:00",
+        "value": 0.06,
+        "volume": 445.99
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:23",
+      "contributor": 243943079,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINMBOLDY12-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Matt Boldy: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943079
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:23",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Matt Boldy: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943079],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4565233.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:23\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:05:00+00:00",
+          "value": 0.4,
+          "volume": 37.85
+        },
+        {
+          "at": "2026-10-03T23:11:00+00:00",
+          "value": 0.4,
+          "volume": 119.96
+        },
+        {
+          "at": "2026-10-03T23:34:00+00:00",
+          "value": 0.4,
+          "volume": 208.73
+        },
+        {
+          "at": "2026-10-03T23:43:00+00:00",
+          "value": 0.4,
+          "volume": 43.18
+        },
+        {
+          "at": "2026-10-03T23:46:00+00:00",
+          "value": 0.4,
+          "volume": 71.97
+        },
+        {
+          "at": "2026-10-03T23:47:00+00:00",
+          "value": 0.4,
+          "volume": 47.98
+        },
+        {
+          "at": "2026-10-03T23:51:00+00:00",
+          "value": 0.4,
+          "volume": 119.96
+        },
+        {
+          "at": "2026-10-03T23:52:00+00:00",
+          "value": 0.4,
+          "volume": 11.99
+        },
+        {
+          "at": "2026-10-03T23:53:00+00:00",
+          "value": 0.4,
+          "volume": 4.79
+        },
+        {
+          "at": "2026-10-03T23:55:00+00:00",
+          "value": 0.4,
+          "volume": 35.98
+        },
+        {
+          "at": "2026-10-03T23:58:00+00:00",
+          "value": 0.4,
+          "volume": 23.99
+        },
+        {
+          "at": "2026-10-03T23:59:00+00:00",
+          "value": 0.4,
+          "volume": 251.91
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:59:00+00:00",
+        "value": 0.4,
+        "volume": 251.91
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:24",
+      "contributor": 243943080,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINMSHABANOV49-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Max Shabanov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943080
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": null,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "key": "nhl-15169793-game-markets.json:player_props:24",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Max Shabanov: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943080],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":null,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"key\":\"nhl-15169793-game-markets.json:player_props:24\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:30:00+00:00",
+          "value": 0.21,
+          "volume": 45.12
+        },
+        {
+          "at": "2026-10-03T23:52:00+00:00",
+          "value": 0.23,
+          "volume": 1067.57
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:52:00+00:00",
+        "value": 0.23,
+        "volume": 1067.57
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:25",
+      "contributor": 243943081,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINMMCCARRON47-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Michael McCarron: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943081
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3042048.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:25",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Michael McCarron: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943081],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3042048.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:25\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:52:00+00:00",
+          "value": 0.11,
+          "volume": 85.57
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:52:00+00:00",
+        "value": 0.11,
+        "volume": 85.57
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:26",
+      "contributor": 243943082,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSMGEEKIE39-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Morgan Geekie: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943082
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4268466.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:26",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Morgan Geekie: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943082],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4268466.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:26\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:10:00+00:00",
+          "value": 0.26,
+          "volume": 358.36
+        },
+        {
+          "at": "2026-10-03T23:33:00+00:00",
+          "value": 0.26,
+          "volume": 500.0
+        },
+        {
+          "at": "2026-10-03T23:41:00+00:00",
+          "value": 0.26,
+          "volume": 18.28
+        },
+        {
+          "at": "2026-10-03T23:50:00+00:00",
+          "value": 0.26,
+          "volume": 5.52
+        },
+        {
+          "at": "2026-10-03T23:58:00+00:00",
+          "value": 0.26,
+          "volume": 274.25
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:58:00+00:00",
+        "value": 0.26,
+        "volume": 274.25
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:27",
+      "contributor": 243943083,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINNFOLIGNO71-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Nick Foligno: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943083
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3535.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:27",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Nick Foligno: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943083],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3535.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:27\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:25:00+00:00",
+          "value": 0.1,
+          "volume": 235.18
+        },
+        {
+          "at": "2026-10-03T23:54:00+00:00",
+          "value": 0.1,
+          "volume": 47.03
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:54:00+00:00",
+        "value": 0.1,
+        "volume": 47.03
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:28",
+      "contributor": 243943084,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSNZADOROV91-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Nikita Zadorov: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943084
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3042021.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:28",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Nikita Zadorov: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943084],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3042021.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:28\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:22:00+00:00",
+          "value": 0.06,
+          "volume": 125.09
+        },
+        {
+          "at": "2026-10-03T23:42:00+00:00",
+          "value": 0.06,
+          "volume": 187.5
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:42:00+00:00",
+        "value": 0.06,
+        "volume": 187.5
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:29",
+      "contributor": 243943085,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINOMAATTA3-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Olli Maatta: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943085
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2976850.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:29",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Olli Maatta: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943085],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/2976850.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:29\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:56:00+00:00",
+          "value": 0.05,
+          "volume": 93.76
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:56:00+00:00",
+        "value": 0.05,
+        "volume": 93.76
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:30",
+      "contributor": 243943086,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSPZACHA18-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Pavel Zacha: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943086
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3899949.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:30",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Pavel Zacha: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943086],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3899949.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:30\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:58:00+00:00",
+          "value": 0.24,
+          "volume": 197.8
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:58:00+00:00",
+        "value": 0.24,
+        "volume": 197.8
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:31",
+      "contributor": 243943088,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINRHARTMAN38-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Ryan Hartman: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943088
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3042063.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:31",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Ryan Hartman: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943088],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3042063.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:31\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:14:00+00:00",
+          "value": 0.25,
+          "volume": 3097.0
+        },
+        {
+          "at": "2026-10-03T23:15:00+00:00",
+          "value": 0.25,
+          "volume": 3092.0
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:15:00+00:00",
+        "value": 0.25,
+        "volume": 3092.0
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:32",
+      "contributor": 243943089,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSSKURALY52-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Sean Kuraly: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943089
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/2564154.png",
+        "player_team": "away",
+        "key": "nhl-15169793-game-markets.json:player_props:32",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Sean Kuraly: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943089],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/2564154.png\",\"player_team\":\"away\",\"key\":\"nhl-15169793-game-markets.json:player_props:32\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:29:00+00:00",
+          "value": 0.08,
+          "volume": 29.9
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:29:00+00:00",
+        "value": 0.08,
+        "volume": 29.9
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:33",
+      "contributor": 243943091,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-BOSWBORGEN17-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "William Borgen: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943091
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": null,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "key": "nhl-15169793-game-markets.json:player_props:33",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"William Borgen: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943091],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":null,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"key\":\"nhl-15169793-game-markets.json:player_props:33\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [],
+      "baseline": null
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:34",
+      "contributor": 243943092,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINYTRENIN13-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Yakov Trenin: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943092
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3904188.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:34",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Yakov Trenin: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943092],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/3904188.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:34\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "at": "2026-10-03T23:26:00+00:00",
+          "value": 0.11,
+          "volume": 82.32
+        }
+      ],
+      "baseline": {
+        "at": "2026-10-03T23:26:00+00:00",
+        "value": 0.11,
+        "volume": 82.32
+      }
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:player_props:35",
+      "contributor": 243943093,
+      "ticker": "KXNHLGOAL-26OCT03BOSMIN-MINZBOGOSIAN24-1",
+      "original": {
+        "market_name": "Boston vs Minnesota: Goals",
+        "outcome_name": "Zach Bogosian: 1+",
+        "observed_at": null,
+        "contributor_outcome_ids": [
+          243943093
+        ],
+        "threshold": 1.0,
+        "over_probability": 0.0,
+        "opening_over_probability": null,
+        "pregame_mark": null,
+        "_inverted": false,
+        "source": "kalshi",
+        "movement": null,
+        "_market_id": 64870965,
+        "actual": 0.0,
+        "hit": false,
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4002.png",
+        "player_team": "home",
+        "key": "nhl-15169793-game-markets.json:player_props:35",
+        "category": "player_props",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"market_name\":\"Boston vs Minnesota: Goals\",\"outcome_name\":\"Zach Bogosian: 1+\",\"observed_at\":null,\"contributor_outcome_ids\":[243943093],\"threshold\":1.0,\"over_probability\":0.0,\"opening_over_probability\":null,\"pregame_mark\":null,\"_inverted\":false,\"source\":\"kalshi\",\"movement\":null,\"_market_id\":64870965,\"actual\":0.0,\"hit\":false,\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"player_headshot\":\"https://a.espncdn.com/i/headshots/nhl/players/full/4002.png\",\"player_team\":\"home\",\"key\":\"nhl-15169793-game-markets.json:player_props:35\",\"category\":\"player_props\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [],
+      "baseline": null
+    }
+  ]
+}

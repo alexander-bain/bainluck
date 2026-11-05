@@ -1,7 +1,7 @@
-"""#10090: pin the Python-leg CodeQL config (lane1's guard from its review of PR #11698).
+"""#10090 / #12038: pin the CodeQL config (lane1's guard from its review of PR #11698).
 
 The init-step allowance pins `config-file` to one path; this pins what that path
-says, so the scope stays Alex's approval (Python leg, backend/tests/** only).
+says, so the scope stays exact (`backend/tests/**` and `docs/designs/**` only).
 """
 from pathlib import Path
 
@@ -15,4 +15,4 @@ def test_python_codeql_config_skips_backend_tests_and_nothing_else():
         (ROOT / ".github/codeql/codeql-config.yml").read_text()
     )
     assert set(config) == {"name", "paths-ignore"}
-    assert config["paths-ignore"] == ["backend/tests/**"]
+    assert config["paths-ignore"] == ["backend/tests/**", "docs/designs/**"]

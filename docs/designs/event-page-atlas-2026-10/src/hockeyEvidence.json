@@ -1,0 +1,6152 @@
+{
+  "eventID": 15169793,
+  "marketID": 63539066,
+  "verifiedStart": true,
+  "start": "2026-10-04T00:00:00+00:00",
+  "home": "Minnesota Wild",
+  "away": "Boston Bruins",
+  "homeScore": 4,
+  "awayScore": 1,
+  "actual": 5,
+  "actualAt": "2026-10-04T05:59:38.451734+00:00",
+  "points": [
+    {
+      "key": "nhl-15169793-game-markets.json:totals:0",
+      "count": 2,
+      "original": {
+        "threshold": 1.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 1.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380538
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.05,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:0",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":1.5,\"over_probability\":1.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 1.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380538],\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"movement\":0.05,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:0\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.95,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.82,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.835,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.89,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.895,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.895,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.985,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.98,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:1",
+      "count": 3,
+      "original": {
+        "threshold": 2.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 2.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380537
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.04,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:1",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":2.5,\"over_probability\":1.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 2.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380537],\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"movement\":0.04,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:1\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.945,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.94,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.95,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.945,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.945,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.95,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.95,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.955,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.975,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.935,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.97,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.965,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.96,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:2",
+      "count": 4,
+      "original": {
+        "threshold": 3.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 3.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380539
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.15,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:2",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":3.5,\"over_probability\":1.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 3.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380539],\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"movement\":0.15,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:2\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.845,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.845,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.845,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.85,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.86,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.865,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.925,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.845,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.83,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.82,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.885,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.885,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.94,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.93,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.915,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:3",
+      "count": 5,
+      "original": {
+        "threshold": 4.5,
+        "over_probability": 1.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 4.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380540
+        ],
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "movement": 0.25,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:3",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":4.5,\"over_probability\":1.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 4.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380540],\"is_winner\":true,\"resolution_source\":\"api_settlement\",\"movement\":0.25,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:3\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.75,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.75,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.765,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.755,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.74,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.74,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.74,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.745,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.755,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.745,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.735,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.775,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.77,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.775,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.79,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.78,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.79,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.79,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.79,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.79,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.79,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.795,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.875,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.88,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.785,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.745,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.725,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.725,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.725,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.715,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.8,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.775,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.87,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.81,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.81,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.81,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.76,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.925,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.845,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.855,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.765,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.67,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.995,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 1.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:4",
+      "count": 6,
+      "original": {
+        "threshold": 5.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 5.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380541
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.545,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:4",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":5.5,\"over_probability\":0.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 5.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380541],\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"movement\":-0.545,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:4\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.56,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.555,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.555,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.54,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.555,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.555,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.555,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.545,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.55,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.575,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.56,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.575,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.575,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.575,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.575,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.585,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.685,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.675,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.52,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.42,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.465,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.465,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.415,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.415,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.415,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.355,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.415,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.365,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.205,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.2,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.12,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:5",
+      "count": 7,
+      "original": {
+        "threshold": 6.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 6.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380542
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.435,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:5",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":6.5,\"over_probability\":0.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 6.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380542],\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"movement\":-0.435,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:5\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.43,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.415,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.42,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.405,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.41,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.415,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.41,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.43,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.415,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.425,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.43,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.45,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.44,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.44,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.44,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.45,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.45,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.45,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.45,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.445,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.455,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.475,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.57,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.565,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.405,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.345,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.325,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.325,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.325,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.305,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.335,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.32,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.435,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.2,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.34,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.205,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.095,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.09,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.07,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:6",
+      "count": 8,
+      "original": {
+        "threshold": 7.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 7.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380543
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.245,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:6",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":7.5,\"over_probability\":0.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 7.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380543],\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"movement\":-0.245,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:6\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.25,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.25,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.27,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.27,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.25,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.27,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.25,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.24,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.24,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.25,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.25,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.26,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.245,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.25,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.26,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.26,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.255,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.26,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.26,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.26,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.27,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.26,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.27,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.27,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.27,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.265,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.395,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.335,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.13,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.13,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.135,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.13,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.15,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.14,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.145,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.145,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.06,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.065,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.01,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.02,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:7",
+      "count": 9,
+      "original": {
+        "threshold": 8.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 8.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380544
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.155,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:7",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":8.5,\"over_probability\":0.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 8.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380544],\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"movement\":-0.155,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:7\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.17,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.155,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.15,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.15,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.16,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.16,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.15,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.16,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.165,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.175,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.19,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.185,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.18,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.28,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.225,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.125,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.105,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.095,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.095,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.095,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.09,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.13,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.045,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.045,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.045,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.065,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.035,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.02,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.01,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.01,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.01,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    },
+    {
+      "key": "nhl-15169793-game-markets.json:totals:8",
+      "count": 10,
+      "original": {
+        "threshold": 9.5,
+        "over_probability": 0.0,
+        "source": "kalshi",
+        "market_type": "game_total",
+        "market_name": "Boston vs Minnesota: Total Goals",
+        "outcome_name": "Over 9.5 goals scored",
+        "observed_at": "2026-10-04T02:46:43.395259+00:00",
+        "contributor_outcome_ids": [
+          239380545
+        ],
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "movement": -0.075,
+        "period": null,
+        "_market_id": 63539066,
+        "_external_id": "KXNHLTOTAL-26OCT03BOSMIN",
+        "key": "nhl-15169793-game-markets.json:totals:8",
+        "category": "totals",
+        "source_file": "nhl-15169793-game-markets.json"
+      },
+      "originalJSON": "{\"threshold\":9.5,\"over_probability\":0.0,\"source\":\"kalshi\",\"market_type\":\"game_total\",\"market_name\":\"Boston vs Minnesota: Total Goals\",\"outcome_name\":\"Over 9.5 goals scored\",\"observed_at\":\"2026-10-04T02:46:43.395259+00:00\",\"contributor_outcome_ids\":[239380545],\"is_winner\":false,\"resolution_source\":\"api_settlement\",\"movement\":-0.075,\"period\":null,\"_market_id\":63539066,\"_external_id\":\"KXNHLTOTAL-26OCT03BOSMIN\",\"key\":\"nhl-15169793-game-markets.json:totals:8\",\"category\":\"totals\",\"source_file\":\"nhl-15169793-game-markets.json\"}",
+      "observations": [
+        {
+          "timestamp": "2026-10-01T03:03:04.721898+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T03:37:07.957531+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T04:41:22.673271+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:06:09.660961+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T05:34:41.569493+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:20:00.064669+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T06:50:04.591359+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T07:30:03.001283+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T08:35:32.883819+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:01:59.724760+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T09:37:24.673680+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:03:34.458839+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T11:28:42.892268+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T12:48:57.936359+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T13:26:44.037552+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:26:36.561222+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T14:59:43.978289+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T16:31:16.022473+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T17:07:49.709294+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T18:44:02.513910+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:07:28.474495+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T19:41:42.378167+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T21:04:35.887792+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-01T22:52:44.600323+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:42:32.326028+00:00",
+          "probability": 0.06,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T00:58:30.663533+00:00",
+          "probability": 0.06,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T02:33:52.774187+00:00",
+          "probability": 0.065,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T04:20:27.407049+00:00",
+          "probability": 0.055,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T05:43:05.524075+00:00",
+          "probability": 0.055,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T07:11:34.594294+00:00",
+          "probability": 0.055,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:19:41.455331+00:00",
+          "probability": 0.055,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T09:48:26.249839+00:00",
+          "probability": 0.055,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T11:13:20.203970+00:00",
+          "probability": 0.07,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T12:53:57.296195+00:00",
+          "probability": 0.06,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:29:41.114738+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T14:55:37.055732+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T16:49:44.000936+00:00",
+          "probability": 0.07,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T18:56:02.688879+00:00",
+          "probability": 0.07,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-02T23:03:52.005501+00:00",
+          "probability": 0.07,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T01:03:58.581742+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:16:24.918107+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T03:56:56.124952+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T05:06:40.371474+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T06:20:00.144298+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T07:02:30.945453+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:20:01.798584+00:00",
+          "probability": 0.09,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T09:47:02.821767+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T10:57:46.294856+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:29:35.318914+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T12:50:31.653092+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T14:28:42.354421+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:05:10.311905+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T15:30:50.882505+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:36:04.484353+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T16:58:49.741046+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T17:42:29.435610+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T18:24:39.470389+00:00",
+          "probability": 0.08,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T19:20:00.081684+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:29:55.522328+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T20:57:19.195789+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:00:17.229881+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:12:17.236031+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:16:17.265747+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:20:17.268911+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:24:17.254677+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:28:17.280306+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:36:17.308911+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:40:17.323867+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:44:17.304256+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T21:50:17.326573+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:06:17.338417+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:10:17.292778+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:24:17.323270+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:29:18.252138+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:44:17.345332+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:48:43.263953+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T22:56:43.274030+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:04:43.266393+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:08:43.321437+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:12:43.262558+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:00.082515+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:20:43.333448+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:24:43.295100+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:32:43.317575+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:38:43.317285+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:42:43.327588+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-03T23:54:43.297293+00:00",
+          "probability": 0.085,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:18:43.302419+00:00",
+          "probability": 0.135,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:26:43.317660+00:00",
+          "probability": 0.11,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:46:43.334837+00:00",
+          "probability": 0.055,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T00:54:01.447857+00:00",
+          "probability": 0.045,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:02:43.327795+00:00",
+          "probability": 0.035,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:06:43.318645+00:00",
+          "probability": 0.03,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:10:43.332872+00:00",
+          "probability": 0.035,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:14:43.331548+00:00",
+          "probability": 0.04,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:43.358860+00:00",
+          "probability": 0.05,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:26:57.585124+00:00",
+          "probability": 0.045,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:48:43.340113+00:00",
+          "probability": 0.075,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T01:52:43.389467+00:00",
+          "probability": 0.025,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:04:43.405476+00:00",
+          "probability": 0.03,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:08:43.378226+00:00",
+          "probability": 0.025,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:12:43.340805+00:00",
+          "probability": 0.05,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:16:43.377040+00:00",
+          "probability": 0.05,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:28:43.406669+00:00",
+          "probability": 0.03,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:34:43.390701+00:00",
+          "probability": 0.045,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:38:43.350688+00:00",
+          "probability": 0.01,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:42:43.402425+00:00",
+          "probability": 0.01,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-04T02:46:43.395259+00:00",
+          "probability": 0.01,
+          "american_odds": null,
+          "bookmaker": "consensus"
+        },
+        {
+          "timestamp": "2026-10-06T00:00:00+00:00",
+          "probability": 0.0,
+          "american_odds": null,
+          "bookmaker": "settlement"
+        }
+      ]
+    }
+  ]
+}

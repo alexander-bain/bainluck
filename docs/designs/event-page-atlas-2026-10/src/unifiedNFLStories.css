@@ -1,0 +1,23 @@
+.uf-reader-values{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%}.uf-reader-values>div{display:flex;flex-direction:column;gap:5px}.uf-reader-values span,.uf-reader-values small{font-size:11px;font-weight:400;color:var(--text-secondary)}.uf-reader-values strong{font-size:15px}.uf-source{border:0;background:none;text-align:left;padding:0;color:var(--series-home);font:inherit;min-height:44px;line-height:1.3}.cf-large .uf-reader-values span,.cf-large .uf-reader-values small,.cf-large .uf-reader-values strong{font-size:16px}.uf-stories .cy-card:not(.cy-expanded) .cy-plot{height:175px}.uf-stories .cy-card:not(.cy-expanded) h2{margin-bottom:10px}.uf-stories .cy-card:not(.cy-expanded) .cy-headline{margin-bottom:8px}.uf-stories .cy-card:not(.cy-expanded) .cy-parts{height:44px}.uf-stories .cy-card:not(.cy-expanded) .cy-selection{margin-top:8px}.uf-stories .cy-card:not(.cy-expanded) .cy-note{margin-bottom:0}.uf-stories.cy-large .cy-card:not(.cy-expanded) .cy-plot{height:230px}.cy-event.wide-content .uf-stories .cy-card:not(.cy-expanded) .cy-plot{height:230px}
+
+.cf-view:has(.uf-reader-title) .cf-slide[inert]{visibility:hidden}.uf-contract{font-size:11px}.cf-large .uf-contract{font-size:16px}
+
+/* Short laptop windows retain a full-size probability chart by using width
+   for the score/projection and reducing app chrome, not the plot height. */
+@media (max-height:850px){
+ .uf-event.wide-content:not(.large-text){padding-top:12px}
+ .uf-event.wide-content:not(.large-text)>.brand{height:45px;padding-bottom:4px;margin-bottom:2px}
+ .uf-event.wide-content:not(.large-text)>.context{height:22px;margin-bottom:2px}
+ .uf-event.wide-content:not(.large-text)>.phase-control{height:44px;padding:0}
+ .uf-event.wide-content:not(.large-text) .final-outcome-header{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:18px}
+ .uf-event.wide-content:not(.large-text) .final-contenders{gap:14px}
+ .uf-event.wide-content:not(.large-text) .final-contender{gap:5px}
+ .uf-event.wide-content:not(.large-text) .final-name{min-height:0;font-size:14px}
+ .uf-event.wide-content:not(.large-text) .final-baseline{font-size:36px}
+ .uf-event.wide-content:not(.large-text) .final-score-projection{display:grid;grid-template-columns:1fr;gap:8px;margin:0;padding:0;border:0}
+ .uf-event.wide-content:not(.large-text) .final-score{font-size:28px}
+ .uf-event.wide-content:not(.large-text) .hero{padding:18px}
+ .uf-event.wide-content:not(.large-text)>.primary-grid{max-height:calc(100dvh - 195px)}
+}
+
+.cy-headline .cy-contract-result{font-size:11px;color:var(--text-primary);line-height:1.3}.cy-large .cy-headline .cy-contract-result{font-size:16px}

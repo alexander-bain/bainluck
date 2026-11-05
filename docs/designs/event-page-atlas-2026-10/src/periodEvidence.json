@@ -1,0 +1,204 @@
+{
+  "eventID": 14780558,
+  "start": "2026-10-13T00:15:00+00:00",
+  "rows": [
+    {
+      "key": "pregame:period_markets:64788683:243648398",
+      "quarter": 1,
+      "side": "home",
+      "label": "Rams",
+      "baseline": {
+        "value": 0.45,
+        "at": "2026-10-12T06:16:00+00:00",
+        "volume": 10.69,
+        "intervalMinutes": 1
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL1Q-26OCT12BUFLAR-LAR",
+      "rules": "If Los Angeles R wins the 1st Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 1st Quarter. Only points scored during the 1st Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.969364+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788683:243648396",
+      "quarter": 1,
+      "side": "away",
+      "label": "Bills",
+      "baseline": {
+        "value": 0.37,
+        "at": "2026-10-12T05:50:00+00:00",
+        "volume": 31.37,
+        "intervalMinutes": 1
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL1Q-26OCT12BUFLAR-BUF",
+      "rules": "If Buffalo wins the 1st Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 1st Quarter. Only points scored during the 1st Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.969364+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788683:243648397",
+      "quarter": 1,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": {
+        "value": 0.19,
+        "at": "2026-10-12T06:37:00+00:00",
+        "volume": 1.0,
+        "intervalMinutes": 1
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL1Q-26OCT12BUFLAR-TIE",
+      "rules": "If neither team wins the 1st Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 1st Quarter. Only points scored during the 1st Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.969364+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788684:243648399",
+      "quarter": 2,
+      "side": "home",
+      "label": "Rams",
+      "baseline": null,
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL2Q-26OCT12BUFLAR-LAR",
+      "rules": "If Los Angeles R wins the 2nd Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 2nd Quarter. Only points scored during the 2nd Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.990347+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788684:243648400",
+      "quarter": 2,
+      "side": "away",
+      "label": "Bills",
+      "baseline": {
+        "value": 0.39,
+        "at": "2026-10-12T05:00:00+00:00",
+        "volume": 166.19,
+        "intervalMinutes": 60
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL2Q-26OCT12BUFLAR-BUF",
+      "rules": "If Buffalo wins the 2nd Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 2nd Quarter. Only points scored during the 2nd Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.990347+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788684:243648401",
+      "quarter": 2,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": null,
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL2Q-26OCT12BUFLAR-TIE",
+      "rules": "If neither team wins the 2nd Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 2nd Quarter. Only points scored during the 2nd Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.990347+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788685:243648404",
+      "quarter": 3,
+      "side": "home",
+      "label": "Rams",
+      "baseline": {
+        "value": 0.47,
+        "at": "2026-10-12T05:00:00+00:00",
+        "volume": 51.0,
+        "intervalMinutes": 60
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL3Q-26OCT12BUFLAR-LAR",
+      "rules": "If Los Angeles R wins the 3rd Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 3rd Quarter. Only points scored during the 3rd Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.971672+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788685:243648402",
+      "quarter": 3,
+      "side": "away",
+      "label": "Bills",
+      "baseline": {
+        "value": 0.36,
+        "at": "2026-10-12T05:00:00+00:00",
+        "volume": 13.29,
+        "intervalMinutes": 60
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL3Q-26OCT12BUFLAR-BUF",
+      "rules": "If Buffalo wins the 3rd Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 3rd Quarter. Only points scored during the 3rd Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.971672+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788685:243648403",
+      "quarter": 3,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": {
+        "value": 0.18,
+        "at": "2026-10-12T03:00:00+00:00",
+        "volume": 73.26,
+        "intervalMinutes": 60
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL3Q-26OCT12BUFLAR-TIE",
+      "rules": "If neither team wins the 3rd Quarter of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 3rd Quarter. Only points scored during the 3rd Quarter of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.971672+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788686:243648406",
+      "quarter": 4,
+      "side": "home",
+      "label": "Rams",
+      "baseline": null,
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL4Q-26OCT12BUFLAR-LAR",
+      "rules": "If Los Angeles R wins the 4th Quarter (excluding overtime) of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 4th Quarter (excluding overtime). Only points scored during the 4th Quarter (excluding overtime) of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.993825+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788686:243648407",
+      "quarter": 4,
+      "side": "away",
+      "label": "Bills",
+      "baseline": {
+        "value": 0.43,
+        "at": "2026-10-12T05:00:00+00:00",
+        "volume": 134.71,
+        "intervalMinutes": 60
+      },
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL4Q-26OCT12BUFLAR-BUF",
+      "rules": "If Buffalo wins the 4th Quarter (excluding overtime) of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 4th Quarter (excluding overtime). Only points scored during the 4th Quarter (excluding overtime) of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.993825+00:00"
+    },
+    {
+      "key": "pregame:period_markets:64788686:243648405",
+      "quarter": 4,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": null,
+      "recent": null,
+      "recentReason": "no_recent_trade",
+      "ticker": "KXNFL4Q-26OCT12BUFLAR-TIE",
+      "rules": "If neither team wins the 4th Quarter (excluding overtime) of the BUF Bills vs LA Rams Pro Football game originally scheduled for Oct 12, 2026, then the market resolves to Yes.",
+      "secondary": "The following market refers to the team that scores the most points during the 4th Quarter (excluding overtime). Only points scored during the 4th Quarter (excluding overtime) of play count towards this market. If both teams score the same amount of points during the quarter, all team strikes resolve to No and the Tie strike resolves to Yes.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "bookAt": "2026-10-12T06:52:08.993825+00:00"
+    }
+  ],
+  "scope": "pregame historical trades; not current probability or synchronized distribution",
+  "historyPolicy": "Last positive-volume candle before capture and kickoff; minute resolution preferred within the final two-hour capture; otherwise hourly close with explicit hour-ending clock."
+}
