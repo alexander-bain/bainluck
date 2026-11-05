@@ -164,8 +164,8 @@ describe('Step F2 — Atlas futures bodies by stored shape (#883)', () => {
 
       expect(multiVenueHtml).toContain('data-testid="atlas-duel-body"');
       expect(multiVenueHtml).not.toContain('since opening');
-      expect(multiVenueHtml).toContain('Unavailable');
-      expect(multiVenueHtml).toContain('data-testid="atlas-dial-multivenue-note"');
+      expect(multiVenueHtml).not.toContain('data-testid="atlas-dial-opening-value"');
+      expect(multiVenueHtml).not.toContain('48%');
     });
   });
 

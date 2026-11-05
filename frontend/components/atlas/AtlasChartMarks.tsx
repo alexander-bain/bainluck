@@ -168,7 +168,7 @@ export function AtlasSeriesReadingMarks({
                 cx={pt.x}
                 cy={pt.y}
                 r={isSelected ? 5 : 4}
-                fill="#FFFFFF"
+                className="fill-surface-card"
                 stroke={color}
                 strokeWidth={isSelected ? 2.5 : 2}
                 strokeOpacity={opacity}
@@ -184,7 +184,7 @@ export function AtlasSeriesReadingMarks({
                   r={isSelected ? 4.5 : 3}
                   fill={color}
                   fillOpacity={opacity}
-                  stroke={isSelected ? "#FFFFFF" : undefined}
+                  className={isSelected ? "stroke-surface-card" : undefined}
                   strokeWidth={isSelected ? 1.5 : undefined}
                 />
               )
