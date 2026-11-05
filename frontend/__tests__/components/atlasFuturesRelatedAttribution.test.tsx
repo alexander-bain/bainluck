@@ -1,14 +1,81 @@
-import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+/** @jest-environment jsdom */
+
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import RelatedByTag from '@/components/RelatedByTag';
 import { formatAtlasAttribution } from '@/components/atlas/atlasStateCopy';
 
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+
+function renderHtml(element: React.ReactElement): string {
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  act(() => {
+    root.render(element);
+  });
+  const html = container.innerHTML;
+  act(() => {
+    root.unmount();
+  });
+  return html;
+}
+
 let swrPayload: unknown;
+let searchParamsStr = '';
+let futuresMarketPayload: unknown;
+
+jest.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(searchParamsStr),
+  useRouter: () => ({ replace: () => {}, push: () => {} }),
+}));
+
+jest.mock('@/hooks', () => ({
+  usePageTracking: () => {},
+  useScrollDepth: () => {},
+  useEngagementTime: () => {},
+  usePinnedFutures: () => ({
+    isPinned: () => false,
+    togglePin: () => {},
+    isMaxReached: false,
+  }),
+}));
+
+jest.mock('@/components/Analytics', () => ({
+  useAnalyticsContext: () => ({ track: () => {} }),
+}));
+
+jest.mock('@/hooks/useMarketStream', () => ({
+  useMarketStream: () => {},
+}));
+
+jest.mock('@/hooks/useFuturesDetailStream', () => ({
+  useFuturesDetailStream: () => {},
+}));
 
 jest.mock('swr', () => ({
   __esModule: true,
-  default: () => ({ data: swrPayload, error: undefined, isLoading: false }),
+  default: (key: unknown) => {
+    if (Array.isArray(key) && key[0] === 'futures-market') {
+      return {
+        data: futuresMarketPayload,
+        error: undefined,
+        isLoading: false,
+        mutate: () => {},
+      };
+    }
+    if (Array.isArray(key) && key[0] === 'futures-history') {
+      return {
+        data: undefined,
+        error: undefined,
+        isLoading: false,
+        mutate: () => {},
+      };
+    }
+    return { data: swrPayload, error: undefined, isLoading: false, mutate: () => {} };
+  },
 }));
+
+import FuturesDetailPage from '../../app/futures/[id]/page';
 
 const SAMPLE_PAYLOAD = {
   items: [
@@ -64,7 +131,7 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
   });
 
   it('keeps default (atlas=false) markup byte-identical when atlas is omitted', () => {
-    const defaultHtml = renderToStaticMarkup(
+    const defaultHtml = renderHtml(
       <RelatedByTag
         tags={['sport:politics']}
         excludeId={999}
@@ -73,7 +140,7 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
         title="More Politics"
       />,
     );
-    const explicitFalseHtml = renderToStaticMarkup(
+    const explicitFalseHtml = renderHtml(
       <RelatedByTag
         tags={['sport:politics']}
         excludeId={999}
@@ -90,7 +157,7 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
   });
 
   it('renders Keep exploring eyebrow and predicate headings when atlas=true while preserving card fields', () => {
-    const html = renderToStaticMarkup(
+    const html = renderHtml(
       <RelatedByTag
         tags={['sport:politics']}
         excludeId={999}
@@ -124,5 +191,76 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
         sourceLabels: ['Kalshi', 'Polymarket'],
       }),
     ).toBe('Kalshi · Polymarket');
+  });
+
+  it('renders the attribution footer under ?atlas=1 and opens AtlasDetailsSheet when Market details is clicked', async () => {
+    searchParamsStr = 'atlas=1';
+    futuresMarketPayload = {
+      id: 108629,
+      name: 'Which state will have the closest Governor race?',
+      status: 'open',
+      mutually_exclusive: true,
+      source: 'kalshi',
+      source_count: 1,
+      external_id: 'KXGOVCLOSEST-26-FL',
+      created_at: '2026-10-01T00:00:00Z',
+      updated_at: '2026-11-03T18:00:00Z',
+      outcomes: [
+        {
+          id: 1,
+          name: 'Florida',
+          probability: 0.29,
+          rendered_percent: 29,
+          rank: 1,
+          is_winner: false,
+          last_updated: '2026-11-03T18:00:00Z',
+        },
+        {
+          id: 2,
+          name: 'Wisconsin',
+          probability: 0.21,
+          rendered_percent: 21,
+          rank: 2,
+          is_winner: false,
+          last_updated: '2026-11-03T18:00:00Z',
+        },
+      ],
+    };
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<FuturesDetailPage params={{ id: '108629' }} />);
+      });
+
+      const footer = container.querySelector(
+        '[data-testid="atlas-attribution-footer"]',
+      );
+      expect(footer).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="atlas-attribution-source"]')?.textContent,
+      ).toBe('Kalshi');
+      expect(container.querySelector('[data-testid="atlas-details-sheet"]')).toBeNull();
+
+      const detailsButton = container.querySelector(
+        '[data-testid="atlas-attribution-details-button"]',
+      ) as HTMLButtonElement;
+      expect(detailsButton).not.toBeNull();
+      expect(detailsButton.textContent).toBe('Market details');
+
+      await act(async () => {
+        detailsButton.click();
+      });
+
+      expect(container.querySelector('[data-testid="atlas-details-sheet"]')).not.toBeNull();
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+      searchParamsStr = '';
+    }
   });
 });
