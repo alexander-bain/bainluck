@@ -1,10 +1,12 @@
 """#12013: actual venue results, live contracts and pending closed contracts differ."""
 
 import json
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from sqlalchemy import text
 
@@ -17,7 +19,7 @@ NOW = datetime(2026, 11, 4, 22, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def subject(db, monkeypatch):
+def subject(db, monkeypatch):  # noqa: F811 - imported pytest fixture
     monkeypatch.setattr(repair, "utc_now", lambda: NOW)
     db.connection.execute(
         text("ALTER TABLE futures_outcomes ADD COLUMN current_american_odds INTEGER")
@@ -53,7 +55,7 @@ def event(*, result="", status="active", close="2026-11-08T15:00:00Z"):
     }  # The real API also carries an empty top-level list.
 
 
-async def backup_rows(db):
+async def backup_rows(db):  # noqa: F811 - imported pytest fixture
     return (await db.execute(text(f"SELECT * FROM {repair.BACKUP_TABLE}"))).all()
 
 
@@ -264,3 +266,201 @@ def test_cli_requires_exact_scope_and_never_defaults_to_apply(monkeypatch):
     with pytest.raises(SystemExit) as error:
         repair.main()
     assert error.value.code == 0
+
+
+def archived_leg(**changes):
+    record = {
+        "ticker": "ARCHIVED",
+        "event_ticker": "SWEEP",
+        "status": "finalized",
+        "result": "no",
+        "close_time": "2026-01-01T08:06:53Z",
+        "settlement_ts": "2026-01-01T10:05:05Z",
+    }
+    return {**record, **changes}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("apply", [False, True])
+async def test_default_appendix_path_uses_exact_archive_result_and_preserves_live_leg(
+    subject, monkeypatch, apply
+):
+    from app.tasks import base
+
+    await subject.execute(
+        text(
+            "INSERT INTO futures_outcomes (id,market_id,name,external_id,is_winner,resolution_source,current_probability,last_updated) "
+            "VALUES (1601727,:mid,'Old leg','ARCHIVED',FALSE,NULL,.01,'old'),"
+            "(1601728,:mid,'Already graded','OMITTED',FALSE,'api_settlement',0,'authority')"
+        ),
+        {"mid": MID},
+    )
+    await subject.commit()
+    before = await repair.appendix_snapshot(subject, MID)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url)
+        if request.url.path.endswith("/events/SWEEP"):
+            return httpx.Response(200, json=event())
+        assert request.url.path.endswith("/historical/markets")
+        assert dict(request.url.params) == {"event_ticker": "SWEEP", "limit": "200"}
+        return httpx.Response(200, json={"markets": [archived_leg()], "cursor": ""})
+
+    @asynccontextmanager
+    async def session(**bounds):
+        assert bounds == {"statement_timeout_ms": 15000, "lock_timeout_ms": 5000}
+        yield subject
+
+    client = httpx.AsyncClient
+    monkeypatch.setattr(base, "get_task_session", session)
+    monkeypatch.setattr(
+        repair.httpx,
+        "AsyncClient",
+        lambda **kw: client(transport=httpx.MockTransport(handler), **kw),
+    )
+    monkeypatch.setattr(repair.asyncio, "sleep", AsyncMock())
+    assert await repair.run_appendix(only_ids={MID}, apply=apply) == 0
+    after = await repair.appendix_snapshot(subject, MID)
+    assert len(calls) == 2
+    if not apply:
+        assert after == before and await backup_rows(subject) == []
+    else:
+        assert after[0]["status"] == "open" and after[0]["settled_at"] is None
+        assert after[1][0]["is_winner"] is None
+        assert after[1][0]["resolution_source"] is None
+        for key in [
+            "current_probability",
+            "current_american_odds",
+            "last_updated",
+            "price_changed_at",
+        ]:
+            assert after[1][0][key] == before[1][0][key]
+        assert after[1][1]["is_winner"] == 0
+        assert after[1][1]["resolution_source"] == "api_settlement"
+        assert after[1][1]["current_probability"] == 0
+        assert after[1][2] == before[1][2]
+        assert len(await backup_rows(subject)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"event_ticker": "WRONG"},
+        {"status": "active"},
+        {"result": ""},
+        {"result": "scalar"},
+        {"settlement_ts": None},
+        {"settlement_ts": "invalid"},
+    ],
+)
+async def test_archive_never_supplies_a_guessed_or_wrong_event_grade(changes):
+    async with httpx.AsyncClient(
+        base_url=repair.PUBLIC_API,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"markets": [archived_leg(**changes)]}
+            )
+        ),
+    ) as client:
+        with pytest.raises(ValueError, match="exact binary venue settlement"):
+            await repair.read_appendix_archive(client, "SWEEP", {"ARCHIVED"})
+
+
+@pytest.mark.asyncio
+async def test_other_archive_tickers_cannot_fill_a_missing_stored_leg():
+    async with httpx.AsyncClient(
+        base_url=repair.PUBLIC_API,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"markets": [archived_leg(ticker="OTHER")]}
+            )
+        ),
+    ) as client:
+        assert await repair.read_appendix_archive(client, "SWEEP", {"ARCHIVED"}) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_empty", [False, True])
+async def test_archive_pagination_is_complete_and_duplicate_records_are_not_hidden(
+    first_empty,
+):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url)
+        cursor = request.url.params.get("cursor")
+        return httpx.Response(
+            200,
+            json={
+                "markets": [] if first_empty and cursor is None else [archived_leg()],
+                "cursor": "next" if cursor is None else "",
+            },
+        )
+
+    async with httpx.AsyncClient(
+        base_url=repair.PUBLIC_API, transport=httpx.MockTransport(handler)
+    ) as client:
+        records = await repair.read_appendix_archive(client, "SWEEP", {"ARCHIVED"})
+    assert len(calls) == 2 and calls[1].params["cursor"] == "next"
+    assert len(records) == (1 if first_empty else 2)
+    market = {
+        "source": "kalshi",
+        "status": "resolved",
+        "settled_at": "old",
+        "external_id": "SWEEP",
+        "resolution_date": "2026-01-01T15:00:00Z",
+    }
+    legs = [
+        {
+            "id": 1,
+            "external_id": "ARCHIVED",
+            "is_winner": False,
+            "resolution_source": "ungradeable_result",
+        }
+    ]
+    payload = {"event": {"event_ticker": "SWEEP", "markets": records}}
+    plan = repair.appendix_plan(market, legs, payload)
+    assert plan["verdict"] == (
+        "would_reconcile" if first_empty else "venue_leg_missing_or_duplicated"
+    )
+    if first_empty:
+        assert plan["grades"] == [{"id": 1, "is_winner": False}]
+
+
+@pytest.mark.asyncio
+async def test_archive_rate_limit_stops_without_retry():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url)
+        return httpx.Response(429)
+
+    async with httpx.AsyncClient(
+        base_url=repair.PUBLIC_API, transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await repair.read_appendix_archive(client, "SWEEP", {"ARCHIVED"})
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cycle,expected_calls", [(True, 2), (False, 10)])
+async def test_incomplete_archive_walk_refuses_with_a_bounded_request_count(
+    cycle, expected_calls
+):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url)
+        return httpx.Response(
+            200, json={"markets": [], "cursor": "repeat" if cycle else str(len(calls))}
+        )
+
+    async with httpx.AsyncClient(
+        base_url=repair.PUBLIC_API, transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(ValueError, match="incomplete evidence"):
+            await repair.read_appendix_archive(client, "SWEEP", {"ARCHIVED"})
+    assert len(calls) == expected_calls
