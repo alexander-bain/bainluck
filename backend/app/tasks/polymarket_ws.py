@@ -4544,6 +4544,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     from app.utils.stream_history_points import StreamHistoryPoints
 
     blend_refresher.stream_history = StreamHistoryPoints("polymarket")
+    # #11929 27-B: observed spans (a span, not a row). Off unless
+    # `STREAM_OBSERVED_SPANS` names polymarket and its move points are on.
+    # Spans a dead run left open close at the venue heartbeat first.
+    from app.utils.stream_observed_spans import ObservedSpans
+
+    observed_spans = ObservedSpans("polymarket")
+    if observed_spans.enabled:
+        await observed_spans.recover(get_task_session)
     # #10090 decision J: `confirmed_at` for this venue's events. A buffered
     # withdrawal whose book prices a published leg out is a pending change
     # (the rule `flush_withdrawals` applies to the stored price).
@@ -7629,6 +7637,48 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 except Exception:  # noqa: BLE001 — never the stats heartbeat
                     history.stats["history_keepalive_errors"] += 1
                     logger.warning("Polymarket WS: keep-alive pass failed", exc_info=True)
+            # #11929 27-B: observed spans, after the keep-alive, in their own
+            # session and transaction. Failures are counted inside.
+            if observed_spans.enabled:
+                try:
+                    await observed_spans.tick(get_task_session, span_legs())
+                except Exception:  # noqa: BLE001 — never the stats heartbeat
+                    observed_spans.stats["spans_errors"] += 1
+                    logger.warning("Polymarket WS: observed spans tick failed", exc_info=True)
+                logger.info("Polymarket WS spans: %s", observed_spans.line())
+
+    def span_legs():
+        """#11929 27-B: outcome ids on a shard that is connected AND sent a data
+        frame within `SPAN_LIFE_S` (Alex: a silently dropped subscription never
+        prints "unchanged"). Game tokens through the game socket's live shards;
+        open-contract tokens, their mirrored legs and binary complements through
+        each open socket's own live shards. A client that cannot say which of
+        its shards are alive (no `live_asset_ids`) contributes nothing: no
+        proof of life, no span."""
+        from app.utils.stream_observed_spans import SPAN_LIFE_S
+
+        legs = []
+        live = getattr(ws, "live_asset_ids", None)
+        if callable(live):
+            tokens = live(SPAN_LIFE_S)
+            legs.extend(oid for token, oid in list(asset_to_outcome.items()) if token in tokens)
+        open_tokens: set = set()
+        for sock in list(open_sockets):
+            open_live = getattr(sock, "live_asset_ids", None)
+            if callable(open_live):
+                open_tokens |= open_live(SPAN_LIFE_S)
+        if open_tokens:
+            to_outcome = dict(open_asset_to_outcome)
+            mirrors = dict(open_asset_mirrors)
+            for token in open_tokens:
+                if token in to_outcome:
+                    legs.append(to_outcome[token])
+                legs.extend(oid for oid, _mid in mirrors.get(token, ()))
+        # #9733: a tick on a leg also prices its binary's other leg.
+        complements = dict(open_complement_of)
+        legs.extend([complements[oid] for oid in legs if oid in complements])
+        markets = market_by_outcome
+        return [oid for oid in legs if oid in markets]
 
     def keepalive_legs():
         """#11929: (outcome_id, market_id) of every leg a CONNECTED socket
@@ -8237,6 +8287,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     "recycle_reset" if stats.get("status") == "resubscribe"
                     else exit_reason
                 )
+            # #11929 27-B: the stats loop is reaped above, so no tick races
+            # this; every open span closes at its last tick alive. A failure or
+            # an interrupt leaves them for the next run's `recover`.
+            try:
+                stats["spans_closed_at_exit"] = await observed_spans.close_all(
+                    get_task_session,
+                )
+            except asyncio.CancelledError as exc:
+                history_interrupted = history_interrupted or exc
             if history_interrupted is not None:
                 raise history_interrupted
 
