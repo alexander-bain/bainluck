@@ -66,7 +66,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       expect(formatAtlasAttribution('kalshi')).toBe('Kalshi');
       expect(formatAtlasAttribution('polymarket')).toBe('Polymarket');
       expect(formatAtlasAttribution('kalshi', { sourceCount: 2 })).toBe(
-        'Kalshi and Polymarket',
+        'Both Kalshi and Polymarket',
       );
       expect(
         formatAtlasAttribution('kalshi', {
@@ -80,7 +80,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       });
       expect(kalshiLink).toEqual({
         url: 'https://kalshi.com/markets/kxdemswingstategovsweep',
-        label: 'Original market on Kalshi',
+        label: 'Original market',
         venueName: 'Kalshi',
       });
     });
@@ -250,7 +250,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       );
 
       expect(html).not.toContain('data-testid="atlas-details-opening"');
-      expect(html).toContain('Kalshi and Polymarket');
+      expect(html).toContain('Both Kalshi and Polymarket');
     });
 
     it('opens on one tap from FuturesHero and closes on Close button click', async () => {

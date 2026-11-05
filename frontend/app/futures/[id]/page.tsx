@@ -1513,6 +1513,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 cadenceNoteShown={trendCadenceNote != null}
                 seriesOrder={chartSeriesOrder}
                 historyWithheld={servedPartialHistory(historyData)}
+                atlas={atlasEnabled}
               />
             </div>
           )}

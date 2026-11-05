@@ -452,7 +452,7 @@ export default function FuturesShapeBody({
               </div>
               <div className="mt-0.5 text-[11px] text-text-muted">
                 {isMultiVenue
-                  ? "Blended opening not supplied"
+                  ? "Combined opening not supplied"
                   : "Single-venue opening"}
               </div>
             </div>
@@ -581,7 +581,7 @@ export default function FuturesShapeBody({
                 : changePoints != null
                   ? "since opening"
                   : isMultiVenue
-                    ? "Opening blend unavailable"
+                    ? "Combined opening unavailable"
                     : recorded == null
                       ? ATLAS_STATE_COPY.noRecentPrice
                       : "Recorded chance"}
@@ -617,7 +617,7 @@ export default function FuturesShapeBody({
               data-testid="atlas-dial-multivenue-note"
               className="mt-2 text-center text-xs text-text-secondary"
             >
-              A blended opening is not supplied. Each named side keeps its served chance.
+              A combined opening is not supplied. Each named side keeps its served chance.
             </p>
           )}
         </div>

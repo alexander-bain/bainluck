@@ -33,6 +33,14 @@ import {
   assignSeriesColors,
   fixedOrderSeriesColors,
 } from "@/lib/seriesColors";
+import {
+  AtlasChartMarkKey,
+  AtlasResultWordMark,
+  AtlasSelectedReadingReadout,
+  AtlasSeriesReadingMarks,
+  type AtlasSelectedReading,
+} from "@/components/atlas/AtlasChartMarks";
+import { formatAtlasTimestampPT } from "@/components/atlas/atlasStateCopy";
 
 // Series palettes live in the shared registry (L2-157, census class E). This
 // kernel is the flagship series surface, so its palette is the canonical one.
@@ -232,6 +240,12 @@ interface FuturesChartProps {
    *  in `lib/historyRange.ts`). One caption under the plot; the drawn points
    *  are unchanged. Absent everywhere a caller did not ask for the full range. */
   historyWithheld?: boolean;
+  /** #883 Step F3 — ?atlas=1 opt-in for shared mark grammar (hollow opening,
+   *  solid recorded readings, result as a word, tap any real reading for exact PT time,
+   *  step line shape per decision 11-A). */
+  atlas?: boolean;
+  /** Optional callback fired when a user taps a real reading on the chart under ?atlas=1. */
+  onSelectReading?: (reading: AtlasSelectedReading | null) => void;
 }
 
 export function FuturesChart({
@@ -245,7 +259,7 @@ export function FuturesChart({
   goldTheme = false,
   greenTheme = false,
   className,
-  stepInterpolation = false,
+  stepInterpolation,
   fixedYAxis = true,
   fieldCeiling = false,
   timeMarkers,
@@ -259,9 +273,12 @@ export function FuturesChart({
   cadenceNoteShown = false,
   seriesOrder,
   historyWithheld = false,
+  atlas = false,
+  onSelectReading,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
+  const effectiveStepInterpolation = stepInterpolation ?? atlas;
   const palette = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
 
   // #7813: the label a series prints in the legend and in the hover tooltip.
@@ -350,6 +367,16 @@ export function FuturesChart({
   // L2-164: zoom state for the opt-in low-prob zoom chip — also before any
   // early returns so the hooks order is stable.
   const [zoomed, setZoomed] = useState(false);
+
+  // #883 Step F3: selected real reading when a user taps a mark under ?atlas=1.
+  const [selectedReading, setSelectedReading] = useState<AtlasSelectedReading | null>(null);
+  const handleSelectReading = useCallback(
+    (reading: AtlasSelectedReading | null) => {
+      setSelectedReading(reading);
+      onSelectReading?.(reading);
+    },
+    [onSelectReading],
+  );
 
   // #3035: on a phone the plot overflows its card, and a scroll container rests
   // on its LEFT edge — the OLDEST data — so a live race opened on last week. Rest
@@ -660,6 +687,17 @@ export function FuturesChart({
 
   return (
     <div className={`${mini ? "" : "space-y-4"} ${className ?? ""}`}>
+      {atlas && !mini && (
+        <div className="space-y-2">
+          <AtlasChartMarkKey
+            settled={settled || resultMarkSpecs.length > 0}
+          />
+          <AtlasSelectedReadingReadout
+            reading={selectedReading}
+            onClear={() => handleSelectReading(null)}
+          />
+        </div>
+      )}
       {/* #3035: the fades must live OUTSIDE the scrolling element. Absolutely
           positioned children of an overflow container travel with its content,
           so a fade placed inside would slide off the edge it is meant to mark. */}
@@ -822,12 +860,19 @@ export function FuturesChart({
 
             {/* Lines */}
             {displayedOutcomes.map((outcome, idx) => {
-              const points = plottedOutcomes[idx].history
+              const readingPoints = plottedOutcomes[idx].history
                 .filter((p) => p.probability !== null)
                 .map((p) => {
                   const t = new Date(p.timestamp).getTime();
-                  return { t, x: xScale(t), y: yScale(p.probability!) };
+                  return {
+                    t,
+                    x: xScale(t),
+                    y: yScale(p.probability!),
+                    prob: p.probability!,
+                    timestamp: p.timestamp,
+                  };
                 });
+              const points = readingPoints.map(({ t, x, y }) => ({ t, x, y }));
 
               // #6331: ONE observation is still an observation. This read `< 2`,
               // so a series with a single real point drew nothing at all — while
@@ -852,7 +897,7 @@ export function FuturesChart({
               // one run and `bridges` is always empty. A lone single point is
               // still a run of one, marked by `dots` (#6331).
               const { runs, bridges, dots } = chartSeriesPath(points, {
-                step: !!stepInterpolation,
+                step: !!effectiveStepInterpolation,
                 gapFloorMs: NEVER_A_HOLE_MS,
               });
 
@@ -933,6 +978,17 @@ export function FuturesChart({
                       fillOpacity={strokeOpacity}
                     />
                   ))}
+                  {atlas && !mini && (
+                    <AtlasSeriesReadingMarks
+                      outcomeId={outcome.outcome_id}
+                      outcomeName={seriesLabel(plottedOutcomes[idx].name)}
+                      points={readingPoints}
+                      color={colorFor(outcome, idx)}
+                      opacity={strokeOpacity}
+                      selectedReading={selectedReading}
+                      onSelectReading={handleSelectReading}
+                    />
+                  )}
                 </Fragment>
               );
             })}
@@ -1008,6 +1064,17 @@ export function FuturesChart({
                       strokeLinejoin="round"
                     />
                   )}
+                  {atlas && !mini && (
+                    <AtlasResultWordMark
+                      outcomeId={m.outcome.outcome_id}
+                      result={m.result}
+                      x={x}
+                      y={y}
+                      plotLeft={padding.left}
+                      plotRight={chartWidth - padding.right}
+                      opacity={opacity}
+                    />
+                  )}
                 </g>
               );
             })}
@@ -1049,7 +1116,11 @@ export function FuturesChart({
             >
               <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px] max-w-full">
                 <div className="text-[10px] text-text-muted mb-1 font-mono">
-                  {formatTooltipTime(hoverInfo.time)}
+                  {atlas
+                    ? formatAtlasTimestampPT(new Date(hoverInfo.time).toISOString(), {
+                        includeSeconds: true,
+                      }) ?? formatTooltipTime(hoverInfo.time)
+                    : formatTooltipTime(hoverInfo.time)}
                 </div>
                 {hoverArchiveNote && (
                   <div
