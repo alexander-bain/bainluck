@@ -116,8 +116,10 @@ _BOOKMAKER_ABSENT_SINCE_KEY = "bainluck:watchdog:bookmaker_curve_absent_since"
 # issue's acceptance criterion ("fires within ~1 h") is not deliverable by the
 # xid signal and it is worth saying so once rather than discovering it later.
 # `age(backend_xmin)` counts TRANSACTIONS, not time, so its rate is this
-# database's xid rate: the incident's own 81,643 over ~40 h is **0.57 xid/s**.
-# At that rate XMIN_PAGE (50,000) is reached after roughly 24 HOURS. So:
+# database's xid rate: the incident's own 81,643 over ~40 h was **0.57 xid/s**.
+# The database now runs about a hundred times faster (57.7 xid/s, measured
+# 2026-11-04 — see `VACUUM_XID_RATE_PER_S`), so the thresholds are sized in
+# HOURS and converted at the measured rate: XMIN_PAGE is still ~24 HOURS. So:
 #
 #   * the WALL-CLOCK signal is the one that pages inside the hour;
 #   * the XID signal is the unambiguous corroborator, and the only one that
@@ -137,11 +139,27 @@ _BOOKMAKER_ABSENT_SINCE_KEY = "bainluck:watchdog:bookmaker_curve_absent_since"
 # plan and any attended vacuum stay out of this module entirely.
 VACUUM_BLOCK_FLAG_KEY = "bainluck:watchdog:vacuum_block"
 
-#: Held-horizon thresholds in XIDS, straight from the issue body (warn 10,000 /
-#: page 50,000) against a measured-healthy 372. At this database's 0.57 xid/s
-#: those are ~4.9 h and ~24 h of held horizon.
-VACUUM_XMIN_WARN = 10_000
-VACUUM_XMIN_PAGE = 50_000
+#: Held-horizon thresholds, sized in HOURS of held horizon and converted to xids
+#: at this database's measured rate (Alex ruled A, 2026-11-04 3:30 PM PT: "same
+#: hours as #2005").
+#:
+#: #2006 set warn 10,000 / page 50,000 xids, which were ~4.9 h / ~24 h at the
+#: 0.57 xid/s of the #2005 era (the incident's 81,643 over ~40 h). Measured
+#: 2026-11-04: `txid_current_snapshot()` xmax went 141,984,884 -> 142,417,911
+#: from 1:30 to 3:35 PM PT, 433,027 xids in 7,510 s = 57.7 xid/s (a 9-minute
+#: window at 1:30 PM read 51/s; every public table's age(relfrozenxid), ~142.4M,
+#: is ~28 days at this rate). At 57.7 xid/s the old numbers were 2.9 MINUTES and
+#: 14 MINUTES — an ordinary long read warned (#11988 saw 16,189 behind a 239 s
+#: read; the duplicate-link scan has run 902 s, ~52,000 xids).
+#:
+#: Re-measure before trusting these if the write mix changes: an xid threshold
+#: is a statement about a rate. The wall-clock signal below is rate-free.
+VACUUM_XID_RATE_PER_S = 57.7
+VACUUM_XMIN_WARN_HOURS = 4.9
+VACUUM_XMIN_PAGE_HOURS = 24.0
+#: 1,000,000 ≈ 4.8 h and 5,000,000 ≈ 24.1 h at 57.7 xid/s.
+VACUUM_XMIN_WARN = 1_000_000
+VACUUM_XMIN_PAGE = 5_000_000
 
 #: Oldest non-idle transaction, in SECONDS.
 #:
@@ -868,7 +886,7 @@ def classify_vacuum_signals(xmin_age, xact_age_s, dead_pct):
     THE CORRECTION THIS FUNCTION EXISTS FOR. The rejected candidate opened with
     ``if xmin_age is None or xact_age_s is None or dead_pct is None: return
     "unavailable"`` — so one absent optional input erased two present ones, and
-    the #2005 shape itself (``xmin_age=81_643`` with no table stats) classified
+    the #2005 shape itself (a ~40 h held horizon with no table stats) classified
     as "we could not tell" rather than as the page it is. That is #2005's own
     failure mode rebuilt inside its fix: the absence of a signal read as the
     absence of a problem.

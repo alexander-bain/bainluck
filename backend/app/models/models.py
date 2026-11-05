@@ -1461,6 +1461,90 @@ class KalshiArchiveInterval(Base):
     )
 
 
+class VenueHistoryPoint(Base):
+    """One venue-reported price for one futures leg at the venue's own time. (#11929)
+
+    PR-A of the gap backfill: preserves Kalshi's hourly candles for recently
+    settled markets before the venue purges them. The writer is
+    ``app/tasks/venue_history_backfill.py``. **Nothing reads this table yet.**
+    Serving it on charts is PR-B. ``futures_odds_snapshots`` readers (calibration,
+    ``/history``, movers) cannot see these rows.
+
+    ``observed_at`` is the venue's timestamp (a candle's ``end_period_ts``), never
+    our fetch time, which is ``fetched_at``. The UNIQUE key makes a rerun conflict
+    instead of doubling (``ON CONFLICT DO NOTHING``). Its leading column is
+    ``outcome_id``, so it also serves per-leg lookups.
+
+    ``ondelete=CASCADE``: several existing deleters remove ``futures_outcomes``
+    rows (orphan cleanup, crypto retention, admin repair). They already delete
+    the leg's snapshots first. Without the cascade, the first deleter to reach a
+    leg with preserved history would fail on this foreign key.
+    """
+
+    __tablename__ = "venue_history_points"
+    __table_args__ = (
+        UniqueConstraint("outcome_id", "observed_at", name="uq_vhp_outcome_observed"),
+        CheckConstraint("probability > 0 AND probability < 1", name="ck_vhp_probability"),
+        CheckConstraint("resolution_s > 0", name="ck_vhp_resolution"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    outcome_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_outcomes.id", ondelete="CASCADE"), nullable=False
+    )
+    market_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    venue: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    probability: Mapped[float] = mapped_column(Numeric(7, 6), nullable=False)
+    yes_bid: Mapped[Optional[float]] = mapped_column(Numeric(7, 6), nullable=True)
+    yes_ask: Mapped[Optional[float]] = mapped_column(Numeric(7, 6), nullable=True)
+    price_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    resolution_s: Mapped[int] = mapped_column(Integer, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class VenueHistoryBackfillProgress(Base):
+    """Per-market progress of the #11929 gap backfill, so the sweep never re-starts at its head.
+
+    One row per (venue, market). ``legs_done`` lists the outcome ids whose whole
+    life has been fetched and written. A run stopped by its wall budget resumes at
+    the next leg, not at the first one. ``attempts`` counts runs that failed on
+    this market with a venue error other than 429. At ``MAX_ATTEMPTS`` the
+    market is skipped, so one market the venue keeps refusing cannot block the
+    oldest-first sweep (gotchas #34, #41). Written only by
+    ``app/tasks/venue_history_backfill.py``; nothing else reads it.
+    """
+
+    __tablename__ = "venue_history_backfill_progress"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('in_progress', 'done', 'failed')", name="ck_vhbp_status"
+        ),
+    )
+
+    venue: Mapped[str] = mapped_column(Text, primary_key=True)
+    market_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    legs_done: Mapped[list] = mapped_column(
+        ARRAY(Integer), nullable=False, server_default=text("'{}'")
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    points_inserted: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class LineMovementAnalysis(Base):
     """Cached LLM-generated explanations for significant line movements."""
 

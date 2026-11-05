@@ -1,0 +1,18 @@
+.match-reading-context{position:sticky;top:54px;z-index:3;background:var(--surface-page);border-bottom:1px solid var(--surface-border);padding:0 0 10px;margin-bottom:14px}
+.device-screen:has(.reading-context-page) .status-bar{background:var(--surface-page)}
+.match-reading-context header{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.match-reading-context header>span{font-size:13px;line-height:1.35;font-weight:600}
+.match-reading-context header>button{flex-shrink:0;display:flex;align-items:center;gap:5px;border:0;background:none;color:var(--series-home);padding:0 4px}
+.match-reading-context header svg{height:16px;width:16px}
+.match-reading-context>p{font-size:12px;color:var(--text-secondary);margin:0 0 3px}
+.match-reading-values{display:grid;gap:8px}
+.match-reading-values>button{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:3px;min-width:0;background:none;border:0;padding:4px 0;text-align:left}
+.match-reading-values>button span{font-size:13px;color:var(--text-primary);line-height:1.3}
+.match-reading-values>button b{font-size:19px;line-height:1.25;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px;font-variant-numeric:tabular-nums}
+.match-reading-values>button:nth-child(1){color:var(--series-home)}.match-reading-values>button:nth-child(2){color:var(--series-away)}.match-reading-values>button:nth-child(3){color:var(--text-secondary)}
+.rg-large .match-reading-context header>span,.rg-large .match-reading-context>p,.rg-large .match-reading-values>button span{font-size:17px}
+.rg-large .match-reading-values>button b{font-size:23px}
+.rg-page .rg-expectation-button{padding:0;border:0;background:none;color:var(--series-home);font-size:28px;font-weight:700;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px}
+.reading-context-page.rg-wide{height:100%;min-height:0;box-sizing:border-box;grid-template-rows:auto minmax(0,1fr)}
+.reading-context-page.rg-wide>.rg-anchor,.reading-context-page.rg-wide>.rg-secondary{min-height:0;max-height:100%;overflow-y:auto;overscroll-behavior:contain;margin-bottom:0}
+.reading-context-page.rg-wide>.rg-anchor{align-self:stretch}

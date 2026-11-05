@@ -993,6 +993,16 @@ HEAVY_TASKS = {
     # 300s class, not the 600-960s grinder class that
     # `test_big_backfills_stay_off_heavy` keeps on background.
     "app.tasks.refresh_stale_polymarket_conditions",
+    # #11929 PR-A, every 15 min at :01/:16/:31/:46, dark by default. Here by an
+    # explicit instruction (Alex, Nov 4 2026: start the venue-history backfill
+    # under an automatic-revert watch; the brief names the heavy queue), NOT as
+    # a precedent that big backfills may use heavy; the list in
+    # `test_big_backfills_stay_off_heavy` is unchanged.
+    # 🔶 REGISTERED COST: when on, a run holds one of heavy's two slots for up
+    # to its wall budget (default 600 s of every 900 s, ~67 % of one slot).
+    # `VENUE_GAP_BACKFILL_WALL_S` lowers that without a deploy; unsetting
+    # `VENUE_GAP_BACKFILL_ENABLED` is the whole revert.
+    "app.tasks.backfill_venue_history_gaps",
     # --- 🔄 `prewarm_live_feed_shapes` IS NO LONGER A MEMBER OF THIS SET. It was
     # added by D68-next below and REMOVED by #3765 (LAT-P179, Fable D51) on
     # 2026-09-07; it routes to `realtime` from `task_routes` above, where the
@@ -1764,6 +1774,39 @@ def fill_generic_market_history(self, market_ids=None, dry_run: bool = False):
         "generic_market_history",
         run_generic_market_history_fill(market_ids, dry_run=dry_run),
     )
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.backfill_venue_history_gaps",
+    soft_time_limit=780,
+    time_limit=840,
+)
+def backfill_venue_history_gaps(self):
+    """#11929 PR-A: keep Kalshi's hourly candles for markets settled in the last 45 days.
+
+    PILLAR: TRUTH. SHIP: a settled futures market keeps the price journey the
+    venue recorded, past the 47-86 day purge. Writes `venue_history_points`
+    and `venue_history_backfill_progress` only; nothing reads them yet (serving
+    is PR-B). Off unless `VENUE_GAP_BACKFILL_ENABLED` is set on
+    `bainluck-heavy`: off, the body returns before Redis, the database or the
+    venue. Bounds and the cohort: :mod:`app.tasks.venue_history_backfill`.
+    """
+    from app.tasks.venue_history_backfill import (
+        LEASE_TTL_S,
+        TASK_LABEL,
+        TASK_NAME,
+        backfill_enabled,
+        run_venue_history_backfill,
+    )
+    from app.utils.single_flight import single_flight
+
+    if not backfill_enabled():
+        return {"task": TASK_LABEL, "status": "disabled", "terminal": "skipped"}
+    with single_flight(TASK_NAME, ttl_seconds=LEASE_TTL_S) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run(TASK_LABEL, run_venue_history_backfill())
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_thirty_day_charts")
@@ -7568,6 +7611,18 @@ celery_app.conf.beat_schedule = {
     "refresh-stale-polymarket-conditions-hourly": {
         "task": "app.tasks.refresh_stale_polymarket_conditions",
         "schedule": crontab(minute=8),
+        "options": {"queue": "heavy"},
+    },
+    # #11929 PR-A. The settled-market venue history backfill, every 15 minutes.
+    # Dark unless `VENUE_GAP_BACKFILL_ENABLED` is set on bainluck-heavy; off, a
+    # tick returns before Redis, the database or the venue. `heavy` as a
+    # literal, because heavy is where it is routed (HEAVY_TASKS). Minutes
+    # 1/16/31/46 are unshared on heavy. Its wall budget (default 600 s, max
+    # 720 s) plus the 15-minute lease mean a run never laps the next. Expiry
+    # comes from `apply_heavy_beat_expires` (900 s).
+    "backfill-venue-history-gaps": {
+        "task": "app.tasks.backfill_venue_history_gaps",
+        "schedule": crontab(minute="1,16,31,46"),
         "options": {"queue": "heavy"},
     },
     # #3518/#3569. Hourly at :20, deliberately between the Kalshi poll (:45 every

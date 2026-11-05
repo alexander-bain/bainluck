@@ -1,0 +1,52 @@
+/* Wide event pages give the probability anchor and stories their own space.
+   The existing shared phone scroll is unchanged. */
+.mf-page.mf-wide:not(.mf-reading){
+ display:grid;
+ grid-template-columns:minmax(340px,.9fr) minmax(0,1.4fr);
+ grid-template-rows:auto minmax(0,1fr) auto;
+ max-width:1360px;
+ height:100%;
+ min-height:0;
+}
+.mf-wide:not(.mf-reading)>.mf-anchor-column{grid-column:1;grid-row:1 / 4;min-height:0;overflow:auto;overscroll-behavior:contain;background:var(--surface-card);border-right:1px solid var(--surface-border)}
+.mf-wide:not(.mf-reading)>.mf-controls{grid-column:2;grid-row:1;border-bottom:1px solid var(--surface-border);padding:8px 18px}
+.mf-wide:not(.mf-reading)>.mf-body-frame{grid-column:2;grid-row:2;container-type:inline-size}
+.mf-wide:not(.mf-reading)>.mf-replay-control{grid-column:2;grid-row:3}
+.mf-wide:not(.mf-reading) .mf-anchor{padding:18px 22px 22px;border-bottom:0}
+.mf-wide:not(.mf-reading) .mf-match{gap:10px}
+.mf-wide:not(.mf-reading) .mf-match>span{font-size:16px}
+.mf-wide:not(.mf-reading) .mf-probabilities{align-items:flex-start;flex-wrap:wrap;gap:18px;margin-top:18px}
+.mf-wide:not(.mf-reading) .mf-probabilities .mf-other{align-items:flex-start}
+.mf-wide:not(.mf-reading) .mf-history{height:264px}
+.mf-wide:not(.mf-reading) .mf-feed{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:0 18px 18px}
+.mf-wide:not(.mf-reading) .mf-card{padding:16px;min-height:0}
+.mf-wide:not(.mf-reading) .mf-card h2{font-size:24px}
+.mf-wide:not(.mf-reading) .mf-both-visual{gap:14px}
+.mf-wide:not(.mf-reading) .mf-dial{width:108px;transform:none;margin-right:0}
+.mf-wide:not(.mf-reading) .mf-library-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mf-page.mf-wide:not(.mf-reading) .mf-anchor:has(.sbh){display:block}
+.mf-page.mf-wide:not(.mf-reading) .mf-anchor:has(.sbh)>.mf-probabilities{flex-direction:row;align-items:flex-start;gap:18px;margin-top:18px}
+.mf-page.mf-wide:not(.mf-reading) .mf-anchor:has(.sbh)>.mf-chart-key{padding-bottom:0}
+.mf-wide:not(.mf-reading) .sbh-chart{height:264px}
+@container (max-width:730px){
+ .mf-wide:not(.mf-reading) .mf-feed{grid-template-columns:minmax(0,1fr)}
+}
+@container (min-width:1060px){
+ .mf-wide:not(.mf-reading) .mf-feed{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+
+.mf-page.mf-wide.mf-reading{height:100%;min-height:0;max-width:1030px}
+.mf-wide.mf-reading .mf-feed{grid-template-columns:minmax(0,1fr)}
+.wide-stage:has(>.mf-page){display:flex;flex-direction:column;overflow:hidden}
+.wide-stage>.mf-page{flex:1;min-height:0;width:100%}
+
+.mf-page.mf-wide.mf-reading .mf-anchor:has(.sbh){display:block}
+.mf-page.mf-wide.mf-reading .mf-anchor:has(.sbh)>.mf-probabilities{flex-direction:row;gap:20px}
+
+/* A split-view window still uses the desktop portal. Keep that portal mounted
+   while adapting its geometry, so reader selection and scroll are retained. */
+.mf-page.mf-split-narrow .mf-library-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.mf-page.mf-split-narrow .mf-controls{padding:0 14px}
+.mf-page.mf-split-narrow .mf-controls nav{gap:12px}
+body:has(.mf-page.mf-split-narrow) .cf-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);padding:8px;border-radius:20px}
+body:has(.mf-page.mf-split-narrow) .cf-view.cf-wide{height:calc(100dvh - 40px)!important}

@@ -646,6 +646,12 @@ ENFORCED_TASKS = frozenset({
     # finished its job. Not `deadline_hit` either: the wall stopping a run
     # partway is the design, and was true of the healthy first fire.
     "opening_repair_drain",            # terminal + errors
+    # #11929 PR-A, enrolled IN THE SAME CHANGE that gives it a terminal. The
+    # settled-market venue history backfill: `complete` only when every market
+    # it selected finished, `partial` when the wall budget, the row throttle or
+    # a venue 429 stopped it or a market failed (`errors`), `no_work` when the
+    # cohort was empty, which must not bank a success.
+    "venue_history_backfill",          # terminal + completed/total + errors
 })
 
 

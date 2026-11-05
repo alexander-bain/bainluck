@@ -1,0 +1,59 @@
+import {GolfSourceFacts} from './GolfSourceFacts';
+import {deviceTimeZone} from './readerTime';
+import {outlookHistoryFrame,type OutlookScale} from './outlookHistory';
+import {outlookTime,outlookCaptureLabel} from './outlookClock';
+import {GolfOutlookChooser} from './GolfOutlookChooser';
+import {initialOutlookPicker} from './golfOutlookChoices';
+import type {CardFocusMemory} from './readerRail';
+import {useRef,useState} from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import {InfoCircledIcon,ChevronDownIcon} from '@radix-ui/react-icons';
+import {BottomSheet,useKeyboard} from './mobile';
+import {CardFocus,ExpandCard} from './CardFocus';
+import {dgWire,finishLabels,capturedProfile,forecastValue,leaders} from './golfOutlookEvidence';
+const pct=(v:number|null|undefined)=>v==null?'Unavailable':v===0?'0%':v<.001?'<0.1%':`${Math.round(v*1000)/10}%`;
+import './datagolfOutlook.css';
+const colors=['var(--series-home)','var(--series-away)','var(--dg-teal)','var(--dg-gold)','var(--dg-slate)'];
+function ForecastFan({name,onPick}:{name:string;onPick:(index:number)=>void}){
+ const profile=capturedProfile(name);
+ return <div className="dg-fan"><div className="dg-profile-chart" role="group" aria-label="Recorded finish probabilities, each on a zero to one hundred percent scale"><div className="dg-profile-grid" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div><div className="dg-profile-bars">{profile.map((x,i)=>{const value=forecastValue(x?.row.probability);return <button key={i} aria-label={`${finishLabels[i]}: ${pct(value)}. Open forecast details`} onClick={()=>onPick(i)}><div className="dg-column"><div className="dg-column-fill" style={{height:`${(value??0)*100}%`,background:colors[i]}}/><strong style={{bottom:`calc(${(value??0)*100}% + 7px)`}}>{value===null?'—':pct(value)}</strong>{value===0&&<i className="dg-zero"/>}</div><span>{finishLabels[i]}</span></button>})}</div></div>{profile.every(x=>forecastValue(x?.row.probability)===null)&&<p className="dg-missing">Forecast unavailable for this golfer. Original records remain in Details.</p>}<p className="dg-footnote">Finishes overlap: winning also counts as a top-5 finish. Tap a bar for details.</p></div>;
+
+}
+function History({name,timeZone,scale,onScale}:{name:string;timeZone:string;scale:OutlookScale;onScale:(s:OutlookScale)=>void}){
+ const {points,domain,cap}=outlookHistoryFrame(name,scale);
+ if(!points.length||!domain)return <div className="dg-empty">Recorded history unavailable for this golfer.</div>;
+ const x=(s:string)=>domain[0]===domain[1]?171:44+(Date.parse(s)-domain[0])/(domain[1]-domain[0])*248,y=(p:number)=>165-p/cap*140;
+ return <div className="dg-history"><div className="dg-section-heading"><h3>Chance to win</h3><span>Recorded model estimates</span></div>
+  <div className="dg-scale-row"><span>0–{pct(cap)} scale</span><div role="group" aria-label="Win probability scale"><button aria-pressed={scale==='auto'} onClick={()=>onScale('auto')}>Auto</button><button aria-pressed={scale==='full'} onClick={()=>onScale('full')}>0–100%</button></div></div>
+  <svg viewBox="0 0 330 218" role="img" aria-label={`${name}: ${points.length} recorded ${points.length===1?'forecast':'forecasts'} on a zero to ${pct(cap)} scale, ${points.map(p=>`${pct(p.probability)} at ${outlookTime(p.timestamp,timeZone)}`).join('; ')}`}>
+   {[0,cap/2,cap].map(p=><g key={p}><line x1="44" x2="292" y1={y(p)} y2={y(p)} stroke="var(--surface-border)"/><text x="38" y={y(p)+4} textAnchor="end">{pct(p)}</text></g>)}
+   <text x="44" y="195">{outlookTime(domain[0],timeZone)}</text>{domain[1]!==domain[0]&&<text x="292" y="211" textAnchor="end">{outlookTime(domain[1],timeZone)}</text>}
+   {points.map(p=><g key={p.timestamp}><circle cx={x(p.timestamp)} cy={y(p.probability)} r="5" fill="var(--surface-card)" stroke="var(--series-home)" strokeWidth="2"/><text x={x(p.timestamp)} y={y(p.probability)-12} textAnchor="middle" className="dg-point-label">{pct(p.probability)}</text></g>)}
+  </svg><p>{points.length===1?'One forecast recorded; there is no recorded trend yet.':'Two recorded forecasts; the unobserved interval stays open.'}</p>
+ </div>;
+}
+export function useDataGolfOutlookSession(){
+ const [timeZone]=useState(deviceTimeZone);
+ const [historyScale,setHistoryScale]=useState<OutlookScale>('auto');
+ const [chooser,setChooser]=useState(false),[pickerState,setPickerState]=useState(initialOutlookPicker);
+ const readerMemory=useRef<CardFocusMemory>({scrollTop:{}}).current;
+ const [name,setName]=useState(leaders[0].name),[large,setLarge]=useState(false),[focus,setFocus]=useState<string|null>(null),[detail,setDetail]=useState<number|null>(null),[info,setInfo]=useState(false),[readerActive,setReaderActive]=useState<string|null>(null);
+ return {timeZone,historyScale,setHistoryScale,chooser,setChooser,pickerState,setPickerState,name,setName,large,setLarge,focus,setFocus,detail,setDetail,info,setInfo,readerActive,setReaderActive,readerMemory};
+}
+export function DataGolfOutlook({wide=false,session}:{wide?:boolean;session:ReturnType<typeof useDataGolfOutlookSession>}){
+ const {timeZone,historyScale,setHistoryScale,chooser,setChooser,pickerState,setPickerState,name,setName,large,setLarge,focus,setFocus,detail,setDetail,info,setInfo,readerActive,setReaderActive,readerMemory}=session,keyboard=useKeyboard();
+ const profile=capturedProfile(name),winner=profile[0],win=forecastValue(winner?.row.probability);
+ const show=(i:number)=>{keyboard.hide();setDetail(i)};
+ const choose=(n:string)=>{keyboard.hide();setName(n)};
+ const picker=<button className="dg-picker-button" aria-label={`Choose golfer. Following ${name}`} onClick={()=>{keyboard.hide();setChooser(true)}}><strong>{name}</strong><span>Golfers<ChevronDownIcon/></span></button>;
+ const outlook=(expanded=false)=><article className="dg-card"><span className="eyebrow">Pre-tournament outlook</span><h2>What could this week hold?</h2>{expanded?picker:<p className="dg-subtitle">{name} · five ways to follow the tournament</p>}<ForecastFan name={name} onPick={show}/></article>;
+ const comparison=<article className="dg-card"><span className="eyebrow">Six leading captured win estimates</span><h2>The shape of the field</h2><p className="dg-subtitle">Pick a golfer to explore their finish outlook.</p><div className="dg-contenders">{leaders.map(r=><button key={r.id} aria-pressed={r.name===name} onClick={()=>choose(r.name)}><strong>{r.name}</strong><span className="dg-contender-number">{pct(r.probability)}</span><svg viewBox="0 0 220 38" role="img" aria-label={`${r.name}, recorded win estimate ${pct(r.probability)} on a zero to one hundred percent scale`}><line x1="8" x2="212" y1="20" y2="20" stroke="var(--surface-border)" strokeWidth="7"/><line x1="8" x2={8+(r.probability??0)*204} y1="20" y2="20" stroke="var(--series-home)" strokeWidth="7"/><circle cx={8+(r.probability??0)*204} cy="20" r="5" fill="var(--surface-card)" stroke="var(--series-home)" strokeWidth="2"/></svg><span className="dg-contender-label">Chance to win · pre-tournament</span></button>)}</div></article>;
+ const detailEntry=detail===null?null:profile[detail];
+ const details=<><p className="eyebrow">DataGolf model · archived specimen</p><h2>{name} · {detail===null?'Forecast details':finishLabels[detail]}</h2><strong className="dg-detail-prob">{pct(forecastValue(detailEntry?.row.probability))}</strong><p>Recorded pre-tournament forecast. This is a model estimate; no live market reading is shown.</p>{detailEntry&&<><p>App record updated {outlookTime(detailEntry.row.last_updated,timeZone)}. Provider generation time is unavailable in this response.</p><p>Captured {outlookTime(dgWire.capturedAt,timeZone)}.</p><details><summary>Original source record</summary><pre>{JSON.stringify({captured_at:dgWire.capturedAt,market_id:detailEntry.market.id,external_id:detailEntry.market.external_id,...detailEntry.row},null,2)}</pre></details></>}</>;
+ const about=<><h2>About these forecasts</h2><p>Real DataGolf estimates from the Bain Luck API for the DP World India Championship, scheduled October 15–18. This design specimen is frozen, not a live feed.</p><p>190 retained golfers remain reachable. 144 have recorded win estimates; 46 have no available forecast. Missing is never zero.</p><p>Top-5, top-10, top-20 and make-cut probabilities overlap. Do not add them together. No score, round, final result or projected score is invented before play.</p><p>The response dates our stored records; it does not expose the model's generation clock. Opening values without a clock are kept in original details and are not used as a qualified baseline.</p><p>Player links in this frozen specimen use exact unique names within one provider tournament and retain all original IDs. Production needs stable player identity and freshness eligibility.</p></>;
+ const modal=detail!==null||info||chooser;
+ const closeModal=()=>{setInfo(false);setDetail(null);setChooser(false)};
+ const modalTitle=chooser?'Choose a golfer':info?'Forecast information':'Forecast details';
+ const modalContent=chooser?<GolfOutlookChooser selected={name} state={pickerState} setState={setPickerState} onChoose={n=>{choose(n);setChooser(false)}}/>:info?about:details;
+ return <main className={`dg-page ${wide?'dg-wide':''} ${large?'large-text':''}`}><header className="dg-appbar"><strong>Bain Luck.</strong><button onClick={()=>setLarge(!large)}>{large?'Aa Standard':'Aa Larger'}</button><button aria-label="About DataGolf forecasts" onClick={()=>{keyboard.hide();setInfo(true)}}><InfoCircledIcon/></button></header><div className="dg-archive">REAL CAPTURE · DATAGOLF MODEL · NOT LIVE</div><section className="dg-hero"><span className="eyebrow">Before tee-off · October 15–18</span><h1>DP World India<br/>Championship</h1>{picker}<div className="dg-hero-prob"><div><strong>{name}</strong><span>Recorded chance to win</span></div><b data-missing={win===null}>{pct(win)}</b></div><History name={name} timeZone={timeZone} scale={historyScale} onScale={setHistoryScale}/></section><section className="dg-stories"><div><ExpandCard label="Finish outlook" onClick={()=>{keyboard.hide();setReaderActive('outlook');setFocus('outlook')}}/>{outlook()}</div><div><ExpandCard label="Field comparison" onClick={()=>{keyboard.hide();setReaderActive('field');setFocus('field')}}/>{comparison}</div></section><p className="dg-footnote">Explore all 190 golfers with the Golfers button. Details open from each finish estimate.</p><CardFocus suspended={modal} memory={readerMemory} resumeAt={readerActive} onActiveCardChange={setReaderActive} start={focus} cards={[{id:'outlook',name:'Finish outlook',visual:<div className={`dg-focus ${large?'large-text':''}`}>{outlook(true)}</div>},{id:'field',name:'Field comparison',visual:<div className={`dg-focus ${large?'large-text':''}`}>{comparison}</div>}]} wide={wide} large={large} onClose={()=>setFocus(null)} returnLabel="Back to tournament" anchor={<><b>India Championship · Before tee-off</b><span>{name} · {pct(win)} recorded win estimate</span><span>DataGolf model · {outlookCaptureLabel(dgWire.capturedAt,timeZone)}</span></>}/>{wide?<Dialog.Root open={modal} onOpenChange={v=>{if(!v)closeModal()}}><Dialog.Portal><Dialog.Overlay className="cf-overlay"/><Dialog.Content className={`dg-modal ${large?'large-text':''}`} aria-describedby={undefined}><Dialog.Title>{modalTitle}</Dialog.Title>{chooser?<><button onClick={closeModal}>Done</button>{modalContent}</>:<GolfSourceFacts onClose={closeModal}>{modalContent}</GolfSourceFacts>}</Dialog.Content></Dialog.Portal></Dialog.Root>:<BottomSheet snap={chooser?.92:.72} open={modal} onOpenChange={v=>{if(!v)closeModal()}} title={modalTitle}><div className={`dg-details ${large?'large-text':''}`}>{chooser?<><button onClick={closeModal}>Done</button>{modalContent}</>:<GolfSourceFacts onClose={closeModal}>{modalContent}</GolfSourceFacts>}</div></BottomSheet>}</main>
+}

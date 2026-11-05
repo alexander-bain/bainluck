@@ -56,6 +56,7 @@ import {
   getServerTelemetryDecision,
   subscribeTelemetryConsent,
 } from '@/lib/analytics';
+import { readLabTraffic } from '@/lib/analytics/labTraffic';
 
 /**
  * LAT-P204 (#2673): the gated providers are LAZY, and that is the whole cut.
@@ -92,6 +93,25 @@ export function TelemetryGate() {
   // Strict Mode's double-invoke and any remount are both harmless.
   useEffect(() => {
     initTelemetryConsent();
+  }, []);
+
+  // #12030: our own lab browsers (`?bl_lab=…`, `lib/analytics/labTraffic`) are
+  // not visitors. The cookieless visit counter mounted in the root layout takes
+  // a `beforeSend` through its own command queue, so a marked visit is dropped
+  // there without moving that mount (D96) or touching anyone else's count. The
+  // queue is read when its script loads, which is after this commit.
+  useEffect(() => {
+    if (!readLabTraffic()) return;
+    const w = window as typeof window & {
+      va?: (...args: unknown[]) => void;
+      vaq?: unknown[][];
+    };
+    w.va =
+      w.va ||
+      function va(...args: unknown[]) {
+        (w.vaq = w.vaq || []).push(args);
+      };
+    w.va('beforeSend', () => null);
   }, []);
 
   const decision = useSyncExternalStore(

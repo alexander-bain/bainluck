@@ -1,0 +1,630 @@
+{
+  "eventID": 14639175,
+  "start": "2026-10-11T13:30:00+00:00",
+  "verifiedStart": true,
+  "actualCapturedAt": "2026-10-12T01:33:52.700548+00:00",
+  "actualClockNote": "Final quarter scores from the completed-game capture; exact quarter-end times unavailable.",
+  "home": "Jaguars",
+  "away": "Eagles",
+  "rows": [
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:75",
+      "quarter": 1,
+      "side": "home",
+      "label": "JAX",
+      "baseline": {
+        "value": 0.54,
+        "at": "2026-10-11T13:29:00+00:00",
+        "volume": 91.07,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL1Q-26OCT11PHIJAC-JAC",
+      "rules": "If Jacksonville wins the 1st Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261673+00:00",
+      "won": true,
+      "homeScore": 7,
+      "awayScore": 0,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 1st Quarter Winner",
+        "outcome_name": "Jacksonville",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843277
+        ],
+        "threshold": null,
+        "probability": 1.0,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "1Q",
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559187,
+        "key": "nfl-latest-game-markets.json:period_markets:75",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 1st Quarter Winner",
+        "outcome_name": "Jacksonville",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843277
+        ],
+        "threshold": null,
+        "probability": 1.0,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "1Q",
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559187,
+        "key": "nfl-14639175-game-markets.json:period_markets:99",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:77",
+      "quarter": 1,
+      "side": "away",
+      "label": "PHI",
+      "baseline": {
+        "value": 0.26,
+        "at": "2026-10-11T13:29:00+00:00",
+        "volume": 464.08,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL1Q-26OCT11PHIJAC-PHI",
+      "rules": "If Philadelphia wins the 1st Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261673+00:00",
+      "won": false,
+      "homeScore": 7,
+      "awayScore": 0,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 1st Quarter Winner",
+        "outcome_name": "Philadelphia",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843278
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "1Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559187,
+        "key": "nfl-latest-game-markets.json:period_markets:77",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 1st Quarter Winner",
+        "outcome_name": "Philadelphia",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843278
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "1Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559187,
+        "key": "nfl-14639175-game-markets.json:period_markets:101",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:76",
+      "quarter": 1,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": {
+        "value": 0.21,
+        "at": "2026-10-11T13:29:00+00:00",
+        "volume": 155.45,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL1Q-26OCT11PHIJAC-TIE",
+      "rules": "If neither team wins the 1st Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261673+00:00",
+      "won": false,
+      "homeScore": 7,
+      "awayScore": 0,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 1st Quarter Winner",
+        "outcome_name": "Tie",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843279
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "1Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559187,
+        "key": "nfl-latest-game-markets.json:period_markets:76",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 1st Quarter Winner",
+        "outcome_name": "Tie",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843279
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "1Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559187,
+        "key": "nfl-14639175-game-markets.json:period_markets:100",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:169",
+      "quarter": 2,
+      "side": "home",
+      "label": "JAX",
+      "baseline": {
+        "value": 0.6,
+        "at": "2026-10-11T13:23:00+00:00",
+        "volume": 4.01,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL2Q-26OCT11PHIJAC-JAC",
+      "rules": "If Jacksonville wins the 2nd Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261596+00:00",
+      "won": false,
+      "homeScore": 0,
+      "awayScore": 14,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 2nd Quarter Winner",
+        "outcome_name": "Jacksonville",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843304
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "2Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559196,
+        "key": "nfl-latest-game-markets.json:period_markets:169",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": null
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:167",
+      "quarter": 2,
+      "side": "away",
+      "label": "PHI",
+      "baseline": {
+        "value": 0.29,
+        "at": "2026-10-11T12:34:00+00:00",
+        "volume": 164.25,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL2Q-26OCT11PHIJAC-PHI",
+      "rules": "If Philadelphia wins the 2nd Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261596+00:00",
+      "won": true,
+      "homeScore": 0,
+      "awayScore": 14,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 2nd Quarter Winner",
+        "outcome_name": "Philadelphia",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843305
+        ],
+        "threshold": null,
+        "probability": 1.0,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "2Q",
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559196,
+        "key": "nfl-latest-game-markets.json:period_markets:167",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": null
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:168",
+      "quarter": 2,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": {
+        "value": 0.12,
+        "at": "2026-10-11T13:02:00+00:00",
+        "volume": 35.71,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL2Q-26OCT11PHIJAC-TIE",
+      "rules": "If neither team wins the 2nd Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261596+00:00",
+      "won": false,
+      "homeScore": 0,
+      "awayScore": 14,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 2nd Quarter Winner",
+        "outcome_name": "Tie",
+        "observed_at": "2026-10-11T14:13:02.911298+00:00",
+        "contributor_outcome_ids": [
+          242843306
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "2Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559196,
+        "key": "nfl-latest-game-markets.json:period_markets:168",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": null
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:0",
+      "quarter": 3,
+      "side": "home",
+      "label": "JAX",
+      "baseline": {
+        "value": 0.5,
+        "at": "2026-10-11T13:23:00+00:00",
+        "volume": 4.79,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL3Q-26OCT11PHIJAC-JAC",
+      "rules": "If Jacksonville wins the 3rd Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.262920+00:00",
+      "won": true,
+      "homeScore": 3,
+      "awayScore": 0,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 3rd Quarter Winner",
+        "outcome_name": "Jacksonville",
+        "observed_at": "2026-10-11T16:25:42.640003+00:00",
+        "contributor_outcome_ids": [
+          242843331
+        ],
+        "threshold": null,
+        "probability": 1.0,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "3Q",
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559205,
+        "key": "nfl-latest-game-markets.json:period_markets:0",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 3rd Quarter Winner",
+        "outcome_name": "Jacksonville",
+        "observed_at": "2026-10-11T15:34:20.582263+00:00",
+        "contributor_outcome_ids": [
+          242843331
+        ],
+        "threshold": null,
+        "probability": 0.55,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "3Q",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 64559205,
+        "key": "nfl-14639175-game-markets.json:period_markets:59",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:2",
+      "quarter": 3,
+      "side": "away",
+      "label": "PHI",
+      "baseline": {
+        "value": 0.3,
+        "at": "2026-10-11T12:00:00+00:00",
+        "volume": 84.37,
+        "intervalMinutes": 60
+      },
+      "ticker": "KXNFL3Q-26OCT11PHIJAC-PHI",
+      "rules": "If Philadelphia wins the 3rd Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.262920+00:00",
+      "won": false,
+      "homeScore": 3,
+      "awayScore": 0,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 3rd Quarter Winner",
+        "outcome_name": "Philadelphia",
+        "observed_at": "2026-10-11T16:25:42.640003+00:00",
+        "contributor_outcome_ids": [
+          242843332
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "3Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559205,
+        "key": "nfl-latest-game-markets.json:period_markets:2",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 3rd Quarter Winner",
+        "outcome_name": "Philadelphia",
+        "observed_at": "2026-10-11T15:34:20.582263+00:00",
+        "contributor_outcome_ids": [
+          242843332
+        ],
+        "threshold": null,
+        "probability": 0.215,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "3Q",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 64559205,
+        "key": "nfl-14639175-game-markets.json:period_markets:60",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:1",
+      "quarter": 3,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": {
+        "value": 0.2,
+        "at": "2026-10-11T13:03:00+00:00",
+        "volume": 22.68,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL3Q-26OCT11PHIJAC-TIE",
+      "rules": "If neither team wins the 3rd Quarter of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.262920+00:00",
+      "won": false,
+      "homeScore": 3,
+      "awayScore": 0,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 3rd Quarter Winner",
+        "outcome_name": "Tie",
+        "observed_at": "2026-10-11T16:25:42.640003+00:00",
+        "contributor_outcome_ids": [
+          242843333
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "3Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559205,
+        "key": "nfl-latest-game-markets.json:period_markets:1",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 3rd Quarter Winner",
+        "outcome_name": "Tie",
+        "observed_at": "2026-10-11T15:34:13.534006+00:00",
+        "contributor_outcome_ids": [
+          242843333
+        ],
+        "threshold": null,
+        "probability": 0.215,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "3Q",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 64559205,
+        "key": "nfl-14639175-game-markets.json:period_markets:61",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:3",
+      "quarter": 4,
+      "side": "home",
+      "label": "JAX",
+      "baseline": {
+        "value": 0.56,
+        "at": "2026-10-11T12:18:00+00:00",
+        "volume": 43.1,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL4Q-26OCT11PHIJAC-JAC",
+      "rules": "If Jacksonville wins the 4th Quarter (excluding overtime) of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261808+00:00",
+      "won": true,
+      "homeScore": 9,
+      "awayScore": 3,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 4th Quarter Winner",
+        "outcome_name": "Jacksonville",
+        "observed_at": "2026-10-11T16:25:42.640003+00:00",
+        "contributor_outcome_ids": [
+          242843358
+        ],
+        "threshold": null,
+        "probability": 1.0,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "4Q",
+        "is_winner": true,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559214,
+        "key": "nfl-latest-game-markets.json:period_markets:3",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 4th Quarter Winner",
+        "outcome_name": "Jacksonville",
+        "observed_at": "2026-10-11T15:34:20.582263+00:00",
+        "contributor_outcome_ids": [
+          242843358
+        ],
+        "threshold": null,
+        "probability": 0.645,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "4Q",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 64559214,
+        "key": "nfl-14639175-game-markets.json:period_markets:0",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:4",
+      "quarter": 4,
+      "side": "away",
+      "label": "PHI",
+      "baseline": {
+        "value": 0.32,
+        "at": "2026-10-11T08:00:00+00:00",
+        "volume": 32.81,
+        "intervalMinutes": 60
+      },
+      "ticker": "KXNFL4Q-26OCT11PHIJAC-PHI",
+      "rules": "If Philadelphia wins the 4th Quarter (excluding overtime) of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261808+00:00",
+      "won": false,
+      "homeScore": 9,
+      "awayScore": 3,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 4th Quarter Winner",
+        "outcome_name": "Philadelphia",
+        "observed_at": "2026-10-11T16:25:42.640003+00:00",
+        "contributor_outcome_ids": [
+          242843359
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "4Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559214,
+        "key": "nfl-latest-game-markets.json:period_markets:4",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 4th Quarter Winner",
+        "outcome_name": "Philadelphia",
+        "observed_at": "2026-10-11T15:33:45.570654+00:00",
+        "contributor_outcome_ids": [
+          242843359
+        ],
+        "threshold": null,
+        "probability": 0.22,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "4Q",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 64559214,
+        "key": "nfl-14639175-game-markets.json:period_markets:1",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    },
+    {
+      "key": "nfl-latest-game-markets.json:period_markets:5",
+      "quarter": 4,
+      "side": "tie",
+      "label": "Tie",
+      "baseline": {
+        "value": 0.15,
+        "at": "2026-10-11T12:16:00+00:00",
+        "volume": 5.88,
+        "intervalMinutes": 1
+      },
+      "ticker": "KXNFL4Q-26OCT11PHIJAC-TIE",
+      "rules": "If neither team wins the 4th Quarter (excluding overtime) of the PHI Eagles vs JAC Jaguars Pro Football game originally scheduled for Oct 11, 2026, then the market resolves to Yes.",
+      "bookAt": "2026-10-12T07:16:24.261808+00:00",
+      "won": false,
+      "homeScore": 9,
+      "awayScore": 3,
+      "original": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 4th Quarter Winner",
+        "outcome_name": "Tie",
+        "observed_at": "2026-10-11T16:25:42.640003+00:00",
+        "contributor_outcome_ids": [
+          242843360
+        ],
+        "threshold": null,
+        "probability": null,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "4Q",
+        "is_winner": false,
+        "resolution_source": "api_settlement",
+        "_market_id": 64559214,
+        "key": "nfl-latest-game-markets.json:period_markets:5",
+        "category": "period_markets",
+        "source_file": "nfl-latest-game-markets.json"
+      },
+      "earlier": {
+        "market_name": "PHI Eagles vs JAC Jaguars: 4th Quarter Winner",
+        "outcome_name": "Tie",
+        "observed_at": "2026-10-11T15:33:24.515236+00:00",
+        "contributor_outcome_ids": [
+          242843360
+        ],
+        "threshold": null,
+        "probability": 0.135,
+        "source": "kalshi",
+        "market_type": "quarter_winner",
+        "period": "4Q",
+        "is_winner": null,
+        "resolution_source": null,
+        "_market_id": 64559214,
+        "key": "nfl-14639175-game-markets.json:period_markets:2",
+        "category": "period_markets",
+        "source_file": "nfl-14639175-game-markets.json"
+      }
+    }
+  ],
+  "scope": "Independent pregame trades, final quarter points and venue results. No synchronized distribution or live probability inferred."
+}
