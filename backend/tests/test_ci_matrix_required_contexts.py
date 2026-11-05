@@ -183,7 +183,7 @@ def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
             "matrix"
         ), f"{name} became a matrix job; a job-level skip would then drop its required contexts"
         expected = (
-            f"always() && {SCOPE_RUNS} && {LIVE}" if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE}"
+            f"${{{{ !cancelled() && {SCOPE_RUNS} && {LIVE} }}}}" if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE}"
         )
         assert job.get("if") == expected, (name, job.get("if"))
 
