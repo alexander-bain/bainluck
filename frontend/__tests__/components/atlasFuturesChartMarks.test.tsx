@@ -199,4 +199,39 @@ describe('Step F3 — Atlas chart marks on FuturesChart (#883)', () => {
     const hitMatches = html.match(/data-testid="atlas-chart-reading-hit"/g) ?? [];
     expect(hitMatches.length).toBe(2);
   });
+
+  it('does not label the first point of a windowed or partial history as Opening', () => {
+    const windowedHtml = renderHtml(
+      <FuturesChart
+        historyData={openHistory}
+        selectedOutcomes={new Set([501])}
+        onToggleOutcome={() => {}}
+        fixedYAxis
+        fieldCeiling
+        atlas
+        atlasIncludesOpening={false}
+      />,
+    );
+
+    expect(windowedHtml).not.toContain('data-testid="atlas-chart-opening-mark"');
+    expect(windowedHtml).not.toContain('Opening');
+    const recordedMatches =
+      windowedHtml.match(/data-testid="atlas-chart-recorded-mark"/g) ?? [];
+    expect(recordedMatches.length).toBe(3);
+
+    const withheldHtml = renderHtml(
+      <FuturesChart
+        historyData={openHistory}
+        selectedOutcomes={new Set([501])}
+        onToggleOutcome={() => {}}
+        fixedYAxis
+        fieldCeiling
+        historyWithheld
+        atlas
+      />,
+    );
+
+    expect(withheldHtml).not.toContain('data-testid="atlas-chart-opening-mark"');
+    expect(withheldHtml).not.toContain('Opening');
+  });
 });
