@@ -15,7 +15,7 @@ probe behind this classifier::
         return "unavailable"
 
 which is #2005's failure mode rebuilt inside its own fix: the incident shape
-(``xmin_age=81_643`` with no table stats — a reachable read, not an error, since
+(a ~40 h held horizon — 81,643 xids at 2026-09 rates — with no table stats — a reachable read, not an error, since
 ``Q_WORST_DEAD_PCT`` filters to tables over 1,000 tuples and returns no row when
 none qualify) classified as "we could not tell", and the caller only degraded on
 ``page``. **An absent signal outranked a present and bad one.** The review
