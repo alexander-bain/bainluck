@@ -584,7 +584,17 @@ def test_only_the_committed_flush_paths_reach_the_history_writer():
         text = path.read_text()
         if "stream_history_points" in text:
             importers.add(path.relative_to(BACKEND).as_posix())
-    assert importers == {"app/tasks/kalshi_ws.py", "app/tasks/polymarket_ws.py"}
+    # #11929 27-B: the span writer reads only the SWITCH (spans need move
+    # points on), never the writer — pinned to exactly those two names.
+    spans = "app/utils/stream_observed_spans.py"
+    assert importers == {"app/tasks/kalshi_ws.py", "app/tasks/polymarket_ws.py", spans}
+    imports = [
+        line for line in (BACKEND / spans).read_text().splitlines()
+        if "stream_history_points" in line and line.startswith("from ")
+    ]
+    assert imports == [
+        "from app.utils.stream_history_points import stream_history_enabled, stream_history_venues"
+    ]
     for preview in ("app/utils/market_preview.py", "app/tasks/live_blend_refresh.py"):
         text = (BACKEND / preview).read_text()
         for name in ("stream_history", "FuturesOddsSnapshot", "futures_odds_snapshots"):

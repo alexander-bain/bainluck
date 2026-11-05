@@ -248,6 +248,9 @@ class KalshiWebSocket:
         self._cmd_counter = count(1)
         self._connected = False
         self._message_count = 0
+        # #11929 27-B: `time.monotonic()` of the last frame received, so a span
+        # extends only while this connection shows life (`stream_observed_spans`).
+        self.last_message_at: Optional[float] = None
         self._reconnect_count = 0
 
         self.on_ticker: Optional[Callable] = None
@@ -507,6 +510,7 @@ class KalshiWebSocket:
                         try:
                             async for raw in _cooperative_messages(ws):
                                 self._message_count += 1
+                                self.last_message_at = time.monotonic()
                                 try:
                                     # #10090: the fast parser, same contract.
                                     data = ws_json.loads(raw)

@@ -1545,6 +1545,59 @@ class VenueHistoryBackfillProgress(Base):
     )
 
 
+class StreamObservedSpan(Base):
+    """One stretch a socket consumer observed one futures leg live. (#11929 27-B)
+
+    Opened (``ended_at`` NULL) at the first minute tick that finds the leg on a
+    connected, subscribed connection with a message in the last 180 s; closed
+    once when it leaves that population (disconnect, unsubscribe, silence, or
+    the consumer run ending). The writer is ``app/utils/stream_observed_spans.py``.
+    **Nothing reads this table yet**; drawing a span flat on charts is the serve
+    PR. An open span ends, for any reader, at its venue's
+    :class:`StreamSpanHeartbeat`.
+
+    No foreign key to ``futures_outcomes``, on purpose: adding one takes SHARE
+    ROW EXCLUSIVE on that table, and #12020's FK showed what that costs the live
+    Kalshi flushes (8 lock timeouts in one second). An orphaned span names a leg
+    no chart can request, so it is never read.
+    """
+
+    __tablename__ = "stream_observed_spans"
+    __table_args__ = (
+        CheckConstraint(
+            "ended_at IS NULL OR ended_at >= started_at", name="ck_sos_order"
+        ),
+        CheckConstraint("venue IN ('kalshi', 'polymarket')", name="ck_sos_venue"),
+        Index("ix_sos_outcome_started", "outcome_id", "started_at"),
+        Index(
+            "ix_sos_open_by_venue", "venue", postgresql_where=text("ended_at IS NULL")
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    venue: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    end_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class StreamSpanHeartbeat(Base):
+    """Per venue, the last minute tick the span writer committed. (#11929 27-B)
+
+    Written in the same transaction as every tick, so an open
+    :class:`StreamObservedSpan` is never read as lasting past the last tick
+    that saw its leg alive.
+    """
+
+    __tablename__ = "stream_span_heartbeats"
+
+    venue: Mapped[str] = mapped_column(Text, primary_key=True)
+    beat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class LineMovementAnalysis(Base):
     """Cached LLM-generated explanations for significant line movements."""
 
