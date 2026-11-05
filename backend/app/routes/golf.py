@@ -1713,6 +1713,13 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
 
         # Merge sources and probabilities
         long["sources"].update(short["sources"])
+        comparison_members = long.setdefault("comparison_members", {})
+        for label in short["sources"]:
+            member = short.get("comparison_members", {}).get(label)
+            if member is None:
+                comparison_members.pop(label, None)
+            else:
+                comparison_members[label] = member
         if short.get("is_winner") is True:
             long["is_winner"] = True
             if long.get("resolution_source") in (None, "ungradeable_result"):
@@ -2510,7 +2517,7 @@ def _set_blend_movement(entry: dict) -> None:
 def _aggregate_golfer_outcome(
     outcome, source_label: str, golfer_data: dict[str, dict],
     prob_24h_ago: dict[int, float], prob_scale: float = 1.0,
-    *, include_overflow: bool = False,
+    *, include_overflow: bool = False, market=None,
 ) -> None:
     """Aggregate a single outcome into golfer_data, tracking sources and movement.
 
@@ -2582,6 +2589,10 @@ def _aggregate_golfer_outcome(
 
     entry = golfer_data[key]
     entry["sources"][source_label] = prob
+    if market is not None:
+        entry.setdefault("comparison_members", {})[source_label] = (market, outcome)
+    else:
+        entry.setdefault("comparison_members", {}).pop(source_label, None)
     if getattr(outcome, "is_winner", None) is True:
         entry["is_winner"] = True
         if entry.get("resolution_source") in (None, "ungradeable_result"):
@@ -2663,12 +2674,18 @@ def _build_tournament_entry(
         })
 
     if mutually_exclusive is True:
-        from app.utils.outcome_display import normalize_display_probs
+        from app.utils.futures_market_snapshot import normalize_blended_field
 
-        if normalize_display_probs(golfers, field_complete=field_complete):
-            for golfer in golfers:
-                golfer["movement_24h"] = golfer["opening_probability"] = None
-                golfer["movement_is_dated"] = False
+        normalize_blended_field(
+            golfers,
+            [
+                list(data["comparison_members"].values())
+                if len(data.get("comparison_members", {})) == len(data["sources"])
+                else []
+                for data in golfer_data.values()
+            ],
+            field_complete=field_complete,
+        )
     # A priced overflow contract participates in the same full-field allocation,
     # but is not a golfer and must not acquire a player rank or profile link.
     overflow_outcomes, named_golfers = [], []
@@ -3615,6 +3632,7 @@ async def get_golf(
                     outcome, source_label, golfer_data, market_basis,
                     prob_scale=renorm_factor,
                     include_overflow=getattr(market, "mutually_exclusive", None) is True,
+                    market=market,
                 )
             if withheld:
                 logger.debug(

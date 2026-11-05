@@ -174,6 +174,7 @@ def _aggregate_championship_odds(
                     "team_name": display_name,
                     "sources": {},
                     "probabilities": [],
+                    "comparison_members": [],
                     "movement_24h": None,
                     "opening_probability": None,
                     "seed": None,
@@ -186,6 +187,7 @@ def _aggregate_championship_odds(
 
             team_data[key]["sources"][source] = round(prob, 3)
             team_data[key]["probabilities"].append(prob)
+            team_data[key]["comparison_members"].append((market, outcome))
             if getattr(outcome, "is_winner", None) is True:
                 team_data[key]["is_winner"] = True
                 if team_data[key]["resolution_source"] in (None, "ungradeable_result"):
@@ -219,17 +221,17 @@ def _aggregate_championship_odds(
             "american_odds": probability_to_american(avg_prob),
         })
 
-    championship_odds.sort(key=lambda t: t["probability"], reverse=True)
+    from app.utils.futures_market_snapshot import normalize_blended_field
 
-    from app.utils.outcome_display import normalize_display_probs
-
-    changed = normalize_display_probs(
-        championship_odds, mutually_exclusive=field_exclusive, field_complete=field_complete,
+    normalize_blended_field(
+        championship_odds,
+        [data["comparison_members"] for data in team_data.values()],
+        mutually_exclusive=field_exclusive,
+        field_complete=field_complete,
     )
+    championship_odds.sort(key=lambda t: t["probability"], reverse=True)
     for team in championship_odds:
         team.pop("name")
-        if changed:
-            team["movement_24h"] = team["opening_probability"] = None
         team["american_odds"] = probability_to_american(team["probability"])
 
     return championship_odds

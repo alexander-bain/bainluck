@@ -131,6 +131,20 @@ def _golf_db(markets):
 
 @pytest.fixture(autouse=True)
 def _no_schedule_and_the_measured_basis(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    at = (datetime.now(timezone.utc) - timedelta(hours=18)).isoformat()
+    monkeypatch.setattr(
+        UTAH_KALSHI,
+        "market_metadata",
+        {
+            DATED_BASIS_METADATA_KEY: {
+                str(o.id): [BASIS[o.id], at] for o in UTAH_KALSHI.outcomes
+            }
+        },
+    )
+
     async def _empty():
         return []
 

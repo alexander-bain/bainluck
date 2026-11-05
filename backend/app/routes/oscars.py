@@ -322,7 +322,7 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
     categories = []
 
     for cat_key, cat_markets in category_markets.items():
-        from app.utils.outcome_display import normalize_display_probs
+        from app.utils.futures_market_snapshot import normalize_blended_field
 
         field_exclusive = all(getattr(m, "mutually_exclusive", None) is True for m in cat_markets)
         field_complete = all(o.current_probability is not None for m in cat_markets for o in m.outcomes)
@@ -362,6 +362,7 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
                         "name": display_name,
                         "sources": {},
                         "probabilities": [],
+                        "comparison_members": [],
                         "movement_24h": None,
                         "opening_probability": None,
                         "is_winner": False,
@@ -371,6 +372,7 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
 
                 nominee_data[key]["sources"][source] = round(prob, 3)
                 nominee_data[key]["probabilities"].append(prob)
+                nominee_data[key]["comparison_members"].append((market, outcome))
 
                 # Use the 24h movement from whichever source has it
                 if outcome.probability_change_24h is not None:
@@ -412,12 +414,12 @@ async def build_oscars_payload(db: AsyncSession) -> dict:
             })
 
         # Normalize the full blended field before the presentation cap (#11995).
-        changed = normalize_display_probs(
-            nominees, mutually_exclusive=field_exclusive, field_complete=field_complete,
+        normalize_blended_field(
+            nominees,
+            [data["comparison_members"] for data in nominee_data.values()],
+            mutually_exclusive=field_exclusive,
+            field_complete=field_complete,
         )
-        if changed:
-            for nom in nominees:
-                nom["movement_24h"] = nom["opening_probability"] = None
         nominees.sort(key=lambda n: n["probability"], reverse=True)
         nominee_count = len(nominees)
         nominees = nominees[:_MAX_NOMINEES]
