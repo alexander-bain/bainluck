@@ -95,6 +95,7 @@ nonisolated struct GolfTournamentData: Decodable, Sendable, Identifiable {
     let location: String?
     let scheduleStatus: String?
     let golfers: [GolfGolferData]
+    let overflowOutcomes: [GolfGolferData]
 
     var id: String { slug ?? name }
 
@@ -116,16 +117,17 @@ nonisolated struct GolfTournamentData: Decodable, Sendable, Identifiable {
         location = try container.decodeIfPresent(String.self, forKey: .location)
         scheduleStatus = try container.decodeIfPresent(String.self, forKey: .scheduleStatus)
         golfers = (try? container.decodeIfPresent([GolfGolferData].self, forKey: .golfers)) ?? []
+        overflowOutcomes = try container.decodeIfPresent([GolfGolferData].self, forKey: .overflowOutcomes) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
         case key, name, slug, isMajor, isTourEvent, isWomens, tour, tourLabel
-        case commenceTime, resolutionDate, startDate, endDate, venue, location, scheduleStatus, golfers
+        case commenceTime, resolutionDate, startDate, endDate, venue, location, scheduleStatus, golfers, overflowOutcomes
     }
 }
 
 /// Golfer probability row inside a tournament market.
-nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable {
+nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable {
     let name: String
     let probability: Double
     let renderedPercent: Int?
@@ -239,6 +241,7 @@ nonisolated struct GolfScheduleEntry: Decodable, Sendable, Identifiable {
 nonisolated struct GolfTournamentDetailResponse: Decodable, Sendable {
     let tournament: GolfTournamentData
     let golfers: [GolfGolferData]
+    let overflowOutcomes: [GolfGolferData]
     let biggestMovers: [GolfMoverData]
 
     init(from decoder: Decoder) throws {
@@ -248,10 +251,11 @@ nonisolated struct GolfTournamentDetailResponse: Decodable, Sendable {
         // a field this build has not seen must not blank a page whose subject
         // decoded perfectly well (the per-item tolerance rule of #1471).
         golfers = (try? container.decodeIfPresent([GolfGolferData].self, forKey: .golfers)) ?? []
+        overflowOutcomes = try container.decodeIfPresent([GolfGolferData].self, forKey: .overflowOutcomes) ?? []
         biggestMovers = (try? container.decodeIfPresent([GolfMoverData].self, forKey: .biggestMovers)) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
-        case tournament, golfers, biggestMovers
+        case tournament, golfers, overflowOutcomes, biggestMovers
     }
 }

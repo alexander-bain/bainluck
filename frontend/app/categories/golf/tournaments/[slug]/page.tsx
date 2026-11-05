@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchGolfTournament, fetchGolfLeaderboard, fetchFuturesHistory } from "@/lib/api";
+import { fetchGolfTournament, fetchGolfLeaderboard, fetchFuturesHistory, formatProbability } from "@/lib/api";
 import type {
   GolfTournamentDetailResponse,
   GolfGolfer,
@@ -12,6 +12,7 @@ import type {
 } from "@/lib/types";
 import { TOURNAMENT_EMOJI } from "@/lib/golfData";
 import { groupRelatedMarkets } from "@/lib/golfRelatedSections";
+import { GolfOverflowRows } from "@/components/golf/GolferRow";
 import { EvolutionView } from "@/components/EvolutionView";
 import type { PositionOption } from "@/components/EvolutionView";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -137,6 +138,7 @@ interface MergedGolfer {
   thru: string;
   hole: string;
   winProb: number; // 0-100 percentage
+  renderedPercent?: number | null;
   winProbChange: number | null;
   top5Prob: number | null;
   top10Prob: number | null;
@@ -198,6 +200,7 @@ function buildMergedGolfers(
     thru: "\u2014",
     hole: "",
     winProb: g.probability * 100,
+    renderedPercent: g.rendered_percent,
     winProbChange: null,
     top5Prob: g.top_5_prob ?? null,
     top10Prob: g.top_10_prob ?? null,
@@ -519,6 +522,7 @@ export default function GolfTournamentPage() {
           isLive={isLive}
           hasSnapshot={leaderboard?.has_snapshot || false}
         />
+        <GolfOverflowRows outcomes={data.overflow_outcomes} />
 
         {/* Related Futures — tournament-specific markets not in the grid */}
         {data.related_futures && data.related_futures.length > 0 && (
@@ -988,7 +992,9 @@ function DesktopRow({
           className="text-sm font-bold tabular-nums"
           style={isLeader ? { color: accentColor } : undefined}
         >
-          {golfer.winProb.toFixed(1)}%
+          {golfer.renderedPercent != null
+            ? formatProbability(golfer.winProb / 100, { rendered: golfer.renderedPercent })
+            : `${golfer.winProb.toFixed(1)}%`}
         </span>
         {changeDisplay && (
           <span className={`text-[9px] ml-1 ${changeColor}`}>{changeDisplay}</span>
@@ -1090,7 +1096,9 @@ function MobileRow({
           className="text-sm font-bold tabular-nums"
           style={isLeader ? { color: accentColor } : undefined}
         >
-          {golfer.winProb.toFixed(1)}%
+          {golfer.renderedPercent != null
+            ? formatProbability(golfer.winProb / 100, { rendered: golfer.renderedPercent })
+            : `${golfer.winProb.toFixed(1)}%`}
         </div>
         {isLive && golfer.winProbChange != null && Math.abs(golfer.winProbChange) >= 0.1 && (
           <div

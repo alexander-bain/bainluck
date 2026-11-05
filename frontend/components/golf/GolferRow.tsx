@@ -16,7 +16,22 @@
 
 import { formatProbability } from "@/lib/api";
 import { sourceHex } from "@/lib/sourceColors";
-import type { GolfGolfer } from "@/lib/types";
+import type { GolfGolfer, GolfOverflowOutcome } from "@/lib/types";
+
+/** Priced contracts that belong to the field but do not identify a golfer. */
+export function GolfOverflowRows({ outcomes }: { outcomes?: GolfOverflowOutcome[] }) {
+  if (!outcomes?.length) return null;
+  return (
+    <dl aria-label="Other outcomes" className="border-t border-surface-border pt-3 space-y-2">
+      {outcomes.map((outcome) => (
+        <div key={outcome.name} className="flex items-center justify-between gap-3 text-sm text-text-secondary">
+          <dt>{outcome.name}</dt>
+          <dd className="font-mono tabular-nums">{formatProbability(outcome.probability, { rendered: outcome.rendered_percent })}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 // ============================================================================
 // Movement Badge

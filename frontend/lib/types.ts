@@ -2524,6 +2524,8 @@ export interface GolfH2HMatchup {
   golfer_b: { name: string; probability: number };
 }
 
+export type GolfOverflowOutcome = Pick<GolfGolfer, "name" | "probability" | "rendered_percent">;
+
 export interface GolfTournament {
   key: string;
   name: string;
@@ -2545,6 +2547,7 @@ export interface GolfTournament {
   market_names?: string[];
   market_sources?: string[];
   golfers: GolfGolfer[];
+  overflow_outcomes?: GolfOverflowOutcome[];
   prop_markets?: GolfPropMarket[];
   /** #9212 — see `FeedTournamentData.champion`. */
   champion?: string | null;
@@ -2655,6 +2658,7 @@ export interface GolfTournamentDetailResponse {
     resolution_date: string | null;
   };
   golfers: GolfGolfer[];
+  overflow_outcomes?: GolfOverflowOutcome[];
   markets: GolfMarketGroup[];
   related_futures?: {
     market_id: number;

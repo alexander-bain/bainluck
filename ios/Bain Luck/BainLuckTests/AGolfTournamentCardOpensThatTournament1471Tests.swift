@@ -293,6 +293,24 @@ final class AGolfTournamentCardOpensThatTournament1471Tests: XCTestCase {
         XCTAssertTrue(shown.field.isEmpty, "a malformed field degrades to no field, never to no page")
     }
 
+    func test11995TheFieldKeepsServerIntegersAndUnrankedOverflow() throws {
+        let shown = try presentation("""
+        {
+          "tournament": {"name": "Masters", "slug": "masters"},
+          "golfers": [{"name": "Alice Smith", "probability": 0.255, "rendered_percent": 25}],
+          "overflow_outcomes": [{"name": "Field", "probability": 0.745, "rendered_percent": 75}]
+        }
+        """)
+        XCTAssertEqual(shown.field.count, 1)
+        XCTAssertEqual(shown.field[0].probabilityLabel, "25%")
+        XCTAssertEqual(shown.overflowOutcomes[0].name, "Field")
+        XCTAssertEqual(shown.overflowOutcomes[0].renderedPercent, 75)
+        XCTAssertNil(shown.overflowOutcomes[0].rank)
+        XCTAssertEqual(GolfTournamentFieldRow(name: "Small chance", probability: 0.004,
+                                            position: 1, movement24h: nil,
+                                            renderedPercent: 0).probabilityLabel, "<1%")
+    }
+
     // MARK: - Source reading
 
     private static func codeText(of relativePath: String, file: StaticString = #filePath) -> String {

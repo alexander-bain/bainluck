@@ -5067,6 +5067,7 @@ async def get_golf_tournament(
         },
         "golfers": golfers,
         "markets": sorted_groups,
+        **({"overflow_outcomes": tournament["overflow_outcomes"]} if tournament.get("overflow_outcomes") else {}),
         "related_futures": related_futures,
         "evolution_market_id": evolution_market_id,
         "biggest_movers": tournament_movers,

@@ -298,6 +298,37 @@ async def test_golf_unpriced_overflow_is_unknown_mass_not_zero(monkeypatch):
     assert "overflow_outcomes" not in entry
 
 
+@pytest.mark.asyncio
+async def test_golf_detail_retains_the_same_priced_overflow_as_the_card(monkeypatch):
+    entry = await golf_overflow_body(monkeypatch, "polymarket", "Field")
+    entry["slug"] = "the-masters"
+    monkeypatch.setattr(
+        golf,
+        "get_golf",
+        AsyncMock(
+            return_value={
+                "tournaments": [entry],
+                "biggest_movers": [],
+                "pga_schedule": [],
+            }
+        ),
+    )
+    empty = MagicMock()
+    empty.all.return_value = []
+    empty.scalars.return_value.all.return_value = []
+    body = await golf.get_golf_tournament(
+        "the-masters", SimpleNamespace(execute=AsyncMock(return_value=empty))
+    )
+    assert body["overflow_outcomes"] == entry["overflow_outcomes"]
+    assert (
+        sum(
+            row["rendered_percent"]
+            for row in body["golfers"] + body["overflow_outcomes"]
+        )
+        == 100
+    )
+
+
 def comparison_fields():
     from datetime import datetime, timedelta, timezone
     from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY

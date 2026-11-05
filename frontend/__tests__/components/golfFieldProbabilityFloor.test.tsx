@@ -49,7 +49,7 @@ jest.mock("next/link", () => ({
   ),
 }));
 
-import { GolferRow } from "@/components/golf/GolferRow";
+import { GolferRow, GolfOverflowRows } from "@/components/golf/GolferRow";
 import TournamentCard from "@/components/TournamentCard";
 
 /** Rendered markup with the entities this rule's own output produces decoded. */
@@ -81,6 +81,25 @@ const row = (g: GolfGolfer, showSourceBreakdown = false) =>
   );
 
 describe("UX-P161 — the golf field row honours the probability floor", () => {
+  it("#11995 keeps priced overflow in the visible field without a golfer link", () => {
+    const html = text(<>
+      {[40, 20, 20].map((percent, index) => <GolferRow key={index}
+        golfer={golfer({ name: ["Alice Smith", "Bob Jones", "Casey Reed"][index], probability: percent / 100, rendered_percent: percent })}
+        tournamentKey="masters" />)}
+      <GolfOverflowRows outcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />
+    </>);
+    const visible = html.replace(/<[^>]*>/g, "");
+    expect([...visible.matchAll(/(\d+)%/g)].reduce((sum, match) => sum + Number(match[1]), 0)).toBe(100);
+    const overflow = text(<GolfOverflowRows outcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />);
+    expect(overflow).toContain("Field");
+    expect(overflow).toContain(">20%<");
+    expect(overflow).not.toContain("<a");
+  });
+  it("#11995 keeps a nonzero overflow chance possible when its allocation rounds to zero", () => {
+    const html = text(<GolfOverflowRows outcomes={[{ name: "Other", probability: 0.004, rendered_percent: 0 }]} />);
+    expect(html).toContain("<1%");
+    expect(html).not.toContain(">0%<");
+  });
   it("#11995 prints the server allocation instead of rounding this leg again", () => {
     const html = row(golfer({ probability: 0.255, rendered_percent: 25 }));
     expect(html).toContain(">25%<");
