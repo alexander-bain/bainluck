@@ -323,6 +323,8 @@ describe('Step F2 — Atlas futures bodies by stored shape (#883)', () => {
 
       const html = renderHtml(<QuantityGroup title="All Outcomes" rungs={rungs} atlas />);
 
+      expect(html).toContain('data-testid="atlas-threshold-eyebrow"');
+      expect(html).toContain('Independent thresholds · do not add to 100%');
       expect(html).toContain('data-testid="atlas-threshold-true-positions"');
       const xs = Array.from(
         html.matchAll(/<circle cx="([0-9.]+)" cy="([0-9.]+)"/g),
