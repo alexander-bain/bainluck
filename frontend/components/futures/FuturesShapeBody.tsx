@@ -197,10 +197,9 @@ function MovementRail({
           cx={x(opening)}
           cy="10"
           r="3.5"
-          fill="#FFFFFF"
           stroke="currentColor"
           strokeWidth="1.75"
-          className="text-text-primary"
+          className="fill-surface-card text-text-primary"
         />
       )}
       {recorded != null && (
@@ -432,30 +431,30 @@ export default function FuturesShapeBody({
           {/* Opening vs Recorded / Result comparison */}
           <div
             data-testid="atlas-dial-comparison"
-            className="mb-3 grid grid-cols-2 gap-3 rounded-xl border border-surface-border bg-surface-deep p-3.5"
+            className={`mb-3 grid gap-3 rounded-xl border border-surface-border bg-surface-deep p-3.5 ${
+              opening != null ? "grid-cols-2" : "grid-cols-1"
+            }`}
           >
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
-                <span
-                  aria-hidden="true"
-                  className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-primary bg-surface-card"
-                />
-                <span>Opening</span>
+            {opening != null && (
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-primary bg-surface-card"
+                  />
+                  <span>Opening</span>
+                </div>
+                <div
+                  data-testid="atlas-dial-opening-value"
+                  className="mt-1 text-lg font-bold tabular-nums text-text-primary"
+                >
+                  {formatServerChance(opening, selectedRendered?.opening)}
+                </div>
+                <div className="mt-0.5 text-[11px] text-text-muted">
+                  Opening chance
+                </div>
               </div>
-              <div
-                data-testid="atlas-dial-opening-value"
-                className="mt-1 text-lg font-bold tabular-nums text-text-primary"
-              >
-                {opening == null
-                  ? "Unavailable"
-                  : formatServerChance(opening, selectedRendered?.opening)}
-              </div>
-              <div className="mt-0.5 text-[11px] text-text-muted">
-                {isMultiVenue
-                  ? "Combined opening not supplied"
-                  : "Single-venue opening"}
-              </div>
-            </div>
+            )}
 
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
@@ -505,9 +504,10 @@ export default function FuturesShapeBody({
             <path
               d="M38 138 A112 112 0 0 1 262 138"
               fill="none"
-              stroke="#E5E7EB"
+              stroke="currentColor"
               strokeWidth="8"
               strokeLinecap="round"
+              className="text-surface-border"
             />
             {[0, 0.5, 1].map((p) => {
               const pt = pointOnArc(p);
@@ -517,7 +517,8 @@ export default function FuturesShapeBody({
                   cx={pt.x}
                   cy={pt.y}
                   r="2.5"
-                  fill="#9CA3AF"
+                  fill="currentColor"
+                  className="text-text-muted"
                 />
               );
             })}
@@ -528,9 +529,10 @@ export default function FuturesShapeBody({
                   recorded! > opening! ? 1 : 0
                 } ${endPt.x} ${endPt.y}`}
                 fill="none"
-                stroke="#10B981"
+                stroke="currentColor"
                 strokeWidth="8"
                 strokeLinecap="round"
+                className="text-accent-brand"
               />
             )}
             {startPt && (
@@ -539,9 +541,9 @@ export default function FuturesShapeBody({
                 cx={startPt.x}
                 cy={startPt.y}
                 r="6"
-                fill="#FFFFFF"
-                stroke="#111827"
+                stroke="currentColor"
                 strokeWidth="2.5"
+                className="fill-surface-card text-text-primary"
               />
             )}
             {endPt && (
@@ -550,7 +552,8 @@ export default function FuturesShapeBody({
                 cx={endPt.x}
                 cy={endPt.y}
                 r="5.5"
-                fill="#10B981"
+                fill="currentColor"
+                className="text-accent-brand"
               />
             )}
             <text
@@ -580,11 +583,9 @@ export default function FuturesShapeBody({
                 ? "Confirmed result"
                 : changePoints != null
                   ? "since opening"
-                  : isMultiVenue
-                    ? "Combined opening unavailable"
-                    : recorded == null
-                      ? ATLAS_STATE_COPY.noRecentPrice
-                      : "Recorded chance"}
+                  : recorded == null
+                    ? ATLAS_STATE_COPY.noRecentPrice
+                    : "Recorded chance"}
             </text>
             <text
               x="38"
@@ -611,15 +612,6 @@ export default function FuturesShapeBody({
               100%
             </text>
           </svg>
-
-          {isMultiVenue && (
-            <p
-              data-testid="atlas-dial-multivenue-note"
-              className="mt-2 text-center text-xs text-text-secondary"
-            >
-              A combined opening is not supplied. Each named side keeps its served chance.
-            </p>
-          )}
         </div>
       </section>
     );
