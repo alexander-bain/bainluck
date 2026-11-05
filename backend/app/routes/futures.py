@@ -20,6 +20,7 @@ from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
+from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
 from app.utils.settlement_display import (
     VERDICT_UNKNOWN as SETTLEMENT_VERDICT_UNKNOWN,
     applies_to_market as settlement_display_applies,
@@ -8549,6 +8550,25 @@ async def get_probability_timeline(
             entry.setdefault("archive", {})[name] = archive_timeline_mark(row)
             archive_rows_served.append(row)
 
+    # #11929 27-B: a stretch a live connection observed draws flat at 15-minute
+    # steps for each charted leg (`app/utils/observed_span_steps`; off unless
+    # SERVE_OBSERVED_SPANS). Coverage is measured first, so a step is drawn but
+    # never reported as covered by a capture. A settled market gets no tail.
+    _timeline_coverage = _measure_timeline_coverage(
+        [entries_by_instant[at] for at in sorted(entries_by_instant)]
+    )
+    _timeline_settled_at = getattr(market, "settled_at", None)
+    await add_timeline_steps(
+        db, entries_by_instant,
+        {oid: outcome_names[oid] for oid in top_outcome_ids if oid in outcome_names},
+        now=now,
+        until=(
+            _timeline_settled_at if _timeline_settled_at is not None
+            else None if (market.status or "").lower() == "resolved"
+            else now
+        ),
+    )
+
     timeline = [entries_by_instant[at] for at in sorted(entries_by_instant)]
 
     # Build outcome metadata list (ordered by current probability)
@@ -8612,7 +8632,7 @@ async def get_probability_timeline(
         # reads the raw 04:31. #7351's venue entries are the exception and say so
         # honestly: they carry the venue's own recorded instant, so a domain that
         # ends on one ends on a real observation rather than on an hour mark.
-        **_measure_timeline_coverage(timeline),
+        **_timeline_coverage,
         # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
         # Self-describing payload metadata: it says what one step of `timeline` below
         # actually spans, which is not recoverable from the series itself. No client
@@ -9914,6 +9934,27 @@ async def get_futures_history(
         settle_basis=_settle_basis,
     )
 
+    # #11929 27-B: a stretch a live connection observed draws flat at 15-minute
+    # steps (`app/utils/observed_span_steps`; off unless SERVE_OBSERVED_SPANS).
+    # LAST, after the settled freezes (#7927: their witness is the last REAL
+    # point), and after coverage is measured: a step is drawn, never counted as
+    # a capture or a data point. Its tail stops at the settlement stamp, and a
+    # settled leg with no stamp gets no tail.
+    _history_coverage = _measure_history_coverage(outcome_history)
+    _steps_now = datetime.now(timezone.utc)
+    _market_settled_at = getattr(market, "settled_at", None)
+
+    def _step_until(oid: int):
+        if _settle_ts is not None:
+            return min(_settle_ts, _steps_now)
+        if _market_settled_at is not None:
+            return _market_settled_at
+        if oid in resolved_ids or (market.status or "").lower() == "resolved":
+            return None
+        return _steps_now
+
+    await add_history_steps(db, outcome_history, now=_steps_now, until_for=_step_until)
+
     response: dict = {
         "market_id": market_id,
         "market_name": market.name,
@@ -9927,7 +9968,7 @@ async def get_futures_history(
         # `actual_hours` above stays exactly as it was — it is the search window
         # and `auto_extended`'s caption is correct about it. These four are the
         # separate, measured claim, so no existing reader's meaning moves.
-        **_measure_history_coverage(outcome_history),
+        **_history_coverage,
     }
 
     # Signal to the frontend when data is sparse so it can show appropriate UI
