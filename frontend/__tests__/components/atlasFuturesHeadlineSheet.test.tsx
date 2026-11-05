@@ -30,12 +30,12 @@ function renderHtml(element: React.ReactElement): string {
 
 describe('Step F1 — Atlas futures headline, result, and shared details sheet (#883)', () => {
   describe('atlasStateCopy shared helpers', () => {
-    it('exports the canonical shared state wording including "No recent price"', () => {
+    it('exports the canonical shared state wording including "No recent probability"', () => {
       expect(ATLAS_STATE_COPY.loading).toBe('Loading');
       expect(ATLAS_STATE_COPY.updateInterrupted).toBe('Update interrupted');
       expect(ATLAS_STATE_COPY.postponed).toBe('Postponed');
       expect(ATLAS_STATE_COPY.voided).toBe('Void');
-      expect(ATLAS_STATE_COPY.noRecentPrice).toBe('No recent price');
+      expect(ATLAS_STATE_COPY.noRecentPrice).toBe('No recent probability');
       expect(ATLAS_STATE_COPY.wonWithCheck).toBe('✓ Won');
       expect(ATLAS_STATE_COPY.lostWithCross).toBe('✗ Lost');
     });
@@ -112,7 +112,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       expect(html).toContain('data-testid="atlas-details-trigger"');
     });
 
-    it('prints "No recent price" when an open market has no current probability', () => {
+    it('prints "No recent probability" when an open market has no current probability', () => {
       const html = renderHtml(
         <FuturesHero
           atlas
@@ -124,7 +124,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       );
 
       expect(html).toContain('data-testid="atlas-no-recent-price"');
-      expect(html).toContain('>No recent price<');
+      expect(html).toContain('>No recent probability<');
       expect(html).toContain('>Adam Hamilton<');
     });
 
