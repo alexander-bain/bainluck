@@ -33,6 +33,8 @@ venue grades; pending contracts reopen with the venue's latest close (past for
 awaiting-result); real scalar settlements remain ungradeable. Existing venue
 grades, including archived legs, are preserved. The original backup is retained
 and the locked before-image for this operation is appended in its own key.
+Missing ungraded tickers are looked up in the same event's public archive;
+only exact binary settlements with their venue timestamp can supplement it.
 
     python3 scripts/repair_11947_clock_settled_kalshi_markets_still_trading.py --census-only
     python3 scripts/repair_11947_clock_settled_kalshi_markets_still_trading.py --only-ids 109918
@@ -818,6 +820,75 @@ async def reconcile_appendix_market(session, market_id, read_event, *, apply=Fal
     }
 
 
+async def read_appendix_archive(
+    client: httpx.AsyncClient, event_ticker: str, missing: set[str]
+) -> list[dict]:
+    """Supplement missing legs with exact venue settlements, never inferred losses."""
+    from app.services.kalshi_api import (
+        historical_markets_params,
+        parse_historical_markets,
+    )
+    from app.utils.kalshi_market_status import gradeable_winner
+
+    found, seen, cursor = [], set(), None
+    for _ in range(10):
+        response = await client.get(
+            "/historical/markets",
+            params=historical_markets_params(
+                event_ticker=event_ticker, series_ticker=None, limit=200, cursor=cursor
+            ),
+            headers=tagged(PUBLIC_API),
+        )
+        response.raise_for_status()
+        print(
+            json.dumps(
+                {
+                    "venue_archive_read": event_ticker,
+                    "cursor": cursor,
+                    "http_status": response.status_code,
+                    "at": utc_now().isoformat(),
+                }
+            ),
+            flush=True,
+        )
+        records, next_cursor = parse_historical_markets(response.json())
+        for record in records:
+            if record.get("ticker") not in missing:
+                continue
+            if (
+                record.get("event_ticker") != event_ticker
+                or gradeable_winner(record.get("status"), record.get("result")) is None
+                or instant(record.get("settlement_ts")) is None
+            ):
+                raise ValueError("Archive leg lacks an exact binary venue settlement")
+            found.append(record)  # Keep duplicates: the planner must refuse them.
+            print(
+                json.dumps(
+                    {
+                        "venue_archive_event": event_ticker,
+                        "venue_leg": {
+                            key: record.get(key)
+                            for key in (
+                                "ticker",
+                                "status",
+                                "result",
+                                "close_time",
+                                "settlement_ts",
+                            )
+                        },
+                    }
+                ),
+                flush=True,
+            )
+        if not next_cursor:
+            return found
+        if next_cursor in seen:
+            raise ValueError("Archive cursor repeated; incomplete evidence")
+        seen.add(next_cursor)
+        cursor = next_cursor
+    raise ValueError("Archive page budget exhausted; incomplete evidence")
+
+
 async def run_appendix(*, only_ids, apply=False, census_only=False):
     from app.tasks.base import get_task_session
 
@@ -870,6 +941,13 @@ async def run_appendix(*, only_ids, apply=False, census_only=False):
                 )
             )
             await session.commit()
+        required = defaultdict(set)
+        for row in population:
+            required[row["market"]["external_id"]].update(
+                leg["external_id"]
+                for leg in row["legs"]
+                if leg["resolution_source"] != "api_settlement"
+            )
         counts = defaultdict(int)
         async with httpx.AsyncClient(base_url=PUBLIC_API, timeout=15) as client:
 
@@ -911,6 +989,16 @@ async def run_appendix(*, only_ids, apply=False, census_only=False):
                         ),
                         flush=True,
                     )
+                if event.get("event_ticker") == ticker and isinstance(
+                    event.get("markets"), list
+                ):
+                    missing = required[ticker] - {
+                        record.get("ticker") for record in event["markets"]
+                    }
+                    if missing:
+                        event["markets"].extend(
+                            await read_appendix_archive(client, ticker, missing)
+                        )
                 return payload
 
             for row in population:
