@@ -728,7 +728,13 @@ export function isCountingBeacon(url: string): boolean {
     return false;
   }
   const host = parsed.hostname;
-  if (host.endsWith("google-analytics.com") || host === "analytics.google.com") {
+  // Exact host or a dot-delimited subdomain (region1.google-analytics.com), never
+  // a look-alike such as `evilgoogle-analytics.com` (CodeQL, #12039).
+  const isGa4 =
+    host === "google-analytics.com" ||
+    host.endsWith(".google-analytics.com") ||
+    host === "analytics.google.com";
+  if (isGa4) {
     return parsed.pathname.includes("/collect");
   }
   return parsed.pathname === "/_vercel/insights/view" || parsed.pathname === "/_vercel/insights/event";

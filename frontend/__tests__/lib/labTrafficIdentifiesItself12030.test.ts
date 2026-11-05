@@ -161,6 +161,9 @@ describe('the Browser audit identifies itself', () => {
     );
     expect(beacon).toMatch(/parsed\.pathname\.includes\("\/collect"\)/);
     expect(beacon).toContain('"/_vercel/insights/view"');
+    // A GA4 host is the exact name or a dot-delimited subdomain, never a bare suffix.
+    expect(beacon).toContain('host.endsWith(".google-analytics.com")');
+    expect(beacon).not.toContain('host.endsWith("google-analytics.com")');
     expect(beacon).not.toMatch(/googletagmanager|gtag\/js|speed-insights/);
   });
 });
