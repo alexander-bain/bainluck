@@ -120,7 +120,9 @@ async def load_observed_spans(
     from sqlalchemy import text
 
     try:
-        result = await db.execute(
+        # (Not `result = await db.execute(` at this indent: that line is a
+        # mutation harness's replacement text, so the residue scan reads it as a mutant.)
+        span_rows = await db.execute(
             text(
                 "SELECT s.outcome_id, s.started_at, "
                 "COALESCE(s.ended_at, h.beat_at, s.started_at) AS ended_at "
@@ -133,7 +135,7 @@ async def load_observed_spans(
             ),
             {"ids": ids, "start": start, "end": end},
         )
-        rows = result.all()
+        rows = span_rows.all()
     except Exception as exc:  # noqa: BLE001 — a span read never fails a chart
         logger.warning("observed spans: read for %d legs failed: %s", len(ids), str(exc)[:200])
         return {}
