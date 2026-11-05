@@ -115,3 +115,8 @@ aeeb6fe11415997b649e57a6beee611d26d1f459:artifacts/web-event-quotes-9484/INDEPEN
 # credential: the generic API-key rule matches the identifier ending in "Key".
 # Exact fingerprint only; verified from gitleaks run 36959885230.
 4d9f365ba12b361534a91026fd2997788cc0d5a2:ios/Bain Luck/Bain Luck/Utilities/LaunchRig.swift:generic-api-key:439
+
+# #12016 / #12038: Kalshi outcome ticker suffix in unchanged event-page design
+# authority reference copy, never built or served; not a credential.
+2ba4ef13007a67799bc43710b6cd1c76164fb0ca:docs/designs/event-page-atlas-2026-10/src/playerDuelEvidence.ts:generic-api-key:37
+7f29d5bc5033309911f8949553b56eb81de799d5:.gitleaksignore:generic-api-key:119

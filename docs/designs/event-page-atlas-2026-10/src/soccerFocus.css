@@ -1,0 +1,12 @@
+.sl-focus-content .atlas-card h3{font-size:26px;line-height:1.18;letter-spacing:-.03em;margin:8px 0 18px}.sl-focus-content .sl-goal-chart{height:245px}.sl-focus-content .sl-pre>b{font-size:36px}.sl-focus-content .sl-pre>span{font-size:13px}.sl-focus-content .sl-note{font-size:13px}.sl-focus-content .sl-first-options button{min-height:82px}.sl-focus-content.large-text .atlas-card h3{font-size:30px}.sl-focus-content.large-text .sl-targets,.sl-focus-content.large-text .sl-first-options{flex-direction:column}.sl-focus-content.large-text .sl-targets b,.sl-focus-content.large-text .sl-targets span,.sl-focus-content.large-text .sl-first-options span,.sl-focus-content.large-text .sl-first-options small{font-size:16px}.sl-focus-content.large-text .sl-score-path{flex-wrap:wrap;gap:18px}.sl-focus-content.large-text .sl-score-path span{font-size:15px}.sl-focus-content.large-text .sl-milestone{grid-template-columns:1fr 1fr}.sl-focus-content.large-text .sl-milestone .sl-pre{grid-column:1/-1}.sl-focus-content.large-text .sl-team-goals span,.sl-focus-content.large-text .sl-team-goals b,.sl-focus-content.large-text .sl-milestone>div>span{font-size:16px}
+@media(min-width:740px){.wide-content.sl-page .sl-story-goals{grid-row:span 2}}
+
+.sl-reader-context{position:relative;padding-right:28px;min-height:44px}
+.sl-reader-context>span{display:block;margin-top:4px;font-size:12px;line-height:1.4}
+.sl-reader-context>button{position:absolute;right:-10px;top:-5px;width:44px;height:44px;display:grid;place-items:center;border:0;background:none;color:var(--text-secondary)}
+.cf-view:has(.sl-reader-context):not(.cf-wide) .cf-footer b,.cf-view:has(.sl-reader-context):not(.cf-wide) .cf-dots{display:none}
+.cf-view:has(.sl-reader-context):not(.cf-wide) .cf-footer{padding-top:8px;padding-bottom:10px}
+.cf-large .sl-reader-context>span{font-size:14px}
+
+.sl-focus-content .sl-goals h3{margin-bottom:10px}
+.sl-focus-content .sl-goal-chart{margin-top:8px}

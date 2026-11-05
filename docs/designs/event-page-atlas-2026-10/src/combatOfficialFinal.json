@@ -1,0 +1,28 @@
+{
+  "eventID": 15318681,
+  "venueTimeZone": "America/Denver",
+  "eventDate": "2026-10-03",
+  "eventName": "UFC 332: Silva vs Wang",
+  "home": "Ateba Gautier",
+  "away": "Roman Kopylov",
+  "winner": "Roman Kopylov",
+  "loser": "Ateba Gautier",
+  "method": "TKO",
+  "methodDetail": "strikes",
+  "round": 1,
+  "elapsedInRound": "3:12",
+  "absoluteFinishAt": null,
+  "source": {
+    "publisher": "UFC",
+    "url": "https://www.ufc.com/news/ufc-332-silva-vs-wang-results",
+    "sha256": "2717b5f69f413e020414cf90e8208d1cc773a74414a455ef574f6f1fc7508650",
+    "capturedAt": "2026-10-13T14:12:06.124513+00:00",
+    "resultStatement": "Roman Kopylov defeated Ateba Gautier by TKO (strikes) at 3:12 of Round 1"
+  },
+  "corroboration": {
+    "url": "https://www.ufc.com/video/160791",
+    "file": "sources/ufc-video.html",
+    "sha256": "bcd076b4d03f1091ee0de7300ca3ff01aa6e0eaaee5e4e5a2195c09a92d85f26",
+    "capturedAt": "2026-10-13T14:12:06.181193+00:00"
+  }
+}
