@@ -334,9 +334,11 @@ def display_probability_divisor(
 ) -> float | None:
     """One venue-blind served-number rule; never turn unknown mass into zero.
 
-    Exclusivity describes the event, not the magnitude of the prices. Alex's
-    #11995 ruling removes the former vig thresholds, ceiling and one-cent
-    exclusion. Call with the FULL field before any preview/overflow slice.
+    Alex's clarification: normalize healthy complete one-winner inputs; exclude
+    entries only on evidence, never just because the total is large. Call with
+    the FULL eligible field before any preview/overflow slice. If a real outcome
+    lacks a supported price, pass field_complete=False rather than redistributing
+    its unknown probability among the survivors.
     A cumulative ladder is refused even if its stored exclusivity flag is wrong.
     """
     import math
