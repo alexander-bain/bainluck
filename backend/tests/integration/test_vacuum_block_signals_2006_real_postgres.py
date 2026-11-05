@@ -55,15 +55,20 @@ therefore uses that URL only for its host and credentials and provisions
 ``bl_vacuum_signals_2006`` beside it — created on first use, kept, with the
 tables and the role dropped on both ends of every test.
 
-Two tables in it, created with ``autovacuum_enabled = false`` so the dead tuples
-cannot be reclaimed out from under the read:
+Three tables in it, created with ``autovacuum_enabled = false`` so the dead
+tuples cannot be reclaimed out from under the read:
 
-* ``vacuum_probe_dirty_2006`` — 2,000 rows inserted, 1,990 deleted ⇒ 99.5% dead.
-* ``vacuum_probe_clean_2006`` — 2,000 rows, none deleted ⇒ 0% dead.
+* ``vacuum_probe_dirty_2006`` — 200,000 rows inserted, 199,000 deleted ⇒ 99.5%
+  dead.
+* ``vacuum_probe_clean_2006`` — 400,000 rows, 100,000 deleted ⇒ 25% dead: the
+  cleaner table, over the dead-tuple floor so it COMPETES for "worst".
+* ``vacuum_probe_queue_2006`` — #11988's shape: 6,000 rows, 5,994 deleted ⇒
+  99.9% dead, the highest share here, and under ``VACUUM_DEAD_MIN_TUPLES``.
 
 The clean table is the arm that stops ``ORDER BY ... DESC`` being reversible
 without notice: "returns a row" is satisfied by either direction, "does not
-return the clean table" is not.
+return the clean table" is not. The queue table is the arm that keeps the floor:
+it out-ranks both on share, so the read returns it the moment the floor goes.
 
 ``n_dead_tup`` is published by the statistics collector asynchronously, so the
 fixture POLLS for it rather than sleeping a guessed interval or calling
@@ -99,6 +104,8 @@ needs_postgres = pytest.mark.skipif(
 
 DIRTY_TABLE = "vacuum_probe_dirty_2006"
 CLEAN_TABLE = "vacuum_probe_clean_2006"
+QUEUE_TABLE = "vacuum_probe_queue_2006"
+PROBE_TABLES = (DIRTY_TABLE, CLEAN_TABLE, QUEUE_TABLE)
 
 #: The unprivileged stand-in for the Heroku application role. Created and
 #: dropped by the fixture; it owns nothing and is granted nothing.
@@ -107,7 +114,7 @@ PROBE_ROLE = "bl_vacuum_probe_2006"
 #: the length of one test session on a disposable database, and is dropped after.
 PROBE_SECRET = uuid.uuid4().hex
 
-#: 1,990 of 2,000. Asserted as a floor, not as an exact winner — this gate owns
+#: 199,000 of 200,000. Asserted as a floor, not as an exact winner — this gate owns
 #: its database, but a floor says what the arm means without arithmetic.
 DIRTY_PCT_FLOOR = 99.0
 
@@ -209,7 +216,7 @@ async def pg():
     conn = await asyncpg.connect(_gate_dsn())
 
     async def _drop():
-        for table in (DIRTY_TABLE, CLEAN_TABLE):
+        for table in PROBE_TABLES:
             await conn.execute(f"DROP TABLE IF EXISTS {table}")
         await conn.execute(
             "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = "
@@ -221,16 +228,20 @@ async def pg():
         await conn.execute(
             f"CREATE ROLE {PROBE_ROLE} LOGIN PASSWORD '{PROBE_SECRET}'"
         )
-        for table in (DIRTY_TABLE, CLEAN_TABLE):
+        for table, rows, kept in (
+            (DIRTY_TABLE, 200_000, 1_000),
+            (CLEAN_TABLE, 400_000, 300_000),
+            (QUEUE_TABLE, 6_000, 6),
+        ):
             await conn.execute(
                 f"CREATE TABLE {table} (id integer PRIMARY KEY) "
                 f"WITH (autovacuum_enabled = false)"
             )
             await conn.execute(
-                f"INSERT INTO {table} SELECT generate_series(1, 2000)"
+                f"INSERT INTO {table} SELECT generate_series(1, {rows})"
             )
-        await conn.execute(f"DELETE FROM {DIRTY_TABLE} WHERE id > 10")
-        await _await_dead_tuples(conn, DIRTY_TABLE, 1990)
+            await conn.execute(f"DELETE FROM {table} WHERE id > {kept}")
+            await _await_dead_tuples(conn, table, rows - kept)
         yield conn
     finally:
         try:
@@ -442,6 +453,27 @@ class TestTheDeadTupleReadingIsGenuinelyOptional:
         pct = row["n_dead_tup"] / (row["n_live_tup"] + row["n_dead_tup"]) * 100
         assert pct >= DIRTY_PCT_FLOOR
 
+    async def test_a_hot_queue_under_the_floor_never_reads_as_the_worst(self, pg):
+        """#11988: a queue of a few live rows reads ~99.9% dead between any two
+        vacuums. Its share is the highest in this database, and the read must
+        still not return it — nor anything, once the tables over the floor go."""
+        from app.tasks.watchdog import Q_VACUUM_WORST_DEAD_PCT, VACUUM_DEAD_MIN_TUPLES
+
+        queue = await pg.fetchrow(
+            "SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = $1",
+            QUEUE_TABLE,
+        )
+        assert queue["n_dead_tup"] / (queue["n_live_tup"] + queue["n_dead_tup"]) > 0.995
+        assert queue["n_dead_tup"] < VACUUM_DEAD_MIN_TUPLES
+
+        row = await pg.fetchrow(Q_VACUUM_WORST_DEAD_PCT)
+        assert row["relname"] != QUEUE_TABLE, (
+            "the 6-live-row queue was returned as the worst table — the floor is gone"
+        )
+        for table in (DIRTY_TABLE, CLEAN_TABLE):
+            await pg.execute(f"DROP TABLE {table}")
+        assert await pg.fetchrow(Q_VACUUM_WORST_DEAD_PCT) is None
+
     async def test_no_qualifying_table_returns_no_row_and_no_error(self, pg):
         """THE reachable ``None``. This is the read the rejected classifier
         turned into ``unavailable`` for the whole check — and the review's claim
@@ -452,7 +484,7 @@ class TestTheDeadTupleReadingIsGenuinelyOptional:
             classify_vacuum_signals,
         )
 
-        for table in (DIRTY_TABLE, CLEAN_TABLE):
+        for table in PROBE_TABLES:
             await pg.execute(f"DROP TABLE IF EXISTS {table}")
 
         row = await pg.fetchrow(Q_VACUUM_WORST_DEAD_PCT)
