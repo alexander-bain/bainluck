@@ -50,6 +50,7 @@ def test_preview_keeps_full_divisor_and_allocation_including_overflow():
     "kwargs",
     [
         {"mutually_exclusive": False},
+        {"mutually_exclusive": None},
         {"field_complete": False},
         {"mutually_exclusive": None, "field_complete": False},
     ],
@@ -144,6 +145,40 @@ def test_a_refused_history_tick_does_not_turn_unknown_mass_into_zero():
     )
     assert sum(result[start].values()) == pytest.approx(1)
     assert result[start + timedelta(minutes=1)] == partial
+
+
+@pytest.mark.parametrize("source", ["polymarket", "draftkings"])
+def test_absent_history_members_stay_raw_before_and_after_the_book_blend(source):
+    from datetime import datetime, timedelta, timezone
+    from app.utils.futures_history_basis import devigged_consensus_by_time
+
+    start = datetime(2026, 11, 4, tzinfo=timezone.utc)
+    full = {1: 0.4, 2: 0.3, 3: 0.2}
+    partial = {2: 0.3, 3: 0.2}
+    incomplete = set()
+    result = devigged_consensus_by_time(
+        {start: {source: full}, start + timedelta(minutes=1): {source: partial}},
+        incomplete_times=incomplete,
+    )
+    assert sum(result[start].values()) == pytest.approx(1)
+    assert result[start + timedelta(minutes=1)] == partial
+    assert incomplete == {start + timedelta(minutes=1)}
+
+
+def test_a_history_member_that_never_wrote_is_still_required_by_the_full_field():
+    from datetime import datetime, timezone
+    from app.utils.futures_history_basis import devigged_consensus_by_time
+
+    instant = datetime(2026, 11, 4, tzinfo=timezone.utc)
+    partial = {1: 0.1, 2: 0.1}
+    incomplete = set()
+    result = devigged_consensus_by_time(
+        {instant: {"kalshi": partial}},
+        outcome_names={1: "Alice", 2: "Bob", 3: "Casey"},
+        incomplete_times=incomplete,
+    )
+    assert result[instant] == partial
+    assert incomplete == {instant}
 
 
 def test_event_row_alias_preserves_ladder_semantics_and_rounding_identity():
@@ -349,3 +384,77 @@ def test_detail_keeps_the_actual_normalized_move_and_opening(monkeypatch, zero_o
     )
     assert leader["opening_probability"] == pytest.approx(0.0 if zero_opening else 0.25)
     assert detail["openings_withheld"] is False
+
+
+@pytest.mark.parametrize("composition", [False, True])
+def test_verified_title_keeps_complete_same_estimator_references(
+    monkeypatch, composition
+):
+    from datetime import datetime
+    from app.routes import futures
+    from app.utils.futures_verified_title import Composition, OutcomeOverlay, Refusal
+
+    market, rows, now = _comparison_field()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is None else now.astimezone(tz)
+
+    monkeypatch.setattr(futures, "datetime", Clock)
+    monkeypatch.setattr("app.utils.futures_market_snapshot.datetime", Clock)
+    detail = futures._format_market_detail(market, normalize_numbers=False)
+    verdict = Refusal("no_corroborating_venue")
+    if composition:
+        verdict = Composition(
+            {},
+            {
+                o.id: OutcomeOverlay(
+                    float(o.current_probability),
+                    [market.source],
+                    None,
+                    "single_source",
+                    False,
+                )
+                for o in market.outcomes
+            },
+            [market.source],
+        )
+    futures._apply_verified_title_to_detail(detail, verdict, market)
+    leader = next(row for row in detail["outcomes"] if row["id"] == rows[0]["id"])
+    assert leader["probability"] == pytest.approx(0.1505 / 1.0005, abs=1e-8)
+    assert leader["opening_probability"] == pytest.approx(0.25)
+    assert leader["probability_change_24h"] == pytest.approx(
+        0.1505 / 1.0005 - 0.02, abs=1e-8
+    )
+    assert detail["openings_withheld"] is False
+
+
+def test_unknown_exclusivity_keeps_only_the_feeds_existing_population_band():
+    from app.routes.events import _build_search_top_outcomes
+    from app.routes.futures import _format_market_detail
+    from app.routes.league_futures import _serialize_outcomes
+    from tests.test_midterms_complete_outcome_prices_11948 import _detail_field
+
+    market = _detail_field()
+    market.mutually_exclusive = None
+    market.outcomes = market.outcomes[:3]
+    for outcome, p in zip(market.outcomes, [0.5, 0.4, 0.3]):
+        outcome.current_probability = p
+    detail = _format_market_detail(market)
+    preview = _build_search_top_outcomes(market, limit=3)
+    league = _serialize_outcomes(market.outcomes, market)
+    for row in detail["outcomes"] + preview + league:
+        raw = next(
+            o.current_probability for o in market.outcomes if o.name == row["name"]
+        )
+        assert row["probability"] == raw
+        assert "rendered_percent" not in row
+    feed = [
+        {"id": o.id, "name": o.name, "probability": o.current_probability}
+        for o in market.outcomes
+    ]
+    _normalize_feed_probabilities(feed, market.outcomes, mutually_exclusive=None)
+    assert [o["probability"] for o in feed] == pytest.approx(
+        [0.5 / 1.2, 0.4 / 1.2, 0.3 / 1.2], abs=5e-5
+    )

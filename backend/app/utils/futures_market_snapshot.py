@@ -1340,7 +1340,10 @@ def normalized_field_comparisons(
     a missing leg into zero. The existing raw bank and stored columns are intact.
     """
     from app.utils.field_opening_coherence import field_openings_publishable
-    from app.utils.outcome_display import normalize_display_probs
+    from app.utils.outcome_display import (
+        display_probability_divisor,
+        normalize_display_probs,
+    )
 
     state = _instance_dict(market) or {}
     if (
@@ -1350,13 +1353,17 @@ def normalized_field_comparisons(
     ):
         return None
     rows = [dict(row) for row in outcomes]
+    if (
+        any(row.get("id") is None for row in rows)
+        or display_probability_divisor(
+            rows, field_complete=field_complete, question=state.get("name")
+        )
+        is None
+    ):
+        return None
     normalize_display_probs(
         rows, field_complete=field_complete, question=state.get("name")
     )
-    if not rows or any(
-        row.get("id") is None or "rendered_percent" not in row for row in rows
-    ):
-        return None
 
     def reference(values):
         column = [
@@ -1367,9 +1374,9 @@ def normalized_field_comparisons(
             }
             for row in rows
         ]
-        normalize_display_probs(column, question=state.get("name"))
-        if any("rendered_percent" not in row for row in column):
+        if display_probability_divisor(column, question=state.get("name")) is None:
             return {}
+        normalize_display_probs(column, question=state.get("name"))
         return {row["id"]: row["probability"] for row in column}
 
     bank = dated_movement_basis(market)

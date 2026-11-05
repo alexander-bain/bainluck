@@ -5600,7 +5600,7 @@ async def get_futures_market(
     # #9387: opt-in only. The default response is untouched, field for field.
     if representation == REPRESENTATION_VERIFIED_TITLE:
         _apply_verified_title_to_detail(
-            detail, await _resolve_verified_title(db, market)
+            detail, await _resolve_verified_title(db, market), market
         )
     return detail
 
@@ -5913,7 +5913,7 @@ def _overlay_current(row: dict, overlay, prob_key: str) -> bool:
     return True
 
 
-def _apply_verified_title_to_detail(detail: dict, verdict) -> None:
+def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     """Effective verified mode changes current values; nothing else moves.
 
     Outcome ids, names, array order, `source` and `bookmakers` stay the
@@ -5927,11 +5927,40 @@ def _apply_verified_title_to_detail(detail: dict, verdict) -> None:
     if isinstance(verdict, Composition):
         for row in detail["outcomes"]:
             changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
+    # A source-only/refused composition can retain complete references. A
+    # changed blend has no historical field with those same contributors;
+    # its old source-only references are still withheld by _overlay_current.
+    comparisons = (
+        normalized_field_comparisons(
+            market,
+            detail["outcomes"],
+            field_complete=not detail.get("prices_withheld"),
+        )
+        if not changed
+        else None
+    )
     scaled = normalize_display_probs(
         detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
         field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
     )
-    if scaled:
+    if comparisons is not None:
+        had_openings = any(
+            row.get("opening_probability") is not None for row in detail["outcomes"]
+        )
+        for row in detail["outcomes"]:
+            comparison = comparisons[row["id"]]
+            row["opening_probability"] = comparison["opening_probability"]
+            row["opening_american_odds"] = (
+                probability_to_american(row["opening_probability"])
+                if row["opening_probability"] is not None
+                else None
+            )
+            row["probability_change_24h"] = comparison["probability_change_24h"]
+        detail["openings_withheld"] = bool(detail.get("openings_withheld")) or (
+            had_openings
+            and all(row["opening_probability"] is None for row in detail["outcomes"])
+        )
+    elif scaled:
         detail["openings_withheld"] = True
         for row in detail["outcomes"]:
             for key in ("opening_probability", "opening_american_odds", "probability_change_24h"):
@@ -6044,7 +6073,7 @@ async def _finish_verified_timeline(
         market, None, await _withheld_price_outcome_ids(db, market),
         normalize_numbers=False,
     )
-    _apply_verified_title_to_detail(board, verdict)
+    _apply_verified_title_to_detail(board, verdict, market)
     current = {row["id"]: row for row in board["outcomes"]}
     for meta in payload.get("outcomes") or []:
         if meta.get("id") is not None:
@@ -9679,6 +9708,7 @@ async def get_futures_history(
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=_field_complete,
         incomplete_times=incomplete_history_times,
+        graded_outcome_ids=_settled_grades,
         outcome_names={o.id: o.name for o in charted_outcomes},
         question=market.name,
     )
@@ -9768,7 +9798,6 @@ async def get_futures_history(
         market, charted_outcomes, field_archive_by_outcome,
         field_complete=_field_complete,
     ) if not archive_scale_refusal else {}
-
 
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}

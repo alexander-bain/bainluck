@@ -394,7 +394,7 @@ def normalize_display_probs(
     """
     import math
 
-    if _field_has_result(outcomes):
+    if mutually_exclusive is not True or _field_has_result(outcomes):
         return False
     # Existing untraded midpoint refusal; this is membership cleanup, not vig.
     if mutually_exclusive:

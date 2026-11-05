@@ -8710,7 +8710,13 @@ def _normalize_feed_probabilities(
     for o in top_outcomes:
         row = by_id.get(o.get("id")) or by_name.get(o.get("name"))
         if row is not None:
-            o["probability"] = row["probability"]
+            # The feed's pre-existing unknown-semantics band (#8224) stays
+            # here; detail/league/search require a known one-winner field.
+            o["probability"] = (
+                _scale_display_probability(row["probability"], scale)
+                if mutually_exclusive is None
+                else row["probability"]
+            )
             if "rendered_percent" in row:
                 o["rendered_percent"] = row["rendered_percent"]
         elif mutually_exclusive is None:
