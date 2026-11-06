@@ -14,8 +14,8 @@ The adopted plan is #11850 comment6674713798, sections4–5; Alex's44-A stands.
 One packet contains event id, league, explicit series/doubleheader cluster id,
 start time and binary home-win result, plus its odds snapshots, source snapshots
 and recorded probability publications. A drawn game is a home non-win for this
-target; this is not an away-win or three-way target. Unknown results refuse the
-packet. Every unreadable packet/row is a failure, retained in the report.
+target; this is not an away-win or three-way target. Only completed games with both scores are graded; a closed/cancelled game stays
+unknown even if scores are present. Unknown results refuse the packet. Every unreadable packet/row is a failure, retained in the report.
 
 The exporter keeps recorded `sources`, status, fallback inputs, method, revision,
 clocks, payload hash and blend verbatim on `served` rows. `recorded_at` is the
@@ -80,7 +80,7 @@ come from the existing `DATABASE_URL` environment and are never printed.
 
 Queries are per-event/index-bounded with a10-second statement timeout; PostgreSQL
 connection and transactions are read-only. The nightly statement budget is1800
-seconds, including time already spent, and the current busy-hours guard is
+seconds, including transaction/timeout setup and time already spent, and the current busy-hours guard is
 checked before connecting and before each read. Each event/table has a20,000-row
 cap; overflow fails instead of silently truncating. A read failure and consumed
 statement time remain in the export receipt. The owner carries that receipt into

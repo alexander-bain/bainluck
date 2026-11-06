@@ -250,7 +250,20 @@ async def test_database_export_obeys_busy_hours_before_connecting(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reader_is_readonly_bounded_and_carries_forward_spent_budget(monkeypatch):
+@pytest.mark.parametrize(
+    "event_status,home,away,expected",
+    [
+        ("completed", 4, 2, 1),
+        ("completed", 2, 4, 0),
+        ("completed", 2, 2, 0),
+        ("closed", 4, 2, None),
+        ("cancelled", 4, 2, None),
+        ("completed", None, 2, None),
+    ],
+)
+async def test_reader_is_readonly_bounded_and_carries_forward_spent_budget(
+    monkeypatch, event_status, home, away, expected
+):
     raw = packet()
     queries = []
     engine_options = []
@@ -276,10 +289,10 @@ async def test_reader_is_readonly_bounded_and_carries_forward_spent_budget(monke
                     {
                         "id": 1,
                         "start": START,
-                        "status": "completed",
+                        "status": event_status,
                         "league": "baseball_mlb",
-                        "home_score": 4,
-                        "away_score": 2,
+                        "home_score": home,
+                        "away_score": away,
                     }
                 ]
             elif "FROM odds_snapshots" in query:
@@ -308,17 +321,18 @@ async def test_reader_is_readonly_bounded_and_carries_forward_spent_budget(monke
         "default_transaction_read_only": "on",
         "statement_timeout": "10000",
     }
-    assert queries[0][0] == "SET TRANSACTION READ ONLY"
+    assert any(query == "SET TRANSACTION READ ONLY" for query, _ in queries)
     reads = [
         (sql, params) for sql, params in queries if sql.strip().startswith("SELECT")
     ]
     assert len(reads) == 4
     assert all("event_id" in params for _, params in reads)
     assert all("LIMIT :limit" in sql for sql, _ in reads[1:])
-    assert receipt["statements"] == 4
+    assert result[0]["event"]["outcome"] == expected
+    assert receipt["statements"] == 10
+    assert queries[0][0].startswith("SET LOCAL statement_timeout")
     assert receipt["statement_seconds_before"] == 7
     assert receipt["statement_seconds_after"] >= 7
-    assert result[0]["event"]["outcome"] == 1
     engine.dispose.assert_awaited_once()
 
 
