@@ -846,6 +846,7 @@ def register_roundup_producer(producer: RoundupProducer) -> RoundupProducer:
 def _register_builtin_producers() -> None:
     import app.utils.discover_bundles as _bundles
     import app.utils.field_band as _field_band
+    import app.utils.field_leaders as _field_leaders
     import app.utils.same_deadline_board as _same_deadline
     import app.utils.sibling_family as _sibling_family
     import app.utils.window_events_closest as _window_closest
@@ -873,17 +874,24 @@ def _register_builtin_producers() -> None:
     if dec31_producer is not None:
         register_roundup_producer(dec31_producer)
 
-    gta_producer = getattr(
-        _sibling_family, "GTA_VI_ALBUM_FEATURES_PRODUCER", None
-    )
-    if gta_producer is not None:
-        register_roundup_producer(gta_producer)
+    for attr in (
+        "GTA_VI_ALBUM_FEATURES_PRODUCER",
+        "SNOW_FIRST_FLAKES_2026_PRODUCER",
+        "RT_SCORES_THIS_WEEK_PRODUCER",
+        "WHO_ANNOUNCES_BEFORE_2027_PRODUCER",
+    ):
+        sf_producer = getattr(_sibling_family, attr, None)
+        if sf_producer is not None:
+            register_roundup_producer(sf_producer)
 
-    snow_producer = getattr(
-        _sibling_family, "SNOW_FIRST_FLAKES_2026_PRODUCER", None
-    )
-    if snow_producer is not None:
-        register_roundup_producer(snow_producer)
+    for attr in (
+        "TOMORROWS_HIGHS_PRODUCER",
+        "OPENING_WEEKEND_PRODUCER",
+        "THIS_WEEKS_ECONOMIC_DATA_PRODUCER",
+    ):
+        fl_producer = getattr(_field_leaders, attr, None)
+        if fl_producer is not None:
+            register_roundup_producer(fl_producer)
 
     for attr in (
         "FOR_SCALE_SNOW_IN_DC_PRODUCER",
