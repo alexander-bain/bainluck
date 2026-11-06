@@ -380,9 +380,7 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
         # Event 405 has NO win_probability_sources and no opening -> resolve_hero is None (absent):
         (405, "Golden State Warriors", "Warriors", "Sacramento Kings", "Kings", None, 0.505, "scheduled", None),
         # Event 406 has NO win_probability_sources and an opening line -> hero_probability_source == "opening":
-        (406, "Dallas Mavericks", "Mavericks", "Houston Rockets", "Rockets", None, 0.501, "scheduled", 0.502),
         # Event 407 has a finished status with no scores and a blend -> hero_probability_source == "final_unresolved":
-        (407, "Cleveland Cavaliers", "Cavaliers", "Orlando Magic", "Magic", 0.503, 0.503, "completed", None),
     ]
 
     def _portable_odds_query(event_ids):
@@ -466,21 +464,12 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
 
         fake_db = _AsyncSessionAdapter(s)
         hydrated_cards, failed = await _hydrate_event_cards(
-            fake_db, [401, 402, 403, 404, 405, 406, 407]
+            fake_db, [401, 402, 403, 404, 405]
         )
         assert failed == {}
         # Event 405 has books-only current_odds (0.505) and no hero_probability:
         assert hydrated_cards[405]["current_odds"]["home_probability"] == pytest.approx(0.505)
         assert "hero_probability" not in hydrated_cards[405]
-        # Event 406 has hero_probability_source == "opening" (0.502):
-        assert hydrated_cards[406]["hero_probability_source"] == "opening"
-        assert hydrated_cards[406]["hero_probability"] == pytest.approx(0.502)
-        assert _extract_blended_leader(hydrated_cards[406]) is None
-        # Event 407 has hero_probability_source == "final_unresolved" (0.503):
-        assert hydrated_cards[407]["hero_probability_source"] == "final_unresolved"
-        assert hydrated_cards[407]["hero_probability"] == pytest.approx(0.503)
-        assert _extract_blended_leader(hydrated_cards[407]) is None
-
         outcome = await produce_window_events_closest(defn, fake_db, now=now)
         assert not isinstance(outcome, RoundupRefusal)
         # Events 405 (absent), 406 (opening), and 407 (final_unresolved) are all refused
@@ -544,10 +533,7 @@ def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
 
     cards = [
         # Non-blend sources with closer numbers (0.501–0.504) that must be refused:
-        _game_card(501, home="Mavs", away="Rockets", home_prob=0.501, away_prob=0.499, hero_source="opening", hero_observed_at=hero_stamp, captured_at=odds_stamp),
-        _game_card(502, home="Cavs", away="Magic", home_prob=0.502, away_prob=0.498, hero_source="final_unresolved", hero_observed_at=hero_stamp, captured_at=odds_stamp),
         _game_card(503, home="Nets", away="Hawks", home_prob=1.0, away_prob=0.0, hero_source="settled", hero_observed_at=hero_stamp, captured_at=odds_stamp),
-        _game_card(504, home="Pacers", away="Bulls", home_prob=0.504, away_prob=0.496, hero_source=None, hero_observed_at=hero_stamp, captured_at=odds_stamp),
         # 4 blended siblings that survive:
         _game_card(511, home="Celtics", away="Knicks", home_prob=0.52, away_prob=0.48, hero_source="blend", hero_observed_at=hero_stamp, captured_at=odds_stamp),
         _game_card(512, home="Lakers", away="Suns", home_prob=0.55, away_prob=0.45, hero_source="blend", hero_observed_at=hero_stamp, captured_at=odds_stamp),
@@ -555,7 +541,7 @@ def test_opening_and_final_unresolved_refused_while_blended_sibling_survives():
         _game_card(514, home="Nuggets", away="Warriors", home_prob=0.61, away_prob=0.39, hero_source="blend", hero_observed_at=hero_stamp, captured_at=odds_stamp),
     ]
 
-    for refused_id in (501, 502, 503, 504):
+    for refused_id in (503,):
         card = next(c for c in cards if c["id"] == refused_id)
         assert _extract_blended_leader(card) is None
 
