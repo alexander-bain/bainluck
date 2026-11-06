@@ -41,9 +41,20 @@ def _outcome(name: str, prob: float, rank: int = 0):
     return SimpleNamespace(id=rank, name=name, current_probability=prob, rank=rank)
 
 
-def _market(name: str, outcomes: list, source: str = "kalshi", external_id: str = "kxgovt"):
+def _market(
+    name: str,
+    outcomes: list,
+    source: str = "kalshi",
+    external_id: str = "kxgovt",
+    mutually_exclusive: bool | None = True,
+):
     return SimpleNamespace(
-        id=1, name=name, source=source, external_id=external_id, outcomes=outcomes
+        id=1,
+        name=name,
+        source=source,
+        external_id=external_id,
+        outcomes=outcomes,
+        mutually_exclusive=mutually_exclusive,
     )
 
 
@@ -187,11 +198,11 @@ class TestDistributionRow:
     def test_a_partition_is_normalized(self):
         m = _market(
             "Deficit",
-            [_outcome(f"bucket {i}", 0.4, i) for i in range(1, 7)],
+            [_outcome(f"bucket {i}", 0.25, i) for i in range(1, 7)],
         )
         row = _distribution_row(m)
         assert row["kind"] == "brackets"
-        # Raw sum 240% — a real partition, so it gets scaled back.
+        # Raw sum 150% (within #11995 6-A 160% ceiling) — a real partition, so it gets scaled back.
         assert sum(r[0] for r in row["rows"]) == pytest.approx(100.0, abs=1.0)
 
     def test_the_row_carries_what_the_card_needs(self):

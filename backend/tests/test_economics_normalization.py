@@ -27,19 +27,30 @@ def _make_outcome(name: str, prob: float, rank: int = 0):
     )
 
 
-def _make_market(name: str, outcomes: list, source: str = "kalshi", external_id: str = "kxcpi"):
+def _make_market(
+    name: str,
+    outcomes: list,
+    source: str = "kalshi",
+    external_id: str = "kxcpi",
+    mutually_exclusive: bool | None = True,
+):
     return SimpleNamespace(
-        id=1, name=name, source=source, external_id=external_id, outcomes=outcomes,
+        id=1,
+        name=name,
+        source=source,
+        external_id=external_id,
+        outcomes=outcomes,
+        mutually_exclusive=mutually_exclusive,
     )
 
 
 # ---------------------------------------------------------------------------
-# _brackets_from_outcomes — multi-outcome market normalization
+# _brackets_from_outcomes — multi-outcome market normalization (#11995 / #12093)
 # ---------------------------------------------------------------------------
 
 
 class TestBracketsFromOutcomes:
-    """_brackets_from_outcomes should normalize when probabilities sum > 105%."""
+    """_brackets_from_outcomes normalizes via #11995 6-A guards."""
 
     def test_normal_distribution_unchanged(self):
         outcomes = [
@@ -55,7 +66,7 @@ class TestBracketsFromOutcomes:
         assert brackets[0][0] == 35.0
 
     def test_inflated_distribution_normalized(self):
-        """Independent binary markets whose probs sum >> 100% get normalized."""
+        """Mutually-exclusive market whose probs sum up to 160% gets normalized."""
         outcomes = [
             _make_outcome("2.5% - 3.0%", 0.55, rank=1),
             _make_outcome("3.0% - 3.5%", 0.45, rank=2),
@@ -69,16 +80,16 @@ class TestBracketsFromOutcomes:
         assert total <= 101.0, f"Sum should be <=101%, got {total}%"
         assert brackets[0][0] < 55.0
 
-    def test_exactly_105_not_normalized(self):
-        """Threshold is strictly > 105; sum of exactly 105 is left alone."""
+    def test_underround_not_scaled_up(self):
+        """#11995 6-A scale-down only: sum < 100% is left untouched."""
         outcomes = [
-            _make_outcome("Low", 0.55, rank=1),
-            _make_outcome("High", 0.50, rank=2),
+            _make_outcome("Low", 0.45, rank=1),
+            _make_outcome("High", 0.40, rank=2),
         ]
         market = _make_market("Rate Level", outcomes)
         brackets = _brackets_from_outcomes(market)
-        assert brackets[0][0] == 55.0
-        assert brackets[1][0] == 50.0
+        assert brackets[0][0] == 45.0
+        assert brackets[1][0] == 40.0
 
     def test_normalize_false_skips(self):
         outcomes = [
@@ -105,13 +116,40 @@ class TestBracketsFromOutcomes:
         market = _make_market("Empty", [])
         assert _brackets_from_outcomes(market) == []
 
-    def test_severe_overround(self):
-        """6 brackets each at ~40% (sum 240%) should normalize correctly."""
+    def test_over_160_ceiling_refused(self):
+        """#11995 6-A: raw sum > 160% refuses normalization (independent binaries)."""
         outcomes = [_make_outcome(f"Bracket {i}", 0.40, rank=i) for i in range(6)]
         market = _make_market("Inflated", outcomes)
         brackets = _brackets_from_outcomes(market)
-        total = sum(b[0] for b in brackets)
-        assert 99.0 <= total <= 101.0, f"Sum should be ~100%, got {total}%"
+        assert [b[0] for b in brackets] == [40.0] * 6
+
+    def test_one_cent_floor_excluded_from_divisor(self):
+        """#11995 6-A / #8595: 1c floor outcomes are excluded from the divisor."""
+        outcomes = [
+            _make_outcome("2.0% - 2.5%", 0.55, rank=1),
+            _make_outcome("2.5% - 3.0%", 0.55, rank=2),
+            *[
+                _make_outcome(f"Tail {i}", 0.01, rank=i + 3)
+                for i in range(10)
+            ],
+        ]
+        market = _make_market("CPI", outcomes)
+        brackets = _brackets_from_outcomes(market)
+        # Non-floor mass is 1.10 -> each 0.55 leg normalizes to 50.0%, not 0.55/1.20 = 45.8%
+        assert brackets[0][0] == 50.0
+        assert brackets[1][0] == 50.0
+        assert brackets[2][0] == 0.9
+
+    def test_mutually_exclusive_none_or_false_not_rescaled(self):
+        """#12010 / #12093: mutually_exclusive must be True to normalize."""
+        outcomes = [
+            _make_outcome("2.0% - 2.5%", 0.60, rank=1),
+            _make_outcome("2.5% - 3.0%", 0.55, rank=2),
+        ]
+        for me in (None, False):
+            market = _make_market("CPI", outcomes, mutually_exclusive=me)
+            brackets = _brackets_from_outcomes(market)
+            assert [b[0] for b in brackets] == [60.0, 55.0]
 
 
 # ---------------------------------------------------------------------------
