@@ -1745,15 +1745,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         marketIsDuel={marketShape === SHAPE_DUEL}
       />
 
-      {/* More from this category */}
-      {market?.llm_sport_category && (
+      {/* More from this category (default non-atlas placement) */}
+      {!atlasEnabled && market?.llm_sport_category && (
         <RelatedByTag
           tags={[`sport:${market.llm_sport_category}`]}
           excludeId={market.id}
           excludeType="futures"
           limit={4}
           title={`More ${toTitleCaseAcronymSafe(market.llm_sport_category)}`}
-          atlas={atlasEnabled}
+          atlas={false}
         />
       )}
 
@@ -1952,6 +1952,21 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </details>
         )}
       </div>
+      )}
+
+      {/* #883 Step F4: under ?atlas=1, RelatedByTag ("Keep exploring") sits
+          after the market's own outcomes/results block and immediately above the
+          attribution footer, matching the atlas contract section order
+          (headline -> journey -> body -> all outcomes -> related -> attribution). */}
+      {atlasEnabled && market?.llm_sport_category && (
+        <RelatedByTag
+          tags={[`sport:${market.llm_sport_category}`]}
+          excludeId={market.id}
+          excludeType="futures"
+          limit={4}
+          title={`More ${toTitleCaseAcronymSafe(market.llm_sport_category)}`}
+          atlas
+        />
       )}
 
       {/* #883 Step F4: attribution footer — names contributing source(s) only,

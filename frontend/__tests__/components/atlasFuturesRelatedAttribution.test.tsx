@@ -269,4 +269,53 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
       searchParamsStr = '';
     }
   });
+
+  it('places Final Results / All Outcomes above Keep exploring under ?atlas=1 per the atlas section order', async () => {
+    searchParamsStr = 'atlas=1';
+    futuresMarketPayload = {
+      id: 109085,
+      name: 'Kansas Senate winner?',
+      status: 'resolved',
+      mutually_exclusive: true,
+      llm_sport_category: 'politics',
+      source: 'kalshi',
+      source_count: 1,
+      external_id: 'SENATEKS-26',
+      created_at: '2026-06-01T00:00:00Z',
+      updated_at: '2026-11-04T06:00:00Z',
+      outcomes: [
+        {
+          id: 10,
+          name: 'Adam Hamilton',
+          probability: null,
+          opening_probability: 0.12,
+          rank: 1,
+          is_winner: true,
+          resolution_source: 'api_settlement',
+          last_updated: '2026-11-04T06:00:00Z',
+        },
+        {
+          id: 11,
+          name: 'Roger Marshall',
+          probability: null,
+          opening_probability: 0.86,
+          rank: 2,
+          is_winner: false,
+          resolution_source: 'api_settlement',
+          last_updated: '2026-11-04T06:00:00Z',
+        },
+      ],
+    };
+
+    const html = renderHtml(<FuturesDetailPage params={{ id: '109085' }} />);
+    searchParamsStr = '';
+
+    const finalResultsIdx = html.indexOf('Final Results');
+    const keepExploringIdx = html.indexOf('Keep exploring');
+    const attributionIdx = html.indexOf('data-testid="atlas-attribution-footer"');
+
+    expect(finalResultsIdx).toBeGreaterThan(-1);
+    expect(keepExploringIdx).toBeGreaterThan(finalResultsIdx);
+    expect(attributionIdx).toBeGreaterThan(keepExploringIdx);
+  });
 });
