@@ -128,7 +128,9 @@ def _old_composite(market):
 
 class TestTheDefectTheseSpecimensReproduce:
     def test_the_blank_ladder_was_rescaled_into_a_bucket(self):
-        assert _old_composite(_blank()) == (28.6, "$87")  # `WTI $87 · 28%` on the page
+        # #12093: _brackets_from_outcomes now uses #11995 6-A (refuses >160% raw sum),
+        # so the 281.5% blank ladder stays un-rescaled at its 80.5% modal leg.
+        assert _old_composite(_blank()) == (80.5, "$87")
         assert not econ._is_cumulative_ladder(_blank())
 
     def test_the_mixed_affix_ladder_was_differenced_into_a_bucket(self):

@@ -1123,3 +1123,33 @@ class TestIsSameQuestion:
         assert not is_same_question(
             "Number of rate cuts in 2026?", "How many Fed rate cuts in 2026?"
         )
+
+    def test_spotlight_match_includes_server_blend_12093(self):
+        """#12093 (Defect 1): spotlight rows carry server-blended `merged`."""
+        markets = [
+            _market(
+                market_id=1,
+                name="Who will win?",
+                src="kalshi",
+                outcomes=[
+                    _outcome("Alice", 0.70),
+                    _outcome("Bob", 0.20),
+                    _outcome("Carol", 0.10),
+                ],
+            ),
+            _market(
+                market_id=2,
+                name="Who will win?",
+                src="polymarket",
+                outcomes=[
+                    _outcome("Alice", 0.20),
+                    _outcome("Bob", 0.45),
+                    _outcome("Carol", 0.35),
+                ],
+            ),
+        ]
+        (match,) = find_cross_source_markets(markets, market_row_fn=_simple_row_fn)
+        assert match["outcome"] == "Alice"
+        # 50pt spread trips blend_probabilities's 40pt divergence gate -> primary value 70.0 (not plain mean 45.0)
+        assert match["merged"] == 70.0
+

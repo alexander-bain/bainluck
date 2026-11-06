@@ -3042,15 +3042,17 @@ export default function EventPage({ params }: EventPageProps) {
                     stays on the `title`, which has room for it. */}
                 {/* #2786 — HOME-AWAY, matching this page's own hero, which
                     stacks the home score above the away score. */}
-                {(atlasOptIn && venueVoided ? ATLAS_STATE_COPY.voided : venueSettledSentence) ??
-                  suspendedSummary(
-                    event?.away_score,
-                    event?.home_score,
-                    "home-away",
-                    // #8810 — "Postponed" when ESPN said so. Null on every
-                    // other row, which keeps the sentence it had.
-                    stoppageLabel,
-                  )}
+                {atlasOptIn && venueVoided
+                  ? ATLAS_STATE_COPY.voided
+                  : venueSettledSentence ??
+                    suspendedSummary(
+                      event?.away_score,
+                      event?.home_score,
+                      "home-away",
+                      // #8810 — "Postponed" when ESPN said so. Null on every
+                      // other row, which keeps the sentence it had.
+                      stoppageLabel,
+                    )}
               </span>
             ) : (
               <span className="flex items-center gap-1.5">
@@ -4312,7 +4314,7 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && !venueVoided && (
         <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
           <div id={ALL_MARKETS_ANCHOR_ID} className="scroll-mt-20 empty:hidden">
-            <QuestionCatalog data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />
+            <QuestionCatalog data={gameMarkets} status={event.status} />
           </div>
         </SectionErrorBoundary>
       )}
