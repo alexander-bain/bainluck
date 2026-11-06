@@ -474,7 +474,7 @@ async def test_field_leaders_all_per_member_refusal_reasons_recorded():
     assert isinstance(res_inv, RoundupRefusal)
     assert ("field_leaders", "invalid_probability:605") in res_inv.reasons
 
-    # 6. guard_failed (mutually_exclusive=False and sum > 160%)
+    # 6. guard_failed (mutually_exclusive=False, mutually_exclusive=None, and sum > 160%)
     non_exclusive_city = [
         _city_market(
             606,
@@ -487,11 +487,51 @@ async def test_field_leaders_all_per_member_refusal_reasons_recorded():
             "Chicago",
             [("44°–45°", 0.90), ("46°–47°", 0.85)],  # sum = 1.75 > 1.60 ceiling
         ),
+        {
+            **_city_market(
+                608,
+                "Miami",
+                [("80°–81°", 0.60), ("82°–83°", 0.40)],
+            ),
+            "mutually_exclusive": None,
+        },
     ]
     res_guard = await tomorrows_highs(non_exclusive_city, now=NOW_UTC)
     assert isinstance(res_guard, RoundupRefusal)
     assert ("field_leaders", "guard_failed:606") in res_guard.reasons
     assert ("field_leaders", "guard_failed:607") in res_guard.reasons
+    assert ("field_leaders", "guard_failed:608") in res_guard.reasons
+
+    # 7. partial_field (< 0.90 total bucket mass, e.g. 4-bucket field at 60% total)
+    partial_field_city = [
+        _city_market(
+            609,
+            "New York",
+            [
+                ("50°–51°", 0.25),
+                ("52°–53°", 0.15),
+                ("54°–55°", 0.12),
+                ("56°–57°", 0.08),
+            ],
+        )
+    ]
+    res_partial = await tomorrows_highs(partial_field_city, now=NOW_UTC)
+    assert isinstance(res_partial, RoundupRefusal)
+    assert ("field_leaders", "partial_field:609") in res_partial.reasons
+
+    # 8. empty_bucket_label (an unlabeled bucket refuses the member instead of silently dropping the leg)
+    unlabeled_bucket_city = [
+        {
+            **_city_market(610, "New York", [("52°–53°", 0.60), ("54°–55°", 0.40)]),
+            "outcomes": [
+                {"id": 6101, "name": "52°–53°", "probability": 0.60, "observed_at": "2026-11-05T17:30:00Z"},
+                {"id": 6102, "name": "   ", "probability": 0.40, "observed_at": "2026-11-05T17:30:00Z"},
+            ],
+        }
+    ]
+    res_unlabeled = await tomorrows_highs(unlabeled_bucket_city, now=NOW_UTC)
+    assert isinstance(res_unlabeled, RoundupRefusal)
+    assert ("field_leaders", "empty_bucket_label:610") in res_unlabeled.reasons
 
 
 @pytest.mark.asyncio

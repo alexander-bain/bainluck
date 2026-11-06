@@ -64,6 +64,7 @@ __all__ = [
     "OPENING_WEEKEND_PRODUCER",
     "OPENING_WEEKEND_SLUG",
     "PRODUCER_KIND_FIELD_LEADERS",
+    "SPECIALTY_FIELD_MASS_MIN",
     "THIS_WEEKS_ECONOMIC_DATA_DEFINITION",
     "THIS_WEEKS_ECONOMIC_DATA_DEFINITION_PATH",
     "THIS_WEEKS_ECONOMIC_DATA_ID",
@@ -85,6 +86,7 @@ __all__ = [
 ]
 
 PRODUCER_KIND_FIELD_LEADERS = "field_leaders"
+SPECIALTY_FIELD_MASS_MIN = 0.9
 
 TOMORROWS_HIGHS_SLUG = "roundup-tomorrows-highs"
 TOMORROWS_HIGHS_ID = "roundup:tomorrows-highs"
@@ -286,7 +288,7 @@ class _NormalizedBucket:
 @dataclass(frozen=True)
 class _CoherentFieldMember:
     market_id: int
-    source: str
+    source: Optional[str]
     category: str
     name: str
     subject: str
@@ -326,8 +328,8 @@ def _build_field_leader_card(member: _CoherentFieldMember) -> dict[str, Any]:
         "market_type": "field",
         "status": "open",
         "source": member.source,
-        "sources": [member.source],
-        "source_count": 1,
+        "sources": [member.source] if member.source else [],
+        "source_count": 1 if member.source else 0,
         "mutually_exclusive": True,
         "resolution_date": member.resolution_date,
         "top_outcomes": top_outcomes,
@@ -460,7 +462,7 @@ def select_field_leaders(
             dropped_reasons.append(("field_leaders", f"cumulative_ladder_not_allowed:{mid}"))
             continue
 
-        if m.get("mutually_exclusive") is False:
+        if m.get("mutually_exclusive") is not True:
             dropped_reasons.append(("field_leaders", f"guard_failed:{mid}"))
             continue
 
@@ -492,7 +494,8 @@ def select_field_leaders(
                 break
             label = str(o.get("name") or o.get("label") or "").strip()
             if not label:
-                continue
+                bucket_error = f"empty_bucket_label:{mid}"
+                break
             p_raw = (
                 o.get("probability")
                 if "probability" in o
@@ -518,6 +521,11 @@ def select_field_leaders(
 
         if len(raw_buckets) < 2:
             dropped_reasons.append(("field_leaders", f"too_few_buckets:{mid}"))
+            continue
+
+        raw_mass = sum(p_val for _, _, p_val, _ in raw_buckets)
+        if raw_mass + 1e-9 < SPECIALTY_FIELD_MASS_MIN:
+            dropped_reasons.append(("field_leaders", f"partial_field:{mid}"))
             continue
 
         outcome_dicts: list[dict[str, Any]] = [
@@ -567,14 +575,19 @@ def select_field_leaders(
         leader = by_prob[0]
         runner_up = by_prob[1]
 
-        # Freshness check (6h cadence).
-        obs_dt = _parse_dt(leader.observed_at)
-        if obs_dt is None:
-            dropped_reasons.append(("field_leaders", f"missing_observation_time:{mid}"))
-            continue
-        age_hours = (effective_now - obs_dt.astimezone(timezone.utc)).total_seconds() / 3600.0
-        if age_hours > max_age_hours:
-            dropped_reasons.append(("field_leaders", f"stale_observation:{mid}"))
+        # Freshness check (6h cadence) on both leader and runner-up so a stale runner-up cannot decide the 1-pt gap.
+        freshness_reason: Optional[str] = None
+        for top_bucket in (leader, runner_up):
+            obs_dt = _parse_dt(top_bucket.observed_at)
+            if obs_dt is None:
+                freshness_reason = f"missing_observation_time:{mid}"
+                break
+            age_hours = (effective_now - obs_dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+            if age_hours > max_age_hours:
+                freshness_reason = f"stale_observation:{mid}"
+                break
+        if freshness_reason is not None:
+            dropped_reasons.append(("field_leaders", freshness_reason))
             continue
 
         # Top two ranges within 1 point -> drop that row (not a whole-card refusal unless < min_members remain).
@@ -595,7 +608,8 @@ def select_field_leaders(
             continue
         seen_subjects.add(dedup_key)
 
-        source_str = str(m.get("source") or "kalshi").strip().lower()
+        raw_src = str(m.get("source") or "").strip().lower()
+        source_str: Optional[str] = raw_src if raw_src else None
         cat_str = str(m.get("category") or domain).strip().lower()
         candidates.append(
             _CoherentFieldMember(
@@ -808,7 +822,7 @@ async def _load_field_leaders_from_db(
             "llm_sport_category": getattr(m, "llm_sport_category", None),
             "market_tier": getattr(m, "market_tier", None),
             "market_type": getattr(m, "market_type", None),
-            "mutually_exclusive": getattr(m, "mutually_exclusive", True),
+            "mutually_exclusive": getattr(m, "mutually_exclusive", None),
             "resolution_date": getattr(m, "resolution_date", None),
             "updated_at": getattr(m, "updated_at", None),
             "prices_updated_at": getattr(m, "prices_updated_at", None),
