@@ -108,12 +108,13 @@ fields say both live and not live, so the arm cannot show the opening holds no
 ordinary live event. If such a card would sit in the CANDIDATE opening — the
 first :data:`OPENING_SEATS` cards of the deck the stable move would return,
 which includes a conflicted tail card the move would promote into a vacated
-seat — the whole call is UNSUPPORTED with the input order unchanged and the
-conflicted identities named in ``refused_conflicts``. It is never skipped in
-favour of the next card, demoted, rescored, or treated as live or settled;
-which lifecycle source should win is not this module's decision. A conflict
-outside the candidate opening does not refuse an otherwise supported opening.
-An exempt conflict keeps its seat exactly as an exempt live card does.
+seat — the single-pass call returns UNSUPPORTED with the input order unchanged,
+the conflicted identities named in ``refused_conflicts``, and the offending
+input indices named in ``refused_positions`` (Ruling 23-A, #12041: the edition
+composer holds back only the named offender(s) and re-runs ``seat_opening`` on
+the remaining deck). A conflict outside the candidate opening does not refuse
+an otherwise supported opening. An exempt conflict keeps its seat exactly as an
+exempt live card does.
 
 Thin supply: an explicit continuation
 -------------------------------------
@@ -174,6 +175,12 @@ COMPLIANT = "compliant"
 SPARSE_CONTINUATION = "sparse_continuation"
 UNSUPPORTED = "unsupported"
 
+# Refusal classes (#12041 Ruling 23-A).
+REFUSAL_UNKNOWN_KIND = "unknown_kind"
+REFUSAL_INVALID_IDENTITY = "invalid_identity"
+REFUSAL_MALFORMED_GROUP = "malformed_group"
+REFUSAL_LIFECYCLE_CONFLICT = "lifecycle_conflict"
+
 
 @dataclass
 class CardSeating:
@@ -219,6 +226,11 @@ class OpeningSeatingOutcome:
     #: identities, in candidate-opening order, of unexempt CONFLICT cards that
     #: made the call UNSUPPORTED (empty for every other outcome)
     refused_conflicts: list = field(default_factory=list)
+    #: 0-based positions in the input ``items`` of the card(s) that caused an
+    #: :data:`UNSUPPORTED` refusal (#12041 Ruling 23-A; empty otherwise)
+    refused_positions: list = field(default_factory=list)
+    #: refusal category when ``status == UNSUPPORTED`` (#12041 Ruling 23-A)
+    refusal_class: Optional[str] = None
     #: 0-based position in ``items`` (the full deck, not a page) of the first
     #: card of the explicit ordinary-live continuation section. ``None`` when
     #: there is no such section; ``0`` when no card is eligible.
@@ -239,6 +251,8 @@ class OpeningSeatingOutcome:
             "displaced": list(self.displaced),
             "entered": list(self.entered),
             "refused_conflicts": list(self.refused_conflicts),
+            "refused_positions": list(self.refused_positions),
+            "refusal_class": self.refusal_class,
             "continuation_start": self.continuation_start,
             "restricted": pick(lambda c: c.restricted),
             "exempt_live": pick(lambda c: c.lifecycle == LIVE and c.exempt_by),
@@ -426,21 +440,43 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
         raise ValueError("seat_opening needs an explicit timezone-aware clock")
     unchanged = list(items)
 
-    def refuse(status: str, detail: str, cards: list) -> OpeningSeatingOutcome:
-        return OpeningSeatingOutcome(status=status, items=unchanged, detail=detail, cards=cards)
+    def refuse(
+        status: str,
+        detail: str,
+        cards: list,
+        *,
+        refused_positions: Optional[list] = None,
+        refusal_class: Optional[str] = None,
+    ) -> OpeningSeatingOutcome:
+        return OpeningSeatingOutcome(
+            status=status,
+            items=unchanged,
+            detail=detail,
+            cards=cards,
+            refused_positions=list(refused_positions or []),
+            refusal_class=refusal_class,
+        )
 
     cards: list[CardSeating] = []
     seen: set[str] = set()
     for index, card in enumerate(items):
         kind = card.get("type") if isinstance(card, dict) else None
         if kind not in KNOWN_KINDS:
-            return refuse(UNSUPPORTED, f"[{index}]: card kind {kind!r} is not supported", cards)
+            return refuse(
+                UNSUPPORTED,
+                f"[{index}]: card kind {kind!r} is not supported",
+                cards,
+                refused_positions=[index],
+                refusal_class=REFUSAL_UNKNOWN_KIND,
+            )
         seating = classify_card(card, now=now)
         if seating.identity == "?" or seating.identity in seen:
             return refuse(
                 UNSUPPORTED,
                 f"[{index}]: identity {seating.identity!r} is missing or duplicated",
                 cards,
+                refused_positions=[index],
+                refusal_class=REFUSAL_INVALID_IDENTITY,
             )
         seen.add(seating.identity)
         cards.append(seating)
@@ -450,11 +486,17 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
         for card, seating in zip(items, cards)
         if seating.kind == "event" and isinstance(card.get("data"), dict)
     }
-    for card, seating in zip(items, cards):
+    for group_index, (card, seating) in enumerate(zip(items, cards)):
         if seating.kind in GROUP_KINDS:
             reason, restricted_by = _group_members(card, by_event_id, now=now)
             if reason is not None:
-                return refuse(UNSUPPORTED, reason, cards)
+                return refuse(
+                    UNSUPPORTED,
+                    reason,
+                    cards,
+                    refused_positions=[group_index],
+                    refusal_class=REFUSAL_MALFORMED_GROUP,
+                )
             # A group inherits its represented members' restriction and is then
             # seated by the same stable move as any restricted card.
             seating.restricted_by = restricted_by
@@ -491,6 +533,8 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
             + "; their typed fields say both live and not live, so the opening "
             "cannot be shown free of ordinary live events",
             cards,
+            refused_positions=list(conflicted),
+            refusal_class=REFUSAL_LIFECYCLE_CONFLICT,
         )
         outcome.refused_conflicts = [cards[i].identity for i in conflicted]
         return outcome
