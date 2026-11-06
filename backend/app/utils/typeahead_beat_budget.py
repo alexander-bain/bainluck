@@ -2075,7 +2075,16 @@ def free_background_slots(
 #: indexed MLB window read; ESPN boards (11 reads, no quota) only when the
 #: window holds an unanchored, unscored row. The census RUN over the tree
 #: branched from `8c641f6f48` printed `explicit 100 implicit 40 total 140`.
-BACKGROUND_BEAT_COUNT = 140
+#: 🔴 RE-DERIVED at speed (2026-11-05, #12108): 140 → 141, explicit 100 → 101,
+#: fall-through UNMOVED at 40. `probability-publication-coverage`
+#: (`crontab(minute=37, hour="*/6")`) names `background` explicitly. Cost: four
+#: fires a day, inert (one env read) while PROBABILITY_PUBLICATION_RECORDING is
+#: off; on, one indexed EXISTS per event started in the last 24 h with a line,
+#: one `pg_total_relation_size`, one Redis GET+SET — no table scan. ⚠️ #12100
+#: also writes 141 against the same base of 140: whichever merges second
+#: re-runs the census (142), never adds one. The census RUN over the tree
+#: branched from `b65d0573bf` printed `explicit 101 implicit 40 total 141`.
+BACKGROUND_BEAT_COUNT = 141
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
