@@ -20,7 +20,14 @@ import {
  * item waits on — is a label rather than a figure, and the page test exempts it
  * by that attribute. A figure never goes in here.
  */
-export default function TruthChip({ truth }: { truth: Truth }) {
+export default function TruthChip({
+  truth,
+  linked = true,
+}: {
+  truth: Truth;
+  /** False inside something that is already a link (a hero tile), where a nested `<a>` is invalid. */
+  linked?: boolean;
+}) {
   const now = useNow();
   const dated = truth.kind === "last_run" || truth.kind === "reviewed";
   const days = dated && now ? ageInDays(truth.asOf, now) : null;
@@ -38,7 +45,7 @@ export default function TruthChip({ truth }: { truth: Truth }) {
       data-as-of={truth.kind === "planned" ? undefined : truth.asOf}
       className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1"
     >
-      {source ? (
+      {source && linked ? (
         <a href={source.href} target="_blank" rel="noopener noreferrer" title={source.label}>
           {chip}
         </a>

@@ -1,0 +1,34 @@
+{
+  "about": "The receipts' own words behind every figure and verdict in runs-2026-11.json. Test-only: lib/evals/__tests__/runs.test.ts reads this, the page never does. Each quote is copied verbatim from the receipt it names.",
+  "quotes": {
+    "discover-interest-baseline": {
+      "result": { "quote": "### Verdict: NO BASELINE MEASURABLE", "from": "https://github.com/alexander-bain/bainluck/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md" },
+      "labels": { "quote": "| Total labelled rows **in existence** | **24** |", "from": "https://github.com/alexander-bain/bainluck/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md" },
+      "positives": { "quote": "| Positives (`love`) | **1** |", "from": "https://github.com/alexander-bain/bainluck/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md" }
+    },
+    "calibration-exit-exam": {
+      "result": { "quote": "**Exit exam:** it last ran Aug 13 and has never passed.", "from": "https://github.com/alexander-bain/bainluck/pull/11956" }
+    },
+    "twin-judge-first-run": {
+      "result": { "quote": "The run's last step failed", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6650478138" },
+      "replies": { "quote": "43 of 120 replies hit the 900-token cap.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6650478138" },
+      "cut_off": { "quote": "43 of 120 replies hit the 900-token cap.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6650478138" },
+      "cost": { "quote": "- Cost: $0.51.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6650478138" },
+      "model": { "quote": "Run: 120 requests, all succeeded on claude-sonnet-5-5.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6650478138" }
+    },
+    "twin-judge-exam-run-1": {
+      "result": { "quote": "Twin-judge exam completed; result: FAIL.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673312127" },
+      "replies": { "quote": "three passes over all 120 frozen pairs completed: 360/360 replies", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673312127" },
+      "pilot_replies": { "quote": "| Pilot, 10 replies, once | 131846 | 9206 | $0.177876 |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673312127" },
+      "cost": { "quote": "| Total | 5347253 | 292116 | **$6.807833** |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673312127" },
+      "model": { "quote": "Model `claude-sonnet-5-5`, high effort, structured JSON, output cap 4096", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673312127" }
+    },
+    "twin-judge-exam-run-2": {
+      "result": { "quote": "Result: shared gate FAIL; twin gate FAIL; pooled gate FAIL", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674874973" },
+      "replies": { "quote": "All 360 replies collected. Actual usage-rated run-2 cost $7.737527, within its fresh $10 cap.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674874973" },
+      "cost": { "quote": "All 360 replies collected. Actual usage-rated run-2 cost $7.737527, within its fresh $10 cap.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674874973" },
+      "model": { "quote": "model (`claude-sonnet-5-5`), high effort", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674874973" },
+      "disclosure": { "quote": "Run 2 is a repeated evaluation, **not fresh blind validation**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674874973" }
+    }
+  }
+}

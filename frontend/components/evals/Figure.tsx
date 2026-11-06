@@ -59,10 +59,48 @@ export default function Figure({ children, truth, value, className = "" }: Figur
       data-as-of={truth.asOf}
       data-source={truth.source.href}
       data-value={value ?? children}
-      className={`font-mono tabular-nums ${className}`}
+      className={`tabular-nums ${className}`}
     >
       {children}
     </span>
+  );
+}
+
+/**
+ * A chart or other drawn exhibit: many numbers (axis ticks, counts) drawn from
+ * one record. It takes the same three things a `Figure` does and obeys the
+ * same two rules, and the whole exhibit counts as one figure for the page's
+ * digit scan — its numbers are the record's, drawn, not typed.
+ */
+export function Exhibit({
+  truth,
+  label,
+  children,
+}: {
+  truth: MeasuredTruth;
+  /** What the exhibit shows, for screen readers. */
+  label: string;
+  children: ReactNode;
+}) {
+  const insidePlanned = useContext(PlannedContext);
+  const problem = figureProblem(insidePlanned, truth);
+  if (problem) {
+    if (process.env.NODE_ENV !== "production") {
+      throw new Error(`/evals Exhibit "${label}": ${problem}`);
+    }
+    return null;
+  }
+  return (
+    <figure
+      data-evals-figure=""
+      data-evals-exhibit=""
+      data-truth={truth.kind}
+      data-as-of={truth.asOf}
+      data-source={truth.source.href}
+      aria-label={label}
+    >
+      {children}
+    </figure>
   );
 }
 

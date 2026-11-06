@@ -3,12 +3,14 @@
  */
 
 /**
- * #12102 S1 — /evals renders its shell and keeps the truth rules.
+ * #12102 — /evals renders its sections and keeps the truth rules.
  *
- * The plan's acceptance for S1: tests fail on a bare number or on a figure
- * inside a PLANNED item, and the route is unlisted (`noindex`) until Alex's
- * phone look (Decide 43-A1). Each rule has a negative control here, so a
- * scanner that silently stopped reading would fail rather than pass.
+ * S1's acceptance: tests fail on a bare number or on a figure inside a PLANNED
+ * item, and the route is unlisted (`noindex`) until Alex's phone look (Decide
+ * 43-A1). S3's: the forward record shows /about's figure under a LIVE label,
+ * an older payload shows the staleness sentence, and a failed read shows
+ * "Unavailable right now" with no number. Each rule has a negative control, so
+ * a scanner that silently stopped reading would fail rather than pass.
  *
  * Rendered with `createRoot` in jsdom, the way a browser runs the page: effects
  * fire, so the ages a reader's clock adds are on screen when the scan runs.
@@ -16,6 +18,7 @@
 
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { SWRConfig } from "swr";
 
 // The three GA4 hooks read an AnalyticsProvider context a test render does not
 // supply; stubbing them is the house idiom (see aboutProofCard…7740.test.tsx).
@@ -24,17 +27,33 @@ jest.mock("@/hooks", () => ({
   useScrollDepth: () => {},
   useEngagementTime: () => {},
 }));
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({ children, href, ...rest }: { children: React.ReactNode; href: unknown }) =>
+    React.createElement("a", { href: String(href), ...rest }, children),
+}));
+// The page's one network read. Each test decides what it answers.
+jest.mock("@/lib/api", () => ({
+  ...jest.requireActual("@/lib/api"),
+  fetchCalibration: jest.fn(),
+}));
 
 import EvalsPage from "@/app/evals/page";
 import { metadata } from "@/app/evals/layout";
 import EvalsSection from "@/components/evals/EvalsSection";
 import Figure from "@/components/evals/Figure";
+import { fetchCalibration } from "@/lib/api";
+import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofFigures";
 import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy } from "@/lib/copyBans";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
+import { calibrationFixture, calibrationFixtureBuckets } from "@/lib/evals/fixtures/calibration";
 import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
+import { loadRuns } from "@/lib/evals/runs";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { pacificDayLabel, type MeasuredTruth } from "@/lib/evals/truth";
 import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
+
+const fetchCalibrationMock = fetchCalibration as jest.Mock;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,6 +75,24 @@ async function mount(node: React.ReactElement): Promise<HTMLElement> {
   });
   return host;
 }
+
+/** The page with a cache of its own, so no test reads another's payload; flushed once the read settles. */
+async function mountPage(): Promise<HTMLElement> {
+  const page = await mount(
+    <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false }}>
+      <EvalsPage />
+    </SWRConfig>
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  return page;
+}
+
+beforeEach(() => {
+  fetchCalibrationMock.mockReset();
+  fetchCalibrationMock.mockResolvedValue(calibrationFixture());
+});
 
 afterEach(async () => {
   await act(async () => root?.unmount());
@@ -103,21 +140,21 @@ function freezeClockAt(iso: string) {
 
 describe("/evals S1 renders the shell", () => {
   it("carries the page marker a served-DOM probe reads, and the title", async () => {
-    const page = await mount(<EvalsPage />);
+    const page = await mountPage();
     expect(page.querySelector('[data-testid="evals-page"]')).not.toBeNull();
     expect(page.querySelector("h1")?.textContent).toBe("How Bain Luck tests itself");
   });
 
-  it("shows the gaps, the reading guide and the sources, and no section without data", async () => {
-    const page = await mount(<EvalsPage />);
+  it("shows the built sections in order, and no section without data", async () => {
+    const page = await mountPage();
     const sections = Array.from(page.querySelectorAll("[data-evals-section]")).map((s) =>
       s.getAttribute("data-evals-section")
     );
-    expect(sections).toEqual(["gaps", "how-to-read", "sources"]);
+    expect(sections).toEqual(["timeline", "forward-record", "gaps", "how-to-read", "sources"]);
   });
 
   it("every gap row links the issue or pull request that owns it", async () => {
-    const page = await mount(<EvalsPage />);
+    const page = await mountPage();
     const rows = Array.from(page.querySelectorAll("[data-gap-id]"));
     expect(rows.map((r) => r.getAttribute("data-gap-id"))).toEqual(GAPS.map((g) => g.id));
     for (const row of rows) {
@@ -130,7 +167,7 @@ describe("/evals S1 renders the shell", () => {
 
   it("the gaps carry LAST REVIEWED with its date, and a planned row names what it waits on", async () => {
     freezeClockAt(daysAfterReview(0));
-    const page = await mount(<EvalsPage />);
+    const page = await mountPage();
     const chip = page.querySelector('[data-evals-section="gaps"] [data-truth-chip]');
     expect(REVIEWED_LABEL).toMatch(/^[A-Z]{3} \d{1,2}$/);
     expect(chip?.getAttribute("data-truth")).toBe("reviewed");
@@ -142,29 +179,33 @@ describe("/evals S1 renders the shell", () => {
 
   it("the gaps' age turns amber after two weeks without a review, and not before", async () => {
     freezeClockAt(daysAfterReview(14));
-    let page = await mount(<EvalsPage />);
+    let page = await mountPage();
     let age = page.querySelector('[data-evals-section="gaps"] [data-age-days]');
     expect(age?.textContent).toBe("14 days ago");
     expect(age?.getAttribute("data-age-amber")).toBe("false");
     await act(async () => root?.unmount());
 
     freezeClockAt(daysAfterReview(15));
-    page = await mount(<EvalsPage />);
+    page = await mountPage();
     age = page.querySelector('[data-evals-section="gaps"] [data-age-days]');
     expect(age?.textContent).toBe("15 days ago");
     expect(age?.getAttribute("data-age-amber")).toBe("true");
   });
 
   it("lists only the sources a section on the page reads", async () => {
-    const page = await mount(<EvalsPage />);
+    const page = await mountPage();
     const listed = Array.from(page.querySelectorAll("[data-source-id]")).map((s) =>
       s.getAttribute("data-source-id")
     );
-    expect(listed).toEqual(EVALS_SOURCES.filter((s) => s.usedBy.includes("gaps")).map((s) => s.id));
+    const onPage = ["timeline", "forward-record", "gaps"];
+    expect(listed).toEqual(
+      EVALS_SOURCES.filter((s) => s.usedBy.some((id) => onPage.includes(id))).map((s) => s.id)
+    );
+    expect(listed.length).toBe(EVALS_SOURCES.length);
   });
 
   it("the words a render assembles pass the bans too", async () => {
-    const page = await mount(<EvalsPage />);
+    const page = await mountPage();
     const text = (page.textContent ?? "").replace(/\s+/g, " ");
     const hits = findBannedCopy(text, [...ALL_COPY_BANS, ...SUPPLIER_PROSE_BANS, ...EVALS_COPY_RULES]);
     expect(hits.map((h) => `${h.ban.id}: ${h.context}`)).toEqual([]);
@@ -174,7 +215,7 @@ describe("/evals S1 renders the shell", () => {
 describe("the truth rules hold on the rendered page", () => {
   it("no bare number, no figure inside a PLANNED item, every figure under its own label", async () => {
     freezeClockAt(daysAfterReview(15)); // ages on screen, so the scan sees them
-    const scan = scanEvalsDom(await mount(<EvalsPage />));
+    const scan = scanEvalsDom(await mountPage());
     expect(scan).toEqual({ bareNumbers: [], figuresInPlanned: [], figuresOutsideScope: [] });
   });
 
@@ -222,6 +263,122 @@ describe("the truth rules hold on the rendered page", () => {
       '<section data-truth-scope="last_run"><div data-planned-item="">' +
       '<span data-evals-figure="" data-truth="last_run">3</span></div></section>';
     expect(scanEvalsDom(el).figuresInPlanned).toEqual(["3"]);
+  });
+});
+
+describe("S3: the exams on the record", () => {
+  it("one row per run, oldest first, each with its verdict and its receipt", async () => {
+    const page = await mountPage();
+    const rows = Array.from(page.querySelectorAll("[data-run-id]"));
+    const runs = loadRuns();
+    expect(rows.map((r) => r.getAttribute("data-run-id"))).toEqual(runs.map((r) => r.id));
+    expect(rows.map((r) => r.getAttribute("data-result"))).toEqual(runs.map((r) => r.result));
+    for (const [i, row] of rows.entries()) {
+      expect(row.querySelector(`[data-result="${runs[i].result}"]`)).not.toBeNull();
+      expect(row.querySelector(`a[href="${runs[i].receipt.href}"]`)).not.toBeNull();
+    }
+  });
+
+  it("an AI run names its model and states its replies and its usage-rated cost; a hand-run exam says so", async () => {
+    const page = await mountPage();
+    const exam = page.querySelector('[data-run-id="twin-judge-exam-run-1"]');
+    expect(exam?.querySelector('[data-model="claude-sonnet-5-5"]')?.textContent).toBe("Claude Sonnet 5.5");
+    expect(exam?.textContent).toMatch(/360\s*replies/);
+    expect(exam?.textContent).toMatch(/\$6\.81\s*usage-rated, including the pilot/);
+    const repeat = page.querySelector('[data-run-id="twin-judge-exam-run-2"]');
+    expect(repeat?.getAttribute("data-result")).toBe("fail");
+    expect(repeat?.textContent).toMatch(/\$7\.74\s*usage-rated/);
+    expect(repeat?.textContent).not.toMatch(/including the pilot/);
+    expect(repeat?.textContent).toContain("not a fresh blind test");
+    expect(page.querySelector('[data-run-id="calibration-exit-exam"]')?.textContent).toMatch(/By hand/);
+  });
+
+  it("every number on a row is a figure from that row's run", async () => {
+    const page = await mountPage();
+    for (const row of Array.from(page.querySelectorAll("[data-run-id]"))) {
+      const id = row.getAttribute("data-run-id");
+      const run = loadRuns().find((r) => r.id === id);
+      for (const fig of Array.from(row.querySelectorAll("[data-evals-figure]"))) {
+        expect(fig.getAttribute("data-truth")).toBe("last_run");
+        expect(fig.getAttribute("data-as-of")).toBe(run?.date);
+        expect(fig.getAttribute("data-source")).toBe(run?.receipt.href);
+      }
+    }
+  });
+});
+
+describe("S3: the forward record", () => {
+  const about = proofCohortFigures(calibrationFixtureBuckets());
+
+  it("shows /about's figure under a LIVE label stamped with the payload's own time", async () => {
+    const page = await mountPage();
+    const section = page.querySelector('[data-evals-section="forward-record"]');
+    expect(section?.getAttribute("data-truth-scope")).toBe("live");
+    const chip = section?.querySelector("[data-truth-chip]");
+    expect(chip?.getAttribute("data-truth")).toBe("live");
+    expect(chip?.textContent).toBe("LIVEas of 7:28 PM PT");
+    const proof = section?.querySelector('[data-testid="evals-forward-proof"]');
+    const figures = Array.from(proof?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
+    expect(figures).toEqual([compactOutcomeCount(about?.outcomes), about?.errorPp.toFixed(1)]);
+  });
+
+  it("the hero tile shows the same figure, linked to the section", async () => {
+    const page = await mountPage();
+    const tile = page.querySelector('[data-hero-tile="forward-record"]');
+    expect(tile?.getAttribute("href")).toBe("#forward-record");
+    expect(tile?.getAttribute("data-truth-scope")).toBe("live");
+    expect(tile?.querySelector("a")).toBeNull(); // no link nested in the tile's link
+    const figures = Array.from(tile?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
+    expect(figures).toEqual([about?.errorPp.toFixed(1), compactOutcomeCount(about?.outcomes)]);
+  });
+
+  it("the meter reads the scorecard: 24 of 53 categories inside the 3-point bar", async () => {
+    const page = await mountPage();
+    const meter = page.querySelector('[data-testid="evals-forward-categories"]');
+    expect(meter?.textContent).toMatch(/^24\s*of\s*53\s*categories are inside the\s*3-point bar\.$/);
+  });
+
+  it("frozen inputs show the staleness sentence with the date the data was staged", async () => {
+    const page = await mountPage();
+    const line = page.querySelector('[data-testid="evals-forward-staleness"]');
+    expect(line?.getAttribute("data-staleness-kind")).toBe("frozen-inputs");
+    expect(line?.textContent).toBe(
+      "The curve is current. The data behind it is older. That data was last updated Oct 27, 1:54 PM PT."
+    );
+    const fresh = await (async () => {
+      await act(async () => root?.unmount());
+      fetchCalibrationMock.mockResolvedValue(calibrationFixture({ availability: "fresh" }));
+      return mountPage();
+    })();
+    expect(fresh.querySelector('[data-testid="evals-forward-staleness"]')).toBeNull();
+  });
+
+  it("the curve is drawn inside a LIVE exhibit, so its axis numbers carry the record's label", async () => {
+    const page = await mountPage();
+    const exhibit = page.querySelector('[data-evals-section="forward-record"] [data-evals-exhibit]');
+    expect(exhibit?.getAttribute("data-truth")).toBe("live");
+    expect(exhibit?.querySelector("svg")).not.toBeNull();
+  });
+
+  it("a failed read says Unavailable right now, in the section and the tile, with no number", async () => {
+    fetchCalibrationMock.mockRejectedValue(new Error("network"));
+    const page = await mountPage();
+    const section = page.querySelector('[data-evals-section="forward-record"]');
+    expect(section?.querySelector('[data-testid="evals-forward-unavailable"]')?.textContent).toBe(
+      "Unavailable right now."
+    );
+    expect(section?.querySelector("[data-evals-figure]")).toBeNull();
+    expect(section?.getAttribute("data-truth-scope")).toBeNull();
+    const tile = page.querySelector('[data-hero-tile="forward-record"]');
+    expect(tile?.textContent).toMatch(/Unavailable right now/);
+    expect(tile?.querySelector("[data-evals-figure]")).toBeNull();
+    expect(scanEvalsDom(page).bareNumbers).toEqual([]);
+  });
+
+  it("a payload that cannot say when it is true is unavailable, not shown undated", async () => {
+    fetchCalibrationMock.mockResolvedValue(calibrationFixture({ generated_at: undefined }));
+    const page = await mountPage();
+    expect(page.querySelector('[data-testid="evals-forward-unavailable"]')).not.toBeNull();
   });
 });
 
