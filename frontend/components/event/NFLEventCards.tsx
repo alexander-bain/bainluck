@@ -1390,6 +1390,11 @@ export function NhlScoringCardView({
                       {ATLAS_STATE_COPY.wonWithCheck}
                     </span>
                   )}
+                  {!scored && entry.actualGoals === 0 && (
+                    <span className="inline-flex items-center rounded bg-surface-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
+                      {ATLAS_STATE_COPY.lostWithCross}
+                    </span>
+                  )}
                   <span className="text-xs font-bold tabular-nums text-text-primary">{finalText}</span>
                 </div>
               </div>
@@ -1879,8 +1884,8 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingProbability: entry.pregameChance,
       openingObservedAt: entry.observedAt,
       lastObservedAt: entry.observedAt,
-      source: entry.venue ?? "sportsbooks",
-      sourceCount: 1,
+      source: "blended",
+      sourceCount: entry.sourceCount,
       rulesText: rulesLines.join("\n"),
     };
   }
