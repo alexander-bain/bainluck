@@ -133,6 +133,20 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     usedBy: ["tests-for-tests"],
   },
   {
+    id: "reviewer-study-plan",
+    label: "Reviewer study, the plan: every case, three tries",
+    date: "2026-11-06",
+    href: `${REPO}/pull/11951#issuecomment-6687948343`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-study-count",
+    label: "Reviewer study, the latest count",
+    date: "2026-11-06",
+    href: `${REPO}/pull/11951#issuecomment-6692550759`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
     id: "reviewer-dropped",
     label: "Why one planted bug was left out",
     date: "2026-11-05",
