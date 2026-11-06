@@ -8,7 +8,7 @@
  * as the plan on #11951 says.
  */
 
-export type EvalsSectionId = "timeline" | "forward-record" | "test-library" | "tests-for-tests" | "gaps";
+export type EvalsSectionId = "timeline" | "forward-record" | "test-library" | "tests-for-tests" | "watchers" | "gaps";
 
 const REPO = "https://github.com/alexander-bain/bainluck";
 
@@ -116,6 +116,106 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     date: "2026-11-05",
     href: `${REPO}/pull/11951#issuecomment-6673535640`,
     usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "beat-schedule",
+    label: "The production schedule",
+    date: "2026-11-05",
+    href: `${REPO}/blob/80b7a1605c/backend/app/tasks/__init__.py`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "quiet-evals-audit",
+    label: "Quiet-evals audit",
+    date: "2026-11-03",
+    href: `${REPO}/blob/82b61ab815/docs/evals/QUIET-EVALS-2026-11.md`,
+    usedBy: ["watchers"],
+  },
+  // Each watcher's newest run on the public record (S5): its first post on GitHub.
+  {
+    id: "data-quality-watchdog-newest-run",
+    label: "Data-quality watchdog, newest run on GitHub",
+    date: "2026-11-06",
+    href: `${REPO}/issues/4057#issuecomment-6685169500`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "matching-reconciliation-newest-run",
+    label: "Matching check, newest run on GitHub",
+    date: "2026-11-06",
+    href: `${REPO}/issues/12144#issuecomment-6686664159`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "anchor-schedule-sentinel-daily-newest-run",
+    label: "Kickoff-time check, newest run on GitHub",
+    date: "2026-11-05",
+    href: `${REPO}/issues/2978#issuecomment-6678966061`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "flow-sentinel-daily-newest-run",
+    label: "Flow sentinel, newest run on GitHub",
+    date: "2026-11-05",
+    href: `${REPO}/issues/12071#issuecomment-6679506737`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "grid-sentinel-daily-newest-run",
+    label: "Grid sentinel, newest run on GitHub",
+    date: "2026-11-05",
+    href: `${REPO}/issues/12074#issuecomment-6679867488`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "tournament-register-sentinel-daily-newest-run",
+    label: "Tournament list check, newest run on GitHub",
+    date: "2026-11-05",
+    href: `${REPO}/issues/4231#issuecomment-6680051792`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "horizon-sentinel-daily-newest-run",
+    label: "Big-event check, newest run on GitHub",
+    date: "2026-11-05",
+    href: `${REPO}/issues/12135`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "board-sentinel-daily-newest-run",
+    label: "Work-list check, newest run on GitHub",
+    date: "2026-11-06",
+    href: `${REPO}/issues/1449#issuecomment-6680233836`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "schedule-sentinel-daily-newest-run",
+    label: "Schedule check, newest run on GitHub",
+    date: "2026-11-06",
+    href: `${REPO}/issues/10783#issuecomment-6680257276`,
+    usedBy: ["watchers"],
+  },
+  // End of the watchers' newest runs.
+  {
+    id: "flow-reporting-again",
+    label: "Flow sentinel, reporting again",
+    date: "2026-11-05",
+    href: `${REPO}/issues/11960#issuecomment-6674619173`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "grid-reporting-again",
+    label: "Grid sentinel, reporting again",
+    date: "2026-11-05",
+    href: `${REPO}/issues/11959#issuecomment-6674618887`,
+    usedBy: ["watchers"],
+  },
+  {
+    id: "matching-reporting-fix",
+    label: "Matching check, why its reporting stopped",
+    date: "2026-11-05",
+    href: `${REPO}/issues/11958#issuecomment-6674619473`,
+    usedBy: ["watchers"],
   },
   {
     id: "evals-story",
