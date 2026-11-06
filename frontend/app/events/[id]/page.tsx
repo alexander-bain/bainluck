@@ -198,6 +198,7 @@ import {
 import { projectedTeamStrokes } from "@/lib/teamLineStrokes";
 import { decodeQuestionMatrix, marginLadderCard, totalLadderCard } from "@/lib/nbaEventCards";
 import { buildMlbEventCards, mlbCardsApply } from "@/lib/mlbEventCards";
+import { buildNhlEventCards, nhlCardsApply } from "@/lib/nhlEventCards";
 import { NFLEventCardDeck, type CardSelection } from "@/components/event/NFLEventCards";
 const EventCardReader = dynamic(() => import("@/components/event/EventCardReader"), { ssr: false });
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -1704,15 +1705,41 @@ export default function EventPage({ params }: EventPageProps) {
       nowMs: nflCardClock,
     });
   }, [atlasOptIn, event, gameMarkets, mlbRelatedFutures, nflCardClock]);
+  const nhlCards = useMemo(() => {
+    if (!nhlCardsApply(event?.sport, atlasOptIn) || !gameMarkets || !event || gameMarkets.event_id !== event.id) {
+      return [];
+    }
+    const shorts = teamShortNames(
+      { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
+      { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+      event.sport,
+    );
+    return buildNhlEventCards({
+      sportKey: event.sport,
+      atlasMode: atlasOptIn,
+      status: event.status,
+      commenceTime: event.commence_time,
+      homeTeam: event.home_team,
+      awayTeam: event.away_team,
+      homeShort: shorts.home,
+      awayShort: shorts.away,
+      homeScore: gameMarkets.home_score ?? event.home_score,
+      awayScore: gameMarkets.away_score ?? event.away_score,
+      gameMarkets: gameMarkets as Parameters<typeof buildNhlEventCards>[0]["gameMarkets"],
+      nowMs: nflCardClock,
+    });
+  }, [atlasOptIn, event, gameMarkets, nflCardClock]);
   const nflCards = useMemo(
     () =>
       (nflCardsOn
         ? nflEventCards(event?.sport, nflFinishCard, nflMilestoneCards)
         : mlbCards.length > 0
           ? mlbCards
-          : nbaEventCards(event?.sport, nflFinishCard, nbaLadders)
+          : nhlCards.length > 0
+            ? nhlCards
+            : nbaEventCards(event?.sport, nflFinishCard, nbaLadders)
       ).map((card) => cardAt(card, nflCardClock)),
-    [nflCardsOn, event?.sport, nflFinishCard, nflMilestoneCards, mlbCards, nbaLadders, nflCardClock],
+    [nflCardsOn, event?.sport, nflFinishCard, nflMilestoneCards, mlbCards, nhlCards, nbaLadders, nflCardClock],
   );
   const nflCardRows = useMemo(
     () => (gameMarkets ? rowsForCards(nflCards, gameMarkets.player_props) : {}),
