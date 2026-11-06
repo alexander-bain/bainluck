@@ -12,6 +12,8 @@ served card, then the scored-but-unserved futures behind them — capped at
 flags. The slate id is the deck's ``edition`` token (a content hash of the
 ordered deck, already on every feed response), so an impression that carries it
 joins to the exact list it was shown in.
+(The capture itself is ``app/utils/ranking_slate_capture.py``; this module
+holds the shape, so the feed route can import it with no import cycle.)
 
 THE RANKER VERSION is the deploy's git sha (:func:`ranker_version`). It rides
 the feed response, the events, and the snapshot.
@@ -34,10 +36,9 @@ import logging
 import os
 from collections import Counter
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
-from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -178,13 +179,17 @@ def card_features(
     *,
     now: datetime,
     market_facts: Mapping[int, Mapping[str, Any]] | None = None,
+    key: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """The features of one served (or scored) card, in one shape for every type.
 
     ``market_facts``: futures id → facts read from the market row
     (``movement_24h``, ``updated_at``), used where the card payload is silent.
+    ``key`` overrides the card's own identity (``build_slate`` uses it for a
+    served card with no id, or one served twice); otherwise a card with no id
+    and no key yields None.
     """
-    key = item_key(item)
+    key = key or item_key(item)
     if key is None:
         return None
     kind = item.get("type") or "unknown"
@@ -192,7 +197,10 @@ def card_features(
     out: dict[str, Any] = {
         "item_key": key,
         "type": kind,
-        "item_id": str(data.get("id") if data.get("id") is not None else data.get("key")),
+        "item_id": (
+            str(data["id"]) if data.get("id") is not None
+            else (str(data["key"]) if data.get("key") is not None else None)
+        ),
         "title": None,
         "category": None,
         "entities": [],
@@ -210,6 +218,10 @@ def card_features(
         "score": _num(item.get("score")),
         "headline": item.get("headline"),
         "settled": None,
+        # Whether the card itself shows the settled result (a final score, a
+        # winner at 100%, a champion). A settled card shown WITH its result is a
+        # legitimate seat; only settled-without-result is a truth-gate failure.
+        "shows_result": None,
         "blend_missing": None,
     }
     observed: Optional[datetime] = None
@@ -230,6 +242,11 @@ def card_features(
         out["resolution_time"] = _iso(data.get("resolution_date"))
         observed = _latest(data.get("price_observed_at")) or _latest(facts.get("updated_at"))
         out["settled"] = _status_settled(data.get("status"))
+        out["shows_result"] = any(
+            isinstance(o, dict)
+            and (o.get("is_winner") is True or (_num(o.get("probability")) or 0) >= 0.9995)
+            for o in outcomes
+        )
         out["blend_missing"] = out["probability"] is None
     elif kind == "event":
         home, away = data.get("home_team"), data.get("away_team")
@@ -252,6 +269,7 @@ def card_features(
         out["start_time"] = _iso(data.get("commence_time"))
         observed = _latest(*stamps)
         out["settled"] = _status_settled(data.get("status"))
+        out["shows_result"] = data.get("home_score") is not None and data.get("away_score") is not None
         out["blend_missing"] = out["probability"] is None
     elif kind == "bundle":
         members = data.get("items") or []
@@ -277,7 +295,12 @@ def card_features(
         out["start_time"] = _iso(data.get("start_date") or data.get("commence_time"))
         out["resolution_time"] = _iso(data.get("end_date") or data.get("resolution_date"))
         status = str(data.get("schedule_status") or "").lower()
-        out["settled"] = bool(data.get("champion")) or status in _SETTLED_STATUSES
+        if data.get("champion"):
+            out["settled"], out["shows_result"] = True, True
+        elif status:
+            out["settled"] = status in _SETTLED_STATUSES
+            out["shows_result"] = False if out["settled"] else None
+        # No champion and no schedule status: settled stays None (UNKNOWN).
         observed = _latest(data.get("price_observed_at"))
     elif kind == "concept":
         leader = data.get("leader") or {}
@@ -296,6 +319,14 @@ def card_features(
     age = (now - observed).total_seconds() if observed else None
     out["price_age_s"] = round(age, 1) if age is not None else None
     out["stale"] = (age > STALE_PRICE_AGE_S) if age is not None else None
+    # True only when settled AND the card is known to show no result; an
+    # unknown on either side stays None (never a pass, never a failure).
+    if out["settled"] is False:
+        out["settled_without_result"] = False
+    elif out["settled"] is True and out["shows_result"] is not None:
+        out["settled_without_result"] = not out["shows_result"]
+    else:
+        out["settled_without_result"] = None
     return out
 
 
@@ -308,20 +339,25 @@ def build_slate(
     cap: int = MAX_CANDIDATES,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """(served order, candidates): every served card first, in served order,
-    with ``served_position`` 1..n; then unserved scored futures with
+    with ``served_position`` = served index + 1 (no card is skipped); then unserved scored futures with
     ``served_position`` None; never more than ``cap`` candidates in total. The
     first :data:`OPENING_CARDS` also carry their served payload as ``card``."""
     served_order: list[str] = []
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for item in served_items:
-        feats = card_features(item, now=now, market_facts=market_facts)
-        if feats is None or feats["item_key"] in seen:
-            continue
-        seen.add(feats["item_key"])
-        served_order.append(feats["item_key"])
+    for index, item in enumerate(served_items):
+        # Every served card keeps its seat: position is the served index + 1, so
+        # the grading sheet's positions are the ones the reader saw. A card with
+        # no id is still counted (``unknown:<index>``); a card served twice gets
+        # a second key for its second seat.
+        position = index + 1
+        key = item_key(item) or f"unknown:{index}"
+        if key in seen:
+            key = f"{key}#{position}"
+        feats = card_features(item, now=now, market_facts=market_facts, key=key)
+        seen.add(key)
+        served_order.append(key)
         if len(candidates) < cap:
-            position = len(served_order)
             extra = {"card": _json_safe(dict(item))} if position <= OPENING_CARDS else {}
             candidates.append({**feats, "served_position": position, **extra})
     for item in scored_futures:
@@ -333,181 +369,6 @@ def build_slate(
         seen.add(feats["item_key"])
         candidates.append({**feats, "served_position": None})
     return served_order, candidates
-
-
-# ── the nightly capture ─────────────────────────────────────────────────────
-
-
-def _anonymous_request():
-    from starlette.requests import Request
-
-    return Request(
-        {"type": "http", "method": "GET", "path": "/api/feed", "headers": [], "query_string": b""}
-    )
-
-
-async def read_served_discover_deck(db: Any) -> dict:
-    """The Discover deck exactly as an anonymous reader's ``GET /api/feed`` gets
-    it: the route function itself, anonymous, no pin, first page wide enough to
-    hold the whole deck."""
-    from fastapi import Response
-
-    from app.routes.feed import get_feed
-
-    return await get_feed(
-        response=Response(),
-        request=_anonymous_request(),
-        limit=MAX_CANDIDATES,
-        offset=0,
-        sport=None,
-        category=None,
-        include_events=True,
-        include_futures=True,
-        my_teams_only=False,
-        mode=None,
-        tags=None,
-        event_pct=None,
-        edition=None,
-        debug=False,
-        debug_ground_truth=False,
-        debug_personalization=False,
-        exclude_reviewed=False,
-        reviewer=None,
-        reviewed_surface=None,
-        secret=None,
-        db=db,
-        user=None,
-    )
-
-
-async def read_scored_futures(db: Any, now: datetime) -> list[dict]:
-    """The anonymous futures pool in the ranker's own order (#142's read)."""
-    from app.routes.feed import _rank_key, _score_futures
-    from app.utils.personalization import PersonalizationContext
-
-    scored = await _score_futures(db, now, None, PersonalizationContext())
-    scored.sort(key=_rank_key, reverse=True)
-    return scored
-
-
-async def read_market_facts(db: Any, futures_ids: list[int]) -> dict[int, dict]:
-    """Per futures id: the largest |24h move| across its outcomes and the
-    market's ``updated_at``. One indexed read by primary key."""
-    if not futures_ids:
-        return {}
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
-    from app.models.models import FuturesMarket
-
-    rows = await db.execute(
-        select(FuturesMarket)
-        .options(selectinload(FuturesMarket.outcomes))
-        .where(FuturesMarket.id.in_(futures_ids))
-    )
-    facts: dict[int, dict] = {}
-    for market in rows.scalars().all():
-        moves = [
-            abs(float(o.probability_change_24h))
-            for o in market.outcomes
-            if o.probability_change_24h is not None
-        ]
-        facts[market.id] = {
-            "movement_24h": max(moves) if moves else None,
-            "updated_at": market.updated_at,
-        }
-    return facts
-
-
-async def snapshot_ranking_slate(
-    db: Any,
-    *,
-    now: datetime | None = None,
-    surface: str = SURFACE_DISCOVER,
-    read_deck=read_served_discover_deck,
-    read_pool=read_scored_futures,
-    read_facts=read_market_facts,
-    environ: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
-    """Take one slate snapshot. Returns a run summary; never raises past a
-    failed read (the summary says what failed). Off unless the switch is on."""
-    if not ranking_snapshots_enabled(environ):
-        return {"status": "disabled"}
-    from sqlalchemy import delete
-
-    from app.models.models import RankingSlateSnapshot
-
-    now = now or datetime.now(timezone.utc)
-    try:
-        payload = await read_deck(db)
-    except Exception as exc:  # noqa: BLE001 — a failed capture is reported, not raised
-        logger.warning("ranking slate: deck read failed: %s", str(exc)[:200])
-        return {"status": "deck_read_failed", "error": str(exc)[:200]}
-    if not isinstance(payload, dict) or payload.get("build_quality", "complete") != "complete":
-        reason = payload.get("degraded_reason") if isinstance(payload, dict) else "no_payload"
-        return {"status": "degraded_deck", "reason": reason}
-    served = list(payload.get("items") or [])
-    edition = payload.get("edition")
-    if not served or not edition:
-        return {"status": "empty_deck", "served": len(served)}
-
-    try:
-        pool = await read_pool(db, now)
-    except Exception as exc:  # noqa: BLE001 — the served order alone is still a slate
-        logger.warning("ranking slate: candidate pool read failed: %s", str(exc)[:200])
-        pool = []
-    futures_ids = sorted(
-        {
-            int((it.get("data") or {})["id"])
-            for it in [*served, *pool]
-            if it.get("type") == "futures" and isinstance((it.get("data") or {}).get("id"), int)
-        }
-    )
-    try:
-        facts = await read_facts(db, futures_ids)
-    except Exception as exc:  # noqa: BLE001 — card payload features still stand
-        logger.warning("ranking slate: market facts read failed: %s", str(exc)[:200])
-        facts = {}
-
-    served_order, candidates = build_slate(served, pool, now=now, market_facts=facts)
-    version = ranker_version(environ)
-    summary = {
-        "served_count": len(served_order),
-        "candidate_count": len(candidates),
-        "pool_scored": len(pool),
-        "deck_total": payload.get("total"),
-        "deck_cache_status": (payload.get("cache") or {}).get("status")
-        if isinstance(payload.get("cache"), dict)
-        else None,
-        "stale_rule_s": STALE_PRICE_AGE_S,
-        "not_stored": ["movement_1h", "movement_7d"],
-    }
-    row_id = str(uuid4())
-    db.add(
-        RankingSlateSnapshot(
-            id=row_id,
-            surface=surface,
-            slate_id=str(edition)[:SLATE_ID_MAX],
-            captured_at=now,
-            ranker_version=version,
-            served_order=served_order,
-            candidates=candidates,
-            summary=summary,
-        )
-    )
-    await db.execute(
-        delete(RankingSlateSnapshot).where(
-            RankingSlateSnapshot.captured_at < now - timedelta(days=RETENTION_DAYS)
-        )
-    )
-    await db.commit()
-    return {
-        "status": "ok",
-        "id": row_id,
-        "slate_id": str(edition)[:SLATE_ID_MAX],
-        "ranker_version": version,
-        **summary,
-    }
 
 
 def slate_row_dict(row: Any) -> dict[str, Any]:

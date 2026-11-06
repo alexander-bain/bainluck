@@ -6,13 +6,15 @@
 
     # 2. Turn its opening ten into a grading sheet for one grader:
     python3 tools/ranking/grades.py sheet --slate evals/ranking/slates/<file>.json --grader alex
-    python3 tools/ranking/grades.py sheet --slate ... --grader dexter --kid
+    python3 tools/ranking/grades.py sheet --slate ... --grader kid1 --kid
 
 ``sheet`` prints the sheet as markdown and writes
-``evals/ranking/grades/<date>-<surface>-<grader>.json`` with every ``grade``
-empty: fill each with ``shareable``, ``interesting`` or ``neither`` (and an
-optional ``note``). ``--kid`` records the grader as non-expert, which keeps
-their grades out of the founder NDCG. An existing file is never overwritten.
+``evals/ranking/grades/<date PT>-<surface>-<slate id>-<grader>.json`` with every
+``grade`` empty: fill each with ``shareable``, ``interesting`` or ``neither``
+(and an optional ``note``). ``--kid`` records the grader as non-expert, which
+keeps their grades out of the founder NDCG. **A kid's grader id is a pseudonym
+(``kid1``, ``kid2``…), never a name: this directory is committed to a public
+repository.** An existing file is never overwritten.
 
 Credentials for ``fetch``: ``BAINLUCK_API`` (default https://api.bainluck.com)
 and ``ADMIN_TOKEN`` from the environment; when ``ADMIN_TOKEN`` is unset, it is
@@ -32,12 +34,32 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parents[2]
 SLATES_DIR = REPO / "evals" / "ranking" / "slates"
 GRADES_DIR = REPO / "evals" / "ranking" / "grades"
 GRADES = ("shareable", "interesting", "neither")
+PT = ZoneInfo("America/Los_Angeles")
+KID_ID = re.compile(r"^kid[0-9]+$")
+
+
+def pt_date(stamp: Optional[str]) -> str:
+    """A UTC ISO stamp's calendar date in Pacific time ("undated" if none)."""
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone(PT).date().isoformat()
+    except (TypeError, ValueError):
+        return "undated"
+
+
+def pt_label(stamp: Optional[str]) -> str:
+    try:
+        at = datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone(PT)
+    except (TypeError, ValueError):
+        return "an unknown time"
+    return at.strftime("%a %b %-d, %-I:%M %p PT")
 DEFAULT_API = "https://api.bainluck.com"
 HEROKU_APP = "bainluck"
 
@@ -72,8 +94,12 @@ def fetch_slate(ref: str, surface: str) -> dict:
 
 
 def slate_filename(slate: dict) -> str:
-    date = str(slate.get("captured_at") or "")[:10] or "undated"
-    return f"{date}-{slate.get('surface')}-{slate.get('slate_id')}.json"
+    return f"{pt_date(slate.get('captured_at'))}-{slate.get('surface')}-{slate.get('slate_id')}.json"
+
+
+def grades_filename(slate: dict, grader: str) -> str:
+    """One file per grader per slate: two captures on one day never collide."""
+    return f"{pt_date(slate.get('captured_at'))}-{slate.get('surface')}-{slate.get('slate_id')}-{grader_slug(grader)}.json"
 
 
 def grader_slug(name: str) -> str:
@@ -117,6 +143,8 @@ def sheet_markdown(sheet: dict) -> str:
         f"### Grading sheet — {sheet['surface']} slate `{sheet['slate_id']}` · grader {sheet['grader']}"
         + ("" if sheet["expert"] else " (kid)"),
         "",
+        f"Captured {pt_label(sheet.get('captured_at'))}.",
+        "",
         "| # | Card | Probability | Grade (shareable / interesting / neither) | Note |",
         "|---|---|---|---|---|",
     ]
@@ -128,15 +156,23 @@ def sheet_markdown(sheet: dict) -> str:
 
 
 def validate_grades(doc: dict) -> list[str]:
-    """Problems with a filled-in grades file (empty list = fine)."""
+    """Problems with a filled-in grades file (empty list = fine). Grades are
+    compared trimmed and lower-cased; ``expert`` must be an explicit bool; a
+    non-expert grader must be a pseudonym."""
     problems = []
     if not doc.get("slate_id"):
         problems.append("no slate_id")
     if not doc.get("grader"):
         problems.append("no grader")
+    if not isinstance(doc.get("expert"), bool):
+        problems.append("`expert` must be true or false")
+    elif doc["expert"] is False and not KID_ID.match(str(doc.get("grader") or "")):
+        problems.append(f"kid grader {doc.get('grader')!r} must be a pseudonym like kid1")
     for item in doc.get("items") or ():
-        if item.get("grade") not in (*GRADES, None):
-            problems.append(f"position {item.get('position')}: grade {item.get('grade')!r} not in {GRADES}")
+        raw = item.get("grade")
+        grade = str(raw).strip().lower() if raw is not None else None
+        if grade and grade not in GRADES:
+            problems.append(f"position {item.get('position')}: grade {raw!r} not in {GRADES}")
     return problems
 
 
@@ -165,9 +201,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     if args.cmd == "sheet":
         slate = json.loads(args.slate.read_text())
-        sheet = build_sheet(slate, grader=args.grader.strip(), kid=args.kid)
-        date = str(slate.get("captured_at") or "")[:10] or "undated"
-        path = args.out / f"{date}-{slate.get('surface')}-{grader_slug(args.grader)}.json"
+        grader = args.grader.strip()
+        if args.kid and not KID_ID.match(grader):
+            raise SystemExit(f"--kid grader {grader!r} must be a pseudonym like kid1 (the grades are public)")
+        sheet = build_sheet(slate, grader=grader, kid=args.kid)
+        path = args.out / grades_filename(slate, grader)
         if path.exists():
             raise SystemExit(f"{path} exists; not overwriting a grader's file")
         args.out.mkdir(parents=True, exist_ok=True)

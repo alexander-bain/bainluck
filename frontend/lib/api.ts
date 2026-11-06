@@ -1568,7 +1568,8 @@ export async function fetchFeed(
 
   const endpoint = `/api/feed${query ? `?${query}` : ""}`;
   // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
-  // names the slate its events carry. Other surfaces never touch it.
+  // names the slate its events carry; any other feed CLEARS it, so a swipe on
+  // a category page never carries the Discover slate.
   const isDiscoverDeck =
     !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
     !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
@@ -1626,7 +1627,7 @@ export async function fetchFeed(
           } catch {
             /* telemetry must never change what the caller receives */
           }
-          if (isDiscoverDeck) noteDiscoverSlate(parsed);
+          noteDiscoverSlate(isDiscoverDeck ? parsed : null);
           return parsed;
         }
       } catch {
@@ -1650,7 +1651,7 @@ export async function fetchFeed(
       });
     },
   });
-  if (isDiscoverDeck) noteDiscoverSlate(page);
+  noteDiscoverSlate(isDiscoverDeck ? page : null);
   return page;
 }
 

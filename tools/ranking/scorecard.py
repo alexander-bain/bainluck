@@ -13,18 +13,20 @@ Metrics, all over the top ten:
 
 * **NDCG@10** against founder grades (shareable=2, interesting=1, neither=0;
   several founders average). No grades → UNKNOWN, never 0. A card with no grade
-  counts 0 and the line says how many of the ten were graded, so a partly
-  graded ranking reads as a lower bound. Non-expert (kid) grades get their own
-  line and never mix into the founder number.
+  counts 0 and the line says how many of the ten are ungraded — a partial
+  score, which can sit above or below the full one — and with more than three
+  ungraded it is UNKNOWN. Non-expert (kid) grades get their own line and never
+  mix into the founder number. A grades file must say ``"expert": true|false``.
 * **category entropy** (bits; the ceiling for ten cards is log2(10) ≈ 3.32).
 * **max entity repeats** — the most cards sharing one team/person/outcome.
 * **sameness** — how many of today's ten were in the previous day's served ten
   for the same surface. No previous slate → UNKNOWN.
 * **freshness** — median age of the latest price, and the share that moved at
   least one point in 24h (over the cards where each is known).
-* **truth-gate failures** — settled / stale / blend-missing cards shown
-  (target 0). Only a recorded ``True`` counts; an unknown flag is reported as
-  unknown, never as a pass.
+* **truth-gate failures** — settled cards shown WITHOUT their result, stale and
+  blend-missing cards (target 0). A finished game shown with its final score is
+  a legitimate seat and is counted separately for information. Only a recorded
+  ``True`` counts; an unknown flag is reported as unknown, never as a pass.
 
 ``--replay`` re-ranks the slate's stored candidate pool with another ranker and
 prints its scorecard beside the served one, so a new ranking is scored against
@@ -71,8 +73,30 @@ def _stamp(value: Any) -> Optional[datetime]:
         return None
 
 
+def normalize_grade(value: Any) -> Optional[str]:
+    """A grade as stored: trimmed and lower-cased; None for a blank one."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text or None
+
+
+def grade_problems(doc: dict) -> list[str]:
+    """Why a grades document cannot be scored (empty list = fine). ``expert``
+    must be an explicit bool: a file without it never counts as a founder."""
+    problems = []
+    if not isinstance(doc.get("expert"), bool):
+        problems.append("`expert` must be true or false")
+    for item in doc.get("items") or ():
+        grade = normalize_grade(item.get("grade"))
+        if grade is not None and grade not in GAINS:
+            problems.append(f"position {item.get('position')}: grade {item.get('grade')!r} is not one of {sorted(GAINS)}")
+    return problems
+
+
 def load_grades(grades_dir: Path, slate_id: str) -> list[dict]:
-    """Every grade file under ``grades_dir`` for this slate."""
+    """Every valid grade file under ``grades_dir`` for this slate, grades
+    normalized. A file with a problem is skipped with a warning on stderr."""
     out = []
     if not grades_dir or not Path(grades_dir).is_dir():
         return out
@@ -81,8 +105,14 @@ def load_grades(grades_dir: Path, slate_id: str) -> list[dict]:
             doc = load_json(path)
         except (OSError, ValueError):
             continue
-        if isinstance(doc, dict) and doc.get("slate_id") == slate_id:
-            out.append(doc)
+        if not isinstance(doc, dict) or doc.get("slate_id") != slate_id:
+            continue
+        problems = grade_problems(doc)
+        if problems:
+            sys.stderr.write(f"skipping {path}: {'; '.join(problems)}\n")
+            continue
+        items = [{**i, "grade": normalize_grade(i.get("grade"))} for i in doc.get("items") or ()]
+        out.append({**doc, "items": items})
     return out
 
 
@@ -111,10 +141,10 @@ def item_gains(grade_docs: Iterable[dict], *, expert: bool) -> dict[str, float]:
     """item_key → mean gain across the graders of one kind (founder or kid)."""
     per_item: dict[str, list[int]] = {}
     for doc in grade_docs:
-        if bool(doc.get("expert", True)) is not expert:
+        if doc.get("expert") is not expert:
             continue
         for item in doc.get("items") or ():
-            grade = item.get("grade")
+            grade = normalize_grade(item.get("grade"))
             if item.get("item_key") and grade in GAINS:
                 per_item.setdefault(item["item_key"], []).append(GAINS[grade])
     return {key: sum(v) / len(v) for key, v in per_item.items()}
@@ -123,21 +153,32 @@ def item_gains(grade_docs: Iterable[dict], *, expert: bool) -> dict[str, float]:
 # ── metrics ─────────────────────────────────────────────────────────────────
 
 
+#: More ungraded cards than this in the top ten and NDCG is UNKNOWN: an
+#: ungraded card counts 0, which can understate OR overstate the score (one
+#: graded card alone can read 1.000), so a mostly-ungraded ten says nothing.
+MAX_UNGRADED = 3
+
+
 def ndcg_at(ranking: list[str], gains: dict[str, float], k: int = TOP) -> dict:
-    """``{"value", "graded", "reason"}``; value is None (UNKNOWN) when nothing in
-    the top k is graded or the ideal gain is 0."""
+    """``{"value", "graded", "ungraded", "reason"}``; value is None (UNKNOWN)
+    with no grades, more than :data:`MAX_UNGRADED` ungraded cards in the top k,
+    or an ideal gain of 0. Ungraded cards count 0 (partial, not a bound)."""
     top = ranking[:k]
     graded = sum(1 for key in top if key in gains)
+    ungraded = len(top) - graded
     if not gains:
-        return {"value": None, "graded": 0, "reason": "no grades"}
-    if graded == 0:
-        return {"value": None, "graded": 0, "reason": "no graded card in the top ten"}
+        return {"value": None, "graded": 0, "ungraded": ungraded, "reason": "no grades"}
+    if ungraded > MAX_UNGRADED:
+        return {
+            "value": None, "graded": graded, "ungraded": ungraded,
+            "reason": f"{ungraded} of the top {len(top)} ungraded (more than {MAX_UNGRADED})",
+        }
     dcg = sum(gains.get(key, 0.0) / math.log2(i + 2) for i, key in enumerate(top))
     ideal = sorted(gains.values(), reverse=True)[:k]
     idcg = sum(g / math.log2(i + 2) for i, g in enumerate(ideal))
     if idcg == 0:
-        return {"value": None, "graded": graded, "reason": "every graded card is 'neither'"}
-    return {"value": dcg / idcg, "graded": graded, "reason": None}
+        return {"value": None, "graded": graded, "ungraded": ungraded, "reason": "every graded card is 'neither'"}
+    return {"value": dcg / idcg, "graded": graded, "ungraded": ungraded, "reason": None}
 
 
 def category_entropy(cards: list[dict]) -> Optional[float]:
@@ -176,13 +217,20 @@ def freshness(cards: list[dict]) -> dict:
     }
 
 
+#: The truth gate's flags. A settled card shown WITH its result (a final score,
+#: a winner at 100%) is a legitimate seat; only settled-without-result fails.
+GATE_FLAGS = ("settled_without_result", "stale", "blend_missing")
+
+
 def truth_gate(cards: list[dict]) -> dict:
     out = {}
-    for flag in ("settled", "stale", "blend_missing"):
+    for flag in GATE_FLAGS:
         out[flag] = sum(1 for c in cards if c.get(flag) is True)
         out[f"{flag}_unknown"] = sum(1 for c in cards if c.get(flag) is None)
-    out["failures"] = sum(
-        1 for c in cards if any(c.get(f) is True for f in ("settled", "stale", "blend_missing"))
+    out["failures"] = sum(1 for c in cards if any(c.get(f) is True for f in GATE_FLAGS))
+    # Informational, never a failure.
+    out["settled_with_result"] = sum(
+        1 for c in cards if c.get("settled") is True and c.get("settled_without_result") is False
     )
     return out
 
@@ -264,8 +312,9 @@ def replay(slate: dict, ranker: Callable[[list[dict]], list]) -> list[str]:
 def _fmt_ndcg(n: dict) -> str:
     if n["value"] is None:
         return f"{UNKNOWN} ({n['reason']})"
-    note = "" if n["graded"] == TOP else f"; {n['graded']}/{TOP} graded, ungraded count 0 (lower bound)"
-    return f"{n['value']:.3f}{note}"
+    if not n["ungraded"]:
+        return f"{n['value']:.3f}"
+    return f"{n['value']:.3f} — **{n['ungraded']} ungraded** (partial; ungraded = 0)"
 
 
 def _fmt_age(seconds: Optional[float]) -> str:
@@ -287,19 +336,22 @@ def _cells(s: dict) -> dict[str, str]:
         "Median price age": _fmt_age(f["median_age_s"]) + (f" ({f['ages_known']}/{TOP} known)" if f["median_age_s"] is not None else ""),
         "Moved ≥1 pt in 24h": UNKNOWN if f["moved_share"] is None else f"{f['moved_count']} of {f['moves_known']} known ({f['moved_share']:.0%})",
         "Truth-gate failures (target 0)": (
-            f"{t['failures']} — settled {t['settled']}, stale {t['stale']}, blend missing {t['blend_missing']}"
+            f"{t['failures']} — settled without its result {t['settled_without_result']}, "
+            f"stale {t['stale']}, blend missing {t['blend_missing']}"
             + (
-                f" (unknown: settled {t['settled_unknown']}, stale {t['stale_unknown']}, blend {t['blend_missing_unknown']})"
-                if any(t[f'{k}_unknown'] for k in ('settled', 'stale', 'blend_missing'))
+                f" (unknown: settled-without-result {t['settled_without_result_unknown']}, "
+                f"stale {t['stale_unknown']}, blend {t['blend_missing_unknown']})"
+                if any(t[f"{k}_unknown"] for k in GATE_FLAGS)
                 else ""
             )
         ),
+        "Settled, shown with result (info)": str(t["settled_with_result"]),
     }
 
 
 def render(slate: dict, columns: list[tuple[str, dict]], grades: list[dict], previous: Optional[dict]) -> str:
-    founders = sorted({d.get("grader", "?") for d in grades if d.get("expert", True)})
-    kids = sorted({d.get("grader", "?") for d in grades if not d.get("expert", True)})
+    founders = sorted({d.get("grader", "?") for d in grades if d.get("expert") is True})
+    kids = sorted({d.get("grader", "?") for d in grades if d.get("expert") is False})
     lines = [
         f"### Ranking scorecard — {slate.get('surface')} slate `{slate.get('slate_id')}`",
         "",

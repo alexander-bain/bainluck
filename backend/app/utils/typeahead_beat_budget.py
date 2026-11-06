@@ -2077,7 +2077,7 @@ def free_background_slots(
 #: branched from `8c641f6f48` printed `explicit 100 implicit 40 total 140`.
 #: 🔴 RE-DERIVED at speed (2026-11-05, #12095): 140 → 141, explicit 100 → 101,
 #: fall-through UNMOVED at 40. `snapshot-ranking-slate-daily`
-#: (`crontab(minute=15, hour=12)`) names `background` explicitly. Cost: one fire
+#: (`crontab(minute=15, hour=15)`) names `background` explicitly. Cost: one fire
 #: a night, inert (one env read) while `RANKING_SNAPSHOTS` is off; on, one
 #: anonymous Discover deck read (usually a cache hit), the futures scoring pass
 #: #142's 2:05 AM snapshot already runs, one primary-key market read and one

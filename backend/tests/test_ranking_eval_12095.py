@@ -23,11 +23,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy.dialects.postgresql import asyncpg as asyncpg_dialect
 from starlette.requests import Request
 
-import app.utils.ranking_eval as re_mod
-from app.models.models import DiscoverInteraction, RankingSlateSnapshot
+import app.utils.ranking_slate_capture as capture_mod
+from app.models.models import RankingSlateSnapshot
 from app.utils.ranking_eval import (
     MAX_CANDIDATES,
     RANKER_VERSION_FIELD,
@@ -37,8 +36,8 @@ from app.utils.ranking_eval import (
     grading_sheet,
     ranker_version,
     ranking_snapshots_enabled,
-    snapshot_ranking_slate,
 )
+from app.utils.ranking_slate_capture import snapshot_ranking_slate
 
 BACKEND = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 11, 6, 12, 15, tzinfo=timezone.utc)
@@ -157,16 +156,60 @@ class TestCardFeatures:
         assert card_features(concept, now=NOW)["category"] == "mma"
         tour = {"type": "tournament", "data": {"key": "t1", "name": "Open", "golfers": [{"name": "G", "probability": 0.2}], "champion": None}}
         f = card_features(tour, now=NOW)
-        assert f["item_key"] == "tournament:t1" and f["probability"] == 0.2 and f["settled"] is False
+        # No champion and no schedule status: settled is UNKNOWN, never False.
+        assert f["item_key"] == "tournament:t1" and f["probability"] == 0.2 and f["settled"] is None
+        assert f["settled_without_result"] is None
+        running = card_features({**tour, "data": {**tour["data"], "schedule_status": "in-progress"}}, now=NOW)
+        assert running["settled"] is False and running["settled_without_result"] is False
+        won = card_features({**tour, "data": {**tour["data"], "champion": "G"}}, now=NOW)
+        assert won["settled"] is True and won["shows_result"] is True and won["settled_without_result"] is False
+
+
+class TestSettledWithoutResult:
+    """Fable 3: a finished game shown WITH its result is a legitimate seat; only
+    settled-without-result is a truth-gate failure."""
+
+    def test_a_final_with_its_score_is_not_a_failure(self):
+        final = event(status="completed")
+        final["data"].update(home_score=3, away_score=2)
+        f = card_features(final, now=NOW)
+        assert f["settled"] is True and f["shows_result"] is True and f["settled_without_result"] is False
+
+    def test_a_final_without_its_score_is(self):
+        f = card_features(event(status="completed"), now=NOW)
+        assert f["settled"] is True and f["shows_result"] is False and f["settled_without_result"] is True
+
+    def test_a_settled_futures_card_with_its_winner_is_not_a_failure(self):
+        won = futures(3, prob=1.0, status="resolved")
+        assert card_features(won, now=NOW)["settled_without_result"] is False
+        flagged = futures(4, prob=0.62, status="resolved")
+        flagged["data"]["top_outcomes"][0]["is_winner"] = True
+        assert card_features(flagged, now=NOW)["settled_without_result"] is False
+
+    def test_a_settled_futures_card_still_showing_a_live_price_is(self):
+        f = card_features(futures(5, prob=0.62, status="resolved"), now=NOW)
+        assert f["settled"] is True and f["settled_without_result"] is True
+
+    def test_an_open_card_is_never_settled_without_result(self):
+        assert card_features(futures(6), now=NOW)["settled_without_result"] is False
 
 
 class TestBuildSlate:
     def test_served_first_in_order_then_unserved_pool_deduped(self):
         order, cands = build_slate([futures(1), event(), futures(1)], [futures(1), futures(9)], now=NOW)
-        assert order == ["futures:1", "event:7"]
+        # A card served twice keeps both seats (its second gets its own key).
+        assert order == ["futures:1", "event:7", "futures:1#3"]
         assert [(c["item_key"], c["served_position"]) for c in cands] == [
-            ("futures:1", 1), ("event:7", 2), ("futures:9", None),
+            ("futures:1", 1), ("event:7", 2), ("futures:1#3", 3), ("futures:9", None),
         ]
+
+    def test_an_unidentifiable_card_keeps_its_seat_and_every_later_position(self):
+        nameless = {"type": "futures", "score": 50, "data": {"name": "No id"}}
+        order, cands = build_slate([futures(1), futures(2), nameless, futures(4), futures(5)], [], now=NOW)
+        assert order == ["futures:1", "futures:2", "unknown:2", "futures:4", "futures:5"]
+        assert [c["served_position"] for c in cands] == [1, 2, 3, 4, 5]
+        assert cands[2]["item_id"] is None and cands[2]["card"] == nameless
+        assert cands[3]["item_key"] == "futures:4" and cands[3]["served_position"] == 4
 
     def test_the_opening_ten_keep_their_served_card(self):
         order, cands = build_slate([futures(i) for i in range(1, 13)], [futures(99)], now=NOW)
@@ -253,14 +296,34 @@ class TestSnapshotWriter:
         out = await snapshot_ranking_slate(
             db, now=NOW, read_deck=_deck([futures(1)]), read_pool=bad_pool, read_facts=_facts, environ=ON,
         )
-        assert out["status"] == "ok" and out["pool_scored"] == 0
+        # Stored, but never "ok": an error must not masquerade as an empty pool.
+        assert out["status"] == "ok_partial" and out["pool_scored"] == 0
+        assert out["pool_error"] == "pool down" and out["facts_error"] is None
         assert db.added[0].served_order == ["futures:1"]
+        assert db.added[0].summary["pool_error"] == "pool down"
+
+    async def test_a_failed_facts_read_is_ok_partial_too(self):
+        async def bad_facts(db, ids):
+            raise RuntimeError("facts down")
+        out = await snapshot_ranking_slate(
+            FakeDB(), now=NOW, read_deck=_deck([futures(1)]), read_pool=_pool, read_facts=bad_facts, environ=ON,
+        )
+        assert out["status"] == "ok_partial" and out["facts_error"] == "facts down"
 
     async def test_a_failed_deck_read_is_reported_not_raised(self):
         async def bad(db):
             raise RuntimeError("feed down")
-        out = await snapshot_ranking_slate(FakeDB(), now=NOW, read_deck=bad, environ=ON)
+        import logging
+
+        with self._caplog.at_level(logging.ERROR, logger="app.utils.ranking_slate_capture"):
+            out = await snapshot_ranking_slate(FakeDB(), now=NOW, read_deck=bad, environ=ON)
         assert out["status"] == "deck_read_failed"
+        # Loud: a night with no slate is an ERROR line, not a quiet WARNING.
+        assert any(r.levelno == logging.ERROR and "nothing captured" in r.getMessage() for r in self._caplog.records)
+
+    @pytest.fixture(autouse=True)
+    def _grab_caplog(self, caplog):
+        self._caplog = caplog
 
 
 def test_grading_sheet_is_the_opening_ten_with_empty_grades():
@@ -315,23 +378,15 @@ async def _post(monkeypatch, env_on: bool):
     return db.rows[0]
 
 
-def _insert_columns(row) -> str:
-    from sqlalchemy import insert
-
-    values = {
-        c.key: getattr(row, c.key)
-        for c in DiscoverInteraction.__table__.columns
-        if c.key in row.__dict__
-    }
-    return str(insert(DiscoverInteraction.__table__).values(values).compile(dialect=asyncpg_dialect.dialect()))
-
-
 class TestEventFields:
-    async def test_off_the_row_and_its_insert_carry_no_slate_fields(self, monkeypatch):
+    async def test_off_the_handler_sets_no_slate_fields(self, monkeypatch):
+        """Off, the handler never SETS the two fields (they read NULL). This is
+        about the values, not the statement: the ORM's INSERT may still name the
+        two new columns (as NULL), which is why the migration must run in the
+        release phase before this code serves (it does: `alembic upgrade head`)."""
         row = await _post(monkeypatch, env_on=False)
         assert "slate_id" not in row.__dict__ and "ranker_version" not in row.__dict__
-        sql = _insert_columns(row)
-        assert "slate_id" not in sql and "ranker_version" not in sql
+        assert row.slate_id is None and row.ranker_version is None
 
     async def test_on_they_are_stored_trimmed_and_clipped(self, monkeypatch):
         row = await _post(monkeypatch, env_on=True)
@@ -401,8 +456,30 @@ def test_the_migration_creates_only_what_it_says_and_no_foreign_key():
     assert len("ranking_slates_12095") <= 32
 
 
+def test_the_deck_read_passes_exactly_the_routes_parameters():
+    """Fable 10: signature drift in `get_feed` would make every night a
+    `deck_read_failed`; the kwargs the capture passes must be its parameters."""
+    import ast as _ast
+    import inspect
+
+    from app.routes.feed import get_feed
+
+    tree = _ast.parse(inspect.getsource(capture_mod.read_served_discover_deck).lstrip())
+    (call,) = [n for n in _ast.walk(tree) if isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "get_feed"]
+    assert {kw.arg for kw in call.keywords} == set(inspect.signature(get_feed).parameters)
+
+
+def test_the_task_reads_the_switch_before_any_session(monkeypatch):
+    """Fable 5: off means no session and no run record."""
+    import app.tasks as tasks
+
+    monkeypatch.delenv(RANKING_SNAPSHOTS_ENV, raising=False)
+    monkeypatch.setattr(tasks, "_tracked_run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran while off")))
+    assert tasks.snapshot_ranking_slate.run() == {"status": "disabled"}
+
+
 def test_the_snapshot_reads_the_route_itself_anonymously():
     import inspect
 
-    src = inspect.getsource(re_mod.read_served_discover_deck)
+    src = inspect.getsource(capture_mod.read_served_discover_deck)
     assert "get_feed(" in src and "user=None" in src and "edition=None" in src and "debug=False" in src

@@ -28,8 +28,8 @@ from app.utils.ranking_eval import (
     grading_sheet,
     ranking_snapshots_enabled,
     slate_row_dict,
-    snapshot_ranking_slate,
 )
+from app.utils.ranking_slate_capture import snapshot_ranking_slate
 
 router = APIRouter(prefix="/admin/ranking", tags=["admin-ranking-eval"])
 
