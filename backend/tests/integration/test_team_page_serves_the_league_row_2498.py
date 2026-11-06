@@ -15,6 +15,7 @@ that is the worse bug, because it would silently pick one of the two St. Louis
 Cardinals rows and make a serving route into a second matcher.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -24,6 +25,20 @@ from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
 )
+
+@pytest.fixture(autouse=True)
+def _historical_fixture_clock(monkeypatch):
+    """The September 11 specimen must not inherit the CI run's calendar day."""
+    from app.routes import teams as teams_route
+
+    class FixtureDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            anchor = datetime(2026, 9, 11, 12, tzinfo=timezone.utc)
+            return anchor.astimezone(tz) if tz is not None else anchor.replace(tzinfo=None)
+
+    monkeypatch.setattr(teams_route, "datetime", FixtureDateTime)
+
 
 # The measured production shape (2026-09-11 22:2xZ), used as the fixture
 # throughout so a reader can check the test against the row.
