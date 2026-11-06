@@ -43,6 +43,10 @@ from app.utils.economics_headline import (
     select_recession_headline,
 )
 from app.utils.market_display_name import clean_served_questions
+from app.utils.outcome_display import (
+    display_probability_divisor,
+    normalize_display_probs,
+)
 from app.utils.market_staleness import (
     CUMULATIVE_THRESHOLD_PREFIXES,
     featured_leader_probability,
@@ -831,18 +835,23 @@ def _ladder_tie_run_in_threshold_order(run: list) -> list:
 
 
 def _ladder_rungs_in_threshold_order(market: FuturesMarket) -> list:
-    """A cumulative ladder's rungs in rank order, price ties broken by threshold.
+    """A cumulative ladder's rungs in threshold order (#10388, #12093).
 
-    #10388 — the stored ``rank`` is a PROBABILITY rank assigned at ingestion by
-    a stable sort on price, so on a price tie it follows venue ingestion order,
-    which has nothing to do with threshold order: the mortgage ladder served
-    "Above 9.00%" before "Above 8.75%", both at 1.5%. Where prices are strict,
-    rank order already IS threshold order, so only contiguous equal-price runs
-    are touched and every strictly priced ladder serves the rows it did before.
+    When every rung on the ladder carries a single threshold shape that
+    ``parse_threshold`` spans completely, order the entire ladder by threshold
+    so non-monotonic or zero-priced tail rungs (e.g. mortgage rungs "Above 7.00%"
+    / "Above 7.25%" at 0.0% after "Above 9.00%") sit at their true threshold
+    positions rather than probability rank. When an unparseable or mixed-shape
+    rung prevents a full-ladder sort, fall back to reordering contiguous
+    equal-price runs (#10388).
     """
+    outcomes = _outcomes_sorted(market)
+    whole_ladder = _ladder_tie_run_in_threshold_order(outcomes)
+    if whole_ladder is not outcomes:
+        return whole_ladder
     out: list = []
     run: list = []
-    for o in _outcomes_sorted(market):
+    for o in outcomes:
         if run and o.current_probability != run[-1].current_probability:
             out.extend(_ladder_tie_run_in_threshold_order(run))
             run = []
@@ -895,19 +904,42 @@ def _distribution_row(
 def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> list[list]:
     """Convert multi-outcome market to [[prob, label], ...] brackets.
 
-    When normalize=True, scale so probabilities sum to 100% (removes
-    overround from independent binary markets displayed as distributions).
+    #11995 (decision 6-A) / #12093 (Defect 5b): when normalize=True, normalize
+    via ``display_probability_divisor`` / ``normalize_display_probs`` inside the
+    existing guards (requires ``mutually_exclusive is True``, ``field_complete``,
+    160% ceiling, one-cent floor exclusion, scale-down only when divisor > 1.0).
     """
-    result = []
-    for o in _outcomes_sorted(market):
-        p = float(o.current_probability or 0)
-        result.append([round(p * 100, 1), o.name or ""])
-    if normalize and result:
-        total = sum(b[0] for b in result)
-        if total > 105:
-            for b in result:
-                b[0] = round(b[0] * 100 / total, 1)
-    return result
+    sorted_outcomes = _outcomes_sorted(market)
+    if not sorted_outcomes:
+        return []
+    venue_exclusive = getattr(market, "mutually_exclusive", None) is True
+    raw_outcomes = list(getattr(market, "outcomes", None) or sorted_outcomes)
+    field_complete = all(o.current_probability is not None for o in raw_outcomes)
+    outcome_dicts = [
+        {
+            "id": getattr(o, "id", idx),
+            "name": o.name or "",
+            "probability": float(o.current_probability or 0),
+            "is_winner": getattr(o, "is_winner", None),
+            "resolution_source": getattr(o, "resolution_source", None),
+        }
+        for idx, o in enumerate(sorted_outcomes)
+    ]
+    if normalize and venue_exclusive and field_complete and len(outcome_dicts) >= 2:
+        divisor = display_probability_divisor(
+            outcome_dicts,
+            mutually_exclusive=True,
+            field_complete=field_complete,
+            question=getattr(market, "name", None),
+        )
+        if divisor is not None and divisor > 1.0:
+            normalize_display_probs(
+                outcome_dicts,
+                mutually_exclusive=True,
+                field_complete=field_complete,
+                question=getattr(market, "name", None),
+            )
+    return [[round(float(d["probability"]) * 100, 1), d["name"]] for d in outcome_dicts]
 
 
 def _modal_bracket(brackets: list[list]) -> tuple[int, float, str]:

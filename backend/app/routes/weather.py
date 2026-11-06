@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
+from app.utils.futures_liveness import leg_is_graded
 from app.utils.ladder_headline import ladder_median_row
 from app.utils.market_display_name import clean_served_questions
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
@@ -601,6 +602,26 @@ def _card_prob(market: FuturesMarket) -> float:
     unreachable defence rather than a displayed number.
     """
     return round(_card_probability(market) * 100)
+
+
+def _outcome_settled_won(outcome) -> bool:
+    """Has this outcome been authoritatively settled as a winner (#12093)?"""
+    if outcome is None:
+        return False
+    if getattr(outcome, "is_winner", None) is True:
+        return True
+    return (
+        leg_is_graded(
+            getattr(outcome, "is_winner", None),
+            getattr(outcome, "resolution_source", None),
+        )
+        and float(getattr(outcome, "current_probability", None) or 0) >= 1.0
+    )
+
+
+def _card_outcome_settled(market: FuturesMarket) -> bool:
+    """Has the outcome behind ``_card_outcome`` been settled as a winner (#12093)?"""
+    return _outcome_settled_won(_card_outcome(market))
 
 
 def _leader_outcome_name(market: FuturesMarket) -> str | None:
@@ -1499,6 +1520,7 @@ async def get_rain(db: AsyncSession):
             # loudest: Miami, Seattle, NYC and Houston all store 0.995000 on an
             # OPEN "Above 1 inch" market and all four printed a flat 100%.
             "probability": raw,
+            "settled": _get_yes_settled(m),
             "src": _market_source(m),
             "delta24h": delta,
         })
@@ -1727,6 +1749,19 @@ def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
     return round(raw * 100)
 
 
+def _get_yes_outcome(market: FuturesMarket):
+    """The outcome behind ``_get_yes_probability_raw``."""
+    for o in market.outcomes or []:
+        if o.name and o.name.lower() in ("yes", "y"):
+            return o
+    return _leader_outcome(market)
+
+
+def _get_yes_settled(market: FuturesMarket) -> bool:
+    """Has the outcome behind ``_get_yes_probability_raw`` been settled won (#12093)?"""
+    return _outcome_settled_won(_get_yes_outcome(market))
+
+
 def _get_yes_probability_raw(market: FuturesMarket) -> float:
     """The 'Yes' probability of a binary market, 0-1.
 
@@ -1801,6 +1836,7 @@ async def get_events(db: AsyncSession, now: datetime | None = None):
             # "Number of tornadoes in Sep 2026?" both print 100% here over open,
             # tradeable books.
             "probability": _card_probability(m),
+            "settled": _card_outcome_settled(m),
             # The sharpest instance of the defect on the whole page: "Hurricane
             # Marie category? — 95%" is 95% of "Category 4 or above", and
             # Category 4 and Category 5 are not the same forecast.
