@@ -274,3 +274,40 @@ test('completion review preserves the native cap and trusted current-head policy
   const policy = fs.readFileSync(path.resolve(__dirname, '../../../.github/workflows/tier-b.yml'), 'utf8');
   assert.match(policy, /github.event_name != 'workflow_run' \|\| github.event.workflow_run.event == 'pull_request'/);
 });
+
+test('completion publication retains the repository supplied by the Context prototype', async () => {
+  const publicationSource = workflow.match(/      - name: Publish the current-head approval verdict[\s\S]*?          script: \|\n([\s\S]*)$/)[1];
+  const publication = new (Object.getPrototypeOf(async function(){}).constructor)(
+    'github', 'context', 'process', 'require', publicationSource);
+  const repository = {owner: 'owner', repo: 'repo'};
+  const context = Object.assign(Object.create({get repo() { return repository; }}), {
+    eventName: 'workflow_run', payload: {workflow_run: {name: 'CI'}},
+  });
+  const pr = {number: 61, state: 'open', labels: [], head: {sha: 'head'}, user: {login: 'author'}};
+  const published = [];
+  let reads = 0;
+  const github = {
+    rest: {
+      pulls: {get: async args => {
+        assert.deepEqual(args, {...repository, pull_number: 61});
+        reads++;
+        return {data: pr};
+      }},
+      checks: {
+        listForRef: async () => [],
+        create: async args => { published.push(args); },
+      },
+    },
+    paginate: (fn, args) => fn(args),
+  };
+  await publication(github, context, {env: {REVIEW_PR: '61'}}, name => {
+    assert.equal(name, './_tier_b_policy/tools/release/tier_b.cjs');
+    return require('../../../tools/release/tier_b.cjs');
+  });
+  assert.equal(reads, 2);
+  assert.equal(published.length, 1);
+  assert.equal(published[0].owner, repository.owner);
+  assert.equal(published[0].repo, repository.repo);
+  assert.equal(published[0].head_sha, 'head');
+  assert.equal(published[0].conclusion, 'success');
+});

@@ -222,6 +222,6 @@ jobs:
         with:
           script: |
             await require('./_tier_b_policy/tools/release/tier_b.cjs').evaluate(github, {
-              ...context, eventName: 'pull_request',
+              ...context, repo: context.repo, eventName: 'pull_request',
               payload: {pull_request: {number: Number(process.env.REVIEW_PR)}}
             });
