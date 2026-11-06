@@ -209,6 +209,15 @@ struct NFLCardReader9483: View {
             // final MLB story's (#11284).
             if let original = MLBFinalDeck11284.original(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
                 MLBOriginalDetails11284(original: original)
+            } else if ReleaseSurfaces.isEventPageAtlasEnabled(),
+                      let atlasModel = EventAtlasStoryCards11666.readerDetailsModel(
+                        rowID: item.id,
+                        cards: heldCards.isEmpty ? liveCards : heldCards,
+                        rows: rows,
+                        awayName: awayName,
+                        homeName: homeName
+                      ) {
+                EventAtlasDetailsSheet11666(model: atlasModel)
             } else if rows[item.id] == nil,
                let detail = NFLCardReaderHold9483.ladderDetail(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
                 NBAOptionDetails9483(detail: detail)
