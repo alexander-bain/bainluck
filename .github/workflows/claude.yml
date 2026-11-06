@@ -18,12 +18,58 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || github.event.issue.assignee.login == 'claude[bot]'))
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ contains(github.event.comment.body, '<!-- reviewer-eval-11951') && 40 || 360 }}
+    concurrency:
+      group: ${{ contains(github.event.comment.body, '<!-- reviewer-eval-11951') && format('reviewer-eval-11951-{0}', github.event.issue.number) || format('claude-{0}', github.run_id) }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
       issues: write
     steps:
+      - name: Load the trusted study command guard
+        if: contains(github.event.comment.body, '<!-- reviewer-eval-11951')
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: _reviewer_eval
+          sparse-checkout: tools/release/reviewer_eval_comment.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Pin and cap a registered advisory review
+        id: reviewer_eval
+        if: contains(github.event.comment.body, '<!-- reviewer-eval-11951')
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const {configure} = require(`${process.env.GITHUB_WORKSPACE}/_reviewer_eval/tools/release/reviewer_eval_comment.cjs`);
+            const result = await configure(github, context);
+            if (!result) throw new Error('Missing study request');
+            core.setOutput('skip', String(result.skip));
+            if (!result.skip) {
+              core.setOutput('args', result.args);
+              core.setOutput('prompt', result.prompt);
+              core.setOutput('head', result.head);
+            }
+      - name: Check out the frozen study input
+        if: steps.reviewer_eval.outputs.skip == 'false'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.reviewer_eval.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        if: steps.reviewer_eval.outputs.skip == 'false'
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r backend/requirements.txt
+        if: steps.reviewer_eval.outputs.skip == 'false'
       - name: Run Claude Code
+        if: steps.reviewer_eval.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.reviewer_eval.outputs.args != '' && github.token || '' }}
+          claude_args: ${{ steps.reviewer_eval.outputs.args }}
+          prompt: ${{ steps.reviewer_eval.outputs.prompt }}
+          show_full_output: ${{ steps.reviewer_eval.outputs.args != '' }}
