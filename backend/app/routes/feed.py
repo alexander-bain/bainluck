@@ -264,6 +264,14 @@ from app.utils.feed_cache import (
     render_feed_page_from_base,
     warm_rail_max_shared_artifact_age_s,
 )
+from app.utils.ranking_eval import (
+    RANKER_VERSION_FIELD,
+    RANKER_VERSION_MAX,
+    SLATE_ID_MAX,
+    clip_event_field,
+    ranker_version,
+    ranking_snapshots_enabled,
+)
 from app.utils.feed_editions import (
     EDITION_LEASE_SECONDS,
     EDITION_STATUS_PINNED,
@@ -584,6 +592,11 @@ class DiscoverInteractionIn(BaseModel):
     surface: str = Field("unknown", max_length=20)
     source: str | None = Field(None, max_length=50)
     market_type: str | None = Field(None, max_length=20)
+    # #12095: the feed response's `edition` and `ranker_version` the card came
+    # from. No length limit on purpose — an oversize value is clipped at the
+    # write, never a 422 that would drop the whole batch.
+    slate_id: str | None = None
+    ranker_version: str | None = None
 
 
 class DiscoverInteractionBatch(BaseModel):
@@ -986,6 +999,9 @@ async def record_discover_interactions(
         raw_prov = getattr(body, "provenance", None)  # type: ignore[attr-defined]
     provenance = normalize_provenance(raw_prov)
 
+    # #12095: slate fields are stored only while the harness switch is on;
+    # off, the row (and its INSERT) is exactly as before.
+    store_slate_fields = ranking_snapshots_enabled()
     rows = []
     for event in body.interactions:
         action = _normalize_discover_value(
@@ -1024,6 +1040,16 @@ async def record_discover_interactions(
                 source=event.source[:50] if event.source else None,
                 market_type=market_type,
                 provenance=provenance,
+                **(
+                    {
+                        "slate_id": clip_event_field(event.slate_id, SLATE_ID_MAX),
+                        "ranker_version": clip_event_field(
+                            event.ranker_version, RANKER_VERSION_MAX
+                        ),
+                    }
+                    if store_slate_fields
+                    else {}
+                ),
             )
         )
 
@@ -7568,6 +7594,11 @@ def _feed_page_payload(
         payload[FEED_EDITION_FIELD] = _edition
     if edition_status is not None:
         payload[FEED_EDITION_STATUS_FIELD] = edition_status
+    # #12095: the deploy that ranked this deck, beside its edition, so an event
+    # can carry both. A whole-deck fact like the edition (the page base carries
+    # it to every page). Absent while `RANKING_SNAPSHOTS` is off.
+    if ranking_snapshots_enabled():
+        payload[RANKER_VERSION_FIELD] = ranker_version()
     return payload
 
 

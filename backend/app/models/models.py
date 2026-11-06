@@ -2045,6 +2045,12 @@ class DiscoverInteraction(Base):
         index=True,
         server_default="unknown",
     )
+    # #12095 (Decide 37-B): the list this event was shown in — the feed
+    # response's `edition` token — and the deploy sha that ranked it. Stored
+    # only while `RANKING_SNAPSHOTS` is on; NULL means "not recorded", never a
+    # slate. `rank` is the position.
+    slate_id: Mapped[Optional[str]] = mapped_column(String(64))
+    ranker_version: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -2174,6 +2180,63 @@ class DiscoverGroundTruthDiagnostic(Base):
             "source_group",
             "triage_bucket",
         ),
+    )
+
+
+class RankingSlateSnapshot(Base):
+    """#12095 (Decide 37-B): one served ranking slate, as a single document.
+
+    The served order (item keys) and up to 500 candidates with the features the
+    ranker had and the truth-gate flags (``app/utils/ranking_eval.py``).
+    ``slate_id`` is the deck's ``edition`` token, which events carry, so the
+    two join. No foreign keys: nothing here may lock a hot table. 90-day
+    retention, enforced by the writer.
+    """
+
+    __tablename__ = "ranking_slate_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    surface: Mapped[str] = mapped_column(String(32), nullable=False)
+    slate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ranker_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    served_order: Mapped[list] = mapped_column(JSONB, nullable=False)
+    candidates: Mapped[list] = mapped_column(JSONB, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (
+        Index("ix_ranking_slates_surface_captured", "surface", "captured_at"),
+        Index("ix_ranking_slates_slate_id", "slate_id"),
+    )
+
+
+class RankingGrade(Base):
+    """#12095 Phase 2: one grader's grade for one card of one captured slate.
+
+    Written by the admin grading page; ``tools/ranking/grades.py export`` copies
+    them to ``evals/ranking/grades/<date>-<surface>-<grader>.json``, the store
+    the scorecard reads. ``expert`` False marks a non-expert (kid) grader, kept
+    apart from the founder grades. No foreign keys.
+    """
+
+    __tablename__ = "ranking_grades"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    slate_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    surface: Mapped[str] = mapped_column(String(32), nullable=False)
+    grader: Mapped[str] = mapped_column(String(40), nullable=False)
+    expert: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    grade: Mapped[str] = mapped_column(String(16), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(String(300))
+    graded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_ranking_grades_slate", "slate_id", "grader"),
+        Index("ix_ranking_grades_graded_at", "graded_at"),
     )
 
 

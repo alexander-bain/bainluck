@@ -2871,6 +2871,22 @@ def snapshot_discover_candidate_pool(
     return _tracked_run("discover_candidate_snapshot", _snapshot())
 
 
+@celery_app.task(bind=True, name="app.tasks.snapshot_ranking_slate")
+def snapshot_ranking_slate(self):
+    """#12095: one nightly Discover slate for the ranking eval harness.
+
+    Inert unless ``RANKING_SNAPSHOTS`` is on (``app/utils/ranking_eval.py``).
+    """
+    from app.services.database import async_session_maker
+    from app.utils.ranking_eval import snapshot_ranking_slate as _snapshot_slate
+
+    async def _snapshot():
+        async with async_session_maker() as db:
+            return await _snapshot_slate(db)
+
+    return _tracked_run("ranking_slate_snapshot", _snapshot())
+
+
 @celery_app.task(bind=True, name="app.tasks.import_external_curator_ground_truth")
 def import_external_curator_ground_truth(self):
     """Persist configured reviewed external-curator/social ground truth."""
@@ -8217,6 +8233,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.snapshot_discover_candidate_pool",
         "schedule": crontab(minute=5, hour=10),
         "kwargs": {"limit": 300, "retention_days": 30},
+        "options": {"queue": "background"},
+    },
+    # #12095 (Decide 37-B): the served Discover slate for the ranking eval
+    # harness. 12:15 UTC = 4:15 AM PST, clear of the 2-3 AM PT maintenance hour.
+    # Inert unless RANKING_SNAPSHOTS is on.
+    "snapshot-ranking-slate-daily": {
+        "task": "app.tasks.snapshot_ranking_slate",
+        "schedule": crontab(minute=15, hour=12),
         "options": {"queue": "background"},
     },
     "import-external-curator-ground-truth-daily": {

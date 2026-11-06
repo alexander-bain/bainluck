@@ -301,6 +301,7 @@ class TestBeatScheduleCompleteness:
         "snapshot-discover-ground-truth-diagnostics-daily",
         "snapshot-discover-label-eval-run-daily",
         "snapshot-discover-candidate-pool-daily",
+        "snapshot-ranking-slate-daily",
         "import-external-curator-ground-truth-daily",
         "check-ground-truth-health-daily",
         "capture-featured-markets-daily",
