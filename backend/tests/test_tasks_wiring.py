@@ -338,6 +338,8 @@ class TestBeatScheduleCompleteness:
         "backfill-espn-ids",
         "backfill-historical-links",
         "update-max-movement",
+        # B-5 (2026-11-06): the hour's one heavy run of the same task.
+        "update-max-movement-heavy",
         "export-engagement-nightly",
         "daily-challenge-push",
         "big-move-alerts",

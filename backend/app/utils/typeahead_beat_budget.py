@@ -2092,7 +2092,15 @@ def free_background_slots(
 #: #142's 2:05 AM snapshot already runs, one primary-key market read and one
 #: insert. The census RUN over the tree merged with `80b7a1605c` printed
 #: `explicit 102 implicit 40 total 142`.
-BACKGROUND_BEAT_COUNT = 142
+#: 🔴 RE-DERIVED at speed (2026-11-06, B-5): 142 → 143, explicit 102 → 103,
+#: fall-through UNMOVED at 40. `update-max-movement-heavy`
+#: (`crontab(minute=20)`) names `background` explicitly; it is the :20 run of
+#: `update_max_movement`, taken out of `update-max-movement`, so arrivals on the
+#: queue are unchanged (six an hour). ⚠️ #12216 (141) and W-1 #12222 (143) write
+#: against the same base of 142: whichever merges after another re-runs the
+#: census, never adds one. The census RUN over the tree branched from
+#: `3c72a05363` printed `explicit 103 implicit 40 total 143`.
+BACKGROUND_BEAT_COUNT = 143
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
