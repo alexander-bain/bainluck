@@ -49,13 +49,16 @@ The transition contract
   the FULL current deck is seated as the replacement — fresh entrants
   included, never a reseat of the old membership.
 * ``seat_opening`` refuses (an unexempt lifecycle conflict in the candidate
-  opening, a group that could launder a live child, an unknown kind, a missing
-  or duplicated identity): :data:`UNSUPPORTED`, ``usable`` False, ``items`` is
-  the input order unchanged and there is no token or manifest. A refusal while
-  judging a pin leaves ``edition_status`` ``None`` — the pin was neither shown
-  compliant nor shown expired; a refusal while composing a replacement keeps
-  the requested edition's own status (e.g. ``expired``) beside ``usable``
-  False, so "expired, with a usable deck" and "no usable deck" never look alike.
+  opening, a malformed group, an unknown kind, a missing or duplicated
+  identity): under Ruling 23-A (#12041), only the card(s) named by the refusal's
+  ``refused_positions`` are held back, the opening is filled from the next-best
+  eligible cards, and the remaining deck is seated and served (with the held-back
+  offender records attached in ``withheld`` and the raw ``OpeningSeatingOutcome``
+  refusals in ``refusals``). When a requested pinned order refuses, the held pin
+  expires as ``opening_order`` and recomposes from the current deck (restarting
+  the reader at page one). Only when holding back leaves no cards at all to show
+  (or a refusal names no position) is the outcome :data:`UNSUPPORTED` with
+  ``usable`` False and ``items`` the input order unchanged.
 
 The boundary is never inferred from ``OpeningSeatingOutcome.changed``: a thin
 deck reports ``sparse_continuation`` (changed) even when its order is already
@@ -71,7 +74,7 @@ touched.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
@@ -141,6 +144,13 @@ class OpeningEditionOutcome:
     pin_seating: Optional[OpeningSeatingOutcome] = None
     #: ``seat_opening`` over the full current deck (``None`` when HELD)
     deck_seating: Optional[OpeningSeatingOutcome] = None
+    #: offender cards held back from ``items`` under Ruling 23-A (#12041)
+    withheld: list = field(default_factory=list)
+    #: ``OpeningSeatingOutcome`` refusals encountered before ``items`` seated
+    refusals: list = field(default_factory=list)
+    #: offender cards that refused in ``pinned`` when ``pin_seating`` was
+    #: :data:`SEATING_UNSUPPORTED`
+    pin_withheld: list = field(default_factory=list)
     detail: str = ""
 
     def summary(self) -> dict:
@@ -155,14 +165,136 @@ class OpeningEditionOutcome:
             "retire_requested": self.retire_requested,
             "restart_at_page_one": self.restart_at_page_one,
             "total": len(self.items) if self.usable else None,
+            "withheld": list(self.withheld),
+            "pin_withheld": list(self.pin_withheld),
+            "refusals": [r.summary() for r in self.refusals],
             "pin_seating": self.pin_seating.summary() if self.pin_seating else None,
             "deck_seating": self.deck_seating.summary() if self.deck_seating else None,
             "detail": self.detail,
         }
 
 
+_RULE_EVIDENCE_FIELDS = (
+    "status",
+    "commence_time",
+    "start_date",
+    "end_date",
+    "schedule_status",
+    "champion",
+)
+
+
 def _identities(items: list) -> list[str]:
     return [feed_edition_member(item) for item in items]
+
+
+def _offender_record(
+    card: Any,
+    *,
+    seat: int,
+    working_seat: int,
+    seating_card: Any,
+    outcome: OpeningSeatingOutcome,
+) -> dict:
+    ident = (
+        seating_card.identity
+        if seating_card is not None
+        else (feed_edition_member(card) if isinstance(card, dict) else "?")
+    )
+    kind = (
+        seating_card.kind
+        if seating_card is not None
+        else (card.get("type") if isinstance(card, dict) else None)
+    )
+    data = (
+        card.get("data")
+        if isinstance(card, dict) and isinstance(card.get("data"), dict)
+        else {}
+    )
+    evidence = (
+        dict(seating_card.lifecycle_evidence)
+        if seating_card is not None and seating_card.lifecycle_evidence
+        else {}
+    )
+    fields: dict[str, Any] = {}
+    for key in _RULE_EVIDENCE_FIELDS:
+        if key in data or key in evidence:
+            fields[key] = data.get(key, evidence.get(key))
+    for key, val in evidence.items():
+        fields.setdefault(key, val)
+    return {
+        "identity": ident,
+        "seat": seat,
+        "working_seat": working_seat,
+        "kind": kind,
+        "refusal_class": outcome.refusal_class or "unsupported",
+        "fields": fields,
+        "detail": (outcome.detail or "")[:500],
+    }
+
+
+def _extract_seating_offenders(
+    items: list, outcome: OpeningSeatingOutcome
+) -> list[dict]:
+    records: list[dict] = []
+    for pos in outcome.refused_positions:
+        if isinstance(pos, int) and 0 <= pos < len(items):
+            seating_card = outcome.cards[pos] if pos < len(outcome.cards) else None
+            records.append(
+                _offender_record(
+                    items[pos],
+                    seat=pos + 1,
+                    working_seat=pos + 1,
+                    seating_card=seating_card,
+                    outcome=outcome,
+                )
+            )
+    return records
+
+
+def _seat_withholding(
+    items: list, *, now: datetime
+) -> tuple[OpeningSeatingOutcome, list[dict], list[OpeningSeatingOutcome]]:
+    """Seat ``items`` while holding back only the card(s) a refusal names
+    (Ruling 23-A, #12041).
+
+    Returns ``(final_seating, withheld_records, refusal_outcomes)``. When every
+    card in a non-empty ``items`` is held back (or a refusal names no position),
+    ``final_seating`` is the initial :data:`SEATING_UNSUPPORTED` outcome so the
+    caller reports ``usable=False``.
+    """
+    indexed = list(enumerate(items))
+    withheld: list[dict] = []
+    refusals: list[OpeningSeatingOutcome] = []
+    while True:
+        working = [card for _, card in indexed]
+        outcome = seat_opening(working, now=now)
+        if outcome.status != SEATING_UNSUPPORTED:
+            return outcome, withheld, refusals
+        refusals.append(outcome)
+        positions = [
+            pos
+            for pos in outcome.refused_positions
+            if isinstance(pos, int) and 0 <= pos < len(indexed)
+        ]
+        if not positions:
+            return refusals[0], withheld, refusals
+        for pos in positions:
+            orig_idx, card = indexed[pos]
+            seating_card = outcome.cards[pos] if pos < len(outcome.cards) else None
+            withheld.append(
+                _offender_record(
+                    card,
+                    seat=orig_idx + 1,
+                    working_seat=pos + 1,
+                    seating_card=seating_card,
+                    outcome=outcome,
+                )
+            )
+        drop_set = set(positions)
+        indexed = [pair for idx, pair in enumerate(indexed) if idx not in drop_set]
+        if not indexed:
+            return refusals[0], withheld, refusals
 
 
 def compose_opening_edition(
@@ -193,6 +325,7 @@ def compose_opening_edition(
     requested = requested_token is not None
     edition_status = EDITION_STATUS_UNPINNED
     pin_seating: Optional[OpeningSeatingOutcome] = None
+    pin_withheld: list[dict] = []
     seating_expiry: Optional[str] = None
     detail = ""
 
@@ -219,46 +352,43 @@ def compose_opening_edition(
             else:
                 pin_seating = seat_opening(pinned, now=now)
                 if pin_seating.status == SEATING_UNSUPPORTED:
-                    return OpeningEditionOutcome(
-                        status=UNSUPPORTED,
-                        usable=False,
-                        items=list(items),
-                        edition_status=None,
-                        requested_token=requested_token,
-                        retire_requested=True,
-                        pin_seating=pin_seating,
-                        detail="the requested pinned order cannot be judged: "
-                        + pin_seating.detail,
-                    )
-                same_order = _identities(pin_seating.items) == _identities(pinned)
-                same_boundary = pin_seating.continuation_start == pinned_start
-                if same_order and same_boundary:
-                    return OpeningEditionOutcome(
-                        status=HELD,
-                        usable=True,
-                        items=list(pinned),
-                        edition_status=EDITION_STATUS_PINNED,
-                        continuation_start=pinned_start,
-                        token=requested_token,
-                        requested_token=requested_token,
-                        pin_seating=pin_seating,
-                        detail="the requested pinned order is still seating-compliant",
-                    )
-                edition_status = EDITION_STATUS_EXPIRED
-                if not same_order:
+                    pin_withheld = _extract_seating_offenders(pinned, pin_seating)
+                    edition_status = EDITION_STATUS_EXPIRED
                     seating_expiry = SEATING_EXPIRY_OPENING_ORDER
                     detail = (
-                        "the pinned opening is no longer compliant: "
+                        "the requested pinned order cannot be judged: "
                         + pin_seating.detail
                     )
                 else:
-                    seating_expiry = SEATING_EXPIRY_SECTION_BOUNDARY
-                    detail = (
-                        f"the pinned section boundary {pinned_start!r} is now "
-                        f"{pin_seating.continuation_start!r}"
-                    )
+                    same_order = _identities(pin_seating.items) == _identities(pinned)
+                    same_boundary = pin_seating.continuation_start == pinned_start
+                    if same_order and same_boundary:
+                        return OpeningEditionOutcome(
+                            status=HELD,
+                            usable=True,
+                            items=list(pinned),
+                            edition_status=EDITION_STATUS_PINNED,
+                            continuation_start=pinned_start,
+                            token=requested_token,
+                            requested_token=requested_token,
+                            pin_seating=pin_seating,
+                            detail="the requested pinned order is still seating-compliant",
+                        )
+                    edition_status = EDITION_STATUS_EXPIRED
+                    if not same_order:
+                        seating_expiry = SEATING_EXPIRY_OPENING_ORDER
+                        detail = (
+                            "the pinned opening is no longer compliant: "
+                            + pin_seating.detail
+                        )
+                    else:
+                        seating_expiry = SEATING_EXPIRY_SECTION_BOUNDARY
+                        detail = (
+                            f"the pinned section boundary {pinned_start!r} is now "
+                            f"{pin_seating.continuation_start!r}"
+                        )
 
-    deck_seating = seat_opening(items, now=now)
+    deck_seating, withheld, refusals = _seat_withholding(items, now=now)
     retire = requested
     if deck_seating.status == SEATING_UNSUPPORTED:
         return OpeningEditionOutcome(
@@ -271,6 +401,9 @@ def compose_opening_edition(
             retire_requested=retire,
             pin_seating=pin_seating,
             deck_seating=deck_seating,
+            withheld=withheld,
+            refusals=refusals,
+            pin_withheld=pin_withheld,
             detail="no usable replacement deck: " + deck_seating.detail,
         )
     deck = deck_seating.items
@@ -288,6 +421,12 @@ def compose_opening_edition(
         if token is not None
         else None
     )
+    composed_note = "composed: " + deck_seating.detail
+    if withheld:
+        withheld_ids = ", ".join(w["identity"] for w in withheld)
+        composed_note = (
+            f"withheld {len(withheld)} card(s) ({withheld_ids}); " + composed_note
+        )
     return OpeningEditionOutcome(
         status=COMPOSED,
         usable=True,
@@ -302,5 +441,8 @@ def compose_opening_edition(
         manifest=replacement,
         pin_seating=pin_seating,
         deck_seating=deck_seating,
-        detail=(detail + "; " if detail else "") + "composed: " + deck_seating.detail,
+        withheld=withheld,
+        refusals=refusals,
+        pin_withheld=pin_withheld,
+        detail=(detail + "; " if detail else "") + composed_note,
     )
