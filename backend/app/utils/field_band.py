@@ -58,7 +58,7 @@ CFP_PICTURE_DEFINITION_PATH = (
 )
 
 _FORBIDDEN_NARRATIVE_RE = re.compile(
-    r"\b(?:kalshi|polymarket|draftkings|fanduel|betmgm|caesars|question|questions)\b",
+    r"\b(?:kalshi|polymarket|draftkings|fanduel|betmgm|caesars|blend|blended|question|questions)\b",
     re.IGNORECASE,
 )
 _PLACEHOLDER_OUTCOME_NAMES = frozenset(
