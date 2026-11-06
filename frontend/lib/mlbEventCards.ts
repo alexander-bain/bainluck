@@ -667,10 +667,12 @@ export function buildMlbExtraInningsCard(opts: {
   if (rows.length === 0) return null;
   const phase = phaseOf(opts.status, opts.commenceTime, opts.nowMs);
 
-  // Print only a served number: prefer a server-blended row if `other` carries one,
-  // otherwise select one served source so each outcome (`Yes` / `No`) shows one
-  // untouched served pregame number (never client-averaged). During or after the
-  // game, read `pregame_mark` only; never mislabel a current/closing `probability` as pregame.
+  // Print only a served number:
+  // - If `other` carries a server-blended row (`source === "blended" | "blend"`), use its pregame number.
+  // - If exactly one source prices the outcome, use that single served pregame number.
+  // - If more than one unblended source prices the outcome, set `pregameChance = null`
+  //   rather than averaging on the client or silently picking one order-dependent source.
+  // During or after the game, read `pregame_mark` only; never mislabel a closing `probability` as pregame.
   const rowPregameChance = (row: (typeof rows)[number]): number | null =>
     phase === "before"
       ? isRecentQuote(row.observed_at, opts.nowMs)
@@ -678,17 +680,12 @@ export function buildMlbExtraInningsCard(opts: {
         : null
       : openChance(row.pregame_mark);
 
-  const chosenSource =
-    rows.find((r) => r.source === "blended" || r.source === "blend")?.source ??
-    rows.find((r) => rowPregameChance(r) !== null)?.source ??
-    rows[0]?.source ??
-    null;
-
   const byLabel = new Map<
     string,
     {
       label: string;
-      primaryRow: (typeof rows)[number];
+      rows: (typeof rows)[number][];
+      sources: Set<string>;
       verdicts: Set<"won" | "lost">;
       marketName: string;
     }
@@ -702,24 +699,41 @@ export function buildMlbExtraInningsCard(opts: {
       phase === "after",
     );
     if (!existing) {
+      const sources = new Set<string>();
+      if (row.source) sources.add(row.source);
       const verdicts = new Set<"won" | "lost">();
       if (verdict) verdicts.add(verdict);
       byLabel.set(label, {
         label,
-        primaryRow: row,
+        rows: [row],
+        sources,
         verdicts,
         marketName: "Extra Innings",
       });
     } else {
+      existing.rows.push(row);
+      if (row.source) existing.sources.add(row.source);
       if (verdict) existing.verdicts.add(verdict);
-      if (existing.primaryRow.source !== chosenSource && row.source === chosenSource) {
-        existing.primaryRow = row;
-      }
     }
   }
 
   const outcomes: MlbExtraInningsOutcome[] = [...byLabel.values()].map((group) => {
-    const pregameChance = rowPregameChance(group.primaryRow);
+    const blendedRow = group.rows.find((r) => r.source === "blended" || r.source === "blend");
+    const pricedRows = group.rows.filter((r) => rowPregameChance(r) !== null);
+
+    let pregameChance: number | null = null;
+    let observedAt: string | null = group.rows[0]?.observed_at ?? null;
+    if (blendedRow) {
+      pregameChance = rowPregameChance(blendedRow);
+      observedAt = blendedRow.observed_at ?? observedAt;
+    } else if (group.sources.size <= 1 && pricedRows.length === 1) {
+      const singleRow = pricedRows[0];
+      if (singleRow) {
+        pregameChance = rowPregameChance(singleRow);
+        observedAt = singleRow.observed_at ?? observedAt;
+      }
+    }
+
     // When venues disagree (`won` and `lost` both present), print `pending`, never a result.
     let venueResult: MlbVenueResult;
     if (group.verdicts.has("won") && group.verdicts.has("lost")) {
@@ -734,9 +748,9 @@ export function buildMlbExtraInningsCard(opts: {
     return {
       id: `mlb-extra:${group.label.toLowerCase()}`,
       label: group.label,
-      sourceCount: 1,
+      sourceCount: Math.max(1, group.sources.size),
       pregameChance,
-      observedAt: group.primaryRow.observed_at ?? null,
+      observedAt,
       venueResult,
       marketName: group.marketName,
     };
