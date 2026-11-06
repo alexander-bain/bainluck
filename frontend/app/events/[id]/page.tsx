@@ -3320,7 +3320,7 @@ export default function EventPage({ params }: EventPageProps) {
               />
               {atlasOptIn && atlasHeadlinePhase && (
                 <div
-                  className="mt-1 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[11px] text-text-secondary"
+                  className="mt-1 flex flex-col items-center justify-center gap-0.5 text-[11px] text-text-secondary"
                   data-testid="event-atlas-headline-subline"
                 >
                   <span
@@ -3578,8 +3578,10 @@ export default function EventPage({ params }: EventPageProps) {
                 );
               })()}
 
+              {!atlasOptIn && (
+                <>
               {/* Opening odds (faint) — live/pregame only */}
-              {!isFinished && !atlasOptIn && openingHomeProb !== null && (
+              {!isFinished && openingHomeProb !== null && (
                 <div className="mt-1.5">
                   <span className="text-[11px] text-text-muted">
                     {/* #2085 — same pair, same rule. `opening_odds` derives its
@@ -3604,12 +3606,14 @@ export default function EventPage({ params }: EventPageProps) {
               )}
 
               {/* Source label — live/pregame only */}
-              {!isFinished && !atlasOptIn && probSourceLabel && (
+              {!isFinished && probSourceLabel && (
                 <div className="mt-1 flex items-center gap-1.5 min-w-0">
                   <span className="text-[11px] text-text-muted min-w-0 text-center">
                     {probSourceLabel}
                   </span>
                 </div>
+              )}
+                </>
               )}
 
             </div>
