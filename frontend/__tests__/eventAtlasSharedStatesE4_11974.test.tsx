@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
@@ -164,6 +166,7 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
         atlasMode
       />,
     );
+    expect(noRecentPregameHtml).toContain('data-testid="atlas-no-recent-probability"');
     expect(noRecentPregameHtml).toContain(ATLAS_STATE_COPY.noRecentPrice);
     expect(noRecentPregameHtml).toContain("No recent probability");
     expect(noRecentPregameHtml).not.toContain("No price yet");
@@ -178,7 +181,8 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
         atlasMode
       />,
     );
-    expect(noRecentLiveHtml).toContain(ATLAS_STATE_COPY.noRecentPrice);
+    expect(noRecentLiveHtml).toContain('data-testid="atlas-no-recent-probability"');
+    expect(noRecentLiveHtml).toContain("No recent probability");
     expect(noRecentLiveHtml).not.toContain(">No price<");
 
     const settledEmptyHtml = renderToStaticMarkup(
@@ -254,6 +258,31 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
       <GameLineBrowser data={settledData} status="final" atlasMode />,
     );
     expect(settledBrowserHtml).toContain(ATLAS_STATE_COPY.wonWithCheck);
+    expect(settledBrowserHtml).toContain("✓ Won");
     expect(settledBrowserHtml).toContain(ATLAS_STATE_COPY.lostWithCross);
+    expect(settledBrowserHtml).toContain("✗ Lost");
+  });
+
+  it("wires ATLAS_STATE_COPY loading, voided, and atlasMode passthrough in app/events/[id]/page.tsx", () => {
+    const pageSrc = readFileSync(
+      join(__dirname, "..", "app", "events", "[id]", "page.tsx"),
+      "utf8",
+    );
+    expect(pageSrc).toContain(
+      "text={atlasOptIn && !pastSlowLoadMark ? ATLAS_STATE_COPY.loading : loadingView.text}",
+    );
+    expect(pageSrc).toContain(
+      "atlasOptIn && venueVoided\n                  ? ATLAS_STATE_COPY.voided\n                  : venueSettledSentence ??",
+    );
+    expect(pageSrc).toContain("atlasMode: atlasOptIn,");
+    expect(pageSrc).toContain("atlasMode={atlasOptIn}");
+    expect(pageSrc).toContain("voided={venueVoided}");
+    expect(pageSrc).toContain("stoppageLabel={stoppageLabel}");
+    expect(pageSrc).toContain(
+      "<GameLineBrowser data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />",
+    );
+    expect(pageSrc).toContain(
+      "<QuestionCatalog data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />",
+    );
   });
 });
