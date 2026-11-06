@@ -32,7 +32,7 @@ orjson>=3.10.0
 
 # Kalshi WebSocket (real-time prices + settlement push)
 websockets>=13.0
-cryptography>=42.0.0
+cryptography>=50.0.2
 
 # Background Tasks
 # Keep the reviewed task-binding contract; 5.7 requires a separate upgrade.
