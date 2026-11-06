@@ -6,7 +6,7 @@
   "category": "sports",
   "tag": "TONIGHT",
   "section_title": "The 4 closest games",
-  "footer": "Bain Luck blend · the 4 closest of {n} games tonight",
+  "footer": "Combined probability · the 4 closest of {n} games tonight",
   "rule": {
     "producer": "window_events_closest",
     "window": "sports-day",

@@ -691,10 +691,7 @@ class TestTheCapIsSolvedFromTheBudget:
         )
 
         assert sentry_budget.MAX_WORKER_POOL_CHILDREN == MAX_WORKER_CONCURRENCY
-        # #12042 (Decide 45-A, Nov 5): worker-background runs ONE child now; the
-        # runtime policy keeps pricing two until it is re-derived, which
-        # over-prices the watchdog (the safe direction). Never UNDER-price it.
-        assert sentry_budget.WATCHDOG_POOL_CHILDREN >= WATCHDOG_POOL_CHILDREN
+        assert sentry_budget.WATCHDOG_POOL_CHILDREN == WATCHDOG_POOL_CHILDREN
         assert (
             sentry_budget.WATCHDOG_COOLDOWN_WINDOWS_PER_DAY
             == WATCHDOG_COOLDOWN_WINDOWS_PER_DAY
