@@ -153,6 +153,7 @@ def select_register_closest(
     markets: Mapping[int, Mapping[str, Any]] | Sequence[Mapping[str, Any]],
     *,
     section_keys: Sequence[str] = ("senate_races", "governors"),
+    excluded_market_ids: Sequence[int] = (109918, 108629),
     min_open_races: int = 3,
     card_rows: int = 3,
     section_title: str = "Open races",
@@ -179,6 +180,7 @@ def select_register_closest(
         return RoundupRefusal((("register_closest", "empty_pool"),))
 
     allowed_sections = set(section_keys)
+    excluded_ids = {int(mid) for mid in excluded_market_ids}
     register_ids: list[int] = []
     for sec in MIDTERMS_MANIFEST.get("sections", ()):
         if sec.get("key") not in allowed_sections:
@@ -193,8 +195,8 @@ def select_register_closest(
         entry: Optional[MidtermsTwinEntry] = MIDTERMS_TWIN_BY_KALSHI_ID.get(kalshi_id)
         if entry is None:
             continue
-        # Skip multi-state meta-markets ("Closest Governor race in 2026?", "Will Democrats sweep...")
-        if kalshi_id in (109918, 108629):
+        # Skip multi-state meta-markets configured in rule.excluded_market_ids
+        if kalshi_id in excluded_ids:
             continue
 
         primary = by_id.get(kalshi_id)
@@ -508,9 +510,16 @@ async def produce_register_closest(
         if isinstance(raw_sections, (list, tuple))
         else ("senate_races", "governors")
     )
+    raw_excluded = rule.get("excluded_market_ids")
+    excluded_market_ids = (
+        tuple(int(x) for x in raw_excluded if isinstance(x, int) and not isinstance(x, bool))
+        if isinstance(raw_excluded, (list, tuple))
+        else (109918, 108629)
+    )
     return select_register_closest(
         by_id,
         section_keys=section_keys,
+        excluded_market_ids=excluded_market_ids,
         min_open_races=int(rule.get("min_open_races", 3)),
         card_rows=int(rule.get("card_rows", 3)),
         section_title=str(definition.get("section_title") or "Open races"),
@@ -579,4 +588,7 @@ async def closest_races(db: Any, *, now: Optional[datetime] = None) -> Any:
 
 
 CLOSEST_RACES_PRODUCER = build_register_closest_producer(CLOSEST_RACES_DEFINITION)
+# Required when register_closest is imported before roundup_containers completes initialization.
 _rc().register_roundup_producer(CLOSEST_RACES_PRODUCER)
+
+

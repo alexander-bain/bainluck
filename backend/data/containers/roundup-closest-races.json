@@ -12,6 +12,7 @@
     "producer": "register_closest",
     "register": "midterms-2026",
     "sections": ["senate_races", "governors"],
+    "excluded_market_ids": [109918, 108629],
     "min_open_races": 3,
     "card_rows": 3,
     "refusal": "all-or-nothing",

@@ -51,6 +51,7 @@ __all__ = [
     "GOLDEN_GLOBES_BEST_PICTURE_PRODUCER",
     "GOLDEN_GLOBES_BEST_PICTURE_SLUG",
     "PRODUCER_KIND_AWARDS_CATEGORY",
+    "WIN_EXCEEDS_NOMINATION_TOLERANCE",
     "awards_category_enabled",
     "build_awards_category_producer",
     "golden_globes_best_picture",
@@ -60,6 +61,7 @@ __all__ = [
 ]
 
 PRODUCER_KIND_AWARDS_CATEGORY = "awards_category_roundup"
+WIN_EXCEEDS_NOMINATION_TOLERANCE = 0.02
 
 GOLDEN_GLOBES_BEST_PICTURE_SLUG = "roundup-golden-globes-best-picture"
 GOLDEN_GLOBES_BEST_PICTURE_ID = "roundup:golden-globes-best-picture"
@@ -114,6 +116,7 @@ def select_awards_category_roundup(
     min_paired_nominees: int = 3,
     card_rows: int = 3,
     require_guard_11995: bool = True,
+    win_exceeds_nomination_tolerance: float = WIN_EXCEEDS_NOMINATION_TOLERANCE,
     section_title: str = "Best Picture",
     footer: str = "Several nominees are nominated; one wins.",
     title: Optional[str] = None,
@@ -279,7 +282,7 @@ def select_awards_category_roundup(
         nom_pct = _half_up_percent(nom_prob)
 
         # Containment check: winning requires being nominated (allow 2pt rounding tolerance).
-        if win_prob > nom_prob + 0.02:
+        if win_prob > nom_prob + float(win_exceeds_nomination_tolerance) + 1e-9:
             return RoundupRefusal(
                 (("awards_category", f"win_exceeds_nomination:{subj_key}"),)
             )
@@ -437,6 +440,9 @@ async def produce_awards_category_roundup(
         min_paired_nominees=int(rule.get("min_paired_nominees", 3)),
         card_rows=int(rule.get("card_rows", 3)),
         require_guard_11995=bool(rule.get("require_guard_11995", True)),
+        win_exceeds_nomination_tolerance=float(
+            rule.get("win_exceeds_nomination_tolerance", WIN_EXCEEDS_NOMINATION_TOLERANCE)
+        ),
         section_title=str(definition.get("section_title") or "Best Picture"),
         footer=str(definition.get("footer") or "Several nominees are nominated; one wins."),
         title=str(definition.get("name") or "") or None,
@@ -509,4 +515,7 @@ async def golden_globes_best_picture(
 GOLDEN_GLOBES_BEST_PICTURE_PRODUCER = build_awards_category_producer(
     GOLDEN_GLOBES_BEST_PICTURE_DEFINITION
 )
+# Required when awards_category_roundup is imported before roundup_containers completes initialization.
 _rc().register_roundup_producer(GOLDEN_GLOBES_BEST_PICTURE_PRODUCER)
+
+
