@@ -150,6 +150,39 @@ export const TESTS_FOR_TESTS_COPY = {
   reviewer: "AI reviewer",
 } as const;
 
+export const WATCHERS_COPY = {
+  title: "Checks that run on their own",
+  lead:
+    "Some checks run by themselves, like smoke detectors. Each one looks for one kind of problem on the live site and files it on our work list when it finds one.",
+  detail:
+    "An audit found a third state between working and stopped: a check that finds problems but cannot file them. We call that running red, reporting stopped, and show it wherever the record says so.",
+  timesNote: "Times are Pacific, worked out in your browser from the schedule's UTC times.",
+  dayGroup: "Through the day",
+  nightGroup: "Every night",
+  every: "Every",
+  minutes: "minutes",
+  hours: "hours",
+  everyDayAt: "Every day at",
+  utc: "UTC",
+  lastResult: "Last result",
+  stateRedReporting: "Running red, reporting",
+  stateRedStopped: "Running red, reporting stopped",
+  stateClosedFixed: "Closed as fixed",
+  runBefore: "Its last run on record, at",
+  filedAfter: "found problems and reported them on our work list:",
+  stoppedAfter: "found problems but could not file them. The stopped reporting is tracked in",
+  closedOneAfter: "re-checked the problem it had reported, found it fixed, and closed it:",
+  closedManyAfter: "re-checked the problems it had reported, found them fixed, and closed them:",
+  alsoClosedBefore: "It also found",
+  alsoClosedOneAfter: "fixed, and closed it.",
+  alsoClosedManyAfter: "fixed, and closed them.",
+  earlierBefore: "Its reporting had been stopped before that run:",
+  fixBefore: "A fix for its reporting has merged since:",
+  unknown: "No public record of its last result.",
+  alerts: "See every open alert",
+  code: "The check's code",
+} as const;
+
 export const GAPS_COPY = {
   title: "What we have not tested yet",
   lead: "This is what we have not checked.",
@@ -258,6 +291,15 @@ export const TERMS: readonly { term: string; meaning: string }[] = [
     term: "Golden set",
     meaning:
       "A fixed set of real markets, each with the event it belongs to or with none, that we run through the real matcher to check it.",
+  },
+  {
+    term: "Sentinel",
+    meaning:
+      "A check that runs on a schedule against the live site and files an issue on our work list when it finds a problem.",
+  },
+  {
+    term: "Running red, reporting stopped",
+    meaning: "A check that keeps finding problems but cannot file them, so nobody sees them until someone looks.",
   },
   {
     term: "Planted bug",
