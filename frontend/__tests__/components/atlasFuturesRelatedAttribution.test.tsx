@@ -180,12 +180,18 @@ describe('Step F4 — RelatedByTag and attribution restyle (#883)', () => {
     expect(html).toContain('+21 more');
   });
 
-  it('formats attribution source labels without venue prices or comparison prose', () => {
+  it('formats attribution source labels without venue prices or comparison prose and uses a neutral fallback when sourceLabels is empty', () => {
     expect(formatAtlasAttribution('kalshi')).toBe('Kalshi');
     expect(formatAtlasAttribution('polymarket')).toBe('Polymarket');
     expect(formatAtlasAttribution('kalshi', { sourceCount: 2 })).toBe(
-      'Both Kalshi and Polymarket',
+      '2 sources',
     );
+    expect(
+      formatAtlasAttribution('datagolf', { sourceCount: 2, sourceLabels: [] }),
+    ).toBe('2 sources');
+    expect(
+      formatAtlasAttribution('odds_api', { sourceCount: 3, sourceLabels: [] }),
+    ).toBe('3 sources');
     expect(
       formatAtlasAttribution('kalshi', {
         sourceLabels: ['Kalshi', 'Polymarket'],
