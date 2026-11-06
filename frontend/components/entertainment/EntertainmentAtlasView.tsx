@@ -50,12 +50,19 @@ type ExtendedEntMarketRow = EntMarketRow & {
   settled_winner?: string | null;
 };
 
+function cleanSource(src?: string | null): string | null {
+  return typeof src === "string" && src.trim().length > 0 ? src.trim() : null;
+}
+
 function toOrderedOutcomes(
   outcomes: { name: string; prob: number | null }[],
   orderNumeric: boolean,
   settledWinner?: string | null
 ): AtlasCategoryOutcome[] {
-  const items = outcomes.map((o, idx) => ({
+  const valid = (outcomes || []).filter(
+    (o) => Boolean(o && typeof o.name === "string" && o.name.trim().length > 0)
+  );
+  const items = valid.map((o, idx) => ({
     o,
     idx,
     num: parseLeadingNumber(o.name),
@@ -74,13 +81,13 @@ function toOrderedOutcomes(
 
   const winnerNorm = (settledWinner || "").trim().toLowerCase();
   return sorted.map(({ o }, idx): AtlasCategoryOutcome => {
-    const won =
-      Boolean(winnerNorm) && o.name.trim().toLowerCase() === winnerNorm;
+    const label = o.name.trim();
+    const won = Boolean(winnerNorm) && label.toLowerCase() === winnerNorm;
     const lost = Boolean(winnerNorm) && !won;
     const hasProb = typeof o.prob === "number" && Number.isFinite(o.prob);
     return {
-      id: `${o.name}-${idx}`,
-      label: o.name,
+      id: `${label}-${idx}`,
+      label,
       probability: hasProb ? o.prob! / 100 : null,
       renderedPercent: hasProb ? Math.round(o.prob!) : null,
       isSettled: Boolean(winnerNorm),
@@ -94,25 +101,32 @@ function renderEntMarketByShape(
   row: ExtendedEntMarketRow,
   kickerOverride?: string
 ) {
-  const outcomes = row.lead_outcomes?.length ? row.lead_outcomes : row.top_outcomes ?? [];
+  const rawOutcomes = row.lead_outcomes?.length ? row.lead_outcomes : row.top_outcomes ?? [];
+  const outcomes = rawOutcomes.filter(
+    (o) => Boolean(o && typeof o.name === "string" && o.name.trim().length > 0)
+  );
   const meta: AtlasMarketMeta = {
     marketId: row.market_id,
     marketTitle: row.q,
     kicker: kickerOverride ?? row.kind?.toUpperCase() ?? null,
     resolutionDate: row.resolution_date,
-    source: row.src,
+    source: cleanSource(row.src),
     externalId: row.external_id,
   };
   const settledWinner = row.settled_winner ?? null;
 
   if (outcomes.length <= 1 || row.kind === "binary") {
     const lead = outcomes[0];
+    const leadName = lead?.name?.trim() ?? "";
+    const rowQ = (row.q || "").trim();
+    const label = leadName && !/^(yes|no)$/i.test(leadName) ? leadName : rowQ;
+    if (!label) return null;
     const prob = lead ? lead.prob : row.prob;
     const hasProb = typeof prob === "number" && Number.isFinite(prob);
     const won =
       Boolean(settledWinner) &&
       (settledWinner?.toLowerCase() === "yes" ||
-        settledWinner?.toLowerCase() === lead?.name?.toLowerCase() ||
+        settledWinner?.toLowerCase() === leadName.toLowerCase() ||
         settledWinner?.toLowerCase() === row.leader?.toLowerCase());
     const lost = Boolean(settledWinner) && !won;
     return (
@@ -121,7 +135,7 @@ function renderEntMarketByShape(
         meta={meta}
         outcome={{
           id: row.market_id,
-          label: lead?.name && !/^(yes|no)$/i.test(lead.name) ? lead.name : row.q,
+          label,
           probability: hasProb ? prob / 100 : null,
           renderedPercent: hasProb ? Math.round(prob) : null,
           isSettled: Boolean(settledWinner),
@@ -169,17 +183,22 @@ function renderThresholdGroup(
   kicker: string,
   shape: "ladder" | "buckets" = "ladder"
 ) {
-  const sorted = [...(group.thresholds ?? [])].sort((a, b) => {
+  const validThresholds = (group.thresholds ?? []).filter(
+    (t) => Boolean(t && typeof t.label === "string" && t.label.trim().length > 0)
+  );
+  if (validThresholds.length === 0) return null;
+  const sorted = [...validThresholds].sort((a, b) => {
     const na = parseLeadingNumber(a.label);
     const nb = parseLeadingNumber(b.label);
     if (na !== null && nb !== null && na !== nb) return na - nb;
     return 0;
   });
   const outcomes: AtlasCategoryOutcome[] = sorted.map((t, idx) => {
+    const label = t.label.trim();
     const hasProb = typeof t.prob === "number" && Number.isFinite(t.prob);
     return {
-      id: t.market_id ?? `${t.label}-${idx}`,
-      label: t.label,
+      id: t.market_id ?? `${label}-${idx}`,
+      label,
       probability: hasProb ? t.prob / 100 : null,
       renderedPercent: hasProb ? Math.round(t.prob) : null,
     };

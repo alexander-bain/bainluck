@@ -354,6 +354,13 @@ celery_config = {
         "socket_keepalive_options": _KEEPALIVE_OPTS,
         "health_check_interval": 25,
         "retry_on_timeout": True,
+        # #12042 L-1 (worker audit §7.1 step 1, Alex 52-A): a worker that
+        # consumes more than one queue BRPOPs them in its `--queues` order
+        # every time, instead of rotating the queue that just delivered to the
+        # back (kombu's default `round_robin`). Only `worker-background`
+        # consumes two (`discover_base,background`); every other worker reads
+        # one queue, so this changes nothing for them.
+        "queue_order_strategy": "priority",
     },
     "result_backend_transport_options": {
         "socket_keepalive": True,
@@ -710,15 +717,28 @@ except Exception:  # pragma: no cover - defensive
 
 from kombu import Queue
 
+#: #12042 L-1 (worker audit 2026-11-06 §7.1 step 1; Alex 52-A). Measured: 18 of
+#: 47 base fires expired on the shared `background` queue (the audit; 134 runs in
+#: 24 h against ~720 for a 2-minute beat, Speed's read). On its own lane, listed
+#: first in `worker-background`'s `--queues`, the simulation completes 714 of 720
+#: a day. It removes no load. The warmers it displaces served about 0 real
+#: searches in 60 minutes. Revert = route it back to `background`.
+DISCOVER_BASE_QUEUE = "discover_base"
+
 celery_app.conf.task_queues = [
     Queue("realtime", routing_key="realtime"),
     Queue("background", routing_key="background"),
     Queue("heavy", routing_key="heavy"),
+    # #12042 L-1: the Discover base rebuild's own lane, served FIRST by
+    # `worker-background` (see `queue_order_strategy` above and the Procfile).
+    Queue(DISCOVER_BASE_QUEUE, routing_key=DISCOVER_BASE_QUEUE),
 ]
 
 celery_app.conf.task_default_queue = "background"
 
 celery_app.conf.task_routes = {
+    # #12042 L-1: the Discover base rebuild runs on its own lane (above).
+    "app.tasks.precompute_discover_candidate_base": {"queue": DISCOVER_BASE_QUEUE},
     # --- Realtime: live game data (30s-120s cycle) ---
     "app.tasks.poll_all_odds": {"queue": "realtime"},
     "app.tasks.poll_datagolf_inplay": {"queue": "realtime"},
@@ -8662,8 +8682,9 @@ celery_app.conf.beat_schedule = {
         # freshness window (CANDIDATE_BASE_FRESH_SECONDS) enforces the "no looser
         # than the anon feed freshness contract" bound; the bounded last-good key
         # + request-path publish keep cold pages covered between beats.
+        # #12042 L-1: its own lane, which `worker-background` serves first.
         "schedule": crontab(minute="*/2"),
-        "options": {"queue": "background"},
+        "options": {"queue": DISCOVER_BASE_QUEUE},
     },
     "prewarm-live-feed-shapes": {
         "task": "app.tasks.prewarm_live_feed_shapes",

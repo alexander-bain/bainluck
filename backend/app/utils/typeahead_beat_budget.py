@@ -1073,7 +1073,7 @@ def derive_response_ttl_s(
 #: `worker-background`'s celery `--concurrency`, from `backend/Procfile`.
 #: Mirrored, and pinned against the Procfile by
 #: `test_background_concurrency_mirror_matches_the_procfile`.
-BACKGROUND_WORKER_CONCURRENCY = 1
+BACKGROUND_WORKER_CONCURRENCY = 2
 
 
 def background_slot_occupancy(
@@ -2092,7 +2092,15 @@ def free_background_slots(
 #: #142's 2:05 AM snapshot already runs, one primary-key market read and one
 #: insert. The census RUN over the tree merged with `80b7a1605c` printed
 #: `explicit 102 implicit 40 total 142`.
-BACKGROUND_BEAT_COUNT = 142
+#: 🔴 RE-DERIVED at speed (2026-11-06, #12042 L-1): 142 → 141, explicit 102 →
+#: 101, fall-through UNMOVED at 40. `precompute-discover-candidate-base` left
+#: `background` for its own `discover_base` lane, which `worker-background`
+#: serves FIRST (`--queues=discover_base,background`, `queue_order_strategy=
+#: priority`). The same worker still runs it, so the slot count is unchanged.
+#: What changes is the order: the base no longer waits behind the warmers.
+#: The census RUN over the tree branched from `9247e7f5ca` printed
+#: `explicit 101 implicit 40 total 141`.
+BACKGROUND_BEAT_COUNT = 141
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

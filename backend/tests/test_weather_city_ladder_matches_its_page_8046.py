@@ -199,3 +199,55 @@ def test_a_failed_refusal_read_keeps_the_raw_ladder_and_the_other_cities(monkeyp
     assert sum(b["probability"] for b in by_name["Miami"].values()) == pytest.approx(
         1.0, abs=0.005
     )
+
+
+def test_partial_or_non_exclusive_or_blank_label_city_ladder_not_squeezed():
+    """#11949 Order 11 + #12126/#12128 guards:
+    - mutually_exclusive must be True
+    - raw mass must be >= 90% (SPECIALTY_FIELD_MASS_MIN)
+    - blank outcome labels are stripped and mark the field incomplete
+    - missing source stays None
+    """
+    session = _session_with(
+        (62721470, "Miami", [("84-85°F", 0.39), ("   ", 0.10), ("86-87°F", 0.45), ("88-89°F", 0.28)]),
+        (62721471, "Dallas", [("90-91°F", 0.60), ("92-93°F", 0.50)]),
+        # Sub-90% mass (0.45 + 0.25 + 0.15 = 0.85 < 0.90): exclusive and labeled, but partial mass stays raw
+        (62721472, "Chicago", [("60-61°F", 0.45), ("62-63°F", 0.25), ("64-65°F", 0.15)]),
+        # Boundary case at exactly 90% mass (0.50 + 0.25 + 0.15 = 0.90 >= 0.90): normalized to 1.0
+        (62721473, "Seattle", [("55-56°F", 0.50), ("57-58°F", 0.25), ("59-60°F", 0.15)]),
+        # Positive control at 95% mass (0.50 + 0.30 + 0.15 = 0.95 >= 0.90): normalized to 1.0
+        (62721474, "Boston", [("50-51°F", 0.50), ("52-53°F", 0.30), ("54-55°F", 0.15)]),
+    )
+    dallas_mkt = session.get(FuturesMarket, 62721471)
+    dallas_mkt.mutually_exclusive = False
+    dallas_mkt.source = ""
+    session.commit()
+
+    cities = asyncio.run(get_cities(AsyncDB(session)))
+    by_name = {c["name"]: c for c in cities}
+
+    # Miami had a blank outcome label: blank stripped, remaining buckets stay raw (not squeezed)
+    miami_dist = {b["label"]: b for b in by_name["Miami"]["high"]["dist"]}
+    assert set(miami_dist.keys()) == {"84-85°F", "86-87°F", "88-89°F"}
+    assert miami_dist["86-87°F"]["probability"] == pytest.approx(0.45)
+
+    # Dallas has mutually_exclusive=False and source="": stays raw and src is None
+    dallas_dist = {b["label"]: b for b in by_name["Dallas"]["high"]["dist"]}
+    assert dallas_dist["90-91°F"]["probability"] == pytest.approx(0.60)
+    assert by_name["Dallas"]["src"] is None
+    assert by_name["Dallas"]["srcs"] == []
+
+    # Chicago has raw mass 0.85 (< 0.90): stays raw (45%, 25%, 15%)
+    chicago_dist = {b["label"]: b for b in by_name["Chicago"]["high"]["dist"]}
+    assert chicago_dist["60-61°F"]["probability"] == pytest.approx(0.45)
+    assert chicago_dist["60-61°F"]["prob"] == 45
+
+    # Boundary at exactly 0.90: Seattle is normalized to 1.0
+    seattle_dist = {b["label"]: b for b in by_name["Seattle"]["high"]["dist"]}
+    assert seattle_dist["55-56°F"]["probability"] == pytest.approx(0.50 / 0.90)
+    assert seattle_dist["55-56°F"]["prob"] == round((0.50 / 0.90) * 100)
+
+    # Positive control at 0.95: Boston is normalized to 1.0
+    boston_dist = {b["label"]: b for b in by_name["Boston"]["high"]["dist"]}
+    assert boston_dist["50-51°F"]["probability"] == pytest.approx(0.50 / 0.95)
+    assert boston_dist["50-51°F"]["prob"] == round((0.50 / 0.95) * 100)
