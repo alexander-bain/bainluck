@@ -74,7 +74,7 @@ export interface NhlScorerEntry {
   actualGoals: number | null;
   hit: boolean | null;
   side: PropSide;
-  venue: string | null;
+  sourceCount: number;
   marketTitle: string;
 }
 
@@ -114,7 +114,20 @@ export function buildNhlScoringCard(opts: {
   const phase = phaseOf(opts.status, opts.commenceTime, opts.nowMs);
   const finished = phase === "after";
   const props = opts.playerProps ?? [];
-  const entriesByPlayer = new Map<string, NhlScorerEntry>();
+  const groupsByPlayer = new Map<
+    string,
+    {
+      rowId: string;
+      player: string;
+      chances: number[];
+      sources: Set<string>;
+      latestObservedAt: string | null;
+      latestObservedMs: number;
+      actualGoals: number | null;
+      hit: boolean | null;
+      side: PropSide;
+    }
+  >();
 
   for (const row of props) {
     if (row._inverted) continue;
@@ -124,7 +137,6 @@ export function buildNhlScoringCard(opts: {
     if (row.threshold !== 1 && row.threshold !== 0.5) continue;
     const side = propOutcomeSide(row.outcome_name);
     if (side === "under" || (side === "unreadable" && /\bunder\b/i.test(row.outcome_name))) continue;
-    if (entriesByPlayer.has(shape.player)) continue;
 
     const rawChance =
       phase === "before"
@@ -142,21 +154,47 @@ export function buildNhlScoringCard(opts: {
     if (pregameChance === null && (actualGoals === null || actualGoals === 0)) continue;
 
     const rId = propRowId(row);
-    entriesByPlayer.set(shape.player, {
-      id: `nhl-scorer:${rId}`,
+    const group = groupsByPlayer.get(shape.player) ?? {
       rowId: rId,
       player: shape.player,
-      pregameChance,
-      observedAt: row.observed_at ?? null,
-      actualGoals,
-      hit,
-      side: row.player_team === "home" || row.player_team === "away" ? row.player_team : "unknown",
-      venue: row.source ?? null,
-      marketTitle: `${shape.player} · 1+ goals`,
-    });
+      chances: [],
+      sources: new Set<string>(),
+      latestObservedAt: null,
+      latestObservedMs: -Infinity,
+      actualGoals: null,
+      hit: null,
+      side: "unknown",
+    };
+    if (pregameChance !== null) group.chances.push(pregameChance);
+    if (row.source) group.sources.add(row.source);
+    const obsMs = parseMs(row.observed_at);
+    if (obsMs !== null && obsMs > group.latestObservedMs) {
+      group.latestObservedMs = obsMs;
+      group.latestObservedAt = row.observed_at ?? null;
+    } else if (group.latestObservedAt === null && row.observed_at) {
+      group.latestObservedAt = row.observed_at;
+    }
+    if (actualGoals !== null) group.actualGoals = actualGoals;
+    if (hit !== null) group.hit = hit;
+    if (group.side === "unknown" && (row.player_team === "home" || row.player_team === "away")) {
+      group.side = row.player_team;
+    }
+    groupsByPlayer.set(shape.player, group);
   }
 
-  const all = [...entriesByPlayer.values()];
+  const all: NhlScorerEntry[] = [...groupsByPlayer.values()].map((g) => ({
+    id: `nhl-scorer:${g.rowId}`,
+    rowId: g.rowId,
+    player: g.player,
+    pregameChance:
+      g.chances.length > 0 ? g.chances.reduce((s, c) => s + c, 0) / g.chances.length : null,
+    observedAt: g.latestObservedAt,
+    actualGoals: g.actualGoals,
+    hit: g.hit,
+    side: g.side,
+    sourceCount: Math.max(1, g.sources.size),
+    marketTitle: `${g.player} · 1+ goals`,
+  }));
   if (all.length === 0) return null;
 
   const scorers = all
