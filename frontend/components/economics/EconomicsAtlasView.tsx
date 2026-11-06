@@ -105,7 +105,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
         </h1>
         <p className="text-base text-text-secondary mt-3 max-w-[640px]">
           Economic prediction markets translated into plain probabilities. Rates,
-          inflation, jobs, and GDP — one blended reading per question.
+          inflation, jobs, and GDP — one calibrated reading per market.
         </p>
       </section>
 

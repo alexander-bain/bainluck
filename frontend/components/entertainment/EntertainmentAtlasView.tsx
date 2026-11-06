@@ -207,7 +207,7 @@ export default function EntertainmentAtlasView({
         </h1>
         <p className="text-sm text-text-secondary max-w-2xl">
           Live probabilities on charts, box office, reality TV, and cultural
-          milestones — one blended reading per question.
+          milestones — one calibrated reading per market.
         </p>
         {updatedPT && (
           <p className="font-mono text-xs text-text-muted">

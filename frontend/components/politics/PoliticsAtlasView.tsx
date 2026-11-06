@@ -328,8 +328,8 @@ export default function PoliticsAtlasView({ data }: { data: PoliticsData }) {
           Politics
         </h1>
         <p className="text-sm text-text-secondary max-w-2xl">
-          Blended probabilities for elections, chambers, legislation, and
-          international affairs — one calibrated reading per question.
+          Live probabilities for elections, chambers, legislation, and
+          international affairs — one calibrated reading per market.
         </p>
         {updatedPT && (
           <p className="font-mono text-xs text-text-muted">

@@ -180,7 +180,7 @@ export default function WeatherAtlasView() {
           </h1>
           <p className="text-sm text-text-secondary mt-2 max-w-xl">
             Weather markets translated into plain probabilities. Rain, temperature,
-            hurricanes, and long-horizon climate — one blended reading per question.
+            hurricanes, and long-horizon climate — one calibrated reading per market.
           </p>
         </div>
 
@@ -198,7 +198,7 @@ export default function WeatherAtlasView() {
                   ? `${featured.q} — ${featured.leader}`
                   : featured.q,
                 kicker: featured.tag,
-                subtitle: featured.closes ? `Resolves ${featured.closes}` : null,
+                subtitle: featured.closes || null,
                 source: featured.src,
               }}
               outcome={{
@@ -341,11 +341,7 @@ export default function WeatherAtlasView() {
                     ),
                   }}
                   buckets={cityBuckets}
-                  stationContextLabel={
-                    isoDayLabel(selectedCity.iso)
-                      ? `Resolves ${isoDayLabel(selectedCity.iso)}`
-                      : null
-                  }
+                  stationContextLabel={isoDayLabel(selectedCity.iso)}
                 />
               )}
             </div>

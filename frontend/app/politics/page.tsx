@@ -687,7 +687,7 @@ export default function PoliticsPage() {
       <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
         <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
           {pinnedCollection && (
-            <div className="max-w-[1120px] mx-auto px-4 md:px-6 pt-6">
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 20px 0" }}>
               <DiscoverCollectionCard entry={pinnedCollection} />
             </div>
           )}
