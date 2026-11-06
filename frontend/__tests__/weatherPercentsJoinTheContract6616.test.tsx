@@ -335,9 +335,15 @@ describe("#6616 · the Monthly rainfall card", () => {
   test("a genuinely settled row prints the result word ✓ Won (#12093)", () => {
     // `settled means settled`: a settled 1.0 row on Monthly rainfall prints
     // the result word (`✓ Won`), never a bare `100%`.
-    const text = rain([monthly("Miami", 100, 1)]);
+    const text = rain([{ ...monthly("Miami", 100, 1), settled: true }]);
     expect(text).toContain("✓ Won");
     expect(text).not.toContain("100%");
+
+    // Absent `settled` (or `settled: false`) renders the percent, never a
+    // result word the market has not reached.
+    const unsettledText = rain([monthly("Miami", 100, 1)]);
+    expect(unsettledText).toContain("100%");
+    expect(unsettledText).not.toContain("✓ Won");
   });
 
   test("a pre-#6616 cached payload renders exactly as it did before", () => {

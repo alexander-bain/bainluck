@@ -41,13 +41,11 @@ export function weatherProbability(row: ServedPercent): number {
 
 /** Whether a weather row's outcome has settled won (#12093).
  *
- *  Reads the server's explicit `settled` boolean when present, and falls back
- *  to `probability >= 1` when an hourly cached payload carries the raw value
- *  `1.0` without `settled`. Pre-#6616 payloads without `probability` stay
- *  un-settled so legacy integer fixtures keep their original rendering. */
+ *  Reads the server's explicit `settled` boolean (`row.settled === true`).
+ *  Absent `settled` (for instance during the hour a cached payload lacks the
+ *  field) renders the percent, never an inferred result word. */
 export function weatherRowSettled(row: ServedPercent): boolean {
-  if (typeof row.settled === "boolean") return row.settled;
-  return typeof row.probability === "number" && Number.isFinite(row.probability) && row.probability >= 1;
+  return row.settled === true;
 }
 
 /** One bucket of a city's temperature ladder. Named because four call sites
