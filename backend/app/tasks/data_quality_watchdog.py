@@ -46,6 +46,19 @@ logger = logging.getLogger(__name__)
 # Check definitions
 # ---------------------------------------------------------------------------
 
+#: C-1 / B-8 (worker audit 2026-11-06): the longest one check's statement may run.
+#: The watchdog was killed at its 300 s soft limit on 2026-11-06 14:45-14:50Z
+#: because its Kalshi winner-coverage scan alone ran 173.9 s; nothing after it
+#: ran and no alert fired. Each check now runs under its own `statement_timeout`
+#: (`timeout_ms` on the check, this by default), the cheap checks run first, and
+#: a check that hits its bound is reported `timed_out` — not passed, not an error,
+#: never filed — so one slow census cannot silence the rest.
+WATCHDOG_CHECK_TIMEOUT_MS = 15_000
+#: The two resolved-outcome census checks get longer: they finished in ~36 s on a
+#: quiet database the same day. 14 checks x 15 s would already fit; 12 x 15 + 2 x
+#: 50 = 280 s stays inside the soft limit at the worst.
+WATCHDOG_COVERAGE_TIMEOUT_MS = 50_000
+
 CHECKS: list[dict[str, Any]] = [
     # --- Ingestion freshness (P0) ---
     {
@@ -116,6 +129,7 @@ CHECKS: list[dict[str, Any]] = [
         # #10090: a full resolved-outcome census (~300k blocks a run on
         # 2026-10-31); it waits for the evening while the database is busy.
         "busy_db_deferrable": True,
+        "timeout_ms": WATCHDOG_COVERAGE_TIMEOUT_MS,
         "threshold": 99.0,
         "comparison": "gte",
         "severity": "P1",
@@ -132,6 +146,7 @@ CHECKS: list[dict[str, Any]] = [
         # #10090: a full resolved-outcome census (~300k blocks a run on
         # 2026-10-31); it waits for the evening while the database is busy.
         "busy_db_deferrable": True,
+        "timeout_ms": WATCHDOG_COVERAGE_TIMEOUT_MS,
         "threshold": 99.0,
         "comparison": "gte",
         "severity": "P1",
@@ -993,8 +1008,12 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
     defer_coverage = busy_db_defer.should_defer("data_quality_watchdog winner coverage")
     stats["checks_deferred"] = 0
 
+    from app.utils.statement_timeout import is_statement_timeout
+
+    stats["checks_timed_out"] = 0
     async with get_task_session() as session:
-        for check in CHECKS:
+        # B-8: cheap checks first (stable sort), the census checks last.
+        for check in sorted(CHECKS, key=lambda c: bool(c.get("busy_db_deferrable"))):
             check_name = check["name"]
             if defer_coverage and check.get("busy_db_deferrable"):
                 # Not run is not passed: no value, no verdict, no filing.
@@ -1005,6 +1024,10 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 }
                 continue
             try:
+                await session.execute(
+                    text("SELECT set_config('statement_timeout', :ms, true)"),
+                    {"ms": f"{int(check.get('timeout_ms', WATCHDOG_CHECK_TIMEOUT_MS))}ms"},
+                )
                 result = await session.execute(text(check["query"]))
                 value = result.scalar()
                 stats["checks_run"] += 1
@@ -1095,6 +1118,20 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                 stats["alerts_fired"] += 1
 
             except Exception as exc:
+                if is_statement_timeout(exc):
+                    # B-8: bounded, not broken. No value, no verdict, no filing.
+                    stats["checks_timed_out"] += 1
+                    stats["results"][check_name] = {
+                        "timed_out": True,
+                        "timeout_ms": int(check.get("timeout_ms", WATCHDOG_CHECK_TIMEOUT_MS)),
+                        "severity": check["severity"],
+                    }
+                    logger.warning("Watchdog check '%s' hit its statement_timeout", check_name)
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
+                    continue
                 logger.error("Watchdog check '%s' errored: %s", check_name, exc)
                 stats["errors"].append({"check": check_name, "error": str(exc)[:200]})
                 # #1001: a failed statement aborts the asyncpg transaction, so
