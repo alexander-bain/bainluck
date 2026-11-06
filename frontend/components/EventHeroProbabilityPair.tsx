@@ -453,7 +453,7 @@ export default function EventHeroProbabilityPair({
             data-testid="event-atlas-state-label"
             className="text-lg font-semibold text-text-muted leading-none"
           >
-            {stoppageLabel === "Postponed" ? ATLAS_STATE_COPY.postponed : (stoppageLabel ?? ATLAS_STATE_COPY.postponed)}
+            {stoppageLabel ?? ATLAS_STATE_COPY.postponed}
           </span>
         )}
       </div>
@@ -484,7 +484,9 @@ export default function EventHeroProbabilityPair({
               data-testid="event-atlas-state-label"
               className="text-lg font-semibold text-text-muted leading-none"
             >
-              {ATLAS_STATE_COPY.noRecentPrice}
+              <span data-testid="atlas-no-recent-probability">
+                {ATLAS_STATE_COPY.noRecentPrice}
+              </span>
             </span>
           ) : null
         ) : (
