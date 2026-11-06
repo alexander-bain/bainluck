@@ -8,6 +8,7 @@ import TruthChip from "@/components/evals/TruthChip";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
 import { EVALS_PAGE_TITLE, TOP_COPY as COPY } from "@/lib/evals/copy";
 import { CHART_THIN_FLOOR } from "@/lib/evals/forwardRecord";
+import { stalenessHeadline } from "@/lib/calibrationStaleness";
 import { reviewerTally, type ReviewerResults } from "@/lib/evals/reviewerResults";
 import type { ReviewerStudy } from "@/lib/evals/reviewerStudy";
 import {
@@ -186,6 +187,13 @@ function TruthCard({ state }: { state: ForwardRecordState }) {
           COPY.truthPlain
         )}
       </p>
+      {view.staleness && (
+        // LIVE is the curve's label; when its inputs are older, the first
+        // screen says so in the accuracy page's own words (Fable on #12124).
+        <p className="text-micro text-yellow-700" data-testid="evals-top-forward-staleness">
+          {stalenessHeadline(view.staleness)}
+        </p>
+      )}
     </Card>
   );
 }

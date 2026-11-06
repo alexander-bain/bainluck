@@ -214,6 +214,30 @@ describe("each picture is drawn from its record", () => {
     expect(truthReading({ ...view, proof: null })).toBe("plain");
   });
 
+  it("probabilities: when the graded inputs are older than the curve, the first screen says so in the accuracy page's words", async () => {
+    fetchCalibrationMock.mockResolvedValue(
+      calibrationFixture({
+        availability: "stale",
+        staged: {
+          ...(calibrationFixture().staged as Record<string, unknown>),
+          staged_at: "2026-10-27T03:28:13+00:00",
+          frozen_over_drift: true,
+        },
+      })
+    );
+    const page = await mountPage();
+    const notice = page.querySelector('[data-evals-top-card="truth"] [data-testid="evals-top-forward-staleness"]');
+    const section = page.querySelector('[data-testid="evals-forward-staleness"] strong');
+    expect(notice?.textContent).toBeTruthy();
+    expect(notice?.textContent).toBe(section?.textContent);
+  });
+
+  it("NEGATIVE CONTROL: a fresh payload puts no notice on the first screen", async () => {
+    fetchCalibrationMock.mockResolvedValue(calibrationFixture({ availability: "fresh" }));
+    const page = await mountPage();
+    expect(page.querySelector('[data-testid="evals-top-forward-staleness"]')).toBeNull();
+  });
+
   it("probabilities: while the record is unavailable the picture says so and draws nothing", async () => {
     fetchCalibrationMock.mockRejectedValue(new Error("down"));
     const page = await mountPage();
