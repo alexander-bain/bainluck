@@ -168,6 +168,11 @@ class TestBuildSlate:
             ("futures:1", 1), ("event:7", 2), ("futures:9", None),
         ]
 
+    def test_the_opening_ten_keep_their_served_card(self):
+        order, cands = build_slate([futures(i) for i in range(1, 13)], [futures(99)], now=NOW)
+        assert [("card" in c) for c in cands] == [True] * 10 + [False] * 3
+        assert cands[0]["card"] == futures(1)
+
     def test_never_more_than_the_cap(self):
         served = [futures(i) for i in range(1, 400)]
         pool = [futures(i) for i in range(1000, 1300)]

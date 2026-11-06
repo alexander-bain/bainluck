@@ -51,6 +51,9 @@ SURFACE_DISCOVER = "discover"
 #: The harness's declared staleness rule, stored on every slate: a card whose
 #: freshest price is older than this is ``stale``. Unknown age = ``None``.
 STALE_PRICE_AGE_S = 24 * 3600
+#: The opening cards also keep their full served payload (``card``), so a
+#: grader sees the real card exactly as it was served.
+OPENING_CARDS = 10
 #: Width of the event/version columns (the edition token is 16 hex chars).
 SLATE_ID_MAX = 64
 RANKER_VERSION_MAX = 64
@@ -96,6 +99,19 @@ def _num(value: Any) -> Optional[float]:
     if isinstance(value, (int, float, Decimal)):
         return float(value)
     return None
+
+
+def _json_safe(value: Any) -> Any:
+    """A served payload as plain JSON (Decimal → float, datetime → ISO)."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 def _ts(value: Any) -> Optional[datetime]:
@@ -293,7 +309,8 @@ def build_slate(
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """(served order, candidates): every served card first, in served order,
     with ``served_position`` 1..n; then unserved scored futures with
-    ``served_position`` None; never more than ``cap`` candidates in total."""
+    ``served_position`` None; never more than ``cap`` candidates in total. The
+    first :data:`OPENING_CARDS` also carry their served payload as ``card``."""
     served_order: list[str] = []
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -304,7 +321,9 @@ def build_slate(
         seen.add(feats["item_key"])
         served_order.append(feats["item_key"])
         if len(candidates) < cap:
-            candidates.append({**feats, "served_position": len(served_order)})
+            position = len(served_order)
+            extra = {"card": _json_safe(dict(item))} if position <= OPENING_CARDS else {}
+            candidates.append({**feats, "served_position": position, **extra})
     for item in scored_futures:
         if len(candidates) >= cap:
             break
