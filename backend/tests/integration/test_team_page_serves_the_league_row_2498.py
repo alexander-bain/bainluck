@@ -227,7 +227,13 @@ def _long_tail(n=12):
 
 
 class TestTeamRouteServesTheLeagueRow:
-    async def test_the_spring_slug_now_serves_the_pennant_race(self, client, mock_db):
+    async def test_the_spring_slug_now_serves_the_pennant_race(self, client, mock_db, monkeypatch):
+        # In season, pinned: since #6266 the route withholds the record in the
+        # league's offseason, so read on the clock this test failed every
+        # November-to-March (gotcha #44: an anchor must not branch on the clock).
+        from app.utils import season_windows
+
+        monkeypatch.setattr(season_windows, "is_offseason", lambda *_a, **_k: False)
         mock_db.execute.side_effect = [
             _scalars_result([_team(**SPRING_ROW)]),          # slug lookup → 853
             _scalars_result([(RED_SOX_PARENT, "baseball_mlb")]),  # siblings on espn_id
