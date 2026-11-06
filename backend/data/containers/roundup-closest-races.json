@@ -7,7 +7,7 @@
   "category": "politics",
   "tag": "POLITICS",
   "section_title": "Open races",
-  "footer": "Bain Luck blend · both venues where paired",
+  "footer": "Combined probability · both sources where paired",
   "rule": {
     "producer": "register_closest",
     "register": "midterms-2026",

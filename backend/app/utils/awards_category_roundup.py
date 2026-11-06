@@ -51,6 +51,7 @@ __all__ = [
     "GOLDEN_GLOBES_BEST_PICTURE_PRODUCER",
     "GOLDEN_GLOBES_BEST_PICTURE_SLUG",
     "PRODUCER_KIND_AWARDS_CATEGORY",
+    "SPECIALTY_FIELD_MASS_MIN",
     "WIN_EXCEEDS_NOMINATION_TOLERANCE",
     "awards_category_enabled",
     "build_awards_category_producer",
@@ -61,6 +62,7 @@ __all__ = [
 ]
 
 PRODUCER_KIND_AWARDS_CATEGORY = "awards_category_roundup"
+SPECIALTY_FIELD_MASS_MIN = 0.9
 WIN_EXCEEDS_NOMINATION_TOLERANCE = 0.02
 
 GOLDEN_GLOBES_BEST_PICTURE_SLUG = "roundup-golden-globes-best-picture"
@@ -325,7 +327,7 @@ def select_awards_category_roundup(
             continue
 
         # Otherwise check if this is the category winner field market
-        if len(outcomes) >= 3 and m.get("mutually_exclusive") is not False:
+        if len(outcomes) >= 3:
             if winner_id_set:
                 if mid not in winner_id_set:
                     continue
@@ -345,6 +347,10 @@ def select_awards_category_roundup(
 
     winner_market = winner_markets[0]
     w_mid = int(winner_market["id"])
+    if winner_market.get("mutually_exclusive") is not True:
+        return RoundupRefusal(
+            (("awards_category", f"winner_field_guard_failed:{w_mid}"),)
+        )
     w_outcomes_raw = (
         winner_market.get("outcomes") or winner_market.get("top_outcomes") or ()
     )
@@ -362,7 +368,9 @@ def select_awards_category_roundup(
             return RoundupRefusal((("awards_category", f"graded_winner_field:{w_mid}"),))
         label = str(o.get("name") or o.get("label") or "").strip()
         if not label:
-            continue
+            return RoundupRefusal(
+                (("awards_category", f"empty_winner_outcome_label:{w_mid}"),)
+            )
         oid_raw = o.get("id")
         oid = (
             int(oid_raw)
@@ -387,6 +395,12 @@ def select_awards_category_roundup(
                 "probability": p_val,
                 "observed_at": obs,
             }
+        )
+
+    raw_mass = sum(float(od["probability"]) for od in w_outcome_dicts)
+    if raw_mass + 1e-9 < SPECIALTY_FIELD_MASS_MIN:
+        return RoundupRefusal(
+            (("awards_category", f"partial_winner_field:{w_mid}"),)
         )
 
     if require_guard_11995:
@@ -480,6 +494,8 @@ def select_awards_category_roundup(
             }
         )
 
+    raw_w_src = str(winner_market.get("source") or "").strip().lower()
+    w_source: Optional[str] = raw_w_src if raw_w_src else None
     # Container members include the winner field market followed by the paired nomination binaries.
     member_entries: list[dict[str, Any]] = [
         {
@@ -494,9 +510,9 @@ def select_awards_category_roundup(
                 "market_tier": 1,
                 "market_type": "field",
                 "status": "open",
-                "source": str(winner_market.get("source") or "kalshi").lower(),
-                "sources": [str(winner_market.get("source") or "kalshi").lower()],
-                "source_count": 1,
+                "source": w_source,
+                "sources": [w_source] if w_source else [],
+                "source_count": 1 if w_source else 0,
                 "mutually_exclusive": True,
                 "resolution_date": _iso_utc(winner_market.get("resolution_date")),
                 "top_outcomes": [
@@ -559,9 +575,6 @@ async def _load_awards_markets_from_db(
     from app.models.models import FuturesMarket
 
     ceremony = str(rule.get("ceremony") or "Golden Globes").strip()
-    category_name = str(
-        rule.get("category_name") or "Best Motion Picture - Drama"
-    ).strip()
     raw_winner_ids = rule.get("winner_market_ids") or ()
     raw_nom_ids = rule.get("nomination_market_ids") or ()
     explicit_ids = [
@@ -615,7 +628,7 @@ async def _load_awards_markets_from_db(
             "source": getattr(fm, "source", None),
             "resolution_date": getattr(fm, "resolution_date", None),
             "updated_at": getattr(fm, "updated_at", None),
-            "mutually_exclusive": getattr(fm, "mutually_exclusive", True),
+            "mutually_exclusive": getattr(fm, "mutually_exclusive", None),
             "outcomes": [
                 {
                     "id": getattr(o, "id", None),

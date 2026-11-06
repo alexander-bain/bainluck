@@ -60,6 +60,7 @@ __all__ = [
     "CLOSEST_RACES_PRODUCER",
     "CLOSEST_RACES_SLUG",
     "PRODUCER_KIND_REGISTER_CLOSEST",
+    "SPECIALTY_FIELD_MASS_MIN",
     "build_register_closest_producer",
     "closest_races",
     "load_register_closest_definition",
@@ -69,6 +70,7 @@ __all__ = [
 ]
 
 PRODUCER_KIND_REGISTER_CLOSEST = "register_closest"
+SPECIALTY_FIELD_MASS_MIN = 0.9
 
 CLOSEST_RACES_SLUG = "roundup-closest-races"
 CLOSEST_RACES_ID = "roundup:closest-races"
@@ -158,11 +160,19 @@ def select_register_closest(
     min_open_races: int = 3,
     card_rows: int = 3,
     section_title: str = "Open races",
-    footer: str = "Bain Luck blend · both venues where paired",
+    footer: str = "Combined probability · both sources where paired",
     title: Optional[str] = None,
     kicker: Optional[str] = None,
 ) -> Any:
-    """Pure selector for ``register_closest`` (#11949 Order 5)."""
+    """Pure selector for ``register_closest`` (#11949 Order 5).
+
+    * ``settled_in_register_still_priced`` is a cross-source settlement disagreement
+      and refuses the whole card immediately.
+    * Per-race outcome/normalization defects (``unpriced_outcome``, ``empty_outcome_label``,
+      ``too_few_outcomes``, ``partial_field``, ``guard_failed``) record a dropped reason,
+      skip that race, and refuse only when fewer than ``min_open_races`` coherent races
+      survive (gotcha #42).
+    """
     rc = _rc()
     RoundupMembers = rc.RoundupMembers
     RoundupRefusal = rc.RoundupRefusal
@@ -191,6 +201,7 @@ def select_register_closest(
                 register_ids.append(int(mid))
 
     open_candidates: list[_OpenRaceCandidate] = []
+    dropped_reasons: list[tuple[str, str]] = []
 
     for kalshi_id in register_ids:
         entry: Optional[MidtermsTwinEntry] = MIDTERMS_TWIN_BY_KALSHI_ID.get(kalshi_id)
@@ -229,6 +240,13 @@ def select_register_closest(
         if primary_settled or twin_settled:
             continue
 
+        if primary.get("mutually_exclusive") is not True:
+            dropped_reasons.append(("register_closest", f"guard_failed:{kalshi_id}"))
+            continue
+        if twin is not None and twin.get("mutually_exclusive") is not True:
+            dropped_reasons.append(("register_closest", f"guard_failed:{kalshi_id}"))
+            continue
+
         # Blend outcomes across primary and twin (when paired and present).
         contributors = [primary] + ([twin] if twin is not None else [])
         raw_primary_outs = (
@@ -236,13 +254,15 @@ def select_register_closest(
         )
         outcome_dicts: list[dict[str, Any]] = []
         oldest_obs: Optional[str] = None
+        race_error: Optional[str] = None
 
         for idx, o in enumerate(raw_primary_outs):
             if not isinstance(o, Mapping):
                 continue
             oname = str(o.get("name") or o.get("label") or "").strip()
             if not oname:
-                continue
+                race_error = f"empty_outcome_label:{kalshi_id}"
+                break
             okey = outcome_key(oname, entry)
             oid_raw = o.get("id")
             oid = (
@@ -252,7 +272,8 @@ def select_register_closest(
             )
             contrib_rows: list[dict[str, Any]] = []
             for c in contributors:
-                c_src = str(c.get("source") or "kalshi").strip().lower()
+                raw_c_src = str(c.get("source") or "").strip().lower()
+                c_src: Optional[str] = raw_c_src if raw_c_src else None
                 c_outs = c.get("outcomes") or c.get("top_outcomes") or ()
                 matches = [
                     co
@@ -279,7 +300,8 @@ def select_register_closest(
 
             blended_p = blend_probabilities(contrib_rows)
             if blended_p is None:
-                return RoundupRefusal((("register_closest", f"unpriced_outcome:{kalshi_id}"),))
+                race_error = f"unpriced_outcome:{kalshi_id}"
+                break
             outcome_dicts.append(
                 {
                     "id": oid,
@@ -288,8 +310,18 @@ def select_register_closest(
                 }
             )
 
+        if race_error is not None:
+            dropped_reasons.append(("register_closest", race_error))
+            continue
+
         if len(outcome_dicts) < 2:
-            return RoundupRefusal((("register_closest", f"too_few_outcomes:{kalshi_id}"),))
+            dropped_reasons.append(("register_closest", f"too_few_outcomes:{kalshi_id}"))
+            continue
+
+        raw_mass = sum(float(od["probability"]) for od in outcome_dicts)
+        if raw_mass + 1e-9 < SPECIALTY_FIELD_MASS_MIN:
+            dropped_reasons.append(("register_closest", f"partial_field:{kalshi_id}"))
+            continue
 
         divisor = display_probability_divisor(
             outcome_dicts,
@@ -298,7 +330,8 @@ def select_register_closest(
             question=str(primary.get("name") or entry.kalshi_name),
         )
         if divisor is None:
-            return RoundupRefusal((("register_closest", f"guard_failed:{kalshi_id}"),))
+            dropped_reasons.append(("register_closest", f"guard_failed:{kalshi_id}"))
+            continue
         normalize_display_probs(
             outcome_dicts,
             mutually_exclusive=True,
@@ -315,7 +348,13 @@ def select_register_closest(
             else _half_up_percent(leader_prob)
         )
 
-        sources = sorted({str(c.get("source") or "kalshi").lower() for c in contributors})
+        sources = sorted(
+            {
+                str(c.get("source") or "").strip().lower()
+                for c in contributors
+                if str(c.get("source") or "").strip()
+            }
+        )
         race_title = _race_label(str(primary.get("name") or entry.kalshi_name))
         card = {
             "id": kalshi_id,
@@ -325,7 +364,7 @@ def select_register_closest(
             "market_tier": 1,
             "market_type": "field",
             "status": "open",
-            "source": "both" if len(sources) > 1 else sources[0],
+            "source": "both" if len(sources) > 1 else (sources[0] if sources else None),
             "sources": sources,
             "source_count": len(sources),
             "mutually_exclusive": True,
@@ -373,7 +412,9 @@ def select_register_closest(
         )
 
     if len(open_candidates) < min_open_races:
-        return RoundupRefusal((("register_closest", "too_few_open_races"),))
+        reasons: list[tuple[str, str]] = list(dropped_reasons)
+        reasons.append(("register_closest", "too_few_open_races"))
+        return RoundupRefusal(tuple(reasons))
 
     # Pick the closest races (lowest leader probability), then sort highest-first for RoundupCard.
     closest_picked = sorted(
@@ -486,6 +527,7 @@ async def produce_register_closest(
                 "name": getattr(m, "name", None),
                 "status": getattr(m, "status", None),
                 "source": getattr(m, "source", None),
+                "mutually_exclusive": getattr(m, "mutually_exclusive", None),
                 "resolution_date": getattr(m, "resolution_date", None),
                 "updated_at": getattr(m, "updated_at", None),
                 "outcomes": [
@@ -530,7 +572,9 @@ async def produce_register_closest(
         min_open_races=int(rule.get("min_open_races", 3)),
         card_rows=int(rule.get("card_rows", 3)),
         section_title=str(definition.get("section_title") or "Open races"),
-        footer=str(definition.get("footer") or "Bain Luck blend · both venues where paired"),
+        footer=str(
+            definition.get("footer") or "Combined probability · both sources where paired"
+        ),
         title=str(definition.get("name") or "") or None,
         kicker=str(definition.get("kicker") or "") or None,
     )

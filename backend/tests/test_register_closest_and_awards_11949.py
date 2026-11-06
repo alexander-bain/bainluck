@@ -44,6 +44,7 @@ async def test_register_closest_refuses_when_fewer_than_three_open_races():
             "name": "Alaska Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "outcomes": [
                 {"id": 1090951, "name": "Democratic party", "probability": 0.95},
                 {"id": 1090952, "name": "Republican party", "probability": 0.05},
@@ -95,6 +96,7 @@ async def test_register_closest_emits_three_closest_open_races_with_blend():
             "name": "Maine Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "prices_updated_at": "2026-11-05T17:00:00Z",
             "outcomes": [
                 {"id": 1090821, "name": "Susan Collins", "probability": 0.52},
@@ -106,6 +108,7 @@ async def test_register_closest_emits_three_closest_open_races_with_blend():
             "name": "Maine Senate Election Winner",
             "status": "open",
             "source": "polymarket",
+            "mutually_exclusive": True,
             "prices_updated_at": "2026-11-05T17:10:00Z",
             "outcomes": [
                 {"id": 1130951, "name": "Susan Collins", "probability": 0.56},
@@ -118,6 +121,7 @@ async def test_register_closest_emits_three_closest_open_races_with_blend():
             "name": "Ohio Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "prices_updated_at": "2026-11-05T17:05:00Z",
             "outcomes": [
                 {"id": 1090721, "name": "Jon Husted", "probability": 0.58},
@@ -130,6 +134,7 @@ async def test_register_closest_emits_three_closest_open_races_with_blend():
             "name": "Michigan Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "prices_updated_at": "2026-11-05T17:05:00Z",
             "outcomes": [
                 {"id": 1090811, "name": "Mike Rogers", "probability": 0.61},
@@ -142,6 +147,7 @@ async def test_register_closest_emits_three_closest_open_races_with_blend():
             "name": "Alaska Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "prices_updated_at": "2026-11-05T17:05:00Z",
             "outcomes": [
                 {"id": 1090951, "name": "Democratic party", "probability": 0.95},
@@ -603,6 +609,7 @@ async def test_register_closest_additional_refusal_reasons():
             "name": "Maine Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "outcomes": [
                 {"id": 1090821, "name": "Susan Collins", "probability": None},
                 {"id": 1090822, "name": "Troy Jackson", "probability": 0.48},
@@ -620,6 +627,7 @@ async def test_register_closest_additional_refusal_reasons():
             "name": "Maine Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "outcomes": [
                 {"id": 1090821, "name": "Susan Collins", "probability": 0.52},
             ],
@@ -636,6 +644,7 @@ async def test_register_closest_additional_refusal_reasons():
             "name": "Maine Senate winner?",
             "status": "open",
             "source": "kalshi",
+            "mutually_exclusive": True,
             "outcomes": [
                 {"id": 1090821, "name": "Susan Collins", "probability": 0.90},
                 {"id": 1090822, "name": "Troy Jackson", "probability": 0.85},
@@ -723,6 +732,7 @@ async def test_awards_category_roundup_loads_from_async_db_session_and_rejects_w
             name="Golden Globes: Best Motion Picture - Drama Winner",
             status="open",
             source="kalshi",
+            mutually_exclusive=True,
             resolution_date=None,
             updated_at="2026-11-05T17:00:00Z",
             outcomes=[
@@ -943,6 +953,202 @@ async def test_awards_category_roundup_rejects_cross_ceremony_and_bare_nominatio
     res = await golden_globes_best_picture(pool)
     assert isinstance(res, RoundupRefusal), f"Expected refusal for {case_name}"
     assert res.reasons == (("awards_category", "too_few_paired_nominees"),)
+
+
+def test_narrative_copy_refuses_blend_and_closest_races_uses_combined_probability():
+    from app.utils.field_band import _validate_narrative_copy
+    from app.utils.register_closest import CLOSEST_RACES_DEFINITION
+
+    assert CLOSEST_RACES_DEFINITION["footer"] == "Combined probability · both sources where paired"
+    assert "blend" not in CLOSEST_RACES_DEFINITION["footer"].lower()
+
+    with pytest.raises(ValueError, match="blend"):
+        _validate_narrative_copy("Bain Luck blend · both venues where paired")
+    with pytest.raises(ValueError, match="(?i)blended"):
+        _validate_narrative_copy("Blended across sources")
+
+
+@pytest.mark.asyncio
+async def test_normalization_guards_mass_floor_mutually_exclusive_and_unlabeled_outcome():
+    # 1. Partial field (< SPECIALTY_FIELD_MASS_MIN = 0.9 raw mass) refused in both producers
+    partial_race = [
+        {
+            "id": 109082,
+            "name": "Maine Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 1090821, "name": "Susan Collins", "probability": 0.45},
+                {"id": 1090822, "name": "Troy Jackson", "probability": 0.40},
+            ],
+        }
+    ]
+    res_partial_race = await closest_races(partial_race)
+    assert isinstance(res_partial_race, RoundupRefusal)
+    assert ("register_closest", "partial_field:109082") in res_partial_race.reasons
+
+    partial_awards = [
+        {
+            "id": 900,
+            "name": "Golden Globes: Best Motion Picture - Drama Winner",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 9001, "name": "One Battle After Another", "probability": 0.35},
+                {"id": 9002, "name": "Sinners", "probability": 0.28},
+                {"id": 9003, "name": "Hamnet", "probability": 0.22},
+            ],
+        }
+    ]
+    res_partial_awards = await golden_globes_best_picture(partial_awards)
+    assert isinstance(res_partial_awards, RoundupRefusal)
+    assert res_partial_awards.reasons == (("awards_category", "partial_winner_field:900"),)
+
+    # 2. mutually_exclusive is False or None refused in both producers
+    for bad_me in (False, None):
+        non_me_race = [
+            {
+                "id": 109082,
+                "name": "Maine Senate winner?",
+                "status": "open",
+                "source": "kalshi",
+                "mutually_exclusive": bad_me,
+                "outcomes": [
+                    {"id": 1090821, "name": "Susan Collins", "probability": 0.52},
+                    {"id": 1090822, "name": "Troy Jackson", "probability": 0.48},
+                ],
+            }
+        ]
+        res_non_me_race = await closest_races(non_me_race)
+        assert isinstance(res_non_me_race, RoundupRefusal)
+        assert ("register_closest", "guard_failed:109082") in res_non_me_race.reasons
+
+        non_me_awards = [
+            {
+                "id": 900,
+                "name": "Golden Globes: Best Motion Picture - Drama Winner",
+                "status": "open",
+                "source": "kalshi",
+                "category": "entertainment",
+                "mutually_exclusive": bad_me,
+                "outcomes": [
+                    {"id": 9001, "name": "One Battle After Another", "probability": 0.42},
+                    {"id": 9002, "name": "Sinners", "probability": 0.31},
+                    {"id": 9003, "name": "Hamnet", "probability": 0.27},
+                ],
+            }
+        ]
+        res_non_me_awards = await golden_globes_best_picture(non_me_awards)
+        assert isinstance(res_non_me_awards, RoundupRefusal)
+        assert res_non_me_awards.reasons == (("awards_category", "winner_field_guard_failed:900"),)
+
+    # 3. Unlabeled outcome refused in both producers
+    unlabeled_race = [
+        {
+            "id": 109082,
+            "name": "Maine Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 1090821, "name": "Susan Collins", "probability": 0.52},
+                {"id": 1090822, "name": "   ", "probability": 0.48},
+            ],
+        }
+    ]
+    res_unlabeled_race = await closest_races(unlabeled_race)
+    assert isinstance(res_unlabeled_race, RoundupRefusal)
+    assert ("register_closest", "empty_outcome_label:109082") in res_unlabeled_race.reasons
+
+    unlabeled_awards = [
+        {
+            "id": 900,
+            "name": "Golden Globes: Best Motion Picture - Drama Winner",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 9001, "name": "One Battle After Another", "probability": 0.42},
+                {"id": 9002, "name": "", "probability": 0.31},
+                {"id": 9003, "name": "Hamnet", "probability": 0.27},
+            ],
+        }
+    ]
+    res_unlabeled_awards = await golden_globes_best_picture(unlabeled_awards)
+    assert isinstance(res_unlabeled_awards, RoundupRefusal)
+    assert res_unlabeled_awards.reasons == (("awards_category", "empty_winner_outcome_label:900"),)
+
+
+@pytest.mark.asyncio
+async def test_register_closest_skips_bad_race_when_three_coherent_races_survive_and_preserves_none_source():
+    # Maine (109082) has an unpriced outcome, while Ohio (109072), Michigan (109081), and Alaska (109095)
+    # are coherent open races. The single bad race must be skipped rather than refusing the whole card (gotcha #42).
+    markets = [
+        {
+            "id": 109082,
+            "name": "Maine Senate winner?",
+            "status": "open",
+            "source": None,
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 1090821, "name": "Susan Collins", "probability": None},
+                {"id": 1090822, "name": "Troy Jackson", "probability": 0.48},
+            ],
+        },
+        {
+            "id": 109072,
+            "name": "Ohio Senate winner?",
+            "status": "open",
+            "source": None,
+            "mutually_exclusive": True,
+            "prices_updated_at": "2026-11-05T17:05:00Z",
+            "outcomes": [
+                {"id": 1090721, "name": "Jon Husted", "probability": 0.58},
+                {"id": 1090722, "name": "Sherrod Brown", "probability": 0.42},
+            ],
+        },
+        {
+            "id": 109081,
+            "name": "Michigan Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": True,
+            "prices_updated_at": "2026-11-05T17:05:00Z",
+            "outcomes": [
+                {"id": 1090811, "name": "Mike Rogers", "probability": 0.61},
+                {"id": 1090812, "name": "Abdul El-Sayed", "probability": 0.39},
+            ],
+        },
+        {
+            "id": 109095,
+            "name": "Alaska Senate winner?",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": True,
+            "prices_updated_at": "2026-11-05T17:05:00Z",
+            "outcomes": [
+                {"id": 1090951, "name": "Democratic party", "probability": 0.95},
+                {"id": 1090952, "name": "Republican party", "probability": 0.05},
+            ],
+        },
+    ]
+    res = await closest_races(markets)
+    assert isinstance(res, RoundupMembers)
+    assert [r["label"] for r in res.rows] == [
+        "Alaska Senate · Democratic party",
+        "Michigan Senate · Mike Rogers",
+        "Ohio Senate · Jon Husted",
+    ]
+    # Ohio had source=None -> card["source"] is None (never defaulted to "kalshi")
+    ohio_member = next(m for m in res.members if m["id"] == 109072)
+    assert ohio_member["card"]["source"] is None
+    assert ohio_member["card"]["sources"] == []
+    assert ohio_member["card"]["source_count"] == 0
+
 
 
 
