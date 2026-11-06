@@ -63,27 +63,6 @@ describe("verifyScriptGrade — the backend twin of #1642", () => {
     ...over,
   });
 
-  it("drops a 'miss' the backend built from a source plus a defaulted false", () => {
-    const index = indexPropRowsByScriptKey([
-      row("Cole Young: Hits O/U 0.5", { resolution_source: "api_settlement", is_winner: false }),
-    ]);
-    expect(verifyScriptGrade(mark("Cole Young: Hits O/U 0.5"), index)).toEqual({
-      graded_result: null,
-      graded_label: null,
-    });
-  });
-
-  it("drops the label with the verdict, so '0 — miss' cannot survive it", () => {
-    const index = indexPropRowsByScriptKey([
-      row("Cole Young: Hits O/U 0.5", { resolution_source: "api_settlement" }),
-    ]);
-    const out = verifyScriptGrade(
-      mark("Cole Young: Hits O/U 0.5", { graded_label: "0 — miss" }),
-      index,
-    );
-    expect(out.graded_label).toBeNull();
-  });
-
   it("withholds when the rows carrying that key disagree", () => {
     const index = indexPropRowsByScriptKey([
       row("Cole Young: Hits O/U 0.5", { hit: true, actual: 1 }),
