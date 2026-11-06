@@ -24,7 +24,11 @@ export default function SourceList({
           </a>
           <span className="text-text-secondary">
             {" · "}
-            <time dateTime={source.date}>{pacificDayLabel(source.date) ?? CHIP_COPY.dateUnreadable}</time>
+            {source.live || source.date === null ? (
+              <span data-source-live="">{CHIP_COPY.readOnOpen}</span>
+            ) : (
+              <time dateTime={source.date}>{pacificDayLabel(source.date) ?? CHIP_COPY.dateUnreadable}</time>
+            )}
             {" · "}
             {SOURCES_COPY.usedByPrefix}{" "}
             {source.usedBy.map((id) => `“${sectionTitles[id] ?? id}”`).join(", ")}
