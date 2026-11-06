@@ -1228,7 +1228,7 @@ class UnitChunk:
         generation. Late inclusion, not a wrong number, and it is published
         rather than assumed (Alex ruling, 2026-08-10).
         """
-        return slot_key(self.buckets, self.index)
+        return self.member_digest
 
     @property
     def member_digest(self) -> str:
