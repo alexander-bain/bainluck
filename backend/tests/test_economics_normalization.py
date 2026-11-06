@@ -1,9 +1,9 @@
-"""Tests for Economics page probability normalization (M8 fix).
+"""Tests for Economics page probability normalization and #12126/#12128 guards.
 
-Distribution markets (CPI, Fed rates, GDP, energy) assemble bracket
-probabilities from independent binary markets.  These can sum well over 100%.
-Both _brackets_from_outcomes and _cumulative_to_discrete must normalize when
-the total exceeds 105%.
+`_brackets_from_outcomes` normalizes only mutually-exclusive, complete fields
+holding at least 90% (`SPECIALTY_FIELD_MASS_MIN`) of raw probability within the
+160% ceiling (scale-down only). `_cumulative_to_discrete` converts cumulative
+threshold ladders into discrete intervals without rescaling sums over 105%.
 """
 
 import re
@@ -202,14 +202,60 @@ class TestBracketsFromOutcomes:
         assert cs["src"] is None
         assert [t["name"] for t in cs["top_outcomes"]] == ["2.0% - 2.5%", "2.5% - 3.0%"]
 
+    def test_specialty_field_mass_min_threshold(self):
+        """#12126 / #12128: SPECIALTY_FIELD_MASS_MIN = 0.9 guard on _brackets_from_outcomes.
+
+        Sub-90% raw mass stays unscaled; boundary 0.90 and overround 1.10 pass
+        the >= 0.90 gate (0.90 is left unscaled by scale-down-only, 1.10 scales
+        down to 100%).
+        """
+        # Sub-90% raw mass (0.45 + 0.25 + 0.15 = 0.85 < 0.90) -> raw
+        sub_90 = _make_market(
+            "CPI",
+            [
+                _make_outcome("2.0% - 2.5%", 0.45, rank=1),
+                _make_outcome("2.5% - 3.0%", 0.25, rank=2),
+                _make_outcome("3.0% - 3.5%", 0.15, rank=3),
+            ],
+            mutually_exclusive=True,
+        )
+        assert [b[0] for b in _brackets_from_outcomes(sub_90)] == [45.0, 25.0, 15.0]
+
+        # Boundary 90% raw mass (0.50 + 0.25 + 0.15 = 0.90) -> passes >= 0.90
+        # mass check; divisor <= 1.0 so scale-down-only keeps raw values
+        at_90 = _make_market(
+            "CPI",
+            [
+                _make_outcome("2.0% - 2.5%", 0.50, rank=1),
+                _make_outcome("2.5% - 3.0%", 0.25, rank=2),
+                _make_outcome("3.0% - 3.5%", 0.15, rank=3),
+            ],
+            mutually_exclusive=True,
+        )
+        assert [b[0] for b in _brackets_from_outcomes(at_90)] == [50.0, 25.0, 15.0]
+
+        # Overround 110% raw mass (0.55 + 0.35 + 0.20 = 1.10 >= 0.90) -> scaled down to 100%
+        over_100 = _make_market(
+            "CPI",
+            [
+                _make_outcome("2.0% - 2.5%", 0.55, rank=1),
+                _make_outcome("2.5% - 3.0%", 0.35, rank=2),
+                _make_outcome("3.0% - 3.5%", 0.20, rank=3),
+            ],
+            mutually_exclusive=True,
+        )
+        scaled = _brackets_from_outcomes(over_100)
+        assert [b[0] for b in scaled] == [50.0, 31.8, 18.2]
+        assert round(sum(b[0] for b in scaled), 1) == 100.0
+
 
 # ---------------------------------------------------------------------------
-# _cumulative_to_discrete — cumulative "Above X" normalization
+# _cumulative_to_discrete — cumulative "Above X" discrete conversion
 # ---------------------------------------------------------------------------
 
 
 class TestCumulativeToDiscrete:
-    """_cumulative_to_discrete should normalize when discrete probs sum > 105%."""
+    """_cumulative_to_discrete converts cumulative rungs into discrete intervals without rescaling."""
 
     def test_well_behaved_cumulative(self):
         outcomes = [
@@ -243,13 +289,7 @@ class TestCumulativeToDiscrete:
         assert len(brackets) <= 4
 
     def test_normalization_guard_fires(self):
-        """Verify the normalization guard catches sums > 105%.
-
-        For well-formed monotonic cumulative data, discrete sums can't exceed
-        the first cumulative value (so max ~100%).  The guard is defensive,
-        protecting against edge cases and upstream data quality issues.
-        It should not make things worse for normal data.
-        """
+        """Well-formed monotonic cumulative data yields discrete intervals summing <= first rung."""
         outcomes = [
             _make_outcome("Above 100", 0.90),
             _make_outcome("Above 200", 0.70),
@@ -260,6 +300,18 @@ class TestCumulativeToDiscrete:
         total = sum(b[0] for b in brackets)
         # 20 + 30 + 30 + 10 = 90 — well under threshold
         assert total <= 105.0
+
+    def test_discrete_sum_over_105_not_rescaled(self):
+        """#12126 / #12128: discrete diffs summing over 105% are NOT rescaled via 100 / total."""
+        outcomes = [
+            _make_outcome("Above 100", 1.20),
+            _make_outcome("Above 200", 0.80),
+            _make_outcome("Above 300", 0.30),
+        ]
+        brackets = _cumulative_to_discrete(outcomes)
+        probs = [b[0] for b in brackets]
+        assert sum(probs) == 120.0
+        assert probs == [40.0, 50.0, 30.0]
 
 
 class TestCumulativeSignedThresholds:
@@ -390,3 +442,72 @@ class TestModalBracket:
         assert idx == 0
         assert prob == 0.0
         assert label == ""
+
+
+# ---------------------------------------------------------------------------
+# FOMC `resolved` guard (#12126 / #12128 / #11949)
+# ---------------------------------------------------------------------------
+
+
+class TestFomcResolvedGuard:
+    """FOMC meeting `resolved` reads only venue settlement via `market_reads_settled`, never `status == 'closed'`."""
+
+    def test_closed_status_or_high_price_without_venue_result_is_not_resolved(self):
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from app.utils.futures_liveness import market_reads_settled
+
+        now = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)
+        closed_ungraded = SimpleNamespace(
+            id=501,
+            name="What will the upper bound of the federal funds rate be after Dec 2026?",
+            status="closed",
+            market_metadata={},
+            outcomes=[
+                SimpleNamespace(
+                    id=1,
+                    name="Above 4.25%",
+                    current_probability=0.99,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+                SimpleNamespace(
+                    id=2,
+                    name="Above 4.50%",
+                    current_probability=0.01,
+                    is_winner=False,
+                    resolution_source=None,
+                ),
+            ],
+        )
+        assert market_reads_settled(closed_ungraded, now=now) is False
+
+        venue_settled = SimpleNamespace(
+            id=502,
+            name="What will the upper bound of the federal funds rate be after Sep 2026?",
+            status="open",
+            market_metadata={"shape": {"expected_winners": 1}},
+            outcomes=[
+                SimpleNamespace(
+                    id=1,
+                    name="4.25% - 4.50%",
+                    current_probability=0.99,
+                    is_winner=True,
+                    resolution_source="api_settlement",
+                ),
+                SimpleNamespace(
+                    id=2,
+                    name="4.00% - 4.25%",
+                    current_probability=0.01,
+                    is_winner=False,
+                    resolution_source="api_settlement",
+                ),
+            ],
+        )
+        assert market_reads_settled(venue_settled, now=now) is True
+
+        route_src = (
+            Path(__file__).resolve().parent.parent / "app" / "routes" / "economics.py"
+        ).read_text()
+        assert '"resolved": market_reads_settled(m, now=now)' in route_src
+        assert '"resolved": m.status == "closed"' not in route_src

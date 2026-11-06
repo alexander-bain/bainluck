@@ -50,7 +50,7 @@ function orderPairsNumerically(
     .map((x) => x.item);
 }
 
-function cleanSource(src?: string | null): string | null {
+export function cleanSource(src?: string | null): string | null {
   return typeof src === "string" && src.trim().length > 0 ? src.trim() : null;
 }
 

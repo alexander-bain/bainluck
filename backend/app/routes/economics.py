@@ -336,6 +336,9 @@ def _market_row(market: FuturesMarket) -> dict | None:
     shipping an unexercised withholding path across nine theme lists.
     """
     raw_cleaned = _clean_outcomes(list(market.outcomes))
+    # Check raw outcome count (> 5) before blank-label filtering so a 6+ outcome
+    # distribution market with blank placeholder legs still routes to
+    # `_distribution_row` rather than collapsing into a binary `_market_row`.
     if len(raw_cleaned) > 5:
         return None
     outcomes = [o for o in raw_cleaned if (o.name or "").strip()]

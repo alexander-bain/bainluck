@@ -1,9 +1,18 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import EconomicsAtlasView from "@/components/economics/EconomicsAtlasView";
+import EconomicsAtlasView, { cleanSource } from "@/components/economics/EconomicsAtlasView";
 import { findBannedCopy, JARGON_BANS, visibleTextFromHtml } from "@/lib/copyBans";
 
 describe("EconomicsAtlasView (#11949 Order 9 + #12126/#12128 guards)", () => {
+  it("cleanSource preserves a missing or blank source as null and never defaults to 'kalshi'", () => {
+    expect(cleanSource(null)).toBeNull();
+    expect(cleanSource(undefined)).toBeNull();
+    expect(cleanSource("")).toBeNull();
+    expect(cleanSource("   ")).toBeNull();
+    expect(cleanSource("kalshi")).toBe("kalshi");
+    expect(cleanSource("polymarket")).toBe("polymarket");
+  });
+
   it("renders Fed, CPI release, and side markets while refusing blank labels, keeping missing source null, and avoiding banned copy", () => {
     const data: any = {
       total_markets: 5,
