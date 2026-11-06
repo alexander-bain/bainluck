@@ -44,9 +44,16 @@ function isRangeBucketLabel(label: string): boolean {
   return /(\d[\d,.]*\s*[–-]\s*\$?\d|<\s*\$?\d|>\s*\$?\d|\bto\b)/i.test(label || "");
 }
 
+type ExtendedEntMarketRow = EntMarketRow & {
+  leader?: string | null;
+  status?: string | null;
+  settled_winner?: string | null;
+};
+
 function toOrderedOutcomes(
   outcomes: { name: string; prob: number }[],
-  orderNumeric: boolean
+  orderNumeric: boolean,
+  settledWinner?: string | null
 ): AtlasCategoryOutcome[] {
   const items = outcomes.map((o, idx) => ({
     o,
@@ -65,15 +72,27 @@ function toOrderedOutcomes(
         })
       : items;
 
-  return sorted.map(({ o }, idx) => ({
-    id: `${o.name}-${idx}`,
-    label: o.name,
-    probability: o.prob / 100,
-    renderedPercent: Math.round(o.prob),
-  }));
+  const winnerNorm = (settledWinner || "").trim().toLowerCase();
+  return sorted.map(({ o }, idx): AtlasCategoryOutcome => {
+    const won =
+      Boolean(winnerNorm) && o.name.trim().toLowerCase() === winnerNorm;
+    const lost = Boolean(winnerNorm) && !won;
+    return {
+      id: `${o.name}-${idx}`,
+      label: o.name,
+      probability: o.prob / 100,
+      renderedPercent: Math.round(o.prob),
+      isSettled: Boolean(winnerNorm),
+      isWinner: won ? true : lost ? false : null,
+      settledResult: won ? "won" : lost ? "lost" : null,
+    };
+  });
 }
 
-function renderEntMarketByShape(row: EntMarketRow, kickerOverride?: string) {
+function renderEntMarketByShape(
+  row: ExtendedEntMarketRow,
+  kickerOverride?: string
+) {
   const outcomes = row.lead_outcomes?.length ? row.lead_outcomes : row.top_outcomes ?? [];
   const meta: AtlasMarketMeta = {
     marketId: row.market_id,
@@ -83,10 +102,17 @@ function renderEntMarketByShape(row: EntMarketRow, kickerOverride?: string) {
     source: row.src,
     externalId: row.external_id,
   };
+  const settledWinner = row.settled_winner ?? null;
 
   if (outcomes.length <= 1 || row.kind === "binary") {
     const lead = outcomes[0];
     const prob = lead ? lead.prob : row.prob;
+    const won =
+      Boolean(settledWinner) &&
+      (settledWinner?.toLowerCase() === "yes" ||
+        settledWinner?.toLowerCase() === lead?.name?.toLowerCase() ||
+        settledWinner?.toLowerCase() === row.leader?.toLowerCase());
+    const lost = Boolean(settledWinner) && !won;
     return (
       <BinaryRow
         key={row.market_id}
@@ -96,6 +122,9 @@ function renderEntMarketByShape(row: EntMarketRow, kickerOverride?: string) {
           label: lead?.name && !/^(yes|no)$/i.test(lead.name) ? lead.name : row.q,
           probability: prob / 100,
           renderedPercent: Math.round(prob),
+          isSettled: Boolean(settledWinner),
+          isWinner: won ? true : lost ? false : null,
+          settledResult: won ? "won" : lost ? "lost" : null,
         }}
       />
     );
@@ -107,7 +136,7 @@ function renderEntMarketByShape(row: EntMarketRow, kickerOverride?: string) {
       <ThresholdLadderCard
         key={row.market_id}
         meta={meta}
-        rungs={toOrderedOutcomes(outcomes, true)}
+        rungs={toOrderedOutcomes(outcomes, true, settledWinner)}
       />
     );
   }
@@ -119,7 +148,7 @@ function renderEntMarketByShape(row: EntMarketRow, kickerOverride?: string) {
       <BucketDistribution
         key={row.market_id}
         meta={meta}
-        buckets={toOrderedOutcomes(outcomes, true)}
+        buckets={toOrderedOutcomes(outcomes, true, settledWinner)}
       />
     );
   }
@@ -128,7 +157,7 @@ function renderEntMarketByShape(row: EntMarketRow, kickerOverride?: string) {
     <FieldBoard
       key={row.market_id}
       meta={meta}
-      outcomes={toOrderedOutcomes(outcomes, false)}
+      outcomes={toOrderedOutcomes(outcomes, false, settledWinner)}
     />
   );
 }
@@ -242,7 +271,7 @@ export default function EntertainmentAtlasView({
               TRENDING NOW
             </p>
             <h2 className="text-xl font-semibold text-text-primary mt-0.5">
-              Lead pop-culture questions
+              Lead pop-culture markets
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
