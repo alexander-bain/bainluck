@@ -472,6 +472,23 @@ async def test_an_oscars_card_uses_only_its_edition_pages_members():
     assert out[1]["data"]["id"] == 5100001
 
 
+@pytest.mark.parametrize("ids,links", [(AI_IDS, True), ([*AI_IDS, 62178321], False)])
+async def test_search_keeps_its_whole_family_and_links_only_when_every_member_belongs(
+    ids, links
+):
+    families = [{"family_key": "story:ai", "markets": [{"id": mid} for mid in ids]}]
+    before = copy.deepcopy(families)
+    out = await tcr.attach_search_family_collection_refs(
+        families,
+        published=published((AI_CID, 18)),
+        read_snapshot=_Snapshots(SNAPS),
+        session_factory=factory(_Session(edges=AI_EDGES)),
+    )
+    assert out[0]["markets"] == before[0]["markets"]
+    assert (out[0].get("collection_ref") is not None) is links
+    assert families == before
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

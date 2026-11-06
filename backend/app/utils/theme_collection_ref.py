@@ -619,7 +619,6 @@ async def attach_theme_collection_refs(
     read_snapshot: Optional[SnapshotReader] = None,
     observe: Optional[Callable[[dict], None]] = None,
     session_factory: Optional[SessionFactory] = None,
-    project_membership: bool = True,
 ) -> list:
     """Give each eligible theme bundle its ``collection_ref``.
 
@@ -653,7 +652,7 @@ async def attach_theme_collection_refs(
             item = items[i]
             projected = await _project_page_membership(
                 item, candidates, published, _snapshot
-            ) if project_membership else [item]
+            )
             if not projected or not _is_theme_bundle(projected[0]):
                 out[i] = (projected, PAGE_MEMBERSHIP_TOO_SMALL)
                 continue
@@ -745,7 +744,6 @@ async def attach_search_family_collection_refs(
         budget_seconds=budget_seconds,
         read_snapshot=read_snapshot,
         session_factory=session_factory,
-        project_membership=False,
     )
     changed = False
     out = list(families)
