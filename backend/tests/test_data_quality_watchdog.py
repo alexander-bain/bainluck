@@ -134,6 +134,21 @@ class TestCheckDefinitions:
         assert "baseball_mlb" in q                  # gated on a real MLB game existing
         assert "exists" in q
 
+    def test_datagolf_freshness_is_play_gated(self):
+        """#12092: DataGolf freshness fires only while a tournament is under way —
+        never on a golf off-day (the weekly false P1 on #1765, Aug 11 – Nov 4)."""
+        dg = {c["name"]: c for c in CHECKS}["datagolf_freshness"]
+        q = " ".join(dg["query"].lower().split())
+        assert dg["comparison"] == "lte" and dg["threshold"] == 0 and dg["severity"] == "P1"
+        assert q.startswith("select case when exists (")
+        assert "fm.source = 'datagolf' and fm.status = 'open'" in q
+        assert "fm.commence_time <= now() - interval '12 hours'" in q
+        assert "fm.resolution_date + interval '1 day' > now()" in q
+        assert "updated_at > now() - interval '18 hours') = 0" in q
+        # Passing means 0 (no play, or healthy); a real gap during play is 1.
+        assert passes_threshold(0, dg) is True
+        assert passes_threshold(1, dg) is False
+
     def test_odds_sparsity_is_tier1_scoped(self):
         """#215E: the sparsity check's message says 'Tier 1' but the old query
         counted EVERY sport, paging on upstream gaps we don't own (esports/NPB).
