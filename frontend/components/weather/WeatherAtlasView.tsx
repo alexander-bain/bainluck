@@ -35,16 +35,21 @@ import {
 type SettleableRow = {
   status?: string | null;
   result?: "yes" | "no" | null;
+  settled?: boolean | null;
   updated_at?: string | null;
   market_id?: number | null;
 };
+
+function cleanSource(src?: string | null): string | null {
+  return typeof src === "string" && src.trim().length > 0 ? src.trim() : null;
+}
 
 function toSettledFlags(row: SettleableRow): {
   isSettled: boolean;
   isWinner: boolean | null;
   settledResult: "won" | "lost" | "unavailable" | null;
 } {
-  const won = row.result === "yes";
+  const won = row.result === "yes" || row.settled === true;
   const lost = row.result === "no";
   const settledStatus =
     row.status === "settled" || row.status === "resolved";
@@ -132,44 +137,75 @@ export default function WeatherAtlasView() {
     ? (liveWildCards as (WildCard & SettleableRow)[])
     : null;
 
-  const monthlyRungs: AtlasCategoryOutcome[] = (monthlyRain ?? []).map((m) => ({
-    id: m.city,
-    label: m.period ? `${m.city} (${m.period})` : m.city,
-    probability: weatherProbability(m),
-    renderedPercent: m.prob,
-    observedAt: m.updated_at ?? null,
-    ...toSettledFlags(m),
-  }));
+  const monthlyRungs: AtlasCategoryOutcome[] = (monthlyRain ?? [])
+    .filter((m) => Boolean(m && typeof m.city === "string" && m.city.trim().length > 0))
+    .map((m) => {
+      const city = m.city.trim();
+      const period = typeof m.period === "string" ? m.period.trim() : "";
+      return {
+        id: city,
+        label: period ? `${city} (${period})` : city,
+        probability: weatherProbability(m),
+        renderedPercent: m.prob,
+        observedAt: m.updated_at ?? null,
+        ...toSettledFlags(m),
+      };
+    });
 
-  const dailyRainRungs: AtlasCategoryOutcome[] = (dailyRain ?? []).map((d) => ({
-    id: d.iso ?? d.date,
-    label: d.iso === todayIso ? `Today (${d.date})` : `${d.day} (${d.date})`,
-    probability: weatherProbability(d),
-    renderedPercent: d.prob,
-    observedAt: d.updated_at ?? null,
-    ...toSettledFlags(d),
-  }));
+  const dailyRainRungs: AtlasCategoryOutcome[] = (dailyRain ?? [])
+    .filter(
+      (d) =>
+        Boolean(
+          d &&
+            ((typeof d.date === "string" && d.date.trim().length > 0) ||
+              (typeof d.day === "string" && d.day.trim().length > 0))
+        )
+    )
+    .map((d) => ({
+      id: d.iso ?? d.date,
+      label: d.iso === todayIso ? `Today (${d.date})` : `${d.day} (${d.date})`,
+      probability: weatherProbability(d),
+      renderedPercent: d.prob,
+      observedAt: d.updated_at ?? null,
+      ...toSettledFlags(d),
+    }));
 
   const cityBuckets: AtlasCategoryOutcome[] = selectedCity
-    ? selectedCity.high.dist.map((b) => ({
-        id: `${selectedCity.id}-${b.label}`,
-        label: b.label,
-        probability: weatherProbability(b),
-        renderedPercent: b.prob,
-      }))
+    ? selectedCity.high.dist
+        .filter((b) => Boolean(b && typeof b.label === "string" && b.label.trim().length > 0))
+        .map((b) => {
+          const label = b.label.trim();
+          return {
+            id: `${selectedCity.id}-${label}`,
+            label,
+            probability: weatherProbability(b),
+            renderedPercent: b.prob,
+          };
+        })
     : [];
 
   const toThresholdRungs = (
     rows: (EventMarket & SettleableRow)[] | undefined
   ): AtlasCategoryOutcome[] =>
-    (rows ?? []).map((item, idx) => ({
-      id: item.market_id ?? `${item.q}-${idx}`,
-      label: item.leader ? `${item.q} — ${item.leader}` : item.q,
-      probability: weatherProbability(item),
-      renderedPercent: item.prob,
-      observedAt: item.updated_at ?? null,
-      ...toSettledFlags(item),
-    }));
+    (rows ?? [])
+      .filter((item) => {
+        const leader = typeof item?.leader === "string" ? item.leader.trim() : "";
+        const q = typeof item?.q === "string" ? item.q.trim() : "";
+        return Boolean(leader || q);
+      })
+      .map((item, idx) => {
+        const leader = typeof item.leader === "string" ? item.leader.trim() : "";
+        const q = typeof item.q === "string" ? item.q.trim() : "";
+        const label = leader && q ? `${q} — ${leader}` : leader || q;
+        return {
+          id: item.market_id ?? `${label}-${idx}`,
+          label,
+          probability: weatherProbability(item),
+          renderedPercent: item.prob,
+          observedAt: item.updated_at ?? null,
+          ...toSettledFlags(item),
+        };
+      });
 
   return (
     <div
@@ -197,7 +233,7 @@ export default function WeatherAtlasView() {
           </p>
           {featuredError && !featured ? (
             <p className="text-sm text-text-muted py-4">Failed to load featured markets</p>
-          ) : featured ? (
+          ) : featured && ((featured.leader && featured.leader.trim()) || (featured.q && featured.q.trim())) ? (
             <BinaryRow
               meta={{
                 marketId: featured.market_id ?? null,
@@ -206,11 +242,11 @@ export default function WeatherAtlasView() {
                   : featured.q,
                 kicker: featured.tag,
                 subtitle: featured.closes || null,
-                source: featured.src,
+                source: cleanSource(featured.src),
               }}
               outcome={{
                 id: featured.market_id ?? "featured",
-                label: featured.leader ?? featured.q,
+                label: (featured.leader?.trim() || featured.q?.trim()) ?? "",
                 probability: weatherProbability(featured),
                 renderedPercent: featured.prob,
                 ...toSettledFlags(featured),
@@ -341,8 +377,11 @@ export default function WeatherAtlasView() {
                     marketTitle: `${selectedCity.name} daily high`,
                     kicker: `${selectedCity.region.toUpperCase()} · °${selectedCity.high.unit}`,
                     resolutionDate: selectedCity.iso ?? null,
-                    source: selectedCity.src ?? selectedCity.srcs?.[0] ?? null,
-                    sourceCount: selectedCity.srcs?.length ?? 1,
+                    source: cleanSource(selectedCity.src ?? selectedCity.srcs?.[0] ?? null),
+                    sourceCount:
+                      (selectedCity.srcs ?? []).filter(
+                        (s) => typeof s === "string" && s.trim().length > 0
+                      ).length || 1,
                   }}
                   buckets={cityBuckets}
                   stationContextLabel={isoDayLabel(selectedCity.iso)}
@@ -443,25 +482,27 @@ export default function WeatherAtlasView() {
                     </p>
                   ) : (
                     <div className="space-y-2.5">
-                      {colItems.map((item, idx) => (
-                        <BinaryRow
-                          key={item.market_id ?? `${col.scale}-${idx}`}
-                          meta={{
-                            marketId: item.market_id ?? null,
-                            marketTitle: item.leader
-                              ? `${item.q} — ${item.leader}`
-                              : item.q,
-                            source: item.src,
-                          }}
-                          outcome={{
-                            id: item.market_id ?? `${col.scale}-${idx}`,
-                            label: item.leader ?? item.q,
-                            probability: weatherProbability(item),
-                            renderedPercent: item.prob,
-                            ...toSettledFlags(item),
-                          }}
-                        />
-                      ))}
+                      {colItems
+                        .filter((item) => Boolean(item.leader?.trim() || item.q?.trim()))
+                        .map((item, idx) => (
+                          <BinaryRow
+                            key={item.market_id ?? `${col.scale}-${idx}`}
+                            meta={{
+                              marketId: item.market_id ?? null,
+                              marketTitle: item.leader
+                                ? `${item.q} — ${item.leader}`
+                                : item.q,
+                              source: cleanSource(item.src),
+                            }}
+                            outcome={{
+                              id: item.market_id ?? `${col.scale}-${idx}`,
+                              label: (item.leader?.trim() || item.q?.trim()) ?? "",
+                              probability: weatherProbability(item),
+                              renderedPercent: item.prob,
+                              ...toSettledFlags(item),
+                            }}
+                          />
+                        ))}
                     </div>
                   )}
                 </div>
@@ -492,24 +533,26 @@ export default function WeatherAtlasView() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-            {wildCardItems.map((card, idx) => (
-              <BinaryRow
-                key={card.market_id ?? idx}
-                meta={{
-                  marketId: card.market_id ?? null,
-                  marketTitle: card.leader ? `${card.q} — ${card.leader}` : card.q,
-                  kicker: card.tag,
-                  source: card.src,
-                }}
-                outcome={{
-                  id: card.market_id ?? idx,
-                  label: card.leader ?? card.q,
-                  probability: weatherProbability(card),
-                  renderedPercent: card.prob,
-                  ...toSettledFlags(card),
-                }}
-              />
-            ))}
+            {wildCardItems
+              .filter((card) => Boolean(card.leader?.trim() || card.q?.trim()))
+              .map((card, idx) => (
+                <BinaryRow
+                  key={card.market_id ?? idx}
+                  meta={{
+                    marketId: card.market_id ?? null,
+                    marketTitle: card.leader ? `${card.q} — ${card.leader}` : card.q,
+                    kicker: card.tag,
+                    source: cleanSource(card.src),
+                  }}
+                  outcome={{
+                    id: card.market_id ?? idx,
+                    label: (card.leader?.trim() || card.q?.trim()) ?? "",
+                    probability: weatherProbability(card),
+                    renderedPercent: card.prob,
+                    ...toSettledFlags(card),
+                  }}
+                />
+              ))}
           </div>
         )}
       </section>

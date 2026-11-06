@@ -199,3 +199,34 @@ def test_a_failed_refusal_read_keeps_the_raw_ladder_and_the_other_cities(monkeyp
     assert sum(b["probability"] for b in by_name["Miami"].values()) == pytest.approx(
         1.0, abs=0.005
     )
+
+
+def test_partial_or_non_exclusive_or_blank_label_city_ladder_not_squeezed():
+    """#11949 Order 11 + #12126/#12128 guards:
+    - mutually_exclusive must be True
+    - raw mass must be >= 90% (SPECIALTY_FIELD_MASS_MIN)
+    - blank outcome labels are stripped and mark the field incomplete
+    - missing source stays None
+    """
+    session = _session_with(
+        (62721470, "Miami", [("84-85°F", 0.39), ("   ", 0.10), ("86-87°F", 0.45), ("88-89°F", 0.28)]),
+        (62721471, "Dallas", [("90-91°F", 0.60), ("92-93°F", 0.50)]),
+    )
+    dallas_mkt = session.get(FuturesMarket, 62721471)
+    dallas_mkt.mutually_exclusive = False
+    dallas_mkt.source = ""
+    session.commit()
+
+    cities = asyncio.run(get_cities(AsyncDB(session)))
+    by_name = {c["name"]: c for c in cities}
+
+    # Miami had a blank outcome label: blank stripped, remaining buckets stay raw (not squeezed)
+    miami_dist = {b["label"]: b for b in by_name["Miami"]["high"]["dist"]}
+    assert set(miami_dist.keys()) == {"84-85°F", "86-87°F", "88-89°F"}
+    assert miami_dist["86-87°F"]["probability"] == pytest.approx(0.45)
+
+    # Dallas has mutually_exclusive=False and source="": stays raw and src is None
+    dallas_dist = {b["label"]: b for b in by_name["Dallas"]["high"]["dist"]}
+    assert dallas_dist["90-91°F"]["probability"] == pytest.approx(0.60)
+    assert by_name["Dallas"]["src"] is None
+    assert by_name["Dallas"]["srcs"] == []
