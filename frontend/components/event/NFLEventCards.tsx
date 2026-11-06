@@ -1606,7 +1606,7 @@ export function SoccerThreeWayCardView({
                       textAnchor="middle"
                       fill="#4B5563"
                     >
-                      {Math.round(t * 100)}%
+                      {t === 0 ? "0%" : t === 1 ? "100%" : formatProbability(t)}
                     </text>
                   ))}
               </svg>
