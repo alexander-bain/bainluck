@@ -17,6 +17,7 @@ import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { futuresOutcomeTotal } from "@/lib/discover/futuresBoard";
 import { namesOnlyTheOtherLeague, sharedLeague } from "@/lib/otherLeagueMarket";
 import { hasSerieAFemminileTags } from "@/lib/relatedRailQuery";
+import { formatAtlasMarketHeading } from "@/components/atlas/atlasStateCopy";
 
 /** The item types this section knows how to render.
  *
@@ -96,6 +97,10 @@ const CARD =
   "flex flex-col rounded-2xl border border-surface-border bg-surface-card px-3.5 py-3 " +
   "transition-colors hover:border-text-muted/40 hover:bg-surface-elevated/40";
 
+const ATLAS_CARD =
+  "flex flex-col rounded-xl border border-surface-border bg-surface-card px-4 py-3.5 " +
+  "transition-colors hover:border-text-muted/40 hover:bg-surface-elevated/40";
+
 const CARD_TITLE = "min-w-0 text-[14px] font-semibold leading-snug text-text-primary";
 
 const FIELD_ROW = "flex items-baseline justify-between gap-3 text-[12px]";
@@ -126,7 +131,13 @@ const MAX_FIELD_ROWS = 4;
  * A card with no pre-match reading prints no number, and one with no score
  * prints no score column — this rail never invents a figure.
  */
-function FinishedEventCard({ data }: { data: FeedEventData }) {
+function FinishedEventCard({
+  data,
+  atlas = false,
+}: {
+  data: FeedEventData;
+  atlas?: boolean;
+}) {
   const hasScore = data.away_score != null && data.home_score != null;
   const awayWon = hasScore && data.away_score! > data.home_score!;
   const homeWon = hasScore && data.home_score! > data.away_score!;
@@ -155,7 +166,7 @@ function FinishedEventCard({ data }: { data: FeedEventData }) {
   return (
     <Link
       href={`/events/${data.id}`}
-      className={CARD}
+      className={atlas ? ATLAS_CARD : CARD}
       data-testid="related-card"
       data-kind="event"
       data-state="final"
@@ -269,6 +280,8 @@ interface RelatedByTagProps {
    * `title`, so a caller that passes no fallback query never needs this.
    */
   fallbackTitle?: string;
+  /** Opt-in to the Nov 3 Atlas related-markets restyle (#883 Step F4). */
+  atlas?: boolean;
 }
 
 export default function RelatedByTag({
@@ -281,6 +294,7 @@ export default function RelatedByTag({
   fallbackTitle,
   preferNames,
   conferences,
+  atlas = false,
 }: RelatedByTagProps) {
   // #10319: only this exact competition requires corroborated returned tags.
   // Concepts do not carry that contract; a sport-only concept response cannot
@@ -362,19 +376,42 @@ export default function RelatedByTag({
   if (items.length === 0) return null;
 
   const heading = primary.length > 0 ? title : fallbackTitle ?? title;
+  const cardClassName = atlas ? ATLAS_CARD : CARD;
 
   return (
-    <section className="mt-8" data-testid="related-by-tag" data-count={items.length}>
+    <section
+      className={atlas ? "mt-8 border-t border-surface-border pt-6" : "mt-8"}
+      data-testid="related-by-tag"
+      data-count={items.length}
+    >
+      {atlas && (
+        <div
+          data-testid="atlas-related-eyebrow"
+          className="mb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted"
+        >
+          Keep exploring
+        </div>
+      )}
       {/* The hub's section rule, not this component's old `text-sm font-semibold`
           — every other section on an event page is set in it, and this one was
           the odd heading out. The count comes with it for the same reason the
           hub's does: a list that stops at four should say it is four. */}
       <h3
-        className="mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
+        className={
+          atlas
+            ? "mb-3 text-[18px] font-semibold tracking-[-0.01em] text-text-primary"
+            : "mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
+        }
         data-testid="related-by-tag-heading"
       >
         {heading}
-        <span className="ml-1.5 font-normal normal-case tracking-normal">
+        <span
+          className={
+            atlas
+              ? "ml-1.5 text-[13px] font-normal text-text-muted"
+              : "ml-1.5 font-normal normal-case tracking-normal"
+          }
+        >
           · {items.length}
         </span>
       </h3>
@@ -387,7 +424,7 @@ export default function RelatedByTag({
           if (item.type === "event") {
             const d = item.data as FeedEventData;
             if (isFinishedStatus(d.status)) {
-              return <FinishedEventCard key={`rel-event-${d.id}`} data={d} />;
+              return <FinishedEventCard key={`rel-event-${d.id}`} data={d} atlas={atlas} />;
             }
             /* A game's field is its two sides. Away first, matching the title,
                so the two lines below read in the order the title names them.
@@ -443,7 +480,7 @@ export default function RelatedByTag({
               <Link
                 key={`rel-event-${d.id}`}
                 href={`/events/${d.id}`}
-                className={CARD}
+                className={cardClassName}
                 data-testid="related-card"
                 data-kind="event"
               >
@@ -521,11 +558,13 @@ export default function RelatedByTag({
               <Link
                 key={`rel-concept-${d.key}`}
                 href={eventPath(d.key)}
-                className={CARD}
+                className={cardClassName}
                 data-testid="related-card"
                 data-kind="concept"
               >
-                <span className={CARD_TITLE}>{d.name}</span>
+                <span className={CARD_TITLE}>
+                  {atlas ? formatAtlasMarketHeading(d.name) || d.name : d.name}
+                </span>
                 {leader && (
                   <ol className="mt-1.5 space-y-0.5" data-testid="related-card-field">
                     <li className={FIELD_ROW}>
@@ -609,11 +648,13 @@ export default function RelatedByTag({
             <Link
               key={`rel-futures-${d.id}`}
               href={`/futures/${d.id}`}
-              className={CARD}
+              className={cardClassName}
               data-testid="related-card"
               data-kind="futures"
             >
-              <span className={CARD_TITLE}>{d.name}</span>
+              <span className={CARD_TITLE}>
+                {atlas ? formatAtlasMarketHeading(d.name) || d.name : d.name}
+              </span>
               {field.length > 0 && (
                 <ol className="mt-1.5 space-y-0.5" data-testid="related-card-field">
                   {field.map((outcome, index) => (
