@@ -166,7 +166,7 @@ describe("a record that cannot be read leaves both exam sections absent", () => 
     ["a missing split", (b) => void delete (b.per_pass["2"] as Partial<Raw["per_pass"]["2"]>).dev, /pass 2, dev/],
     [
       "a gate cell with one malformed named count (refused, never repaired by dropping it)",
-      (b) => void ((b.gate_results[0] as { by_pass: Record<string, Record<string, { k: number; n: number }>> }).by_pass["1"].false_twins.k = 36),
+      (b) => void ((b.gate_results[0] as unknown as { by_pass: Record<string, Record<string, { k: number }>> }).by_pass["1"].false_twins.k = 36),
       /twin_detection: pass 1 is unreadable/,
     ],
     ["a gate cell whose own count is more than its total", (b) => void ((b.gate_results[1] as { by_pass: Record<string, { k: number }> }).by_pass["2"].k = 13), /pass 2 is unreadable/],
