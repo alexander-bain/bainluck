@@ -114,7 +114,24 @@ export function buildNhlScoringCard(opts: {
   const phase = phaseOf(opts.status, opts.commenceTime, opts.nowMs);
   const finished = phase === "after";
   const props = opts.playerProps ?? [];
-  const entriesByPlayer = new Map<string, NhlScorerEntry>();
+  const rowPregameChance = (row: NflPropRow): number | null =>
+    openChance(
+      phase === "before"
+        ? isRecentQuote(row.observed_at, opts.nowMs)
+          ? row.over_probability
+          : null
+        : (row.pregame_mark ?? null),
+    );
+
+  const byPlayer = new Map<
+    string,
+    {
+      player: string;
+      rows: NflPropRow[];
+      sources: Set<string>;
+      hits: Set<boolean>;
+    }
+  >();
 
   for (const row of props) {
     if (row._inverted) continue;
@@ -124,39 +141,76 @@ export function buildNhlScoringCard(opts: {
     if (row.threshold !== 1 && row.threshold !== 0.5) continue;
     const side = propOutcomeSide(row.outcome_name);
     if (side === "under" || (side === "unreadable" && /\bunder\b/i.test(row.outcome_name))) continue;
-    if (entriesByPlayer.has(shape.player)) continue;
 
-    const rawChance =
-      phase === "before"
-        ? isRecentQuote(row.observed_at, opts.nowMs)
-          ? row.over_probability
-          : null
-        : (row.pregame_mark ?? null);
-    const pregameChance = openChance(rawChance);
-    const actualGoals =
-      finished && typeof row.actual === "number" && Number.isFinite(row.actual) && row.actual >= 0
-        ? Math.round(row.actual)
-        : null;
-    const hit = finished && typeof row.hit === "boolean" ? row.hit : null;
+    const existing = byPlayer.get(shape.player);
+    if (!existing) {
+      const sources = new Set<string>();
+      if (row.source) sources.add(row.source);
+      const hits = new Set<boolean>();
+      if (finished && typeof row.hit === "boolean") hits.add(row.hit);
+      byPlayer.set(shape.player, {
+        player: shape.player,
+        rows: [row],
+        sources,
+        hits,
+      });
+    } else {
+      existing.rows.push(row);
+      if (row.source) existing.sources.add(row.source);
+      if (finished && typeof row.hit === "boolean") existing.hits.add(row.hit);
+    }
+  }
+
+  const all: NhlScorerEntry[] = [];
+  for (const group of byPlayer.values()) {
+    const primaryRow = group.rows[0]!;
+    const blendedRow = group.rows.find((r) => r.source === "blended" || r.source === "blend");
+    const pricedRows = group.rows.filter((r) => rowPregameChance(r) !== null);
+
+    let pregameChance: number | null = null;
+    let observedAt: string | null = primaryRow.observed_at ?? null;
+    if (blendedRow) {
+      pregameChance = rowPregameChance(blendedRow);
+      observedAt = blendedRow.observed_at ?? observedAt;
+    } else if (group.sources.size <= 1 && pricedRows.length === 1) {
+      const singleRow = pricedRows[0];
+      if (singleRow) {
+        pregameChance = rowPregameChance(singleRow);
+        observedAt = singleRow.observed_at ?? observedAt;
+      }
+    }
+
+    const actualRow = finished
+      ? group.rows.find((r) => typeof r.actual === "number" && Number.isFinite(r.actual) && r.actual >= 0)
+      : undefined;
+    const actualGoals = actualRow && typeof actualRow.actual === "number" ? Math.round(actualRow.actual) : null;
+    const hit: boolean | null =
+      group.hits.has(true) && group.hits.has(false)
+        ? null
+        : group.hits.has(true)
+          ? true
+          : group.hits.has(false)
+            ? false
+            : null;
 
     if (pregameChance === null && (actualGoals === null || actualGoals === 0)) continue;
 
-    const rId = propRowId(row);
-    entriesByPlayer.set(shape.player, {
+    const rId = propRowId(primaryRow);
+    const sideRow = group.rows.find((r) => r.player_team === "home" || r.player_team === "away");
+    all.push({
       id: `nhl-scorer:${rId}`,
       rowId: rId,
-      player: shape.player,
+      player: group.player,
       pregameChance,
-      observedAt: row.observed_at ?? null,
+      observedAt,
       actualGoals,
       hit,
-      side: row.player_team === "home" || row.player_team === "away" ? row.player_team : "unknown",
-      sourceCount: 1,
-      marketTitle: `${shape.player} · 1+ goals`,
+      side: sideRow?.player_team === "home" || sideRow?.player_team === "away" ? sideRow.player_team : "unknown",
+      sourceCount: Math.max(1, group.sources.size),
+      marketTitle: `${group.player} · 1+ goals`,
     });
   }
 
-  const all = [...entriesByPlayer.values()];
   if (all.length === 0) return null;
 
   const scorers = all
@@ -379,7 +433,7 @@ export function buildNhlContributionMilestoneCard(opts: {
     const shape = parseMlbPropShape(row);
     if (!shape || !/^(?:points|assists)$/i.test(shape.stat.trim())) continue;
     if (isTeamSubject(shape.player, [opts.homeTeam, opts.awayTeam])) continue;
-    const key = `${shape.player}|${shape.stat}|${row.source ?? ""}`;
+    const key = `${shape.player}|${shape.stat.trim().toLowerCase()}`;
     const entry = ladders.get(key) ?? { player: shape.player, stat: shape.stat, rows: [] };
     entry.rows.push(row);
     ladders.set(key, entry);
@@ -387,7 +441,7 @@ export function buildNhlContributionMilestoneCard(opts: {
 
   const candidates: { key: string; card: MilestoneCard; pricedCount: number }[] = [];
   for (const [key, ladder] of ladders) {
-    const rungs: MilestoneRung[] = [];
+    const rawRungs: MilestoneRung[] = [];
     for (const row of ladder.rows) {
       if (typeof row.threshold !== "number" || !Number.isFinite(row.threshold)) continue;
       const side = propOutcomeSide(row.outcome_name);
@@ -395,7 +449,7 @@ export function buildNhlContributionMilestoneCard(opts: {
       const observedAt = basis === "pregamePrice" ? (row.observed_at ?? null) : null;
       let chance = openChance(basis === "pregamePrice" ? row.over_probability : row.pregame_mark);
       if (basis === "pregamePrice" && !isRecentQuote(observedAt, opts.nowMs)) chance = null;
-      rungs.push({
+      rawRungs.push({
         threshold: row.threshold,
         chance,
         observedAt,
@@ -403,7 +457,9 @@ export function buildNhlContributionMilestoneCard(opts: {
         hit: finished ? (row.hit ?? null) : null,
       });
     }
-    rungs.sort((a, b) => a.threshold - b.threshold);
+    const counts = new Map<number, number>();
+    for (const r of rawRungs) counts.set(r.threshold, (counts.get(r.threshold) ?? 0) + 1);
+    const rungs = rawRungs.filter((r) => counts.get(r.threshold) === 1).sort((a, b) => a.threshold - b.threshold);
     const servedSide = ladder.rows.find((r) => r.player_team)?.player_team;
     const actualRow = finished
       ? ladder.rows.find((r) => typeof r.actual === "number" && Number.isFinite(r.actual))

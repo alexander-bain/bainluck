@@ -156,6 +156,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
           probability: 1.0,
           pregame_mark: 0.05,
           is_winner: true,
+          resolution_source: "exchange_settlement",
           source: "kalshi",
         },
         {
@@ -164,6 +165,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
           probability: 0.0,
           pregame_mark: 0.095,
           is_winner: false,
+          resolution_source: "exchange_settlement",
           source: "kalshi",
         },
         {
@@ -172,6 +174,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
           probability: 0.0,
           pregame_mark: 0.11,
           is_winner: false,
+          resolution_source: "exchange_settlement",
           source: "kalshi",
         },
         {
@@ -180,6 +183,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
           probability: 0.0,
           pregame_mark: 0.04,
           is_winner: false,
+          resolution_source: "exchange_settlement",
           source: "kalshi",
         },
       ],
@@ -220,6 +224,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             probability: 1.0,
             pregame_mark: 0.68,
             is_winner: true,
+            resolution_source: "exchange_settlement",
             source: "polymarket",
           },
           {
@@ -228,6 +233,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             probability: 0.0,
             pregame_mark: 0.19,
             is_winner: false,
+            resolution_source: "exchange_settlement",
             source: "polymarket",
           },
           {
@@ -236,6 +242,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             probability: 0.0,
             pregame_mark: 0.13,
             is_winner: false,
+            resolution_source: "exchange_settlement",
             source: "polymarket",
           },
           {
@@ -244,6 +251,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             probability: 1.0,
             pregame_mark: 0.05,
             is_winner: true,
+            resolution_source: "exchange_settlement",
             source: "kalshi",
           },
           {
@@ -252,6 +260,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             probability: 0.0,
             pregame_mark: 0.095,
             is_winner: false,
+            resolution_source: "exchange_settlement",
             source: "kalshi",
           },
           {
@@ -260,6 +269,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             probability: 0.0,
             pregame_mark: 0.11,
             is_winner: false,
+            resolution_source: "exchange_settlement",
             source: "kalshi",
           },
           {
@@ -268,6 +278,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             probability: 0.0,
             pregame_mark: 0.04,
             is_winner: false,
+            resolution_source: "exchange_settlement",
             source: "kalshi",
           },
         ],
@@ -277,6 +288,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             over_probability: 1.0,
             pregame_mark: 0.89,
             is_winner: true,
+            resolution_source: "exchange_settlement",
             market_type: "game_total",
             market_name: "Over 1.5 goals",
             source: "kalshi",
@@ -286,6 +298,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             over_probability: 1.0,
             pregame_mark: 0.72,
             is_winner: true,
+            resolution_source: "exchange_settlement",
             market_type: "game_total",
             market_name: "Over 2.5 goals",
             source: "kalshi",
@@ -295,6 +308,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
             over_probability: 1.0,
             pregame_mark: 0.51,
             is_winner: true,
+            resolution_source: "exchange_settlement",
             market_type: "game_total",
             market_name: "Over 3.5 goals",
             source: "kalshi",

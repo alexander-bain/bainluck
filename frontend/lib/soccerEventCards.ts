@@ -16,6 +16,7 @@
  *      goal thresholds from `game_question_matrix` / `gameMarkets.totals`.
  */
 
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import { labelNamesSide } from "./eventOwnMoneyline";
 import { isFinishedStatus } from "./eventState";
 import {
@@ -78,6 +79,7 @@ export interface SoccerRawTotalRow {
   market_name?: string | null;
   outcome_name?: string | null;
   is_winner?: boolean | null;
+  resolution_source?: string | null;
   period?: string | null;
   _market_id?: number | string | null;
 }
@@ -278,17 +280,18 @@ export function buildSoccerThreeWayCard(opts: {
     }
   }
 
-  // 2. Also check gameMarkets.other grouped by market_name
-  const byMarketName = new Map<string, SoccerRawOtherRow[]>();
+  // 2. Also check gameMarkets.other grouped by market_id / source + market_name
+  const byMarketKey = new Map<string, { title: string; rows: SoccerRawOtherRow[] }>();
   for (const row of opts.otherMarkets ?? []) {
     const mname = (row.market_name ?? "").trim();
     if (!mname || isDisqualifiedThreeWayMarketName(mname)) continue;
-    const list = byMarketName.get(mname) ?? [];
-    list.push(row);
-    byMarketName.set(mname, list);
+    const key = `${row._market_id ?? row.source ?? ""}:${mname}`;
+    const entry = byMarketKey.get(key) ?? { title: mname, rows: [] };
+    entry.rows.push(row);
+    byMarketKey.set(key, entry);
   }
 
-  for (const [title, rows] of byMarketName) {
+  for (const { title, rows } of byMarketKey.values()) {
     if (rows.length !== 3) continue;
     const legsByRole = new Map<SoccerThreeWayRole, SoccerThreeWayLeg>();
     for (const row of rows) {
@@ -307,12 +310,13 @@ export function buildSoccerThreeWayCard(opts: {
       const pregameChance = openChance(
         row.pregame_mark ?? row.opening_probability ?? (phase === "before" ? row.probability : null),
       );
-      const result: "won" | "lost" | null =
-        finished && typeof row.is_winner === "boolean"
-          ? row.is_winner
-            ? "won"
-            : "lost"
-          : null;
+      const result: "won" | "lost" | null = outcomeRowVerdict(
+        {
+          is_winner: typeof row.is_winner === "boolean" ? row.is_winner : null,
+          resolution_source: typeof row.resolution_source === "string" ? row.resolution_source : null,
+        },
+        finished,
+      );
       legsByRole.set(role, {
         role,
         label: role === "home" ? opts.homeShort : role === "away" ? opts.awayShort : "Draw",
@@ -582,17 +586,18 @@ export function buildSoccerExactScoreCard(opts: {
     }
   }
 
-  // 2. Also check gameMarkets.other grouped by market_name
-  const byMarketName = new Map<string, SoccerRawOtherRow[]>();
+  // 2. Also check gameMarkets.other grouped by market_id / source + market_name
+  const byMarketKey = new Map<string, { title: string; rows: SoccerRawOtherRow[] }>();
   for (const row of opts.otherMarkets ?? []) {
     const mname = (row.market_name ?? "").trim();
     if (!isExactScoreMarketTitle(mname)) continue;
-    const list = byMarketName.get(mname) ?? [];
-    list.push(row);
-    byMarketName.set(mname, list);
+    const key = `${row._market_id ?? row.source ?? ""}:${mname}`;
+    const entry = byMarketKey.get(key) ?? { title: mname, rows: [] };
+    entry.rows.push(row);
+    byMarketKey.set(key, entry);
   }
 
-  for (const [title, rows] of byMarketName) {
+  for (const { title, rows } of byMarketKey.values()) {
     const cellsByKey = new Map<string, SoccerExactScoreCell>();
     let otherCell: SoccerExactScoreCard["otherCell"] = null;
 
@@ -613,12 +618,13 @@ export function buildSoccerExactScoreCard(opts: {
         row.pregame_mark ?? row.opening_probability ?? (phase === "before" ? row.probability : null),
       );
       const chance = finished ? pregame : (quoted ?? pregame);
-      const result: "won" | "lost" | null =
-        finished && typeof row.is_winner === "boolean"
-          ? row.is_winner
-            ? "won"
-            : "lost"
-          : null;
+      const result: "won" | "lost" | null = outcomeRowVerdict(
+        {
+          is_winner: typeof row.is_winner === "boolean" ? row.is_winner : null,
+          resolution_source: typeof row.resolution_source === "string" ? row.resolution_source : null,
+        },
+        finished,
+      );
 
       if (parsed === "other") {
         otherCell = {
@@ -819,8 +825,15 @@ export function buildSoccerGoalTotalCard(opts: {
           row.opening_probability ??
           (phase === "before" ? row.over_probability : null),
       );
+      const verdict = outcomeRowVerdict(
+        {
+          is_winner: typeof row.is_winner === "boolean" ? row.is_winner : null,
+          resolution_source: typeof row.resolution_source === "string" ? row.resolution_source : null,
+        },
+        settled,
+      );
       const result: boolean | null =
-        settled && typeof row.is_winner === "boolean" ? row.is_winner : null;
+        verdict === "won" ? true : verdict === "lost" ? false : null;
 
       points.push({
         optionKey: `total:${row._market_id ?? line}`,
@@ -846,14 +859,9 @@ export function buildSoccerGoalTotalCard(opts: {
     }
   }
 
-  const byLine = new Map<number, LadderPoint>();
-  for (const p of points) {
-    const prev = byLine.get(p.x);
-    if (!prev || (p.chance !== null && prev.chance === null)) {
-      byLine.set(p.x, p);
-    }
-  }
-  const kept = Array.from(byLine.values()).sort((a, b) => a.x - b.x);
+  const counts = new Map<number, number>();
+  for (const p of points) counts.set(p.x, (counts.get(p.x) ?? 0) + 1);
+  const kept = points.filter((p) => counts.get(p.x) === 1).sort((a, b) => a.x - b.x);
   if (kept.length < MIN_LADDER_LINES) return null;
 
   const actual =
