@@ -35,8 +35,6 @@ export interface AtlasDetailsSheetProps {
   sourceCount?: number | null;
   sourceLabels?: string[];
   externalId?: string | null;
-  marketId?: number | string | null;
-  outcomeId?: number | string | null;
   rulesText?: string | null;
 }
 
@@ -60,8 +58,6 @@ export default function AtlasDetailsSheet({
   sourceCount = null,
   sourceLabels,
   externalId = null,
-  marketId = null,
-  outcomeId = null,
   rulesText = null,
 }: AtlasDetailsSheetProps) {
   const titleId = useId();
@@ -70,8 +66,13 @@ export default function AtlasDetailsSheet({
 
   useEffect(() => {
     if (!open) return;
-    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
-      previousFocusRef.current = document.activeElement;
+    let previousOverflow: string | undefined;
+    if (typeof document !== 'undefined') {
+      previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      if (document.activeElement instanceof HTMLElement) {
+        previousFocusRef.current = document.activeElement;
+      }
     }
     const timer = window.setTimeout(() => {
       closeButtonRef.current?.focus();
@@ -87,6 +88,9 @@ export default function AtlasDetailsSheet({
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener('keydown', handleKeyDown);
+      if (typeof document !== 'undefined' && previousOverflow !== undefined) {
+        document.body.style.overflow = previousOverflow;
+      }
       if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
         previousFocusRef.current.focus();
       }
