@@ -210,5 +210,5 @@ export function shouldWithholdProbability(
 ): boolean {
   if (!event) return false;
   if (!isPreGame(event.status)) return false;
-  return isUntradedPlaceholder(event.win_probability_sources);
+  return false;
 }
