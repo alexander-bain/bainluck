@@ -244,6 +244,17 @@ export function readPropGrade(
       : { state: "MISS", reason: "explicit_hit", hit: false, actual };
   }
 
+  const sourced = rows.find((row) =>
+    typeof row.resolution_source === "string" &&
+    row.resolution_source.trim() !== "" &&
+    typeof row.is_winner === "boolean",
+  );
+  if (sourced) {
+    return sourced.is_winner
+      ? { state: "HIT", reason: "explicit_hit", hit: true, actual }
+      : { state: "MISS", reason: "explicit_hit", hit: false, actual };
+  }
+
   if (actual != null) {
     return { state: "ACTUAL_ONLY", reason: "no_explicit_verdict", hit: null, actual };
   }

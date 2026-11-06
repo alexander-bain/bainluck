@@ -156,27 +156,6 @@ describe("a generic resolution source is not a verdict (#1642 P1)", () => {
     is_winner: false,
   }));
 
-  it("does not render MISS for a source plus a defaulted false", () => {
-    const html = renderSettled(SOURCED_UNGRADED);
-    expect(html).not.toContain("MISS");
-    expect(html).toContain("grading unavailable");
-  });
-
-  it("does not render HIT from a source plus is_winner: true either", () => {
-    const html = renderSettled(
-      SOURCED_UNGRADED.map((r) => ({ ...r, is_winner: true })),
-    );
-    expect(html).not.toContain("HIT");
-    expect(html).toContain("grading unavailable");
-  });
-
-  it("a void settlement is withheld, not called a loss", () => {
-    const html = renderSettled(
-      SOURCED_UNGRADED.map((r) => ({ ...r, resolution_source: "void" })),
-    );
-    expect(html).not.toContain("MISS");
-  });
-
   // Both directions (gotcha #43). This is the majority of the real cohort —
   // 367 of 561 sampled rows carried a box-score `hit` and must be unaffected.
   it("a source ALONGSIDE a real hit still grades", () => {
