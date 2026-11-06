@@ -50,10 +50,54 @@ export const HERO_TILE_COPY = {
   forwardOutcomesAfter: "traded outcomes",
   unavailable: "Unavailable right now",
   loading: "Reading the live record",
+  examTitle: "AI exam",
+  examFoundBefore: "Found",
+  examOf: "of",
+  examFoundAfter: "twins it had never seen, but wrongly combined",
+  examTo: "to",
+  examCombinedAfter: "held-out pairs.",
   testsTitle: "Tests for the tests",
   testsOf: "of",
   testsCaughtAfter: "planted changes caught;",
   testsRealAfter: "built on the site's own code",
+} as const;
+
+export const EXAM_COPY = {
+  title: "The twin exam and its gates",
+  leadBefore: "Before the AI judge may file matches on its own, it has to pass every gate on pairs it has never seen. It passed",
+  leadMiddle: "and failed",
+  leadAfter: ", so a person still checks its work.",
+  detail:
+    "The bars were set before the run, in a ruling: a license for each kind of pair, plus gates every license shares. No wrong combining on held-out pairs, the same label in every pass, word-for-word quotes and no cut-off replies.",
+  noLicense: "No license was granted, so a person still checks the judge's work.",
+  passedPrefix: "Passed:",
+  failedPrefix: "Failed:",
+  gateHeading: "Gate",
+  passHeadings: ["First pass", "Second pass", "Third pass"],
+  acrossPasses: "Across all three passes",
+  heldOutScope: "Held-out pairs",
+  allScope: "Every reply",
+  barBefore: "The bar for each gate was set before the run, in",
+  barLink: "the ruling that set them",
+  licensesTitle: "Licenses, by kind of pair",
+  licensesNote: "HELD met its own numbers but waits on the shared gates and other checks; NOT ELIGIBLE has too few held-out examples to judge.",
+} as const;
+
+export const CONFUSION_COPY = {
+  title: "Where the judge gets confused",
+  lead: "It is very good at spotting twins and bad at saying when it cannot tell.",
+  detail:
+    "For each kind of pair: how many of them it found, and how often it was right when it used that label, each with its likely range. Rare kinds get wide ranges, and the page draws them.",
+  views: { test: "Held-out", dev: "Development", all: "All pairs" },
+  passes: ["First pass", "Second pass", "Third pass"],
+  viewLabel: "Which pairs",
+  passLabel: "Which pass",
+  found: "Found",
+  right: "Right when it said so",
+  none: "—",
+  noneMeans: "It never used this label, so there is nothing to grade.",
+  heldOutNote: "Held-out pairs stay sealed: only these counts are published, never the pairs.",
+  lock: "Held-out",
 } as const;
 
 export const TIMELINE_COPY = {
@@ -258,6 +302,15 @@ export const TERMS: readonly { term: string; meaning: string }[] = [
     term: "Golden set",
     meaning:
       "A fixed set of real markets, each with the event it belongs to or with none, that we run through the real matcher to check it.",
+  },
+  {
+    term: "Twin",
+    meaning: "Two markets from different sources that are the same market, so their probabilities can be combined.",
+  },
+  {
+    term: "Likely range",
+    meaning:
+      "Where the true rate probably sits, given how few examples there were: a range wide enough to hold it in nineteen exams out of twenty.",
   },
   {
     term: "Planted bug",
