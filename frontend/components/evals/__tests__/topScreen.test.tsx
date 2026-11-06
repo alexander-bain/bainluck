@@ -42,7 +42,8 @@ jest.mock("@/lib/api", () => ({
 
 import EvalsPage from "@/app/evals/page";
 import { fetchCalibration } from "@/lib/api";
-import { STORY_COPY, TERMS, TOP_COPY } from "@/lib/evals/copy";
+import { STORY_COPY, TERMS, TOPIC_COPY, TOP_COPY } from "@/lib/evals/copy";
+import EXAM_RAW from "@/lib/evals/data/twin-exam-2026-11-05.json";
 import { EXAMPLE_AMERICAN_ODDS, EXAMPLE_CONTRACT_CENTS, americanOddsText, americanToPercent } from "@/lib/evals/example";
 import { calibrationFixture } from "@/lib/evals/fixtures/calibration";
 import { forwardRecordView, type ForwardRecordView } from "@/lib/evals/forwardRecord";
@@ -50,6 +51,7 @@ import { loadReviewerResults, reviewerTally } from "@/lib/evals/reviewerResults"
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
 import { truthDots, truthExample, truthReading, wholePercent } from "@/lib/evals/topScreen";
+import { PASSES } from "@/lib/evals/twinExam";
 import { CHART_THIN_FLOOR } from "@/lib/evals/forwardRecord";
 import { loadWatchers, watcherHealth } from "@/lib/evals/watchers";
 
@@ -254,6 +256,26 @@ describe("the story below the top screen (Alex, Nov 6, 2:04 PM)", () => {
     expect(example?.textContent).toContain(americanOddsText(EXAMPLE_AMERICAN_ODDS));
     expect(example?.textContent).toContain(`${EXAMPLE_CONTRACT_CENTS}¢`);
     expect(example?.textContent).toContain(`${americanToPercent(EXAMPLE_AMERICAN_ODDS)}%`);
+  });
+
+  it("the matching picture names its three tries, reads 2 or 3 off the record, and says the rule its red bar counts", async () => {
+    const page = await mountPage();
+    const picture = page.querySelector('[data-evals-chapter="matching"] [data-chapter-picture="exam"]');
+    const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    const M = TOPIC_COPY.matching;
+    const tries = PASSES.map((p) => EXAM_RAW.per_pass[p].test);
+    const found = tries.map((t) => t.per_relation.twin.recall.k);
+    const wrong = tries.map((t) => t.wrong_merges);
+    // The copy spells the number of tries in words.
+    expect(PASSES).toHaveLength(3);
+    expect(M.triesAfter).toContain("three separate tries");
+    expect(text(picture?.querySelector("[data-exam-tries]"))).toBe(`${M.triesBefore} ${tries[0].expected} ${M.triesAfter}`);
+    // The tries agree on the green bar and differ on the red one: one number, then "fewest or most".
+    expect(new Set(found).size).toBe(1);
+    expect(text(picture)).toContain(`${M.foundBefore} ${found[0]} ${M.foundOf} ${tries[0].per_relation.twin.recall.n} ${M.foundAfter}`);
+    expect(text(picture)).toContain(`${M.wrongBefore} ${Math.min(...wrong)} ${M.or} ${Math.max(...wrong)} ${M.wrongAfter}`);
+    expect(text(picture)).toContain("joined 2 or 3 pairs it should have kept apart");
+    expect(text(picture?.querySelector("[data-exam-why]"))).toBe(M.why);
   });
 
   it("a chapter whose record cannot be read keeps its words and drops only its picture", async () => {

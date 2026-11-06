@@ -427,9 +427,10 @@ describe("S2: the twin exam and its gates", () => {
     expect(picture?.getAttribute("data-truth-scope")).toBe("last_run");
     expect(picture?.querySelector('[data-result="fail"]')?.textContent).toBe("FAIL");
     expect(picture?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST RUN · NOV 5")).toBe(true);
-    // The picture itself is an exhibit under the same label; the numbers are the figures inside it.
+    // The picture itself is an exhibit under the same label; the numbers are the figures inside it:
+    // the pairs shown in the tries line, then the green bar's line, then the red bar's.
     const figures = Array.from(picture?.querySelectorAll("[data-evals-figure]:not([data-evals-exhibit])") ?? []).map((f) => f.textContent);
-    expect(figures).toEqual(["24", "25", "2", "3", "60"]);
+    expect(figures).toEqual(["60", "24", "25", "2", "3"]);
   });
 });
 

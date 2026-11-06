@@ -165,14 +165,19 @@ export const TOPIC_COPY = {
   matching: {
     failed: "It failed, so a person still checks every pair it suggests.",
     passed: "It passed, so it may decide on its own.",
-    foundBefore: "Found",
+    /** "three" is `PASSES.length` in words; the story test fails if one moves without the other. */
+    triesBefore: "We showed it the same",
+    triesAfter: "pairs it had never seen in three separate tries. Each time, it:",
+    foundBefore: "found",
     foundOf: "of the",
-    foundAfter: "real pairs it had never seen",
-    wrongBefore: "Wrongly paired",
-    wrongTo: "to",
-    wrongOf: "of the",
-    wrongAfter: "it was shown",
-    label: "Two bars from the AI's test: the real pairs it found, and the pairs it got wrong.",
+    foundAfter: "pairs that were the same market",
+    wrongBefore: "joined",
+    wrongAfter: "pairs it should have kept apart",
+    /** Between the fewest and the most when the tries differ: "2 or 3". */
+    or: "or",
+    /** The rule the red bar counts (the record's wrong_merges), and why it has to be zero. */
+    why: "To decide on its own it has to keep every one of those pairs apart, because joining two different markets mixes them into one wrong number.",
+    label: "Two bars from the AI's test: the pairs it found that were the same market, and the pairs it joined that it should have kept apart.",
   },
   reviewer: {
     legendBefore:

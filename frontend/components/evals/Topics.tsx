@@ -124,7 +124,11 @@ export function KindsPicture({ state }: { state: ForwardRecordState }) {
   );
 }
 
-/** The matcher's exam, as two bars, under its result: FAIL stays FAIL. */
+/**
+ * The matcher's exam, as two bars, under its result: FAIL stays FAIL. The bars
+ * name their three tries, and the rule the red one counts is said in words,
+ * since a short red bar under FAIL reads as a contradiction without it.
+ */
 export function ExamPicture({ exam }: { exam: TwinExam }) {
   const truth = examTruth(exam);
   const C = TOPIC_COPY.matching;
@@ -142,7 +146,7 @@ export function ExamPicture({ exam }: { exam: TwinExam }) {
       n(lo, "text-title-3")
     ) : (
       <>
-        {n(lo, "text-title-3")} {C.wrongTo} {n(hi, "text-title-3")}
+        {n(lo, "text-title-3")} {C.or} {n(hi, "text-title-3")}
       </>
     );
   const bar = (part: number, whole: number, tone: string, kind: string) => (
@@ -156,6 +160,9 @@ export function ExamPicture({ exam }: { exam: TwinExam }) {
         <ResultChip result={exam.result} />
         <span className="text-body text-text-primary">{exam.result === "pass" ? C.passed : C.failed}</span>
       </div>
+      <p className="text-caption text-text-secondary" data-exam-tries="">
+        {C.triesBefore} {n(pairs)} {C.triesAfter}
+      </p>
       <Exhibit truth={truth} label={C.label}>
         <div className="space-y-3">
           <div className="space-y-1">
@@ -166,12 +173,15 @@ export function ExamPicture({ exam }: { exam: TwinExam }) {
           </div>
           <div className="space-y-1">
             <p className="text-caption text-text-secondary">
-              {C.wrongBefore} {range(wrongLo, wrongHi)} {C.wrongOf} {n(pairs)} {C.wrongAfter}
+              {C.wrongBefore} {range(wrongLo, wrongHi)} {C.wrongAfter}
             </p>
             {bar(wrongHi, pairs, "bg-accent-danger", "wrong")}
           </div>
         </div>
       </Exhibit>
+      <p className="text-caption text-text-secondary" data-exam-why="">
+        {C.why}
+      </p>
     </PictureCard>
   );
 }
