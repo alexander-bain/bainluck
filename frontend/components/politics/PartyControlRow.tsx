@@ -4,21 +4,15 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFuturesHistory, type ChamberControl } from "@/lib/api";
-import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
+import { servedPartialHistory } from "@/lib/historyRange";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { isSettlementPoint } from "@/lib/chartSettlementPoints";
 import type { FuturesOutcomeHistory } from "@/lib/types";
-import { FuturesChart } from "@/components/FuturesChart";
+import { TwoSidedHistoryTimeline } from "@/components/event/TwoSidedTimeline";
 import { SourceBadge } from "./atoms";
 import s from "@/app/politics/politics.module.css";
 
 type Control = ChamberControl & { source?: string; winner?: string };
-
-const RANGES: { label: string; hours: number }[] = [
-  { label: "24h", hours: 24 },
-  { label: "7d", hours: 168 },
-  { label: "All", hours: 8760 },
-];
 
 function ChamberHistoryTimeline({
   marketId,
@@ -29,7 +23,7 @@ function ChamberHistoryTimeline({
   defaultHours?: number;
   height?: number;
 }) {
-  const [hours, setHours] = useState(defaultHours);
+  const [hours] = useState(defaultHours);
   const { data, error, mutate } = useSWR(
     marketId ? ["event-twosided", marketId, hours] : null,
     () =>
@@ -39,7 +33,7 @@ function ChamberHistoryTimeline({
         undefined,
         4,
         undefined,
-        historyRangeOption(hours === 8760 ? "all" : null),
+        hours === 8760 ? { range: "full" } : undefined,
       ),
     { revalidateOnFocus: false },
   );
@@ -71,39 +65,7 @@ function ChamberHistoryTimeline({
     );
   }
 
-  if (!hasHistory && !historyWithheld) return null;
-
-  return (
-    <div className="mt-5" data-testid="two-sided-history-timeline" data-hours={hours}>
-      <div className="flex justify-end mb-2">
-        <div className="flex rounded-full bg-surface-elevated p-0.5">
-          {RANGES.map((r) => (
-            <button
-              key={r.hours}
-              type="button"
-              aria-pressed={hours === r.hours}
-              onClick={() => setHours(r.hours)}
-              className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                hours === r.hours
-                  ? "bg-surface-card text-text-primary shadow-card font-semibold"
-                  : "text-text-secondary hover:text-text-primary"
-              }`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <FuturesChart
-        historyData={outcomes}
-        fixedYAxis
-        showAxes
-        showLegend={false}
-        height={height}
-        historyWithheld={historyWithheld}
-      />
-    </div>
-  );
+  return <TwoSidedHistoryTimeline marketId={marketId} defaultHours={defaultHours} height={height} />;
 }
 
 export default function PartyControlRow({
