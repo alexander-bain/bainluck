@@ -131,7 +131,8 @@ export function areGamesUnlocked(input: {
   if (!firstRun) return true;
   if (engagedThisSession) return true;
   if (storage?.gamesUnlocked) return true;
-  return cardsSeen >= GAMES_UNLOCK_CARDS_SEEN && hasScrolled;
+  const sawEnoughCards = cardsSeen >= GAMES_UNLOCK_CARDS_SEEN;
+  return sawEnoughCards && hasScrolled;
 }
 
 function writeFlag(key: string): void {
