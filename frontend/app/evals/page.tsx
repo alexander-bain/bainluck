@@ -4,14 +4,14 @@ import EvalsSection from "@/components/evals/EvalsSection";
 import ExamSection from "@/components/evals/ExamSection";
 import ForwardRecordSection from "@/components/evals/ForwardRecordSection";
 import GapList from "@/components/evals/GapList";
-import HeroTiles from "@/components/evals/HeroTiles";
 import ReadingGuide from "@/components/evals/ReadingGuide";
 import RelationReportCard from "@/components/evals/RelationReportCard";
 import RunTimeline from "@/components/evals/RunTimeline";
 import SourceList from "@/components/evals/SourceList";
 import TestLibrary from "@/components/evals/TestLibrary";
-import TestsForTheTests from "@/components/evals/TestsForTheTests";
+import TestsForTheTests, { BiteMeter } from "@/components/evals/TestsForTheTests";
 import TopScreen from "@/components/evals/TopScreen";
+import { BreakagesPicture, ChecksPicture, ExamPicture, KindsPicture, ReviewerPicture, Topic } from "@/components/evals/Topics";
 import Watchers from "@/components/evals/Watchers";
 import { useForwardRecord } from "@/components/evals/useForwardRecord";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -27,7 +27,7 @@ import {
   SOURCES_COPY,
   TESTS_FOR_TESTS_COPY,
   TIMELINE_COPY,
-  TOP_COPY,
+  TOPIC_COPY,
   WATCHERS_COPY,
 } from "@/lib/evals/copy";
 import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
@@ -50,9 +50,12 @@ import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
  * gates, its report card and its hero tile, from Builder B's scorer record.
  *
  * Since Alex's Nov 6 goal the page opens with the top screen — one plain
- * answer and three pictures for a reader with no AI background — and
- * everything above sits under one "Show the details" fold. No word that needs
- * the glossary appears outside a fold (`topScreen.test.tsx`).
+ * answer and three pictures for a reader with no AI background — and then one
+ * topic per question: a plain paragraph, a picture, and the sections above
+ * under that topic's own "Show the details" fold. The gaps stay open. No word
+ * that needs the glossary appears outside a fold, and the folds use plain
+ * words too: the glossary maps the technical names to them
+ * (`topScreen.test.tsx`).
  *
  * Truth rules, each enforced by a test under `lib/evals/__tests__/` and
  * `components/evals/__tests__/`: every number renders through `Figure` with a
@@ -70,11 +73,11 @@ const WATCHERS = loadWatchers();
 const REVIEWER_RESULTS = loadReviewerResults(REVIEWER_STUDY);
 
 const SECTIONS_ON_PAGE: readonly EvalsSectionId[] = [
+  "forward-record",
   ...(EXAM ? (["exam", "confusion"] as const) : []),
   "timeline",
-  "forward-record",
+  ...(REVIEWER_STUDY ? (["tests-for-tests"] as const) : []),
   ...(SCOREBOARD ? (["test-library"] as const) : []),
-  ...(SCOREBOARD || REVIEWER_STUDY ? (["tests-for-tests"] as const) : []),
   ...(WATCHERS ? (["watchers"] as const) : []),
   "gaps",
 ];
@@ -102,72 +105,103 @@ export default function EvalsPage() {
     <div className="max-w-6xl mx-auto space-y-8 pb-12" data-testid="evals-page">
       <TopScreen forward={forward} study={REVIEWER_STUDY} results={REVIEWER_RESULTS} watchers={WATCHERS} />
 
-      {/* Everything the page carried before the top screen, under one fold until
-          each topic gets its own plain opening (Alex, Nov 6). Nothing with a
-          receipt is dropped; it moved here. */}
-      <details data-evals-fold="details" className="group">
-        <summary className="cursor-pointer list-none rounded-xl border border-surface-border bg-surface-card px-4 py-3 text-body text-accent-brand [&::-webkit-details-marker]:hidden">
-          <span aria-hidden="true" className="mr-1 inline-block transition-transform group-open:rotate-90">›</span>
-          {TOP_COPY.fold}
-          <span className="text-caption text-text-secondary">: {TOP_COPY.foldHint}</span>
-        </summary>
-        <div className="space-y-8 pt-6">
-          <div className="text-center space-y-3 pb-6 border-b border-surface-border">
-            <p className="text-body text-text-primary max-w-2xl mx-auto">{HERO_COPY.lead}</p>
-            <p className="text-caption text-text-secondary max-w-2xl mx-auto">{HERO_COPY.detail}</p>
-            <HeroTiles exam={EXAM} forward={forward} board={SCOREBOARD} />
-          </div>
+      {/* One topic per question the top screen asks, then the gaps: each opens
+          in plain words with a picture, and everything the page carried before
+          sits under that topic's "Show the details" fold, unchanged (Alex, Nov 6). */}
+      <Topic
+        id="probabilities"
+        title={TOPIC_COPY.probabilities.title}
+        why={TOPIC_COPY.probabilities.why}
+        picture={<KindsPicture state={forward} />}
+      >
+        <ForwardRecordSection state={forward} />
+      </Topic>
 
-          {EXAM && <ExamSection exam={EXAM} />}
+      <Topic
+        id="matching"
+        title={TOPIC_COPY.matching.title}
+        why={TOPIC_COPY.matching.why}
+        picture={EXAM && <ExamPicture exam={EXAM} />}
+      >
+        {EXAM && <ExamSection exam={EXAM} />}
+        {EXAM && <RelationReportCard exam={EXAM} />}
+        <EvalsSection
+          id="timeline"
+          title={TIMELINE_COPY.title}
+          lead={TIMELINE_COPY.lead}
+          detail={TIMELINE_COPY.detail}
+        >
+          <RunTimeline runs={RUNS} />
+        </EvalsSection>
+      </Topic>
 
-          {EXAM && <RelationReportCard exam={EXAM} />}
+      {REVIEWER_STUDY && (
+        <Topic
+          id="reviewer"
+          title={TOPIC_COPY.reviewer.title}
+          why={TOPIC_COPY.reviewer.why}
+          picture={REVIEWER_RESULTS && <ReviewerPicture results={REVIEWER_RESULTS} study={REVIEWER_STUDY} />}
+        >
+          <TestsForTheTests board={null} study={REVIEWER_STUDY} />
+        </Topic>
+      )}
 
-          <EvalsSection
-            id="timeline"
-            title={TIMELINE_COPY.title}
-            lead={TIMELINE_COPY.lead}
-            detail={TIMELINE_COPY.detail}
-          >
-            <RunTimeline runs={RUNS} />
-          </EvalsSection>
+      {SCOREBOARD && (
+        <Topic
+          id="tests"
+          title={TOPIC_COPY.tests.title}
+          why={TOPIC_COPY.tests.why}
+          picture={<BreakagesPicture board={SCOREBOARD} />}
+        >
+          <TestLibrary board={SCOREBOARD}>
+            <BiteMeter board={SCOREBOARD} />
+          </TestLibrary>
+        </Topic>
+      )}
 
-          <ForwardRecordSection state={forward} />
+      {WATCHERS && (
+        <Topic
+          id="checks"
+          title={TOPIC_COPY.checks.title}
+          why={TOPIC_COPY.checks.why}
+          picture={<ChecksPicture list={WATCHERS} />}
+        >
+          <Watchers list={WATCHERS} />
+        </Topic>
+      )}
 
-          {SCOREBOARD && <TestLibrary board={SCOREBOARD} />}
+      <EvalsSection
+        id="gaps"
+        title={GAPS_COPY.title}
+        lead={GAPS_COPY.lead}
+        detail={GAPS_COPY.detail}
+        truth={{ kind: "reviewed", asOf: GAPS_REVIEWED_AT }}
+      >
+        <GapList gaps={GAPS} />
+      </EvalsSection>
 
-          {(SCOREBOARD || REVIEWER_STUDY) && <TestsForTheTests board={SCOREBOARD} study={REVIEWER_STUDY} />}
-
-          {WATCHERS && <Watchers list={WATCHERS} />}
-
-          <EvalsSection
-            id="gaps"
-            title={GAPS_COPY.title}
-            lead={GAPS_COPY.lead}
-            detail={GAPS_COPY.detail}
-            truth={{ kind: "reviewed", asOf: GAPS_REVIEWED_AT }}
-          >
-            <GapList gaps={GAPS} />
-          </EvalsSection>
-
-          <EvalsSection
-            id="how-to-read"
-            title={READING_COPY.title}
-            lead={READING_COPY.lead}
-            detail={READING_COPY.detail}
-          >
-            <ReadingGuide />
-          </EvalsSection>
-
-          <EvalsSection
-            id="sources"
-            title={SOURCES_COPY.title}
-            lead={SOURCES_COPY.lead}
-            detail={SOURCES_COPY.detail}
-          >
-            <SourceList sources={sourcesFor(SECTIONS_ON_PAGE)} sectionTitles={SECTION_TITLES} />
-          </EvalsSection>
+      <Topic id="more" title={TOPIC_COPY.more.title} why={TOPIC_COPY.more.why}>
+        <div className="space-y-2 text-body text-text-primary" data-testid="evals-about">
+          <p>{HERO_COPY.lead}</p>
+          <p className="text-caption text-text-secondary">{HERO_COPY.detail}</p>
         </div>
-      </details>
+        <EvalsSection
+          id="how-to-read"
+          title={READING_COPY.title}
+          lead={READING_COPY.lead}
+          detail={READING_COPY.detail}
+        >
+          <ReadingGuide />
+        </EvalsSection>
+        <EvalsSection
+          id="sources"
+          title={SOURCES_COPY.title}
+          lead={SOURCES_COPY.lead}
+          detail={SOURCES_COPY.detail}
+        >
+          <SourceList sources={sourcesFor(SECTIONS_ON_PAGE)} sectionTitles={SECTION_TITLES} />
+        </EvalsSection>
+      </Topic>
     </div>
   );
 }

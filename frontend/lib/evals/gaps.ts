@@ -39,44 +39,44 @@ export interface Gap {
 export const GAPS: readonly Gap[] = [
   {
     id: "combined-probability",
-    text: "The combined probability on each card is not graded. The forward record grades the sources it is made from, not the combined number.",
+    text: "The combined probability on each card is not graded yet. We grade the sources it is made from, not the combined number itself.",
     ref: issueRef(11850),
   },
   {
     id: "rare-pair-kinds",
-    text: "Some kinds of market pairs have too few held-out examples for the AI judge to earn a license on them.",
+    text: "For some kinds of matching pairs there are too few never-seen examples for the AI matcher to earn permission to decide on its own.",
     ref: pullRef(11951),
   },
   {
     id: "code-reviewer",
-    text: "The AI code reviewer's catch rate is not measured.",
+    text: "The AI code reviewer's catch rate is not measured yet; the study is under way.",
     ref: pullRef(11951),
   },
   {
     id: "feed-reviewer",
-    text: "The AI reviewer that looks at the top of the feed each day has not been checked against human labels.",
+    text: "The AI that looks over the top of the Discover feed each day has not been compared with people's judgments.",
     ref: issueRef(587),
   },
   {
     id: "ranking-grades",
-    text: "No change to the feed's ranking has been scored against human grades.",
+    text: "No change to the order of the feed has been scored against people's grades.",
     ref: issueRef(12095),
-    planned: { waitingOn: "the ranking harness", ref: pullRef(12100) },
+    planned: { waitingOn: "the ranking scorer", ref: pullRef(12100) },
   },
   {
     id: "matching-audit",
-    text: "Our four-layer matching audit has no dated result since {since}.",
+    text: "Our full check of how markets are matched to events has no dated result since {since}.",
     dates: { since: "2026-07" },
     ref: issueRef(2693),
   },
   {
     id: "time-before-result",
-    text: "Accuracy by time before the result, such as a week or a day out, is not served.",
+    text: "We do not yet show accuracy by how far ahead a forecast was made, such as a week or a day before the result.",
     ref: pullRef(11956),
   },
   {
     id: "chance-failures",
-    text: "Nothing measures how often a test fails by chance.",
+    text: "Nothing measures how often a test fails by bad luck rather than a real problem.",
     ref: issueRef(11939),
   },
 ];

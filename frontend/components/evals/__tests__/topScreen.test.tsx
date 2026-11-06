@@ -11,6 +11,11 @@
  * The extractor has its own negative control, so a check that stopped reading
  * would fail rather than pass. Each picture is held to its record: one dot per
  * group in the live curve, one block per planned review, one circle per check.
+ *
+ * Below the top screen, one topic per question: a plain paragraph, a picture
+ * outside the fold, and everything the page carried before inside that topic's
+ * "Show the details" fold. The same jargon check covers them, because it reads
+ * the whole page outside every fold.
  */
 
 import React, { act } from "react";
@@ -146,15 +151,94 @@ describe("no jargon above a fold (Alex, Nov 6)", () => {
     expect(hits).toEqual(["gates", "confusion"]);
   });
 
-  it("everything the page carried before sits under the fold, nothing dropped", async () => {
+  it("everything the page carried before sits under a topic's fold, nothing dropped", async () => {
     const page = await mountPage();
-    const fold = page.querySelector("details[data-evals-fold]");
-    expect(fold).not.toBeNull();
-    expect(fold?.querySelector("summary")?.textContent).toContain(TOP_COPY.fold);
-    for (const id of ["exam", "confusion", "timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps", "how-to-read", "sources"]) {
+    const folded: Record<string, string> = {
+      "forward-record": "probabilities",
+      exam: "matching",
+      confusion: "matching",
+      timeline: "matching",
+      "tests-for-tests": "reviewer",
+      "test-library": "tests",
+      watchers: "checks",
+      "how-to-read": "more",
+      sources: "more",
+    };
+    for (const [id, topic] of Object.entries(folded)) {
+      const fold = page.querySelector(`[data-evals-topic="${topic}"] > details[data-evals-fold="${topic}"]`);
+      expect(fold?.querySelector("summary")?.textContent).toContain(TOP_COPY.fold);
       expect(fold?.querySelector(`#${id}`)).not.toBeNull();
     }
-    expect(fold?.querySelector('[data-testid="evals-hero-tiles"]')).not.toBeNull();
+    // The planted-change meter sits with the library whose cases it grades, and the about text with how to read the page.
+    expect(page.querySelector('[data-testid="evals-bite"]')?.closest("#test-library")).not.toBeNull();
+    expect(page.querySelector('[data-testid="evals-about"]')?.closest('details[data-evals-fold="more"]')).not.toBeNull();
+    // The gaps stay open: each row is plain words and its issue.
+    expect(page.querySelector("#gaps")?.closest("details")).toBeNull();
+  });
+});
+
+describe("the topics below the top screen", () => {
+  it("one topic per question, in the top screen's order, with the gaps before the last", async () => {
+    const page = await mountPage();
+    const order = Array.from(page.querySelectorAll("[data-evals-topic], #gaps")).map(
+      (t) => t.getAttribute("data-evals-topic") ?? t.id
+    );
+    expect(order).toEqual(["probabilities", "matching", "reviewer", "tests", "checks", "gaps", "more"]);
+  });
+
+  it("each opens with a plain paragraph and a picture outside its fold, the picture under its own label", async () => {
+    const page = await mountPage();
+    for (const id of ["probabilities", "matching", "reviewer", "tests", "checks"]) {
+      const topic = page.querySelector(`[data-evals-topic="${id}"]`);
+      expect(topic?.querySelector(":scope > h2")?.textContent).toBeTruthy();
+      expect((topic?.querySelector(":scope > p")?.textContent ?? "").length).toBeGreaterThan(80);
+      const picture = topic?.querySelector("[data-topic-picture]");
+      expect(picture).not.toBeNull();
+      expect(picture?.closest("details")).toBeNull();
+      expect(picture?.getAttribute("data-truth-scope")).toBe(picture?.querySelector("[data-truth-chip]")?.getAttribute("data-truth"));
+    }
+  });
+
+  it("a topic whose record cannot be read is absent, not empty", async () => {
+    // A fresh module registry whose scoreboard cannot be read, with its own React to mount it.
+    let parts: {
+      R: typeof React;
+      client: typeof import("react-dom/client");
+      swr: typeof import("swr");
+      Page: React.ComponentType;
+    } | null = null;
+    jest.isolateModules(() => {
+      jest.doMock("@/lib/evals/scoreboard", () => ({
+        ...jest.requireActual("@/lib/evals/scoreboard"),
+        loadScoreboard: () => null,
+      }));
+      parts = {
+        R: require("react"),
+        client: require("react-dom/client"),
+        swr: require("swr"),
+        Page: require("@/app/evals/page").default,
+      };
+    });
+    jest.dontMock("@/lib/evals/scoreboard");
+    const { R, client, swr, Page } = parts!;
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const isolated = client.createRoot(el);
+    await R.act(async () => {
+      isolated.render(
+        R.createElement(
+          swr.SWRConfig,
+          { value: { provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false } },
+          R.createElement(Page)
+        )
+      );
+    });
+    const topics = Array.from(el.querySelectorAll("[data-evals-topic]")).map((t) => t.getAttribute("data-evals-topic"));
+    expect(topics).toEqual(["probabilities", "matching", "reviewer", "checks", "more"]);
+    expect(el.querySelector("#test-library")).toBeNull();
+    expect(el.querySelector('[data-testid="evals-bite"]')).toBeNull();
+    await R.act(async () => isolated.unmount());
+    el.remove();
   });
 });
 
