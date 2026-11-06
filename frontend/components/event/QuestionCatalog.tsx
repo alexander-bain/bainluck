@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import type { GameMarketsResponse } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { buildQuestionCatalog, type CatalogGroup } from "@/lib/questionCatalog";
+import { isSettledStatus } from "@/lib/settledQuote";
 import { formatSourceStamp } from "@/lib/sourceAge";
 import MarketBrowser from "./MarketBrowser";
 
@@ -19,10 +21,14 @@ function QuestionGroupCard({
   group,
   expanded,
   onToggle,
+  atlasMode = false,
+  settled = false,
 }: {
   group: CatalogGroup;
   expanded: boolean;
   onToggle: () => void;
+  atlasMode?: boolean;
+  settled?: boolean;
 }) {
   const shown = expanded ? group.outcomes : group.outcomes.slice(0, GROUP_PREVIEW);
   const thresholds = Array.from(
@@ -48,11 +54,18 @@ function QuestionGroupCard({
         {shown.map((outcome, index) => (
           <li key={`${outcome.label}-${index}`} className="flex justify-between gap-4 text-sm py-0.5">
             <span className="min-w-0">{outcome.label}</span>
-            {outcome.probability != null && (
+            {outcome.probability != null ? (
               <strong className="font-mono tabular-nums whitespace-nowrap">
                 {formatProbabilityPercent(outcome.probability)}
               </strong>
-            )}
+            ) : atlasMode && !settled ? (
+              <span
+                className="text-xs text-text-secondary whitespace-nowrap"
+                data-testid="atlas-no-recent-probability"
+              >
+                {ATLAS_STATE_COPY.noRecentPrice}
+              </span>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -112,13 +125,16 @@ function QuestionGroupCard({
 export default function QuestionCatalog({
   data,
   status,
+  atlasMode = false,
 }: {
   data: GameMarketsResponse;
   status?: string;
+  atlasMode?: boolean;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const groups = buildQuestionCatalog(data, status, Date.now());
   if (!groups.length) return null;
+  const settled = isSettledStatus(status);
   const toggle = (key: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -145,6 +161,8 @@ export default function QuestionCatalog({
               group={group}
               expanded={expanded.has(group.key)}
               onToggle={() => toggle(group.key)}
+              atlasMode={atlasMode}
+              settled={settled}
             />
           ),
         }))}

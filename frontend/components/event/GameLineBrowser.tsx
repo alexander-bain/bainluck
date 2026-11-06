@@ -1,5 +1,6 @@
 "use client";
 
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import type { GameMarketsResponse } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
@@ -11,9 +12,11 @@ import MarketBrowser from "./MarketBrowser";
 export default function GameLineBrowser({
   data,
   status,
+  atlasMode = false,
 }: {
   data: GameMarketsResponse;
   status?: string;
+  atlasMode?: boolean;
 }) {
   const groups = [
     // #10823: team_totals used to carry one flattened over_probability across
@@ -103,7 +106,13 @@ export default function GameLineBrowser({
                         : "font-mono tabular-nums text-text-muted"
                     }
                   >
-                    {verdict === "won" ? "Won" : "Lost"}
+                    {atlasMode
+                      ? verdict === "won"
+                        ? ATLAS_STATE_COPY.wonWithCheck
+                        : ATLAS_STATE_COPY.lostWithCross
+                      : verdict === "won"
+                        ? "Won"
+                        : "Lost"}
                   </span>
                 )}
                 {verdict == null && probability != null && (
@@ -111,6 +120,14 @@ export default function GameLineBrowser({
                     {settled ? "Last quote " : ""}
                     {formatProbabilityPercent(probability)}
                   </strong>
+                )}
+                {verdict == null && probability == null && atlasMode && !settled && (
+                  <span
+                    className="text-xs text-text-secondary whitespace-nowrap"
+                    data-testid="atlas-no-recent-probability"
+                  >
+                    {ATLAS_STATE_COPY.noRecentPrice}
+                  </span>
                 )}
               </div>
               <div className="text-xs text-text-secondary mt-1">

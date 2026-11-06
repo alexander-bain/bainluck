@@ -250,7 +250,7 @@ import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
 import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
-import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import { ATLAS_STATE_COPY, resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
 import {
   EVENT_HEADLINE_PHASE_LABELS,
   resolveEventHeadlineBaseline,
@@ -2043,7 +2043,9 @@ export default function EventPage({ params }: EventPageProps) {
     const loadingView = eventLoadingView(pastSlowLoadMark);
     return (
       <div className="py-12 flex flex-col items-center gap-4">
-        <LoadingSpinner text={loadingView.text} />
+        <LoadingSpinner
+          text={atlasOptIn && !pastSlowLoadMark ? ATLAS_STATE_COPY.loading : loadingView.text}
+        />
         {loadingView.offersRetry && (
           <button
             type="button"
@@ -2515,6 +2517,7 @@ export default function EventPage({ params }: EventPageProps) {
       // #10090 decision J = A. A stream double that predates the field reports
       // `undefined`: unconfirmed.
       priceConfirmed: Boolean(acceptedPriceClock) && typeof confirmedAtShown === "string",
+      atlasMode: atlasOptIn,
     },
     Date.now(),
   );
@@ -3033,7 +3036,7 @@ export default function EventPage({ params }: EventPageProps) {
                     stays on the `title`, which has room for it. */}
                 {/* #2786 — HOME-AWAY, matching this page's own hero, which
                     stacks the home score above the away score. */}
-                {venueSettledSentence ??
+                {(atlasOptIn && venueVoided ? ATLAS_STATE_COPY.voided : venueSettledSentence) ??
                   suspendedSummary(
                     event?.away_score,
                     event?.home_score,
@@ -3321,6 +3324,9 @@ export default function EventPage({ params }: EventPageProps) {
                 // is playing. The slot goes empty, as it does for #6438.
                 stopped={stoppageLabel !== null}
                 tenths={tenthsOptIn}
+                atlasMode={atlasOptIn}
+                voided={venueVoided}
+                stoppageLabel={stoppageLabel}
               />
               {atlasOptIn && atlasHeadlinePhase && (
                 <div
@@ -4113,7 +4119,7 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {gameMarkets && !venueVoided && <SectionErrorBoundary label="Team scoring and period lines" resetKey={gameMarkets}>
-        <GameLineBrowser data={gameMarkets} status={event.status} />
+        <GameLineBrowser data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />
       </SectionErrorBoundary>}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
@@ -4300,7 +4306,7 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && !venueVoided && (
         <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
           <div id={ALL_MARKETS_ANCHOR_ID} className="scroll-mt-20 empty:hidden">
-            <QuestionCatalog data={gameMarkets} status={event.status} />
+            <QuestionCatalog data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />
           </div>
         </SectionErrorBoundary>
       )}
