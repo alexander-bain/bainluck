@@ -121,7 +121,7 @@ export function areGamesUnlocked(input: {
   hasScrolled: boolean;
   engagedThisSession: boolean;
 }): boolean {
-  const { firstRun, storage, cardsSeen, hasScrolled, engagedThisSession } = input;
+  const { firstRun, storage, cardsSeen, engagedThisSession } = input;
   // #6445 — the product question comes before the reader question, and it
   // dominates every arm below. This function answers "should this reader see
   // games"; "we are not shipping games yet" is an answer to that, and putting
@@ -131,7 +131,7 @@ export function areGamesUnlocked(input: {
   if (!firstRun) return true;
   if (engagedThisSession) return true;
   if (storage?.gamesUnlocked) return true;
-  return cardsSeen >= GAMES_UNLOCK_CARDS_SEEN && hasScrolled;
+  return cardsSeen >= GAMES_UNLOCK_CARDS_SEEN;
 }
 
 function writeFlag(key: string): void {

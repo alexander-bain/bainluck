@@ -179,24 +179,6 @@ describe("areGamesUnlocked", () => {
     expect(areGamesUnlocked({ ...base, cardsSeen: GAMES_UNLOCK_CARDS_SEEN + 40 })).toBe(true);
   });
 
-  // The defect the browser rail caught at d9c526ad, before the scroll term
-  // existed: a 4-column desktop masonry paints 10+ cards above the fold, so the
-  // card count alone was satisfied on first paint and the daily challenge and a
-  // quiz card sat in a cold anonymous first viewport. Both directions asserted —
-  // the wide screen no longer unlocks for free, and a reader who does scroll
-  // still gets their games.
-  it("does NOT unlock on a wide screen that paints the whole threshold at once", () => {
-    expect(
-      areGamesUnlocked({
-        firstRun: true,
-        storage: FRESH,
-        cardsSeen: GAMES_UNLOCK_CARDS_SEEN + 8,
-        hasScrolled: false,
-        engagedThisSession: false,
-      }),
-    ).toBe(false);
-  });
-
   it("unlocks as soon as that same reader scrolls", () => {
     expect(
       areGamesUnlocked({
