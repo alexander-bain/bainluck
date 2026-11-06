@@ -296,6 +296,42 @@ async def test_awards_category_roundup_refusal_reasons_and_tolerance_boundary():
     assert isinstance(res_guard, RoundupRefusal)
     assert ("awards_category", "winner_field_guard_failed:900") in res_guard.reasons
 
+    # 3b. unpriced_winner_outcome: winner outcome missing numeric probability
+    unpriced_winner = {
+        "id": 900,
+        "name": "Golden Globes: Best Motion Picture - Drama Winner",
+        "status": "open",
+        "source": "kalshi",
+        "category": "entertainment",
+        "mutually_exclusive": True,
+        "outcomes": [
+            {"id": 9001, "name": "One Battle After Another", "probability": None},
+            {"id": 9002, "name": "Sinners", "probability": 0.31},
+            {"id": 9003, "name": "Hamnet", "probability": 0.27},
+        ],
+    }
+    res_unpriced = await golden_globes_best_picture([unpriced_winner, *only_nomination])
+    assert isinstance(res_unpriced, RoundupRefusal)
+    assert ("awards_category", "unpriced_winner_outcome:900") in res_unpriced.reasons
+
+    # 3c. invalid_winner_probability: winner outcome has out-of-range probability
+    invalid_prob_winner = {
+        "id": 900,
+        "name": "Golden Globes: Best Motion Picture - Drama Winner",
+        "status": "open",
+        "source": "kalshi",
+        "category": "entertainment",
+        "mutually_exclusive": True,
+        "outcomes": [
+            {"id": 9001, "name": "One Battle After Another", "probability": 1.25},
+            {"id": 9002, "name": "Sinners", "probability": 0.31},
+            {"id": 9003, "name": "Hamnet", "probability": 0.27},
+        ],
+    }
+    res_invalid_prob = await golden_globes_best_picture([invalid_prob_winner, *only_nomination])
+    assert isinstance(res_invalid_prob, RoundupRefusal)
+    assert ("awards_category", "invalid_winner_probability:900") in res_invalid_prob.reasons
+
     # 4. win_exceeds_nomination:<subject> when win_prob > nom_prob + 0.02
     winner_field = {
         "id": 900,
