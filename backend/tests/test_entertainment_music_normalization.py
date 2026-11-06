@@ -249,3 +249,67 @@ class TestPercentScaleThresholdClass:
         """
         code = _strip_comments((_ROUTES_DIR / "entertainment.py").read_text())
         assert "spotify_sum" not in code
+
+
+class TestOrderedEntertainmentBuckets12093:
+    """#12093 (Defect 4): box office gross buckets and album sales ladders sit in
+    quantity/threshold order rather than probability rank."""
+
+    def test_box_office_gross_buckets_ordered_by_dollar_range(self):
+        market = _make_market(
+            '"The Cat in the Hat" Opening Weekend Box Office',
+            [
+                _make_outcome("14m-16m", 0.30, rank=1),
+                _make_outcome("12m-14m", 0.25, rank=2),
+                _make_outcome("16m-18m", 0.18, rank=3),
+                _make_outcome("18m-20m", 0.12, rank=4),
+                _make_outcome("<12m", 0.09, rank=5),
+                _make_outcome("20m+", 0.06, rank=6),
+            ],
+            external_id="kxboxoffice-cat",
+        )
+        row = _market_row(market, max_outcomes=8)
+        assert [o["name"] for o in row["top_outcomes"]] == [
+            "<12m",
+            "12m-14m",
+            "14m-16m",
+            "16m-18m",
+            "18m-20m",
+            "20m+",
+        ]
+
+    def test_album_sales_thresholds_ordered_by_threshold(self):
+        market = _make_market(
+            "REBECCA: First Week Pure Album Sales",
+            [
+                _make_outcome("Above 4K", 0.90, rank=1),
+                _make_outcome("Above 8K", 0.65, rank=2),
+                _make_outcome("Above 5K", 0.60, rank=3),
+                _make_outcome("Above 6K", 0.55, rank=4),
+            ],
+            external_id="kxalbumsales-rebecca",
+        )
+        row = _market_row(market, max_outcomes=8)
+        assert [o["name"] for o in row["top_outcomes"]] == [
+            "Above 4K",
+            "Above 5K",
+            "Above 6K",
+            "Above 8K",
+        ]
+
+    def test_named_contenders_preserve_probability_order(self):
+        market = _make_market(
+            "Which movie has biggest opening weekend in 2026?",
+            [
+                _make_outcome("Avengers: Doomsday", 0.52, rank=1),
+                _make_outcome("Spider-Man: Brand New Day", 0.28, rank=2),
+                _make_outcome("Toy Story 5", 0.20, rank=3),
+            ],
+            external_id="kxboxoffice-2026",
+        )
+        row = _market_row(market, max_outcomes=8)
+        assert [o["name"] for o in row["top_outcomes"]] == [
+            "Avengers: Doomsday",
+            "Spider-Man: Brand New Day",
+            "Toy Story 5",
+        ]

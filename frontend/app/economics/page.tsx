@@ -5,7 +5,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
   SectionHeader, Card, SourceChip, MarketRow, FooterNote,
-  ProbNum, ProbBar, Histogram, Delta, probColor,
+  ProbNum, ProbBar, Histogram, Delta, probColor, orderNumericBuckets,
 } from "@/components/economics/atoms";
 import ErrorState from "@/components/ErrorState";
 import EconomicsSkeleton from "@/components/skeletons/EconomicsSkeleton";
@@ -122,9 +122,10 @@ function RateCutsChart({ cuts }: { cuts: [number, string][] }) {
  *  of clearing its own bar, so they legitimately sum past 100% and are scaled
  *  against 100, never against each other. */
 function ThresholdLadder({ rows }: { rows: [number, string][] }) {
+  const ordered = orderNumericBuckets(rows);
   return (
     <div className="flex flex-col gap-1.5 mt-1">
-      {rows.map(([prob, label], i) => {
+      {ordered.map(([prob, label], i) => {
         const col = probColor(prob);
         return (
           <div key={i} className="grid items-center gap-2" style={{ gridTemplateColumns: "1fr 90px 40px" }}>

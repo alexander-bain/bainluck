@@ -12,6 +12,7 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { namedPairLabels, twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
+import { parseNumericBucketSortKey } from "@/components/economics/atoms";
 import type {
   EntertainmentData,
   EntMarketRow,
@@ -337,11 +338,29 @@ function EntHistogram({
   data: { range: string; prob: number }[];
   height?: number;
 }) {
-  const maxV = Math.max(...data.map((d) => d.prob), 0.01);
+  const ordered = (() => {
+    if (data.length < 2) return data;
+    const keyed: { key: [number, number, number]; idx: number; item: { range: string; prob: number } }[] = [];
+    for (let i = 0; i < data.length; i++) {
+      const key = parseNumericBucketSortKey(data[i].range);
+      if (!key) return data;
+      keyed.push({ key, idx: i, item: data[i] });
+    }
+    return keyed
+      .sort(
+        (a, b) =>
+          a.key[0] - b.key[0] ||
+          a.key[1] - b.key[1] ||
+          a.key[2] - b.key[2] ||
+          a.idx - b.idx
+      )
+      .map((entry) => entry.item);
+  })();
+  const maxV = Math.max(...ordered.map((d) => d.prob), 0.01);
   return (
     <div>
       <div className={s.histWrap} style={{ height }}>
-        {data.map((d, i) => {
+        {ordered.map((d, i) => {
           const isPeak = d.prob === maxV;
           return (
             <div
@@ -356,7 +375,7 @@ function EntHistogram({
         })}
       </div>
       <div className={s.histLabels}>
-        {data.map((d, i) => (
+        {ordered.map((d, i) => (
           <span key={i} className={s.histLabel}>
             {d.range}
           </span>
