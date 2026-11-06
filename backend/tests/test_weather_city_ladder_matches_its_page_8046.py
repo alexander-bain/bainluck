@@ -211,6 +211,12 @@ def test_partial_or_non_exclusive_or_blank_label_city_ladder_not_squeezed():
     session = _session_with(
         (62721470, "Miami", [("84-85°F", 0.39), ("   ", 0.10), ("86-87°F", 0.45), ("88-89°F", 0.28)]),
         (62721471, "Dallas", [("90-91°F", 0.60), ("92-93°F", 0.50)]),
+        # Sub-90% mass (0.45 + 0.25 + 0.15 = 0.85 < 0.90): exclusive and labeled, but partial mass stays raw
+        (62721472, "Chicago", [("60-61°F", 0.45), ("62-63°F", 0.25), ("64-65°F", 0.15)]),
+        # Boundary case at exactly 90% mass (0.50 + 0.25 + 0.15 = 0.90 >= 0.90): normalized to 1.0
+        (62721473, "Seattle", [("55-56°F", 0.50), ("57-58°F", 0.25), ("59-60°F", 0.15)]),
+        # Positive control at 95% mass (0.50 + 0.30 + 0.15 = 0.95 >= 0.90): normalized to 1.0
+        (62721474, "Boston", [("50-51°F", 0.50), ("52-53°F", 0.30), ("54-55°F", 0.15)]),
     )
     dallas_mkt = session.get(FuturesMarket, 62721471)
     dallas_mkt.mutually_exclusive = False
@@ -230,3 +236,18 @@ def test_partial_or_non_exclusive_or_blank_label_city_ladder_not_squeezed():
     assert dallas_dist["90-91°F"]["probability"] == pytest.approx(0.60)
     assert by_name["Dallas"]["src"] is None
     assert by_name["Dallas"]["srcs"] == []
+
+    # Chicago has raw mass 0.85 (< 0.90): stays raw (45%, 25%, 15%)
+    chicago_dist = {b["label"]: b for b in by_name["Chicago"]["high"]["dist"]}
+    assert chicago_dist["60-61°F"]["probability"] == pytest.approx(0.45)
+    assert chicago_dist["60-61°F"]["prob"] == 45
+
+    # Boundary at exactly 0.90: Seattle is normalized to 1.0
+    seattle_dist = {b["label"]: b for b in by_name["Seattle"]["high"]["dist"]}
+    assert seattle_dist["55-56°F"]["probability"] == pytest.approx(0.50 / 0.90)
+    assert seattle_dist["55-56°F"]["prob"] == round((0.50 / 0.90) * 100)
+
+    # Positive control at 0.95: Boston is normalized to 1.0
+    boston_dist = {b["label"]: b for b in by_name["Boston"]["high"]["dist"]}
+    assert boston_dist["50-51°F"]["probability"] == pytest.approx(0.50 / 0.95)
+    assert boston_dist["50-51°F"]["prob"] == round((0.50 / 0.95) * 100)

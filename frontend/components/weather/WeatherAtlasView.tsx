@@ -44,11 +44,19 @@ function cleanSource(src?: string | null): string | null {
   return typeof src === "string" && src.trim().length > 0 ? src.trim() : null;
 }
 
+function formatMarketTitle(q?: string | null, leader?: string | null): string {
+  const cleanQ = typeof q === "string" ? q.trim() : "";
+  const cleanLeader = typeof leader === "string" ? leader.trim() : "";
+  if (cleanQ && cleanLeader) return `${cleanQ} — ${cleanLeader}`;
+  return cleanQ || cleanLeader;
+}
+
 function toSettledFlags(row: SettleableRow): {
   isSettled: boolean;
   isWinner: boolean | null;
   settledResult: "won" | "lost" | "unavailable" | null;
 } {
+  // Backend _get_yes_settled sets settled=true only when the Yes outcome won.
   const won = row.result === "yes" || row.settled === true;
   const lost = row.result === "no";
   const settledStatus =
@@ -237,9 +245,7 @@ export default function WeatherAtlasView() {
             <BinaryRow
               meta={{
                 marketId: featured.market_id ?? null,
-                marketTitle: featured.leader
-                  ? `${featured.q} — ${featured.leader}`
-                  : featured.q,
+                marketTitle: formatMarketTitle(featured.q, featured.leader),
                 kicker: featured.tag,
                 subtitle: featured.closes || null,
                 source: cleanSource(featured.src),
@@ -489,9 +495,7 @@ export default function WeatherAtlasView() {
                             key={item.market_id ?? `${col.scale}-${idx}`}
                             meta={{
                               marketId: item.market_id ?? null,
-                              marketTitle: item.leader
-                                ? `${item.q} — ${item.leader}`
-                                : item.q,
+                              marketTitle: formatMarketTitle(item.q, item.leader),
                               source: cleanSource(item.src),
                             }}
                             outcome={{
@@ -540,7 +544,7 @@ export default function WeatherAtlasView() {
                   key={card.market_id ?? idx}
                   meta={{
                     marketId: card.market_id ?? null,
-                    marketTitle: card.leader ? `${card.q} — ${card.leader}` : card.q,
+                    marketTitle: formatMarketTitle(card.q, card.leader),
                     kicker: card.tag,
                     source: cleanSource(card.src),
                   }}
