@@ -50,30 +50,65 @@ function orderPairsNumerically(
     .map((x) => x.item);
 }
 
+export function cleanSource(src?: string | null): string | null {
+  return typeof src === "string" && src.trim().length > 0 ? src.trim() : null;
+}
+
 function pairsToOutcomes(
   pairs: [number | null | undefined, string][] | undefined,
   orderNumeric = true
 ): AtlasCategoryOutcome[] {
   if (!Array.isArray(pairs)) return [];
-  const ordered = orderNumeric ? orderPairsNumerically(pairs) : pairs;
-  return ordered.map(([prob, label], idx) => ({
-    id: `${label}-${idx}`,
-    label,
-    probability: toProb01(prob),
-    renderedPercent: toRenderedPct(prob),
-  }));
+  const valid = pairs.filter(
+    (p): p is [number | null | undefined, string] =>
+      Array.isArray(p) && typeof p[1] === "string" && p[1].trim().length > 0
+  );
+  const ordered = orderNumeric ? orderPairsNumerically(valid) : valid;
+  return ordered.map(([prob, label], idx) => {
+    const trimmed = label.trim();
+    return {
+      id: `${trimmed}-${idx}`,
+      label: trimmed,
+      probability: toProb01(prob),
+      renderedPercent: toRenderedPct(prob),
+    };
+  });
+}
+
+function renderSideBinaryRow(m: any, i: number) {
+  const leader = typeof m?.leader === "string" ? m.leader.trim() : "";
+  const q = typeof m?.q === "string" ? m.q.trim() : "";
+  const label = leader || q;
+  if (!label) return null;
+  return (
+    <BinaryRow
+      key={m.market_id ?? i}
+      meta={{
+        marketId: m.market_id ?? null,
+        marketTitle: leader && q ? `${q} — ${leader}` : label,
+        source: cleanSource(m.src),
+      }}
+      outcome={{
+        id: m.market_id ?? i,
+        label,
+        probability: toProb01(m.prob),
+        renderedPercent: toRenderedPct(m.prob),
+      }}
+    />
+  );
 }
 
 function renderDistributionBlock(dist: EconDistribution, key: string | number) {
   if (!dist.rows?.length) return null;
   const outcomes = pairsToOutcomes(dist.rows, true);
+  if (outcomes.length === 0) return null;
   if (dist.kind === "ladder") {
     return (
       <ThresholdLadderCard
         key={key}
         meta={{
           marketTitle: dist.q,
-          source: dist.src,
+          source: cleanSource(dist.src),
         }}
         rungs={outcomes}
       />
@@ -84,7 +119,7 @@ function renderDistributionBlock(dist: EconDistribution, key: string | number) {
       key={key}
       meta={{
         marketTitle: dist.q,
-        source: dist.src,
+        source: cleanSource(dist.src),
       }}
       buckets={outcomes}
     />
@@ -141,7 +176,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                   meta={{
                     kicker: `FOMC · ${m.date || m.mo || "Meeting"}`,
                     marketTitle: `${m.mo || m.date || "FOMC"} Fed funds rate`,
-                    source: m.src ?? null,
+                    source: cleanSource(m.src),
                   }}
                   buckets={pairsToOutcomes(m.dist, true)}
                 />
@@ -174,22 +209,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
 
             {t.fed.side_markets && t.fed.side_markets.length > 0 && (
               <div className="space-y-2.5">
-                {t.fed.side_markets.map((m: any, i: number) => (
-                  <BinaryRow
-                    key={m.market_id ?? i}
-                    meta={{
-                      marketId: m.market_id ?? null,
-                      marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                      source: m.src,
-                    }}
-                    outcome={{
-                      id: m.market_id ?? i,
-                      label: m.leader ?? m.q,
-                      probability: toProb01(m.prob),
-                      renderedPercent: toRenderedPct(m.prob),
-                    }}
-                  />
-                ))}
+                {t.fed.side_markets.map((m: any, i: number) => renderSideBinaryRow(m, i))}
               </div>
             )}
           </div>
@@ -220,7 +240,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                       meta={{
                         kicker: "NEXT RELEASE",
                         marketTitle: cpi.q || cpi.mo || "Inflation release",
-                        source: cpi.src ?? null,
+                        source: cleanSource(cpi.src),
                       }}
                       releaseAt={releaseAt}
                       shape="buckets"
@@ -234,7 +254,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     meta={{
                       kicker: cpi.is_next ? "NEXT RELEASE" : cpi.mo || "INFLATION",
                       marketTitle: cpi.q || cpi.mo || "Inflation release",
-                      source: cpi.src ?? null,
+                      source: cleanSource(cpi.src),
                     }}
                     buckets={outcomes}
                   />
@@ -244,22 +264,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
 
             {t.inflation.side_markets && t.inflation.side_markets.length > 0 && (
               <div className="space-y-2.5">
-                {t.inflation.side_markets.map((m: any, i: number) => (
-                  <BinaryRow
-                    key={m.market_id ?? i}
-                    meta={{
-                      marketId: m.market_id ?? null,
-                      marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                      source: m.src,
-                    }}
-                    outcome={{
-                      id: m.market_id ?? i,
-                      label: m.leader ?? m.q,
-                      probability: toProb01(m.prob),
-                      renderedPercent: toRenderedPct(m.prob),
-                    }}
-                  />
-                ))}
+                {t.inflation.side_markets.map((m: any, i: number) => renderSideBinaryRow(m, i))}
               </div>
             )}
           </div>
@@ -278,22 +283,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {t.jobs.markets?.map((m: any, i: number) => (
-              <BinaryRow
-                key={m.market_id ?? i}
-                meta={{
-                  marketId: m.market_id ?? null,
-                  marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                  source: m.src,
-                }}
-                outcome={{
-                  id: m.market_id ?? i,
-                  label: m.leader ?? m.q,
-                  probability: toProb01(m.prob),
-                  renderedPercent: toRenderedPct(m.prob),
-                }}
-              />
-            ))}
+            {t.jobs.markets?.map((m: any, i: number) => renderSideBinaryRow(m, i))}
           </div>
         </section>
       )}
@@ -312,36 +302,21 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
 
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr] gap-4 items-start">
             <div className="space-y-2.5">
-              {t.recession.main_q && (
+              {t.recession.main_q && String(t.recession.main_q).trim() && (
                 <BinaryRow
                   meta={{
                     kicker: "HEADLINE MACRO",
-                    marketTitle: t.recession.main_q,
+                    marketTitle: String(t.recession.main_q).trim(),
                   }}
                   outcome={{
                     id: "recession-main",
-                    label: t.recession.main_q,
+                    label: String(t.recession.main_q).trim(),
                     probability: toProb01(t.recession.main_prob),
                     renderedPercent: toRenderedPct(t.recession.main_prob),
                   }}
                 />
               )}
-              {t.recession.side_markets?.map((m: any, i: number) => (
-                <BinaryRow
-                  key={m.market_id ?? i}
-                  meta={{
-                    marketId: m.market_id ?? null,
-                    marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                    source: m.src,
-                  }}
-                  outcome={{
-                    id: m.market_id ?? i,
-                    label: m.leader ?? m.q,
-                    probability: toProb01(m.prob),
-                    renderedPercent: toRenderedPct(m.prob),
-                  }}
-                />
-              ))}
+              {t.recession.side_markets?.map((m: any, i: number) => renderSideBinaryRow(m, i))}
             </div>
 
             {t.recession.gdp_quarters && t.recession.gdp_quarters.length > 0 && (
@@ -377,60 +352,55 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {t.markets.today && t.markets.today.length > 0 && (
               <div className="space-y-2.5">
-                {t.markets.today.map((idx: any, i: number) => (
-                  <BinaryRow
-                    key={i}
-                    meta={{
-                      kicker: "TODAY'S CLOSE",
-                      marketTitle: `${idx.sym} ${idx.dir || ""}`.trim(),
-                    }}
-                    outcome={{
-                      id: `idx-${i}`,
-                      label: idx.sym,
-                      probability: toProb01(idx.prob),
-                      renderedPercent: toRenderedPct(idx.prob),
-                    }}
-                  />
-                ))}
+                {t.markets.today.map((idx: any, i: number) => {
+                  const sym = typeof idx?.sym === "string" ? idx.sym.trim() : "";
+                  if (!sym) return null;
+                  return (
+                    <BinaryRow
+                      key={i}
+                      meta={{
+                        kicker: "TODAY'S CLOSE",
+                        marketTitle: `${sym} ${idx.dir || ""}`.trim(),
+                        source: cleanSource(idx.src),
+                      }}
+                      outcome={{
+                        id: `idx-${i}`,
+                        label: sym,
+                        probability: toProb01(idx.prob),
+                        renderedPercent: toRenderedPct(idx.prob),
+                      }}
+                    />
+                  );
+                })}
               </div>
             )}
             {t.markets.stocks && t.markets.stocks.length > 0 && (
               <div className="space-y-2.5">
-                {t.markets.stocks.map((s: any, i: number) => (
-                  <BinaryRow
-                    key={i}
-                    meta={{
-                      kicker: "SINGLE STOCK",
-                      marketTitle: `${s.sym} — up today`,
-                    }}
-                    outcome={{
-                      id: `stock-${i}`,
-                      label: s.sym,
-                      probability: toProb01(s.prob),
-                      renderedPercent: toRenderedPct(s.prob),
-                    }}
-                  />
-                ))}
+                {t.markets.stocks.map((s: any, i: number) => {
+                  const sym = typeof s?.sym === "string" ? s.sym.trim() : "";
+                  if (!sym) return null;
+                  return (
+                    <BinaryRow
+                      key={i}
+                      meta={{
+                        kicker: "SINGLE STOCK",
+                        marketTitle: `${sym} — up today`,
+                        source: cleanSource(s.src),
+                      }}
+                      outcome={{
+                        id: `stock-${i}`,
+                        label: sym,
+                        probability: toProb01(s.prob),
+                        renderedPercent: toRenderedPct(s.prob),
+                      }}
+                    />
+                  );
+                })}
               </div>
             )}
             {t.markets.side_markets && t.markets.side_markets.length > 0 && (
               <div className="space-y-2.5">
-                {t.markets.side_markets.slice(0, 5).map((m: any, i: number) => (
-                  <BinaryRow
-                    key={m.market_id ?? i}
-                    meta={{
-                      marketId: m.market_id ?? null,
-                      marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                      source: m.src,
-                    }}
-                    outcome={{
-                      id: m.market_id ?? i,
-                      label: m.leader ?? m.q,
-                      probability: toProb01(m.prob),
-                      renderedPercent: toRenderedPct(m.prob),
-                    }}
-                  />
-                ))}
+                {t.markets.side_markets.slice(0, 5).map((m: any, i: number) => renderSideBinaryRow(m, i))}
               </div>
             )}
           </div>
@@ -455,7 +425,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                 meta={{
                   kicker: "GASOLINE",
                   marketTitle: g.label || "Gas price",
-                  source: g.src,
+                  source: cleanSource(g.src),
                 }}
                 buckets={pairsToOutcomes(g.brackets, true)}
               />
@@ -463,18 +433,20 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
             {t.energy.oil && t.energy.oil.length > 0 && (
               <div className="space-y-2.5">
                 {t.energy.oil.map((o: any, i: number) => {
-                  const title = o.sym ? `${o.sym} ${o.range || ""}`.trim() : o.q;
+                  const title = (o.sym ? `${o.sym} ${o.range || ""}`.trim() : o.q || "").trim();
+                  const label = (typeof o.leader === "string" && o.leader.trim() ? o.leader.trim() : title);
+                  if (!label) return null;
                   return (
                     <BinaryRow
                       key={o.market_id ?? i}
                       meta={{
                         marketId: o.market_id ?? null,
-                        marketTitle: title,
-                        source: o.src,
+                        marketTitle: title || label,
+                        source: cleanSource(o.src),
                       }}
                       outcome={{
                         id: o.market_id ?? i,
-                        label: o.leader ?? title,
+                        label,
                         probability: toProb01(o.prob),
                         renderedPercent: toRenderedPct(o.prob),
                       }}
@@ -505,29 +477,14 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                 meta={{
                   kicker: "METALS",
                   marketTitle: c.label || "Metal price",
-                  source: c.src,
+                  source: cleanSource(c.src),
                 }}
                 buckets={pairsToOutcomes(c.brackets, true)}
               />
             ))}
             {t.metals.markets && t.metals.markets.length > 0 && (
               <div className="space-y-2.5">
-                {t.metals.markets.map((m: any, i: number) => (
-                  <BinaryRow
-                    key={m.market_id ?? i}
-                    meta={{
-                      marketId: m.market_id ?? null,
-                      marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                      source: m.src,
-                    }}
-                    outcome={{
-                      id: m.market_id ?? i,
-                      label: m.leader ?? m.q,
-                      probability: toProb01(m.prob),
-                      renderedPercent: toRenderedPct(m.prob),
-                    }}
-                  />
-                ))}
+                {t.metals.markets.map((m: any, i: number) => renderSideBinaryRow(m, i))}
               </div>
             )}
           </div>
@@ -550,22 +507,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
               renderDistributionBlock(t.housing.mortgage_dist, "mortgage")}
             {t.housing.markets && t.housing.markets.length > 0 && (
               <div className="space-y-2.5">
-                {t.housing.markets.map((m: any, i: number) => (
-                  <BinaryRow
-                    key={m.market_id ?? i}
-                    meta={{
-                      marketId: m.market_id ?? null,
-                      marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                      source: m.src,
-                    }}
-                    outcome={{
-                      id: m.market_id ?? i,
-                      label: m.leader ?? m.q,
-                      probability: toProb01(m.prob),
-                      renderedPercent: toRenderedPct(m.prob),
-                    }}
-                  />
-                ))}
+                {t.housing.markets.map((m: any, i: number) => renderSideBinaryRow(m, i))}
               </div>
             )}
           </div>
@@ -584,22 +526,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {t.trade.markets?.map((m: any, i: number) => (
-              <BinaryRow
-                key={m.market_id ?? i}
-                meta={{
-                  marketId: m.market_id ?? null,
-                  marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                  source: m.src,
-                }}
-                outcome={{
-                  id: m.market_id ?? i,
-                  label: m.leader ?? m.q,
-                  probability: toProb01(m.prob),
-                  renderedPercent: toRenderedPct(m.prob),
-                }}
-              />
-            ))}
+            {t.trade.markets?.map((m: any, i: number) => renderSideBinaryRow(m, i))}
           </div>
         </section>
       )}
@@ -619,22 +546,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
             </div>
             {t.government.markets && t.government.markets.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {t.government.markets.map((m: any, i: number) => (
-                  <BinaryRow
-                    key={m.market_id ?? i}
-                    meta={{
-                      marketId: m.market_id ?? null,
-                      marketTitle: m.leader ? `${m.q} — ${m.leader}` : m.q,
-                      source: m.src,
-                    }}
-                    outcome={{
-                      id: m.market_id ?? i,
-                      label: m.leader ?? m.q,
-                      probability: toProb01(m.prob),
-                      renderedPercent: toRenderedPct(m.prob),
-                    }}
-                  />
-                ))}
+                {t.government.markets.map((m: any, i: number) => renderSideBinaryRow(m, i))}
               </div>
             )}
             {t.government.distributions && t.government.distributions.length > 0 && (

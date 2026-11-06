@@ -2092,15 +2092,22 @@ def free_background_slots(
 #: #142's 2:05 AM snapshot already runs, one primary-key market read and one
 #: insert. The census RUN over the tree merged with `80b7a1605c` printed
 #: `explicit 102 implicit 40 total 142`.
-#: 🔴 RE-DERIVED at speed (2026-11-06, B-5): 142 → 143, explicit 102 → 103,
-#: fall-through UNMOVED at 40. `update-max-movement-heavy`
+#: 🔴 RE-DERIVED at speed (2026-11-06, #12042 L-1): 142 → 141, explicit 102 →
+#: 101, fall-through UNMOVED at 40. `precompute-discover-candidate-base` left
+#: `background` for its own `discover_base` lane, which `worker-background`
+#: serves FIRST (`--queues=discover_base,background`, `queue_order_strategy=
+#: priority`). The same worker still runs it, so the slot count is unchanged.
+#: What changes is the order: the base no longer waits behind the warmers.
+#: The census RUN over the tree branched from `9247e7f5ca` printed
+#: `explicit 101 implicit 40 total 141`.
+#: 🔴 RE-DERIVED at speed (2026-11-06, B-5 over L-1): 141 → 142, explicit
+#: 101 → 102, fall-through UNMOVED at 40. `update-max-movement-heavy`
 #: (`crontab(minute=20)`) names `background` explicitly; it is the :20 run of
 #: `update_max_movement`, taken out of `update-max-movement`, so arrivals on the
-#: queue are unchanged (six an hour). ⚠️ #12216 (141) and W-1 #12222 (143) write
-#: against the same base of 142: whichever merges after another re-runs the
-#: census, never adds one. The census RUN over the tree branched from
-#: `3c72a05363` printed `explicit 103 implicit 40 total 143`.
-BACKGROUND_BEAT_COUNT = 143
+#: queue are unchanged (six an hour). W-1 #12222 writes against an older base:
+#: whichever merges after another re-runs the census, never adds one. The census
+#: RUN over the tree merged with `7cf2c6561a` printed `explicit 102 implicit 40 total 142`.
+BACKGROUND_BEAT_COUNT = 142
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
