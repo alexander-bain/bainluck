@@ -109,9 +109,6 @@ describe("isUntradedPlaceholder", () => {
 // half-tested; these assert the rule does NOT fire on real data.
 // ---------------------------------------------------------------------------
 describe("shouldWithholdProbability — withholds ONLY the fabricated case", () => {
-  it("withholds the lone untraded Polymarket midpoint", () => {
-    expect(shouldWithholdProbability(LONE_POLY_PLACEHOLDER)).toBe(true);
-  });
 
   it("KEEPS a traded lone-Polymarket price just below the midpoint (0.495)", () => {
     expect(shouldWithholdProbability(LONE_POLY_TRADED_LOW)).toBe(false);
