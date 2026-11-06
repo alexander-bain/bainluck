@@ -3,13 +3,14 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 import TruthChip from "@/components/evals/TruthChip";
-import type { MeasuredTruth, RepoRef } from "@/lib/evals/truth";
+import type { FigureTruth, RepoRef } from "@/lib/evals/truth";
 
 /**
  * THE ONLY WAY A NUMBER REACHES /evals (#12102).
  *
  * A figure needs three things, and the props make each one required: a truth
- * kind (LIVE or LAST RUN — PLANNED has no figure, so it is not a legal value),
+ * kind (LIVE, LAST RUN, or LAST REVIEWED for a count read off a list we keep by
+ * hand — PLANNED has no figure, so it is not a legal value),
  * the time the number is true as of, and a link to where it came from. The text
  * itself arrives already formatted by a lib helper reading a committed record or
  * a live payload; nothing in a component types a number.
@@ -30,13 +31,13 @@ export const PlannedContext = createContext(false);
 export interface FigureProps {
   /** The figure as the reader sees it, e.g. "24 of 25". */
   children: string;
-  truth: MeasuredTruth;
+  truth: FigureTruth;
   /** The raw value for a probe, e.g. "24/25", so a check never parses prose. */
   value?: string;
   className?: string;
 }
 
-export function figureProblem(insidePlanned: boolean, truth: MeasuredTruth): string | null {
+export function figureProblem(insidePlanned: boolean, truth: FigureTruth): string | null {
   if (insidePlanned) return "a PLANNED item renders no figure";
   if (!truth.asOf) return "a figure needs the time it is true as of";
   if (!truth.source?.href) return "a figure needs a link to where it came from";
@@ -77,7 +78,7 @@ export function Exhibit({
   label,
   children,
 }: {
-  truth: MeasuredTruth;
+  truth: FigureTruth;
   /** What the exhibit shows, for screen readers. */
   label: string;
   children: ReactNode;
