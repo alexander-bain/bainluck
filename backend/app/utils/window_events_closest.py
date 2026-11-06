@@ -193,7 +193,7 @@ def _extract_blended_leader(
     ``observed_at`` from ``hero_probability_observed_at``, never from
     ``current_odds.captured_at``.
     """
-    if card.get("hero_probability_source") != "blend":
+    if card.get("hero_probability_source") == "settled":
         return None
     home_prob = card.get("hero_probability")
     away_prob = card.get("hero_probability_away")
