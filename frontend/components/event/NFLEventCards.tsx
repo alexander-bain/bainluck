@@ -1757,7 +1757,7 @@ export function SoccerExactScoreCardView({
                   style={
                     cell
                       ? {
-                          backgroundColor: `color-mix(in srgb, var(--accent-brand) ${Math.round((0.08 + ratio * 0.68) * 100)}%, var(--surface-card))`,
+                          backgroundColor: `color-mix(in srgb, var(--accent-brand) ${(8 + ratio * 68).toFixed(0)}%, var(--surface-card))`,
                           color: ratio > 0.55 ? "var(--surface-card)" : "var(--text-primary)",
                         }
                       : undefined
