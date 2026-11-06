@@ -12,6 +12,8 @@ import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type Ref } fr
 import { formatProbability } from "@/lib/api";
 import { propVerdictLabel } from "@/lib/propGrade";
 import { teamTextColor } from "@/lib/teamColors";
+import AtlasDetailsSheet, { type AtlasDetailsSheetProps } from "@/components/atlas/AtlasDetailsSheet";
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import {
   cardTitle,
   defaultRungIndex,
@@ -23,9 +25,11 @@ import {
   statDomain,
   targetLabel,
   type FinishCard,
+  type MilestoneBasis,
   type MilestoneCard,
   type MilestoneRung,
   type NflEventCard,
+  type NflPropRow,
 } from "@/lib/nflEventCardDeck";
 import {
   defaultLadderIndex,
@@ -34,6 +38,7 @@ import {
   marginWords,
   type LadderCard,
   type LadderPoint,
+  type OptionDetail,
 } from "@/lib/nbaEventCards";
 
 /** Selected original row per milestone card, keyed by card id. */
@@ -128,7 +133,19 @@ export function usePlotBox(): [Ref<HTMLDivElement>, { width: number; font: numbe
 
 // ─── Projected finish ──────────────────────────────────────────────────────
 
-export function FinishCardView({ card, teams, expanded = false }: { card: FinishCard; teams: CardTeams; expanded?: boolean }) {
+export function FinishCardView({
+  card,
+  teams,
+  expanded = false,
+  atlasMode = false,
+  onDetails,
+}: {
+  card: FinishCard;
+  teams: CardTeams;
+  expanded?: boolean;
+  atlasMode?: boolean;
+  onDetails?: (rowId: string) => void;
+}) {
   const later = card.final ?? card.projectedNow;
   const laterLabel = card.final ? "Final" : card.projectedNow ? "Projected now" : null;
   const values = [card.pregame.away, card.pregame.home, later?.away ?? 0, later?.home ?? 0];
@@ -145,9 +162,15 @@ export function FinishCardView({ card, teams, expanded = false }: { card: Finish
   const x = (v: number) => left + (v / domainMax) * plotW;
   const ticks: number[] = [];
   for (let t = 0; t <= domainMax; t += 7) ticks.push(t);
+  const finalWinnerSide: "away" | "home" | null =
+    card.final && card.final.away !== card.final.home
+      ? card.final.away > card.final.home
+        ? "away"
+        : "home"
+      : null;
   const rows = [
-    { name: teams.awayName, label: teams.awayShort || teams.awayName, color: teams.awayColor, pregame: card.pregame.away, later: later?.away },
-    { name: teams.homeName, label: teams.homeShort || teams.homeName, color: teams.homeColor, pregame: card.pregame.home, later: later?.home },
+    { side: "away" as const, name: teams.awayName, label: teams.awayShort || teams.awayName, color: teams.awayColor, pregame: card.pregame.away, later: later?.away },
+    { side: "home" as const, name: teams.homeName, label: teams.homeShort || teams.homeName, color: teams.homeColor, pregame: card.pregame.home, later: later?.home },
   ];
   const headline = finishHeadline(card, teams.awayName, teams.homeName);
   const placements = axisLabelPlacements(
@@ -166,10 +189,57 @@ export function FinishCardView({ card, teams, expanded = false }: { card: Finish
   ].join(". ");
   return (
     <div className="flex flex-col gap-2" data-card-kind="finish">
-      <p className="text-xs font-bold uppercase tracking-wide" style={{ color: textColor(teams.homeColor) }}>
-        {finishKicker(card)}
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: textColor(teams.homeColor) }}>
+          {finishKicker(card)}
+        </p>
+        {atlasMode && onDetails && (
+          <button
+            type="button"
+            onClick={() => onDetails("finish")}
+            aria-label={`Details for ${finishKicker(card)}`}
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
       <h3 className="text-lg font-bold text-text-primary leading-snug">{headline}</h3>
+      {atlasMode && (
+        <div
+          data-testid="atlas-story-card-mark-key"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary"
+        >
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden="true" className="inline-block h-2.5 w-2.5 border-2 border-text-secondary bg-surface-card" />
+            <span>Pregame</span>
+          </span>
+          {card.projectedNow && !card.final && (
+            <>
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden="true" className="inline-block h-2.5 w-2.5 bg-text-primary" />
+                <span>Recorded</span>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden="true" className="inline-block h-0.5 w-3 bg-text-secondary" />
+                <span>Change</span>
+              </span>
+            </>
+          )}
+          {card.final && (
+            <>
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden="true" className="inline-block h-2.5 w-0.5 bg-text-primary" />
+                <span>Final</span>
+              </span>
+              {finalWinnerSide && (
+                <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <div ref={boxRef} className="w-full max-w-[720px]">
       <svg
         viewBox={`0 0 ${W} ${H}`}
@@ -188,6 +258,18 @@ export function FinishCardView({ card, teams, expanded = false }: { card: Finish
           const ink = inkColor(row.color);
           return (
             <g key={row.name}>
+              {atlasMode && row.later !== undefined && (
+                <line
+                  x1={x(row.pregame)}
+                  x2={x(row.later)}
+                  y1={cy}
+                  y2={cy}
+                  stroke={ink}
+                  strokeWidth={1.75}
+                  strokeOpacity={0.55}
+                  data-mark="finish-connector"
+                />
+              )}
               <rect
                 x={x(row.pregame) - 5}
                 y={cy - 5}
@@ -229,6 +311,14 @@ export function FinishCardView({ card, teams, expanded = false }: { card: Finish
           <span className="text-sm font-semibold min-w-0 flex-1 truncate" style={{ color: textColor(row.color) }}>
             {row.label}
           </span>
+          {atlasMode && finalWinnerSide === row.side && (
+            <span
+              data-testid="finish-card-winner-badge"
+              className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent-live"
+            >
+              {ATLAS_STATE_COPY.wonWithCheck}
+            </span>
+          )}
           <span className="flex flex-col items-end">
             <span className="text-base font-semibold tabular-nums text-text-primary">{formatPoints(row.pregame)}</span>
             <span className="text-[11px] text-text-secondary">pregame projection</span>
@@ -254,17 +344,25 @@ export function FinishCardView({ card, teams, expanded = false }: { card: Finish
 
 // ─── Player milestones ─────────────────────────────────────────────────────
 
-function readoutText(card: MilestoneCard, rung: MilestoneRung): string {
-  const none = card.basis === "pregamePrice" ? "No recent price" : "No pregame chance";
+function readoutText(card: MilestoneCard, rung: MilestoneRung, atlasMode = false): string {
+  const none =
+    card.basis === "pregamePrice"
+      ? atlasMode
+        ? ATLAS_STATE_COPY.noRecentPrice
+        : "No recent price"
+      : "No pregame chance";
   return `${targetLabel(rung.threshold)} · ${rung.chance !== null ? formatProbability(rung.chance) : none}`;
 }
 
-function verdictText(card: MilestoneCard, rung: MilestoneRung, expanded: boolean): string {
-  const more = expanded ? " · details" : "";
+function verdictText(card: MilestoneCard, rung: MilestoneRung, expanded: boolean, atlasMode = false, hasDetails = false): string {
+  const more = expanded || (atlasMode && hasDetails) ? " · details" : "";
   // The site's one settled vocabulary (UX-P106), not the phone's wording.
-  if (rung.hit !== null) return `${propVerdictLabel(rung.hit)}${more}`;
+  if (rung.hit !== null) {
+    const prefix = atlasMode ? `${rung.hit ? "✓ " : "✗ "}` : "";
+    return `${prefix}${propVerdictLabel(rung.hit)}${more}`;
+  }
   if (rung.chance === null) {
-    if (!expanded) return "";
+    if (!expanded && !(atlasMode && hasDetails)) return "";
     return card.basis === "pregamePrice" ? "Last quote in details" : "Details";
   }
   return (card.basis === "pregamePrice" ? "Pregame chance" : "Before kickoff") + more;
@@ -275,11 +373,13 @@ function MilestoneProfileChart({
   selected,
   color,
   expanded,
+  atlasMode = false,
 }: {
   card: MilestoneCard;
   selected: number | null;
   color: string;
   expanded: boolean;
+  atlasMode?: boolean;
 }) {
   const [boxRef, box] = usePlotBox();
   const profile = milestoneProfile(card);
@@ -288,7 +388,7 @@ function MilestoneProfileChart({
       <p
         className={`flex items-center justify-center text-sm text-text-secondary ${expanded ? "min-h-[120px]" : "min-h-[60px]"}`}
       >
-        No recent prices
+        {atlasMode ? ATLAS_STATE_COPY.noRecentPrice : "No recent prices"}
       </p>
     );
   }
@@ -397,26 +497,32 @@ export function MilestoneCardView({
   onMove,
   onDetails,
   expanded = false,
+  atlasMode = false,
 }: {
   card: MilestoneCard;
   color: string | null | undefined;
   selected: number | null;
   onMove: (delta: number) => void;
-  /** Full size only: opens the selected line's exact details. */
+  /** Opens the selected line's exact details. */
   onDetails?: (rowId: string) => void;
   expanded?: boolean;
+  atlasMode?: boolean;
 }) {
   const rung = selected !== null ? card.rungs[selected] : null;
   const ink = inkColor(color);
+  const hasSettled = card.rungs.some((r) => r.hit !== null);
+  const canOpenDetails = Boolean(onDetails && rung && (expanded || atlasMode));
   const readout = rung ? (
     <span className="flex flex-col items-center">
       <span
         className="text-sm font-semibold tabular-nums"
         style={{ color: rung.chance === null ? undefined : textColor(color) }}
       >
-        {readoutText(card, rung)}
+        {readoutText(card, rung, atlasMode)}
       </span>
-      <span className="text-[11px] text-text-secondary">{verdictText(card, rung, expanded)}</span>
+      <span className="text-[11px] text-text-secondary">
+        {verdictText(card, rung, expanded, atlasMode, Boolean(onDetails))}
+      </span>
     </span>
   ) : null;
   return (
@@ -434,9 +540,44 @@ export function MilestoneCardView({
             <span className="text-[11px] text-text-secondary">final</span>
           </div>
         )}
+        {atlasMode && onDetails && rung && (
+          <button
+            type="button"
+            onClick={() => onDetails(rung.rowId)}
+            aria-label={`Details for ${card.player} ${targetLabel(rung.threshold)}`}
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
       </div>
       <p className="text-xs text-text-secondary">{milestoneCaption(card)}</p>
-      <MilestoneProfileChart card={card} selected={selected} color={ink} expanded={expanded} />
+      {atlasMode && (
+        <div
+          data-testid="atlas-story-card-mark-key"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary"
+        >
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-secondary bg-surface-card" />
+            <span>Pregame</span>
+          </span>
+          {card.actual !== null && (
+            <span className="inline-flex items-center gap-1">
+              <span aria-hidden="true" className="inline-block h-2.5 w-0.5 bg-text-primary" />
+              <span>Actual</span>
+            </span>
+          )}
+          {hasSettled && (
+            <span className="inline-flex items-center gap-1">
+              <span className="font-semibold text-accent-live">✓ {propVerdictLabel(true)}</span>
+              <span>/</span>
+              <span className="font-semibold text-text-secondary">✗ {propVerdictLabel(false)}</span>
+            </span>
+          )}
+        </div>
+      )}
+      <MilestoneProfileChart card={card} selected={selected} color={ink} expanded={expanded} atlasMode={atlasMode} />
       <div className="flex items-center gap-1">
         <button
           type="button"
@@ -447,10 +588,10 @@ export function MilestoneCardView({
         >
           <span aria-hidden="true">‹</span>
         </button>
-        {expanded && onDetails && rung ? (
+        {canOpenDetails && rung ? (
           <button
             type="button"
-            onClick={() => onDetails(rung.rowId)}
+            onClick={() => onDetails!(rung.rowId)}
             className="flex-1 min-h-11 rounded-md hover:bg-surface-elevated"
           >
             {readout}
@@ -485,21 +626,25 @@ export function selectedLadderIndex(card: LadderCard, selection: CardSelection):
   return index >= 0 ? index : null;
 }
 
-function ladderReadout(card: LadderCard, p: LadderPoint): { main: string; sub: string } {
+function ladderReadout(card: LadderCard, p: LadderPoint, atlasMode = false): { main: string; sub: string } {
   // Before tip-off a missing dot is a stale price; afterwards the caption already
   // says the pregame chance is unavailable, so the readout does not repeat it.
+  const noPriceLabel = atlasMode ? ATLAS_STATE_COPY.noRecentPrice : "No recent price";
   const main =
     p.chance !== null
       ? `${p.label} · ${formatProbability(p.chance)}`
       : card.phase === "before"
-        ? `${p.label} · No recent price`
+        ? `${p.label} · ${noPriceLabel}`
         : p.label;
   // A final names its pregame chance apart from the verdict: "Before tip-off · MISS".
   // A line with none, on a card where others have one, says so itself.
   const parts: string[] = [];
   if (p.chance !== null) parts.push(card.phase === "before" ? "Pregame chance" : "Before tip-off");
   else if (card.phase === "after" && card.points.some((q) => q.chance !== null)) parts.push("Pregame chance unavailable");
-  if (p.result !== null) parts.push(propVerdictLabel(p.result));
+  if (p.result !== null) {
+    const prefix = atlasMode ? (p.result ? "✓ " : "✗ ") : "";
+    parts.push(`${prefix}${propVerdictLabel(p.result)}`);
+  }
   if (p.now !== null) parts.push(`now ${formatProbability(p.now)}`);
   return { main, sub: parts.join(" · ") };
 }
@@ -509,11 +654,13 @@ function LadderChart({
   selected,
   teams,
   expanded,
+  atlasMode = false,
 }: {
   card: LadderCard;
   selected: number | null;
   teams: CardTeams;
   expanded: boolean;
+  atlasMode?: boolean;
 }) {
   const [boxRef, box] = usePlotBox();
   const W = box.width;
@@ -521,7 +668,7 @@ function LadderChart({
   const margin = card.family === "margin";
   // With no chance to draw (a final with no admitted pin) there is no chance axis:
   // the plot collapses to a strip of the lines with the actual marked on it.
-  const hasDots = card.points.some((p) => p.chance !== null);
+  const hasDots = card.points.some((p) => p.chance !== null || (atlasMode && p.now !== null));
   const H = hasDots
     ? (expanded ? 220 : 150) + (font - AXIS_FONT) * 2 + (margin ? font * 1.6 : 0)
     : font * (margin ? 5.6 : 4) + 28;
@@ -569,7 +716,21 @@ function LadderChart({
         ))}
         {margin && <line x1={x(0)} x2={x(0)} y1={top} y2={top + plotH} stroke="rgba(0,0,0,0.35)" />}
         {card.forecast !== null && (
-          <line x1={x(card.forecast)} x2={x(card.forecast)} y1={top - 4} y2={top + plotH} stroke="#4B5563" strokeWidth={1.5} strokeDasharray="4 3" data-mark="forecast" data-forecast={card.forecast} />
+          <g>
+            <line x1={x(card.forecast)} x2={x(card.forecast)} y1={top - 4} y2={top + plotH} stroke="#4B5563" strokeWidth={1.5} strokeDasharray="4 3" data-mark="forecast" data-forecast={card.forecast} />
+            {atlasMode && (
+              <rect
+                x={x(card.forecast) - 4}
+                y={top + plotH - 4}
+                width={8}
+                height={8}
+                fill="#FFFFFF"
+                stroke="#4B5563"
+                strokeWidth={1.75}
+                data-mark="forecast-square"
+              />
+            )}
+          </g>
         )}
         {card.actual !== null && (
           <line x1={x(card.actual)} x2={x(card.actual)} y1={top - 4} y2={top + plotH} stroke="#111827" strokeWidth={2} data-mark="actual" data-actual={card.actual} />
@@ -583,8 +744,31 @@ function LadderChart({
               {p.chance !== null && (
                 <>
                   <line x1={x(p.x)} x2={x(p.x)} y1={y(0)} y2={y(p.chance)} stroke={c} strokeOpacity={isSelected ? 0.9 : 0.3} strokeWidth={isSelected ? 2 : 1.5} />
+                  {atlasMode && p.now !== null && (
+                    <line
+                      x1={x(p.x)}
+                      x2={x(p.x)}
+                      y1={y(p.chance)}
+                      y2={y(p.now)}
+                      stroke={c}
+                      strokeOpacity={isSelected ? 0.95 : 0.65}
+                      strokeWidth={isSelected ? 2.5 : 1.75}
+                      data-mark="ladder-connector"
+                    />
+                  )}
                   <circle cx={x(p.x)} cy={y(p.chance)} r={isSelected ? 6 : 4} fill="#FFFFFF" stroke={isSelected ? c : "#6B7280"} strokeWidth={isSelected ? 2.5 : 1.5} />
                 </>
+              )}
+              {atlasMode && p.now !== null && (
+                <circle
+                  cx={x(p.x)}
+                  cy={y(p.now)}
+                  r={isSelected ? 5 : 3.5}
+                  fill={c}
+                  stroke="#FFFFFF"
+                  strokeWidth={1}
+                  data-mark="ladder-recorded"
+                />
               )}
               {p.chance === null && isSelected && (
                 <line x1={x(p.x)} x2={x(p.x)} y1={top + plotH - 10} y2={top + plotH} stroke={c} strokeWidth={2.5} />
@@ -615,6 +799,7 @@ export function LadderCardView({
   onMove,
   onDetails,
   expanded = false,
+  atlasMode = false,
 }: {
   card: LadderCard;
   teams: CardTeams;
@@ -622,22 +807,39 @@ export function LadderCardView({
   onMove: (delta: number) => void;
   onDetails?: (optionKey: string) => void;
   expanded?: boolean;
+  atlasMode?: boolean;
 }) {
   const margin = card.family === "margin";
   const point = selected !== null ? card.points[selected] : null;
-  const readout = point ? ladderReadout(card, point) : null;
+  const readout = point ? ladderReadout(card, point, atlasMode) : null;
   const actualText = card.actual === null ? null : margin ? marginWords(card, card.actual) : String(card.actual);
   const forecastText = card.forecast === null ? null : margin ? marginWords(card, card.forecast) : String(card.forecast);
   const pointInk = point ? (point.side === "away" ? teams.awayColor : teams.homeColor) : null;
+  const canOpenDetails = Boolean(onDetails && point && (expanded || atlasMode));
+  const hasRecordedNow = card.points.some((p) => p.now !== null);
+  const hasSettled = card.points.some((p) => p.result !== null);
   const body = readout ? (
     <span className="flex flex-col items-center">
       <span className="text-sm font-semibold tabular-nums" style={{ color: point?.chance !== null ? textColor(pointInk) : undefined }}>{readout.main}</span>
-      <span className="text-[11px] text-text-secondary">{readout.sub}{expanded && onDetails ? (readout.sub ? " · details" : "details") : ""}</span>
+      <span className="text-[11px] text-text-secondary">{readout.sub}{canOpenDetails ? (readout.sub ? " · details" : "details") : ""}</span>
     </span>
   ) : null;
   return (
     <div className="flex flex-col gap-2" data-card-kind={`ladder-${card.family}`}>
-      <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">{ladderTitle(card)}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">{ladderTitle(card)}</p>
+        {atlasMode && onDetails && point && (
+          <button
+            type="button"
+            onClick={() => onDetails(point.optionKey)}
+            aria-label={`Details for ${point.label}`}
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
       {(actualText || forecastText) && (
         <div className="flex gap-6">
           {actualText && (
@@ -655,13 +857,55 @@ export function LadderCardView({
         </div>
       )}
       <p className="text-xs text-text-secondary">{ladderCaption(card)}</p>
-      <LadderChart card={card} selected={selected} teams={teams} expanded={expanded} />
+      {atlasMode && (
+        <div
+          data-testid="atlas-story-card-mark-key"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary"
+        >
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-secondary bg-surface-card" />
+            <span>Pregame</span>
+          </span>
+          {hasRecordedNow && (
+            <>
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full bg-text-primary" />
+                <span>Recorded</span>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden="true" className="inline-block h-0.5 w-3 bg-text-secondary" />
+                <span>Change</span>
+              </span>
+            </>
+          )}
+          {card.actual !== null && (
+            <span className="inline-flex items-center gap-1">
+              <span aria-hidden="true" className="inline-block h-2.5 w-0.5 bg-text-primary" />
+              <span>Actual</span>
+            </span>
+          )}
+          {card.forecast !== null && (
+            <span className="inline-flex items-center gap-1">
+              <span aria-hidden="true" className="inline-block h-2.5 w-2.5 border-2 border-text-secondary bg-surface-card" />
+              <span>Projected</span>
+            </span>
+          )}
+          {hasSettled && (
+            <span className="inline-flex items-center gap-1">
+              <span className="font-semibold text-accent-live">✓ {propVerdictLabel(true)}</span>
+              <span>/</span>
+              <span className="font-semibold text-text-secondary">✗ {propVerdictLabel(false)}</span>
+            </span>
+          )}
+        </div>
+      )}
+      <LadderChart card={card} selected={selected} teams={teams} expanded={expanded} atlasMode={atlasMode} />
       <div className="flex items-center gap-1">
         <button type="button" onClick={() => onMove(-1)} disabled={selected === null || selected === 0} aria-label="Previous line" className="w-11 h-11 shrink-0 flex items-center justify-center rounded-md text-text-primary hover:bg-surface-elevated disabled:text-text-muted disabled:hover:bg-transparent">
           <span aria-hidden="true">‹</span>
         </button>
-        {expanded && onDetails && point ? (
-          <button type="button" onClick={() => onDetails(point.optionKey)} className="flex-1 min-h-11 rounded-md hover:bg-surface-elevated">
+        {canOpenDetails && point ? (
+          <button type="button" onClick={() => onDetails!(point.optionKey)} className="flex-1 min-h-11 rounded-md hover:bg-surface-elevated">
             {body}
             <span className="sr-only">Shows this line&apos;s exact quote</span>
           </button>
@@ -679,6 +923,136 @@ export function LadderCardView({
   );
 }
 
+// ─── Shared Atlas details-sheet adapter (#11974 Step E3) ───────────────────
+
+export function buildStoryCardDetailsSheetProps(opts: {
+  card?: NflEventCard | null;
+  rowId?: string | null;
+  row?: NflPropRow | OptionDetail;
+  lead?: { chance: number; basis: MilestoneBasis } | null;
+  rows?: Record<string, NflPropRow>;
+  teams: CardTeams;
+}): Omit<AtlasDetailsSheetProps, "open" | "onClose"> | null {
+  const { card, rowId, row, lead, rows, teams } = opts;
+  if (card?.kind === "finish" || rowId === "finish") {
+    if (card?.kind !== "finish") return null;
+    const winnerSide =
+      card.phase === "after" && card.final && card.final.home !== card.final.away
+        ? card.final.home > card.final.away
+          ? "home"
+          : "away"
+        : null;
+    const lastAtMs = card.final?.at ?? card.projectedNow?.at ?? card.pregame.at;
+    const rulesLines = [
+      `Pregame projection: ${teams.awayName} ${formatPoints(card.pregame.away)}, ${teams.homeName} ${formatPoints(card.pregame.home)}`,
+    ];
+    if (card.projectedNow) {
+      rulesLines.push(
+        `Projected now: ${teams.awayName} ${formatPoints(card.projectedNow.away)}, ${teams.homeName} ${formatPoints(card.projectedNow.home)}`,
+      );
+    }
+    if (card.final) {
+      rulesLines.push(
+        `Final score: ${teams.awayName} ${formatPoints(card.final.away)}, ${teams.homeName} ${formatPoints(card.final.home)}`,
+      );
+    }
+    return {
+      subjectName: finishHeadline(card, teams.awayName, teams.homeName),
+      marketTitle: `${teams.awayName} at ${teams.homeName} · ${finishKicker(card)}`,
+      isSettled: winnerSide !== null,
+      settledResult: winnerSide !== null ? "won" : null,
+      lastObservedAt: lastAtMs ? new Date(lastAtMs).toISOString() : null,
+      source: "sportsbooks",
+      sourceCount: 1,
+      rulesText: rulesLines.join("\n"),
+    };
+  }
+
+  if ((row && "detail" in row) || card?.kind === "ladder") {
+    const point =
+      card?.kind === "ladder"
+        ? (card.points.find((p) => p.optionKey === rowId) ?? card.points[0] ?? null)
+        : null;
+    const detail: OptionDetail | undefined = row && "detail" in row ? row : point?.detail;
+    if (!detail) return null;
+    const isSettled = detail.result !== null;
+    const settledResult = detail.result === true ? "won" : detail.result === false ? "lost" : null;
+    const openingProbability =
+      detail.baseline ?? (card?.kind === "ladder" && card.phase === "before" ? (point?.chance ?? null) : null);
+    const openingObservedAt =
+      detail.baselineObservedAt ??
+      (card?.kind === "ladder" && card.phase === "before" ? (point?.observedAt ?? null) : null);
+    const lastProbability = point?.now ?? (!isSettled ? detail.quoted : null);
+    const rulesLines: string[] = [];
+    if (card?.kind === "ladder") {
+      const margin = card.family === "margin";
+      const actualText =
+        card.actual === null ? null : margin ? marginWords(card, card.actual) : `${card.actual} points`;
+      const forecastText =
+        card.forecast === null ? null : margin ? marginWords(card, card.forecast) : `${card.forecast} points`;
+      if (actualText) {
+        rulesLines.push(`${card.phase === "after" ? "Actual final" : "So far"}: ${actualText}`);
+      }
+      if (forecastText) {
+        rulesLines.push(`Pregame projection: ${forecastText}`);
+      }
+    }
+    return {
+      subjectName: detail.label,
+      marketTitle: detail.marketName,
+      isSettled,
+      settledResult,
+      openingProbability,
+      openingObservedAt,
+      lastProbability,
+      lastObservedAt: detail.observedAt,
+      source: detail.source ?? "sportsbooks",
+      sourceCount: 1,
+      rulesText: rulesLines.length > 0 ? rulesLines.join("\n") : null,
+    };
+  }
+
+  const propRow: NflPropRow | undefined =
+    (row && !("detail" in row) ? row : undefined) ?? (rowId && rows ? rows[rowId] : undefined);
+  const rung =
+    card?.kind === "milestone"
+      ? (card.rungs.find((r) => r.rowId === rowId) ?? card.rungs[0] ?? null)
+      : null;
+  if (!propRow && !rung) return null;
+  const hit = typeof propRow?.hit === "boolean" ? propRow.hit : (rung?.hit ?? null);
+  const isSettled = hit !== null;
+  const settledResult = hit === true ? "won" : hit === false ? "lost" : null;
+  const openingProbability = lead ? lead.chance : (rung?.chance ?? propRow?.pregame_mark ?? null);
+  const lastProbability =
+    !isSettled && typeof propRow?.over_probability === "number" ? propRow.over_probability : null;
+  const actualVal =
+    typeof propRow?.actual === "number"
+      ? propRow.actual
+      : card?.kind === "milestone"
+        ? card.actual
+        : null;
+  const thresholdVal =
+    typeof propRow?.threshold === "number" ? propRow.threshold : (rung?.threshold ?? null);
+  const rulesLines: string[] = [];
+  if (thresholdVal !== null) rulesLines.push(`Line: ${targetLabel(thresholdVal)}`);
+  if (actualVal !== null) rulesLines.push(`Final actual: ${formatPoints(actualVal)}`);
+  return {
+    subjectName:
+      propRow?.outcome_name ??
+      (card?.kind === "milestone" && rung ? `${card.player}: ${targetLabel(rung.threshold)}` : "Player milestone"),
+    marketTitle:
+      propRow?.market_name ?? (card?.kind === "milestone" ? `${card.player} · ${card.stat}` : "Player prop"),
+    isSettled,
+    settledResult,
+    openingProbability,
+    lastProbability,
+    lastObservedAt: propRow?.observed_at ?? rung?.observedAt ?? null,
+    source: propRow?.source ?? "sportsbooks",
+    sourceCount: 1,
+    rulesText: rulesLines.length > 0 ? rulesLines.join("\n") : null,
+  };
+}
+
 // ─── One card, either family ───────────────────────────────────────────────
 
 export function EventCardView({
@@ -688,6 +1062,7 @@ export function EventCardView({
   onSelect,
   onDetails,
   expanded = false,
+  atlasMode = false,
 }: {
   card: NflEventCard;
   teams: CardTeams;
@@ -695,8 +1070,19 @@ export function EventCardView({
   onSelect: (cardId: string, rowId: string) => void;
   onDetails?: (rowId: string) => void;
   expanded?: boolean;
+  atlasMode?: boolean;
 }) {
-  if (card.kind === "finish") return <FinishCardView card={card} teams={teams} expanded={expanded} />;
+  if (card.kind === "finish") {
+    return (
+      <FinishCardView
+        card={card}
+        teams={teams}
+        expanded={expanded}
+        atlasMode={atlasMode}
+        onDetails={onDetails}
+      />
+    );
+  }
   if (card.kind === "ladder") {
     const index = selectedLadderIndex(card, selection);
     return (
@@ -705,6 +1091,7 @@ export function EventCardView({
         teams={teams}
         selected={index}
         expanded={expanded}
+        atlasMode={atlasMode}
         onDetails={onDetails}
         onMove={(delta) => {
           if (index === null) return;
@@ -722,6 +1109,7 @@ export function EventCardView({
       color={color}
       selected={selected}
       expanded={expanded}
+      atlasMode={atlasMode}
       onDetails={onDetails}
       onMove={(delta) => {
         if (selected === null) return;
@@ -773,6 +1161,8 @@ export function NFLEventCardDeck({
   onOpen,
   openerRef,
   headingRef,
+  atlasMode = false,
+  rows,
 }: {
   cards: NflEventCard[];
   teams: CardTeams;
@@ -782,9 +1172,24 @@ export function NFLEventCardDeck({
   /** Registers each card's Open control, so Back returns focus to it. */
   openerRef: (cardId: string, el: HTMLButtonElement | null) => void;
   headingRef?: Ref<HTMLHeadingElement>;
+  atlasMode?: boolean;
+  rows?: Record<string, NflPropRow>;
 }) {
   const { rowRef, touchProps } = useDeckLeadInView(cards[0]?.id ?? null);
+  const [atlasSheetTarget, setAtlasSheetTarget] = useState<{
+    card: NflEventCard;
+    rowId: string;
+  } | null>(null);
   if (cards.length === 0) return null;
+  const sheetProps =
+    atlasMode && atlasSheetTarget
+      ? buildStoryCardDetailsSheetProps({
+          card: atlasSheetTarget.card,
+          rowId: atlasSheetTarget.rowId,
+          rows,
+          teams,
+        })
+      : null;
   return (
     <section aria-labelledby="nfl-game-stories-heading" className="flex flex-col gap-2" data-testid="nfl-game-stories">
       <div className="flex items-baseline justify-between px-1">
@@ -799,7 +1204,16 @@ export function NFLEventCardDeck({
             data-card-id={card.id}
           >
             <div className="bg-surface-card rounded-card shadow-card border border-surface-border p-4 flex-1">
-              <EventCardView card={card} teams={teams} selection={selection} onSelect={onSelect} />
+              <EventCardView
+                card={card}
+                teams={teams}
+                selection={selection}
+                onSelect={onSelect}
+                atlasMode={atlasMode}
+                onDetails={
+                  atlasMode ? (rowId) => setAtlasSheetTarget({ card, rowId }) : undefined
+                }
+              />
             </div>
             <button
               type="button"
@@ -813,6 +1227,13 @@ export function NFLEventCardDeck({
           </div>
         ))}
       </div>
+      {atlasMode && sheetProps && (
+        <AtlasDetailsSheet
+          open
+          onClose={() => setAtlasSheetTarget(null)}
+          {...sheetProps}
+        />
+      )}
     </section>
   );
 }

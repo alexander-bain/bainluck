@@ -4012,6 +4012,8 @@ export default function EventPage({ params }: EventPageProps) {
             onOpen={setNflOpenCard}
             openerRef={registerNflCardOpener}
             headingRef={nflDeckHeadingRef}
+            atlasMode={atlasOptIn}
+            rows={nflCardRows}
           />
         </SectionErrorBoundary>
       )}
@@ -4556,6 +4558,7 @@ export default function EventPage({ params }: EventPageProps) {
           selection={nflCardSelection}
           onSelect={selectNflCardRow}
           onClose={closeNflReader}
+          atlasMode={atlasOptIn}
         />
       )}
     </div>
