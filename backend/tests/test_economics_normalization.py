@@ -151,6 +151,57 @@ class TestBracketsFromOutcomes:
             brackets = _brackets_from_outcomes(market)
             assert [b[0] for b in brackets] == [60.0, 55.0]
 
+    def test_blank_outcome_label_refused_and_withholds_normalization(self):
+        """#12126 / #12128 / #11949: blank outcome labels are stripped and mark field incomplete."""
+        outcomes = [
+            _make_outcome("2.0% - 2.5%", 0.60, rank=1),
+            _make_outcome("   ", 0.50, rank=2),
+            _make_outcome("2.5% - 3.0%", 0.50, rank=3),
+        ]
+        market = _make_market("CPI", outcomes, mutually_exclusive=True)
+        brackets = _brackets_from_outcomes(market)
+        assert [b[1] for b in brackets] == ["2.0% - 2.5%", "2.5% - 3.0%"]
+        assert [b[0] for b in brackets] == [60.0, 50.0]
+
+    def test_missing_source_stays_none_and_blank_outcome_filtered_in_rows(self):
+        """#12126 / #12128 / #11949: missing source stays None, never 'kalshi' or ''."""
+        from app.routes.economics import _cross_source_row_fn, _distribution_row, _market_row
+
+        m_bin = _make_market(
+            "Will tariffs rise?",
+            [
+                _make_outcome("", 0.90, rank=1),
+                _make_outcome("Yes", 0.42, rank=2),
+                _make_outcome("No", 0.58, rank=3),
+            ],
+            source="",
+            external_id="",
+        )
+        row = _market_row(m_bin)
+        assert row is not None
+        assert row["src"] is None
+        assert row["prob"] == 42.0
+
+        m_dist = _make_market(
+            "CPI Brackets",
+            [
+                _make_outcome("2.0% - 2.5%", 0.45, rank=1),
+                _make_outcome("   ", 0.25, rank=2),
+                _make_outcome("2.5% - 3.0%", 0.30, rank=3),
+            ],
+            source="",
+            external_id="",
+        )
+        dist = _distribution_row(m_dist, min_outcomes=2)
+        assert dist is not None
+        assert dist["src"] is None
+        assert [r[1] for r in dist["rows"]] == ["2.0% - 2.5%", "2.5% - 3.0%"]
+
+        cs = _cross_source_row_fn(m_dist)
+        assert cs is not None
+        assert cs["src"] is None
+        assert [t["name"] for t in cs["top_outcomes"]] == ["2.0% - 2.5%", "2.5% - 3.0%"]
+
 
 # ---------------------------------------------------------------------------
 # _cumulative_to_discrete — cumulative "Above X" normalization

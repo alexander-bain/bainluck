@@ -59,6 +59,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# #12126 / #12128 / #11949 — normalize a mutually-exclusive field only when it
+# holds at least 90% of the probability mass and has no blank outcome labels.
+SPECIALTY_FIELD_MASS_MIN = 0.9
+
 # ---------------------------------------------------------------------------
 # Sub-theme classification — ticker prefix + name pattern matching
 # ---------------------------------------------------------------------------
@@ -331,9 +335,10 @@ def _market_row(market: FuturesMarket) -> dict | None:
     case has no specimen in the served population, and preserving a number beats
     shipping an unexercised withholding path across nine theme lists.
     """
-    outcomes = _clean_outcomes(list(market.outcomes))
-    if len(outcomes) > 5:
+    raw_cleaned = _clean_outcomes(list(market.outcomes))
+    if len(raw_cleaned) > 5:
         return None
+    outcomes = [o for o in raw_cleaned if (o.name or "").strip()]
     # `is not None`, not `or 0`. `current_probability` is Numeric(7, 6), so it
     # arrives as a Decimal — and `Decimal("0.000000")` is FALSY, so the old
     # `or 0` read a genuine priced zero as no reading at all. A priced zero is
@@ -352,7 +357,7 @@ def _market_row(market: FuturesMarket) -> dict | None:
         # indistinguishable from a payload served out of a Redis cache built
         # before the field existed, which the page must also survive.
         "leader": _leader_name(market, leg, outcomes),
-        "src": _source(market),
+        "src": _source(market) or None,
         "delta": None,
         "market_id": market.id,
     }
@@ -558,14 +563,14 @@ def _index_row(market: FuturesMarket) -> dict | None:
             "prob": round(float(rung.current_probability) * 100, 1),
             "dir": f"{word} {(rung.name or '').strip()}",
             "range": "",
-            "src": _source(market),
+            "src": _source(market) or None,
         }
     return {
         "sym": (market.name or "").split(" Up ")[0].split(" up ")[0].split("?")[0].strip()[:20],
         "prob": round(float(outcome.current_probability) * 100, 1),
         "dir": "up",
         "range": "",
-        "src": _source(market),
+        "src": _source(market) or None,
     }
 
 
@@ -588,7 +593,7 @@ def _stock_row(market: FuturesMarket) -> dict | None:
         "sym": sym[:6],
         "prob": round(float(outcome.current_probability) * 100, 1),
         "delta": None,
-        "src": _source(market),
+        "src": _source(market) or None,
     }
 
 
@@ -775,7 +780,7 @@ def _oil_row(market: FuturesMarket) -> dict | None:
             "leader": _with_question_comparator(
                 market, _leader_name(market, rung, outcomes)
             ),
-            "src": _source(market),
+            "src": _source(market) or None,
             "delta": None,
             "market_id": market.id,
         }
@@ -885,8 +890,9 @@ def _distribution_row(
     if _is_cumulative_ladder(market):
         kind = "ladder"
         rows = [
-            [round(float(o.current_probability or 0) * 100, 1), o.name or ""]
+            [round(float(o.current_probability or 0) * 100, 1), (o.name or "").strip()]
             for o in _ladder_rungs_in_threshold_order(market)
+            if (o.name or "").strip()
         ]
     else:
         kind = "brackets"
@@ -896,7 +902,7 @@ def _distribution_row(
         "q": market.name,
         "kind": kind,
         "rows": rows,
-        "src": _source(market),
+        "src": _source(market) or None,
         "market_id": market.id,
     }
 
@@ -904,28 +910,47 @@ def _distribution_row(
 def _brackets_from_outcomes(market: FuturesMarket, normalize: bool = True) -> list[list]:
     """Convert multi-outcome market to [[prob, label], ...] brackets.
 
-    #11995 (decision 6-A) / #12093 (Defect 5b): when normalize=True, normalize
-    via ``display_probability_divisor`` / ``normalize_display_probs`` inside the
-    existing guards (requires ``mutually_exclusive is True``, ``field_complete``,
-    160% ceiling, one-cent floor exclusion, scale-down only when divisor > 1.0).
+    #11995 (decision 6-A) / #12093 (Defect 5b) / #12126 / #12128: when
+    normalize=True, normalize via ``display_probability_divisor`` /
+    ``normalize_display_probs`` inside the existing guards (requires
+    ``mutually_exclusive is True``, ``field_complete``, raw mass >= 90%,
+    no blank outcome labels, 160% ceiling, one-cent floor exclusion,
+    scale-down only when divisor > 1.0).
     """
     sorted_outcomes = _outcomes_sorted(market)
     if not sorted_outcomes:
         return []
     venue_exclusive = getattr(market, "mutually_exclusive", None) is True
     raw_outcomes = list(getattr(market, "outcomes", None) or sorted_outcomes)
-    field_complete = all(o.current_probability is not None for o in raw_outcomes)
-    outcome_dicts = [
-        {
-            "id": getattr(o, "id", idx),
-            "name": o.name or "",
-            "probability": float(o.current_probability or 0),
-            "is_winner": getattr(o, "is_winner", None),
-            "resolution_source": getattr(o, "resolution_source", None),
-        }
-        for idx, o in enumerate(sorted_outcomes)
-    ]
-    if normalize and venue_exclusive and field_complete and len(outcome_dicts) >= 2:
+    field_complete = all(
+        o.current_probability is not None and bool((o.name or "").strip())
+        for o in raw_outcomes
+    )
+    outcome_dicts = []
+    for idx, o in enumerate(sorted_outcomes):
+        label = (o.name or "").strip()
+        if not label:
+            field_complete = False
+            continue
+        outcome_dicts.append(
+            {
+                "id": getattr(o, "id", idx),
+                "name": label,
+                "probability": float(o.current_probability or 0),
+                "is_winner": getattr(o, "is_winner", None),
+                "resolution_source": getattr(o, "resolution_source", None),
+            }
+        )
+    if not outcome_dicts:
+        return []
+    raw_mass = sum(d["probability"] for d in outcome_dicts)
+    if (
+        normalize
+        and venue_exclusive
+        and field_complete
+        and len(outcome_dicts) >= 2
+        and raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+    ):
         divisor = display_probability_divisor(
             outcome_dicts,
             mutually_exclusive=True,
@@ -1284,14 +1309,6 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8, *, usable=None
         discrete = discrete[:max_buckets]
         discrete.sort(key=lambda x: x[2])
 
-    # Normalize: independent binary markets can sum well over 100%.
-    # Same threshold as _brackets_from_outcomes / politics _normalize_outcome_probs.
-    if discrete:
-        total = sum(b[0] for b in discrete)
-        if total > 105:
-            for b in discrete:
-                b[0] = round(b[0] * 100 / total, 1)
-
     return [[b[0], b[1]] for b in discrete]
 
 
@@ -1302,7 +1319,10 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8, *, usable=None
 
 def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
     """Build a row for cross-source matching (economics-specific)."""
-    outcomes = _clean_outcomes(list(market.outcomes))
+    outcomes = [
+        o for o in _clean_outcomes(list(market.outcomes))
+        if (o.name or "").strip()
+    ]
     outcomes = sorted(
         outcomes, key=lambda o: float(o.current_probability or 0), reverse=True
     )
@@ -1312,11 +1332,11 @@ def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
     row = {
         "q": market.name,
         "prob": round(float(outcomes[0].current_probability or 0) * 100, 1),
-        "src": _source(market),
+        "src": _source(market) or None,
         "market_id": market.id,
         "top_outcomes": [
             {
-                "name": o.name,
+                "name": (o.name or "").strip(),
                 "prob": round(float(o.current_probability or 0) * 100, 1),
             }
             for o in top
@@ -1608,7 +1628,7 @@ async def get_economics(db: AsyncSession):
             "date": date_str,
             "mo": mo,
             "dist": discrete,
-            "resolved": m.status in ("resolved", "closed"),
+            "resolved": market_reads_settled(m, now=now),
             "market_id": m.id,
             "sort_key": sort_key,
         })
@@ -1909,14 +1929,14 @@ async def get_economics(db: AsyncSession):
                     "val": modal_label,
                     "prob": modal_prob,
                     "brackets": brackets,
-                    "src": _source(m),
+                    "src": _source(m) or None,
                 })
             else:
                 oil_rows.append({
                     "sym": "WTI" if "wti" in name_lower else "Brent" if "brent" in name_lower else "Oil",
                     "prob": modal_prob,
                     "range": modal_label,
-                    "src": _source(m),
+                    "src": _source(m) or None,
                     "q": short_label,
                 })
             continue
@@ -1960,7 +1980,7 @@ async def get_economics(db: AsyncSession):
                 "val": modal_label,
                 "prob": modal_prob,
                 "brackets": brackets,
-                "src": _source(m),
+                "src": _source(m) or None,
             })
             continue
         _row = _market_row(m)
