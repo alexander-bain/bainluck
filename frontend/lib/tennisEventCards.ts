@@ -226,21 +226,22 @@ export function tennisPlayerShortName(fullName: string): string {
   return parts[parts.length - 1] || cleaned;
 }
 
+function normalizePlayerPlain(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function tennisNameMatchesSide(
   candidate: string,
   playerName: string,
   shortName: string,
 ): boolean {
-  const candNorm = candidate
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-  const fullNorm = playerName
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
+  const candNorm = normalizePlayerPlain(candidate);
+  const fullNorm = normalizePlayerPlain(playerName);
   if (!candNorm || !fullNorm) return false;
   if (candNorm === fullNorm) return true;
   if (candNorm.includes(fullNorm) || fullNorm.includes(candNorm)) return true;
@@ -259,6 +260,70 @@ export function tennisNameMatchesSide(
     return true;
   }
   return false;
+}
+
+export function matchTennisPlayerSide(
+  candidate: string,
+  homeTeam: string,
+  awayTeam: string,
+  homeShort: string,
+  awayShort: string,
+): "home" | "away" | null {
+  const candNorm = normalizePlayerPlain(candidate);
+  const homeNorm = normalizePlayerPlain(homeTeam);
+  const awayNorm = normalizePlayerPlain(awayTeam);
+  const homeShortNorm = normalizePlayerPlain(homeShort);
+  const awayShortNorm = normalizePlayerPlain(awayShort);
+  if (!candNorm) return null;
+
+  // 1. Exact full-name match
+  const exactHome = Boolean(homeNorm && candNorm === homeNorm);
+  const exactAway = Boolean(awayNorm && candNorm === awayNorm);
+  if (exactHome !== exactAway) return exactHome ? "home" : "away";
+  if (exactHome && exactAway) return null;
+
+  // 2. Exact short-name match
+  const shortHome = Boolean(homeShortNorm && candNorm === homeShortNorm);
+  const shortAway = Boolean(awayShortNorm && candNorm === awayShortNorm);
+  if (shortHome !== shortAway) return shortHome ? "home" : "away";
+  if (shortHome && shortAway) return null;
+
+  // 3. Full-name substring match
+  const subHome = Boolean(
+    homeNorm && (candNorm.includes(homeNorm) || homeNorm.includes(candNorm)),
+  );
+  const subAway = Boolean(
+    awayNorm && (candNorm.includes(awayNorm) || awayNorm.includes(candNorm)),
+  );
+  if (subHome !== subAway) return subHome ? "home" : "away";
+  if (subHome && subAway) return null;
+
+  // 4. Token / surname match
+  const tokHome = tennisNameMatchesSide(candidate, homeTeam, homeShort);
+  const tokAway = tennisNameMatchesSide(candidate, awayTeam, awayShort);
+  if (tokHome !== tokAway) return tokHome ? "home" : "away";
+  return null;
+}
+
+function normalizeSourceKey(source: string | null | undefined): string {
+  return typeof source === "string" ? source.trim().toLowerCase() : "";
+}
+
+function dedupeCandidatesBySource<T>(
+  candidates: T[],
+  getSource: (item: T) => string | null | undefined,
+): T[] {
+  const seenNamedSources = new Set<string>();
+  const deduped: T[] = [];
+  for (const c of candidates) {
+    const src = normalizeSourceKey(getSource(c));
+    if (src) {
+      if (seenNamedSources.has(src)) continue;
+      seenNamedSources.add(src);
+    }
+    deduped.push(c);
+  }
+  return deduped;
 }
 
 function parseSetWinnerNumber(marketName: string): number | null {
@@ -316,9 +381,14 @@ function parseExactSetScoreOutcome(
   const playerText = prefix || suffix;
   if (!playerText) return null;
 
-  const isHome = tennisNameMatchesSide(playerText, homeTeam, homeShort);
-  const isAway = tennisNameMatchesSide(playerText, awayTeam, awayShort);
-  if (isHome === isAway) return null;
+  const matchedSide = matchTennisPlayerSide(
+    playerText,
+    homeTeam,
+    awayTeam,
+    homeShort,
+    awayShort,
+  );
+  if (!matchedSide) return null;
 
   const winnerSets = a;
   const loserSets = b;
@@ -327,7 +397,7 @@ function parseExactSetScoreOutcome(
   }
 
   return {
-    winnerSide: isHome ? "home" : "away",
+    winnerSide: matchedSide,
     winnerSets,
     loserSets,
   };
@@ -487,15 +557,20 @@ function extractRawOptionProbabilities(
   const isMatrixOption =
     published !== null || comparison !== null || pregameReading !== null;
 
+  const dedupedEvidence = dedupeCandidatesBySource(evidenceList, (ev) =>
+    typeof ev?.source === "string" ? (ev.source as string) : null,
+  );
+  const distinctEvidenceCount = Math.max(1, dedupedEvidence.length);
+
   const rawSource =
     (typeof published?.source === "string" ? published.source : null) ??
     (typeof rawOpt.source === "string" ? rawOpt.source : null) ??
-    (evidenceList.length === 1 && typeof sourceEvidence?.source === "string"
+    (distinctEvidenceCount === 1 && typeof sourceEvidence?.source === "string"
       ? (sourceEvidence.source as string)
       : null);
 
   const multiSourceEvidenceUnblended =
-    !isServerBlendedSource(rawSource) && evidenceList.length > 1;
+    !isServerBlendedSource(rawSource) && distinctEvidenceCount > 1;
 
   const publishedValue =
     published?.value_state === "quoted" ? asProb(published.value) : null;
@@ -573,7 +648,7 @@ function extractRawOptionProbabilities(
   }
 
   const source = multiSourceEvidenceUnblended ? null : rawSource;
-  const sourceCount = Math.max(1, evidenceList.length);
+  const sourceCount = distinctEvidenceCount;
 
   const marketIds = Array.isArray(rawOpt.market_ids) ? rawOpt.market_ids : [];
   const marketId =
@@ -619,9 +694,10 @@ function resolveCandidateSetOutcome(
   stage: EventStage,
 ): TennisSetPlayerOutcome | null {
   if (candidates.length === 0) return null;
-  const blended = candidates.find((c) => isServerBlendedSource(c.source));
-  const multiUnblended = !blended && candidates.length > 1;
-  const chosen = blended ?? candidates[0]!;
+  const deduped = dedupeCandidatesBySource(candidates, (c) => c.source);
+  const blended = deduped.find((c) => isServerBlendedSource(c.source));
+  const multiUnblended = !blended && deduped.length > 1;
+  const chosen = blended ?? deduped[0]!;
   const combinedResult =
     candidates.length > 1
       ? combineCandidateResults(
@@ -635,7 +711,7 @@ function resolveCandidateSetOutcome(
     pregameProbability: multiUnblended ? null : chosen.pregameProbability,
     liveProbability: multiUnblended ? null : chosen.liveProbability,
     source: multiUnblended ? null : chosen.source,
-    sourceCount: Math.max(chosen.sourceCount, candidates.length),
+    sourceCount: Math.max(chosen.sourceCount, deduped.length),
     result: combinedResult,
   };
 }
@@ -665,17 +741,16 @@ function buildTennisSetsCard(
       if (!label) continue;
       const explicitSide =
         rawOpt.side === "home" || rawOpt.side === "away" ? rawOpt.side : null;
-      const matchesHome =
-        explicitSide === "home" ||
-        (explicitSide === null &&
-          tennisNameMatchesSide(label, inputs.homeTeam, inputs.homeShort));
-      const matchesAway =
-        explicitSide === "away" ||
-        (explicitSide === null &&
-          tennisNameMatchesSide(label, inputs.awayTeam, inputs.awayShort));
-
-      if (matchesHome === matchesAway) continue;
-      const side: "home" | "away" = matchesHome ? "home" : "away";
+      const side =
+        explicitSide ??
+        matchTennisPlayerSide(
+          label,
+          inputs.homeTeam,
+          inputs.awayTeam,
+          inputs.homeShort,
+          inputs.awayShort,
+        );
+      if (!side) continue;
       const probs = extractRawOptionProbabilities(rawOpt, stage, nowMs);
       const result = extractRawResultState(rawOpt, stage);
       const optionKey =
@@ -919,9 +994,10 @@ function buildTennisExactScoreCard(
 
   const outcomes: TennisExactScoreOutcome[] = [];
   for (const candidates of candidatesByKey.values()) {
-    const blended = candidates.find((c) => isServerBlendedSource(c.source));
-    const multiUnblended = !blended && candidates.length > 1;
-    const chosen = blended ?? candidates[0]!;
+    const deduped = dedupeCandidatesBySource(candidates, (c) => c.source);
+    const blended = deduped.find((c) => isServerBlendedSource(c.source));
+    const multiUnblended = !blended && deduped.length > 1;
+    const chosen = blended ?? deduped[0]!;
     const combinedResult =
       candidates.length > 1
         ? combineCandidateResults(
@@ -935,7 +1011,7 @@ function buildTennisExactScoreCard(
       pregameProbability: multiUnblended ? null : chosen.pregameProbability,
       liveProbability: multiUnblended ? null : chosen.liveProbability,
       source: multiUnblended ? null : chosen.source,
-      sourceCount: Math.max(chosen.sourceCount, candidates.length),
+      sourceCount: Math.max(chosen.sourceCount, deduped.length),
       result: combinedResult,
     });
   }
@@ -1052,11 +1128,15 @@ function buildTennisTotalGamesCard(
     }
   }
   for (const [line, candidates] of typedByLine.entries()) {
-    const blended = candidates.find((c) =>
+    const deduped = dedupeCandidatesBySource(
+      candidates,
+      (c) => c.overOpt.source,
+    );
+    const blended = deduped.find((c) =>
       isServerBlendedSource(c.overOpt.source),
     );
-    const multiUnblended = !blended && candidates.length > 1;
-    const chosen = blended ?? candidates[0]!;
+    const multiUnblended = !blended && deduped.length > 1;
+    const chosen = blended ?? deduped[0]!;
     const { q, overOpt } = chosen;
     const rawChance =
       phase === "before"
@@ -1093,6 +1173,7 @@ function buildTennisTotalGamesCard(
         label: overOpt.label || q.label,
         marketName: q.marketName,
         source,
+        sourceCount: deduped.length,
         quoted: multiUnblended ? null : overOpt.quoted,
         observedAt: overOpt.observedAt,
         baseline:
@@ -1144,11 +1225,12 @@ function buildTennisTotalGamesCard(
       probs: extractRawOptionProbabilities(c.overRaw, stage, nowMs),
       rawRes: extractRawResultState(c.overRaw, stage),
     }));
-    const blended = extracted.find((c) =>
+    const deduped = dedupeCandidatesBySource(extracted, (c) => c.probs.source);
+    const blended = deduped.find((c) =>
       isServerBlendedSource(c.probs.source),
     );
-    const multiUnblended = !blended && extracted.length > 1;
-    const chosen = blended ?? extracted[0]!;
+    const multiUnblended = !blended && deduped.length > 1;
+    const chosen = blended ?? deduped[0]!;
     const chance = multiUnblended ? null : chosen.probs.pregameProbability;
     const now = multiUnblended ? null : chosen.probs.liveProbability;
     const source = multiUnblended ? null : chosen.probs.source;
@@ -1184,6 +1266,7 @@ function buildTennisTotalGamesCard(
         label: `Over ${line} games`,
         marketName: chosen.marketName,
         source,
+        sourceCount: Math.max(chosen.probs.sourceCount, deduped.length),
         quoted: now ?? (stage === "before" ? chance : null),
         observedAt: chosen.probs.observedAt,
         baseline: chance,
@@ -1224,11 +1307,14 @@ function buildTennisTotalGamesCard(
   }
 
   for (const [threshold, candidates] of totalsByLine.entries()) {
-    const blended = candidates.find((c) =>
+    const deduped = dedupeCandidatesBySource(candidates, (c) =>
+      typeof c.source === "string" ? c.source : null,
+    );
+    const blended = deduped.find((c) =>
       isServerBlendedSource(typeof c.source === "string" ? c.source : null),
     );
-    const multiUnblended = !blended && candidates.length > 1;
-    const chosen = blended ?? candidates[0]!;
+    const multiUnblended = !blended && deduped.length > 1;
+    const chosen = blended ?? deduped[0]!;
     const marketName = String(chosen.market_name ?? "").trim();
     const observedAt = asIso(chosen.observed_at);
     const overProb = asProb(chosen.over_probability ?? chosen.probability);
@@ -1299,6 +1385,7 @@ function buildTennisTotalGamesCard(
         label: `Over ${threshold} games`,
         marketName: marketName || `Match O/U ${threshold}`,
         source,
+        sourceCount: deduped.length,
         quoted: now ?? (stage === "before" ? chance : null),
         observedAt,
         baseline: chance,

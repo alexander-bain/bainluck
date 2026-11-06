@@ -2393,8 +2393,11 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt,
       lastProbability,
       lastObservedAt: detail.observedAt,
-      source: detail.source ?? "sportsbooks",
-      sourceCount: 1,
+      source:
+        detail.sourceCount && detail.sourceCount > 1 && !detail.source
+          ? null
+          : (detail.source ?? "sportsbooks"),
+      sourceCount: detail.sourceCount ?? 1,
       rulesText: rulesLines.length > 0 ? rulesLines.join("\n") : null,
     };
   }
