@@ -1073,7 +1073,7 @@ def derive_response_ttl_s(
 #: `worker-background`'s celery `--concurrency`, from `backend/Procfile`.
 #: Mirrored, and pinned against the Procfile by
 #: `test_background_concurrency_mirror_matches_the_procfile`.
-BACKGROUND_WORKER_CONCURRENCY = 2
+BACKGROUND_WORKER_CONCURRENCY = 1
 
 
 def background_slot_occupancy(

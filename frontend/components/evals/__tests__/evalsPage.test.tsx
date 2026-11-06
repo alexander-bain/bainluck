@@ -9,8 +9,13 @@
  * item, and the route is unlisted (`noindex`) until Alex's phone look (Decide
  * 43-A1). S3's: the forward record shows /about's figure under a LIVE label,
  * an older payload shows the staleness sentence, and a failed read shows
- * "Unavailable right now" with no number. Each rule has a negative control, so
- * a scanner that silently stopped reading would fail rather than pass.
+ * "Unavailable right now" with no number. S4's: the scoreboard's recorded time
+ * and commit render, the bite meter shows both of its numbers, and all fifteen
+ * reviewer squares read NOT RUN with no zero-filling. S5's: every watcher row
+ * has a source link, its times are worked out in Pacific on the reader's date,
+ * and each verdict is the newest on the record. Each rule has a negative
+ * control, so a scanner that silently stopped reading would fail rather than
+ * pass.
  *
  * Rendered with `createRoot` in jsdom, the way a browser runs the page: effects
  * fire, so the ages a reader's clock adds are on screen when the scan runs.
@@ -42,13 +47,20 @@ import EvalsPage from "@/app/evals/page";
 import { metadata } from "@/app/evals/layout";
 import EvalsSection from "@/components/evals/EvalsSection";
 import Figure from "@/components/evals/Figure";
+import HeroTiles from "@/components/evals/HeroTiles";
+import TestLibrary from "@/components/evals/TestLibrary";
+import TestsForTheTests from "@/components/evals/TestsForTheTests";
+import Watchers from "@/components/evals/Watchers";
 import { fetchCalibration } from "@/lib/api";
 import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofFigures";
 import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy } from "@/lib/copyBans";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { calibrationFixture, calibrationFixtureBuckets } from "@/lib/evals/fixtures/calibration";
 import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
+import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
+import { familyView, loadScoreboard, type Scoreboard } from "@/lib/evals/scoreboard";
+import { loadWatchers, type WatcherList } from "@/lib/evals/watchers";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { pacificDayLabel, type MeasuredTruth } from "@/lib/evals/truth";
 import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
@@ -150,7 +162,16 @@ describe("/evals S1 renders the shell", () => {
     const sections = Array.from(page.querySelectorAll("[data-evals-section]")).map((s) =>
       s.getAttribute("data-evals-section")
     );
-    expect(sections).toEqual(["timeline", "forward-record", "gaps", "how-to-read", "sources"]);
+    expect(sections).toEqual([
+      "timeline",
+      "forward-record",
+      "test-library",
+      "tests-for-tests",
+      "watchers",
+      "gaps",
+      "how-to-read",
+      "sources",
+    ]);
   });
 
   it("every gap row links the issue or pull request that owns it", async () => {
@@ -197,7 +218,7 @@ describe("/evals S1 renders the shell", () => {
     const listed = Array.from(page.querySelectorAll("[data-source-id]")).map((s) =>
       s.getAttribute("data-source-id")
     );
-    const onPage = ["timeline", "forward-record", "gaps"];
+    const onPage = ["timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
     expect(listed).toEqual(
       EVALS_SOURCES.filter((s) => s.usedBy.some((id) => onPage.includes(id))).map((s) => s.id)
     );
@@ -413,6 +434,319 @@ describe("S3: the forward record", () => {
     fetchCalibrationMock.mockResolvedValue(calibrationFixture({ generated_at: undefined }));
     const page = await mountPage();
     expect(page.querySelector('[data-testid="evals-forward-unavailable"]')).not.toBeNull();
+  });
+});
+
+describe("S4: the test library", () => {
+  const board = loadScoreboard() as Scoreboard;
+
+  it("prints the record's own time and commit (recorded_at_pt, recorded_source_sha) under LAST RUN", async () => {
+    const page = await mountPage();
+    const section = page.querySelector('[data-evals-section="test-library"]');
+    expect(section?.getAttribute("data-truth-scope")).toBe("last_run");
+    expect(section?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST RUN · NOV 3")).toBe(true);
+    const recorded = section?.querySelector('[data-testid="evals-library-recorded"]');
+    const time = recorded?.querySelector("time");
+    expect(time?.getAttribute("dateTime")).toBe("2026-11-03");
+    expect(time?.textContent).toBe("Nov 3, 8:48 PM PT");
+    const sha = recorded?.querySelector("a[data-recorded-sha]");
+    expect(sha?.getAttribute("data-recorded-sha")).toBe(board.recordedSourceSha);
+    expect(sha?.textContent).toBe(board.recordedSourceSha.slice(0, 10));
+    expect(sha?.getAttribute("href")).toBe(
+      `https://github.com/alexander-bain/bainluck/commit/${board.recordedSourceSha}`
+    );
+  });
+
+  it("one row per family, in the record's order and in plain words, each with the family's own case count", async () => {
+    const page = await mountPage();
+    const rows = Array.from(page.querySelectorAll("[data-family]"));
+    expect(rows.map((r) => r.getAttribute("data-family"))).toEqual(board.families.map((f) => f.canonical));
+    for (const [i, row] of rows.entries()) {
+      const view = familyView(board.families[i]);
+      const summary = row.querySelector("summary");
+      expect(summary?.textContent).toContain(view.name);
+      expect(summary?.textContent).not.toContain(view.canonical);
+      expect(summary?.querySelector("[data-evals-figure]")?.getAttribute("data-value")).toBe(String(view.cases));
+      expect(summary?.textContent).toContain(view.casesAtLeast ? "or more cases" : " cases");
+    }
+  });
+
+  it("a family's recorded run counts its unrecorded checks and never reads as a PASS", async () => {
+    const page = await mountPage();
+    const cache = page.querySelector('[data-family="cache_failure_resilience"] summary');
+    expect(cache?.textContent?.replace(/\s+/g, " ")).toMatch(
+      /Recorded run: 54 passed, 0 failed\. 15 of its 21 checks have no recorded run\./
+    );
+    expect(page.querySelector('[data-evals-section="test-library"] [data-result="pass"]')).toBeNull();
+  });
+
+  it("one unrecorded check reads 'has', never 'have'", async () => {
+    const page = await mountPage();
+    const admin = page.querySelector('[data-family="admin_surface_truth_contract"] summary');
+    expect(admin?.textContent?.replace(/\s+/g, " ")).toMatch(/\. 1 of its 10 checks has no recorded run\./);
+    const library = page.querySelector('[data-evals-section="test-library"]')?.textContent?.replace(/\s+/g, " ");
+    expect(library).toMatch(/1 of its 2 checks has no recorded run/);
+    expect(library).not.toMatch(/\b1 of its \d+ checks have\b/);
+  });
+
+  it("NEGATIVE CONTROL: a family whose recorded run failed shows FAIL beside its name", async () => {
+    const failing: Scoreboard = JSON.parse(JSON.stringify(board));
+    const first = failing.families[0].members.find((m) => m.last_result);
+    if (first?.last_result) first.last_result.failed = 1;
+    const page = await mount(<TestLibrary board={failing} />);
+    const row = page.querySelector(`[data-family="${failing.families[0].canonical}"]`);
+    expect(row?.querySelector('summary [data-result="fail"]')?.textContent).toBe("FAIL");
+    expect(page.querySelectorAll('[data-result="fail"]')).toHaveLength(1);
+  });
+
+  it("the golden set prints its count, its total and its floor from the record", async () => {
+    const page = await mountPage();
+    const golden = page.querySelector('[data-testid="evals-golden"]');
+    const values = Array.from(golden?.querySelectorAll("[data-evals-figure]") ?? []).map((f) =>
+      f.getAttribute("data-value")
+    );
+    expect(values).toEqual([board.golden.passing, board.golden.total, board.golden.floor].map(String));
+    for (const fig of Array.from(golden?.querySelectorAll("[data-evals-figure]") ?? [])) {
+      expect(fig.getAttribute("data-source")).toContain(`/blob/${board.recordedSourceSha.slice(0, 10)}/`);
+    }
+  });
+});
+
+describe("S4: the tests for the tests", () => {
+  const board = loadScoreboard() as Scoreboard;
+  const study = loadReviewerStudy();
+
+  it("the bite meter shows both numbers: 40 of 40 caught and 0 of 40 on the site's own code", async () => {
+    const page = await mountPage();
+    const bite = page.querySelector('[data-testid="evals-bite"]');
+    const values = (part: string) =>
+      Array.from(bite?.querySelectorAll(`[data-bite="${part}"] [data-evals-figure]`) ?? []).map((f) => f.textContent);
+    expect(values("caught")).toEqual(["40", "40"]);
+    expect(values("real-code")).toEqual(["0", "40"]);
+    expect(bite?.textContent).toContain("None of these cases runs the site's own code");
+    expect(bite?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST RUN · NOV 3")).toBe(true);
+  });
+
+  it("NEGATIVE CONTROL: once a case runs the site's own code, the page stops saying none does", async () => {
+    const some: Scoreboard = { ...board, bite: { ...board.bite, realCode: 3 } };
+    const page = await mount(<TestsForTheTests board={some} study={null} />);
+    expect(page.textContent).not.toContain("None of these cases");
+    expect(page.querySelector('[data-testid="evals-reviewer"]')).toBeNull();
+  });
+
+  it("all fifteen reviewer squares read NOT RUN, with no zero-filling", async () => {
+    const page = await mountPage();
+    const tiles = Array.from(page.querySelectorAll("[data-reviewer-result]"));
+    expect(tiles).toHaveLength(study?.cases.length ?? -1);
+    expect(tiles).toHaveLength(15);
+    for (const tile of tiles) {
+      expect(tile.getAttribute("data-reviewer-result")).toBe("not_run");
+      expect(tile.querySelector('[data-result="not_run"]')?.textContent).toBe("NOT RUN");
+      expect(tile.textContent).not.toMatch(/\d/);
+    }
+    expect(page.querySelectorAll('[data-reviewer-grid="defect"] [data-reviewer-case]')).toHaveLength(10);
+    expect(page.querySelectorAll('[data-reviewer-grid="control"] [data-reviewer-case]')).toHaveLength(5);
+  });
+
+  it("tapping a square shows what changed, what our tests did, and the reviewer's result", async () => {
+    const page = await mountPage();
+    const detail = () => page.querySelector('[data-testid="evals-reviewer-detail"]');
+    expect(detail()?.getAttribute("data-detail-case")).toBe(study?.cases[0].id);
+    const control = study?.cases.find((c) => c.kind === "control");
+    const tile = page.querySelector(`[data-reviewer-case="${control?.id}"]`) as HTMLButtonElement;
+    await act(async () => tile.click());
+    expect(detail()?.getAttribute("data-detail-case")).toBe(control?.id);
+    expect(detail()?.textContent).toContain(control?.text);
+    expect(detail()?.textContent).toMatch(/Our tests: passed it/);
+    expect(detail()?.querySelector('[data-result="not_run"]')?.textContent).toBe("NOT RUN");
+    expect(tile.getAttribute("aria-pressed")).toBe("true");
+    expect(page.querySelector(`[data-reviewer-case="${study?.cases[0].id}"]`)?.getAttribute("aria-pressed")).toBe(
+      "false"
+    );
+  });
+
+  it("the squares say the time they are as of, and point at the full study that started after them (Fable on #12130)", async () => {
+    const page = await mountPage();
+    const grid = page.querySelector('[data-testid="evals-reviewer"]');
+    const chip = grid?.querySelector("[data-truth-chip]");
+    expect(chip?.textContent).toMatch(/^LAST RUN · NOV 5as of 4:36 PM PT/);
+    expect(grid?.textContent).toContain(
+      "When these squares were recorded, the AI reviewer had not reviewed any of them, so each reads NOT RUN."
+    );
+    expect(grid?.textContent).not.toMatch(/has not reviewed/);
+    const full = page.querySelector('[data-testid="evals-reviewer-full-study"]');
+    expect(full?.textContent?.replace(/\s+/g, " ")).toBe(
+      "The reviews started after these squares were recorded. The full study's first result came in at Nov 5, 11:48 PM PT, and each new result follows it on the same thread: results so far."
+    );
+    expect(full?.querySelector("time")?.getAttribute("dateTime")).toBe(study?.fullStudy?.firstResultAt);
+    expect(full?.querySelector("a")?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474"
+    );
+  });
+
+  it("NEGATIVE CONTROL: a study with no full-study result shows no pointer to one", async () => {
+    const page = await mount(<TestsForTheTests board={board} study={{ ...study!, fullStudy: null }} />);
+    expect(page.querySelector('[data-testid="evals-reviewer-full-study"]')).toBeNull();
+  });
+
+  it("the bug left out of the study links its issue", async () => {
+    const page = await mountPage();
+    const link = page.querySelector('[data-testid="evals-reviewer"] a[data-evals-ref]');
+    expect(link?.getAttribute("href")).toBe(`https://github.com/alexander-bain/bainluck/issues/${study?.dropped?.issue}`);
+  });
+
+  it("the hero tile shows the same two numbers, LAST RUN, and jumps to its section", async () => {
+    const page = await mountPage();
+    const tile = page.querySelector('[data-hero-tile="tests-for-tests"]');
+    expect(tile?.getAttribute("href")).toBe("#tests-for-tests");
+    expect(tile?.getAttribute("data-truth-scope")).toBe("last_run");
+    expect(tile?.querySelector("a")).toBeNull();
+    const figures = Array.from(tile?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
+    expect(figures).toEqual(["40", "40", "0", "40"]);
+  });
+
+  it("with no readable scoreboard, its tile is absent rather than empty", async () => {
+    const page = await mount(<HeroTiles forward={{ status: "loading" }} board={null} />);
+    expect(page.querySelector('[data-hero-tile="tests-for-tests"]')).toBeNull();
+    expect(page.querySelector('[data-hero-tile="forward-record"]')).not.toBeNull();
+  });
+});
+
+describe("S5: checks that run on their own", () => {
+  const list = loadWatchers();
+  /** Noon Pacific on a November day (standard time) and on a July day (daylight time). */
+  const NOVEMBER = "2026-11-05T20:00:00Z";
+  const JULY = "2026-07-15T19:00:00Z";
+  const row = (page: HTMLElement, id: string) => page.querySelector(`[data-watcher="${id}"]`);
+
+  it("lists every watcher under LAST REVIEWED, through the day and every night", async () => {
+    freezeClockAt(NOVEMBER);
+    const page = await mountPage();
+    const section = page.querySelector('[data-evals-section="watchers"]');
+    expect(section?.getAttribute("data-truth-scope")).toBe("reviewed");
+    expect(section?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST REVIEWED · NOV 6")).toBe(true);
+    const ids = Array.from(section?.querySelectorAll("[data-watcher]") ?? []).map((r) => r.getAttribute("data-watcher"));
+    expect(ids).toEqual(list?.watchers.map((w) => w.id));
+    expect(section?.querySelectorAll('[data-watcher-group="day"] [data-watcher]')).toHaveLength(2);
+    expect(section?.querySelectorAll('[data-watcher-group="night"] [data-watcher]')).toHaveLength(10);
+  });
+
+  it("every row links where its check lives", async () => {
+    const page = await mountPage();
+    const rows = Array.from(page.querySelectorAll("[data-watcher]"));
+    expect(rows.length).toBe(list?.watchers.length);
+    for (const r of rows) {
+      expect(r.querySelector("a[data-watcher-source]")?.getAttribute("href")).toMatch(
+        /^https:\/\/github\.com\/alexander-bain\/bainluck\/blob\/[0-9a-f]{10}\/backend\/app\/tasks\//
+      );
+    }
+  });
+
+  it("works out each run's Pacific time on the reader's date: 11:10 PM in November, 12:10 AM in July", async () => {
+    freezeClockAt(NOVEMBER);
+    let page = await mountPage();
+    expect(page.querySelector('[data-schedule="flow-sentinel-daily"]')?.textContent).toBe("Every day at 11:10 PM PT");
+    expect(page.querySelector('[data-schedule="matching-reconciliation"]')?.textContent).toBe("Every 15 minutes");
+    expect(page.querySelector('[data-schedule="data-quality-watchdog"]')?.textContent).toBe("Every 2 hours");
+    expect(page.querySelector('[data-day-strip="flow-sentinel-daily"] [data-run-minute]')?.getAttribute("data-run-minute")).toBe(
+      String(23 * 60 + 10)
+    );
+    await act(async () => root?.unmount());
+
+    freezeClockAt(JULY);
+    page = await mountPage();
+    expect(page.querySelector('[data-schedule="flow-sentinel-daily"]')?.textContent).toBe("Every day at 12:10 AM PT");
+    expect(page.querySelector('[data-day-strip="flow-sentinel-daily"] [data-run-minute]')?.getAttribute("data-run-minute")).toBe(
+      "10"
+    );
+  });
+
+  it("draws a dot for every run in the day: twelve, ninety-six, or one", async () => {
+    const page = await mountPage();
+    const runs = (id: string) => page.querySelector(`[data-day-strip="${id}"]`)?.getAttribute("data-runs");
+    expect(runs("data-quality-watchdog")).toBe("12");
+    expect(runs("matching-reconciliation")).toBe("96");
+    expect(runs("grid-sentinel-daily")).toBe("1");
+  });
+
+  it("shows each verdict with its own date, its chip, and the issues its run posted to", async () => {
+    freezeClockAt(NOVEMBER);
+    const page = await mountPage();
+    const refs = (r: Element | null) => Array.from(r?.querySelectorAll("a[data-evals-ref]") ?? []).map((a) => a.textContent);
+    const withVerdict = (list?.watchers ?? []).filter((w) => w.verdict);
+    expect(withVerdict.length).toBeGreaterThan(0);
+    for (const w of withVerdict) {
+      const v = w.verdict!;
+      const r = row(page, w.id);
+      expect(r?.getAttribute("data-verdict-state")).toBe(v.state);
+      expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe(
+        {
+          red_reporting: "Running red, reporting",
+          red_stopped: "Running red, reporting stopped",
+          closed_fixed: "Closed as fixed",
+        }[v.state]
+      );
+      const day = (pacificDayLabel(v.runAt) as string).toUpperCase();
+      expect(r?.querySelector("[data-truth-chip]")?.textContent?.startsWith(`LAST RUN · ${day}`)).toBe(true);
+      const context = [v.earlier, v.fix].filter((n): n is number => n !== null);
+      expect(refs(r)).toEqual([...v.issues, ...v.closed, ...context].map((n) => `#${n}`));
+      expect(r?.querySelector("a[data-verdict-receipt]")?.getAttribute("href")).toBe(v.receipt.href);
+    }
+  });
+
+  it("a run that closed issues as fixed says so, and a run that only closed issues is never green", async () => {
+    freezeClockAt(NOVEMBER);
+    const page = await mountPage();
+    const closing = (list?.watchers ?? []).filter((w) => (w.verdict?.closed.length ?? 0) > 0);
+    expect(closing.length).toBeGreaterThan(0);
+    for (const w of closing) {
+      const v = w.verdict!;
+      const r = row(page, w.id);
+      const text = r?.textContent?.replace(/\s+/g, " ") ?? "";
+      const issues = v.closed.map((n) => `#${n}`).join(" ");
+      if (v.state === "closed_fixed") {
+        const words = v.closed.length === 1 ? "re-checked the problem it had reported, found it fixed, and closed it:" : "re-checked the problems it had reported, found them fixed, and closed them:";
+        expect(text).toContain(`${words} ${issues}.`);
+        expect(r?.querySelector("[data-verdict-chip]")?.className).not.toMatch(/green/);
+      } else {
+        expect(text).toContain(`It also found ${issues} fixed, and closed ${v.closed.length === 1 ? "it" : "them"}.`);
+      }
+    }
+    expect(page.querySelector('[data-evals-section="watchers"] [data-result="pass"]')).toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: a run that could not post reads running red, reporting stopped", async () => {
+    const stoppedList: WatcherList = JSON.parse(JSON.stringify(list));
+    const first = stoppedList.watchers.find((w) => w.verdict)!;
+    first.verdict = { ...first.verdict!, state: "red_stopped", issues: [11958], closed: [], earlier: null, fix: null };
+    const page = await mount(<Watchers list={stoppedList} />);
+    const r = page.querySelector(`[data-watcher="${first.id}"]`);
+    expect(r?.getAttribute("data-verdict-state")).toBe("red_stopped");
+    expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe("Running red, reporting stopped");
+    expect(r?.textContent?.replace(/\s+/g, " ")).toContain(
+      "found problems but could not file them. The stopped reporting is tracked in #11958."
+    );
+    expect(page.querySelectorAll('[data-verdict-state="red_stopped"]')).toHaveLength(1);
+  });
+
+  it("a watcher with no public record of its last result says UNKNOWN, never green", async () => {
+    const page = await mountPage();
+    const unknown = Array.from(page.querySelectorAll('[data-verdict-state="unknown"]'));
+    expect(unknown).toHaveLength((list?.watchers ?? []).filter((w) => !w.verdict).length);
+    for (const r of unknown) {
+      expect(r.querySelector('[data-result="unknown"]')?.textContent).toBe("UNKNOWN");
+      expect(r.querySelector("[data-verdict-chip]")).toBeNull();
+    }
+    expect(page.querySelector('[data-evals-section="watchers"] [data-result="pass"]')).toBeNull();
+  });
+
+  it("links the open alerts without counting them (Decide 43-F1)", async () => {
+    const page = await mountPage();
+    const link = page.querySelector("a[data-alerts-link]");
+    expect(link?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/issues?q=is%3Aopen+label%3Aalert-intake"
+    );
+    expect(link?.textContent).not.toMatch(/\d/);
   });
 });
 

@@ -107,7 +107,21 @@ export interface SoccerThreeWayCard {
   legs: [SoccerThreeWayLeg, SoccerThreeWayLeg, SoccerThreeWayLeg];
   marketTitle: string;
   source: string | null;
+  sourceCount: number;
   quotedSum: number | null;
+}
+
+function dedupeCandidatesBySource<T extends { source: string | null }>(sorted: T[]): T[] {
+  const seenSources = new Set<string>();
+  const out: T[] = [];
+  for (const c of sorted) {
+    if (c.source !== null) {
+      if (seenSources.has(c.source)) continue;
+      seenSources.add(c.source);
+    }
+    out.push(c);
+  }
+  return out;
 }
 
 export function soccerThreeWayHeadline(card: SoccerThreeWayCard): string {
@@ -124,7 +138,7 @@ export function soccerThreeWayReason(card: SoccerThreeWayCard): string {
     return "90-minute Home, Draw, and Away outcomes graded independently";
   }
   if (card.quotedSum !== null) {
-    const pct = Math.round(card.quotedSum * 1000) / 10;
+    const pct = Math.round(card.quotedSum * 100);
     return `Recorded three-way quotes total ${pct}% · no normalization or invented draw`;
   }
   return "Three supplied 90-minute outcomes · no normalization or invented draw";
@@ -370,11 +384,13 @@ export function buildSoccerThreeWayCard(opts: {
 
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => b.score - a.score);
-  const blendedCandidate = candidates.find(
+  const dedupedCandidates = dedupeCandidatesBySource(candidates);
+  const blendedCandidate = dedupedCandidates.find(
     (c) => c.source === "blended" || c.source === "blend",
   );
-  const multiUnblended = !blendedCandidate && candidates.length > 1;
-  const best = blendedCandidate ?? candidates[0];
+  const multiUnblended = !blendedCandidate && dedupedCandidates.length > 1;
+  const best = blendedCandidate ?? dedupedCandidates[0];
+  const sourceCount = blendedCandidate ? 1 : Math.max(1, dedupedCandidates.length);
 
   const rawLegs: [SoccerThreeWayLeg, SoccerThreeWayLeg, SoccerThreeWayLeg] = [
     best.legsByRole.get("home")!,
@@ -387,7 +403,7 @@ export function buildSoccerThreeWayCard(opts: {
   const legs: [SoccerThreeWayLeg, SoccerThreeWayLeg, SoccerThreeWayLeg] = multiUnblended
     ? (rawLegs.map((l) => {
         const verdicts = new Set<"won" | "lost">();
-        for (const c of candidates) {
+        for (const c of dedupedCandidates) {
           const leg = c.legsByRole.get(l.role);
           if (leg?.result) verdicts.add(leg.result);
         }
@@ -427,6 +443,7 @@ export function buildSoccerThreeWayCard(opts: {
     legs,
     marketTitle: best.marketTitle,
     source: multiUnblended ? null : best.source,
+    sourceCount,
     quotedSum,
   };
 }
@@ -469,6 +486,7 @@ export interface SoccerExactScoreCard {
   defaultSelectedKey: string;
   marketTitle: string;
   source: string | null;
+  sourceCount: number;
 }
 
 export function parseSoccerExactScoreOutcome(
@@ -725,11 +743,13 @@ export function buildSoccerExactScoreCard(opts: {
 
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => b.score - a.score);
-  const blendedCandidate = candidates.find(
+  const dedupedCandidates = dedupeCandidatesBySource(candidates);
+  const blendedCandidate = dedupedCandidates.find(
     (c) => c.source === "blended" || c.source === "blend",
   );
-  const multiUnblended = !blendedCandidate && candidates.length > 1;
-  const best = blendedCandidate ?? candidates[0];
+  const multiUnblended = !blendedCandidate && dedupedCandidates.length > 1;
+  const best = blendedCandidate ?? dedupedCandidates[0];
+  const sourceCount = blendedCandidate ? 1 : Math.max(1, dedupedCandidates.length);
   const rawCells = Array.from(best.cellsByKey.values()).sort(
     (a, b) => a.awayGoals - b.awayGoals || a.homeGoals - b.homeGoals,
   );
@@ -749,7 +769,7 @@ export function buildSoccerExactScoreCard(opts: {
     (max, c) => Math.max(max, c.homeGoals, c.awayGoals),
     3,
   );
-  const maxGoals = Math.min(5, Math.max(3, maxCoord));
+  const maxGoals = Math.min(6, Math.max(3, maxCoord));
   const maxChance = cells.reduce((max, c) => Math.max(max, c.chance ?? 0), 0.05);
 
   const winnerCell = finished ? cells.find((c) => c.result === "won") : undefined;
@@ -778,6 +798,7 @@ export function buildSoccerExactScoreCard(opts: {
     defaultSelectedKey,
     marketTitle: best.marketTitle,
     source: multiUnblended ? null : best.source,
+    sourceCount,
   };
 }
 

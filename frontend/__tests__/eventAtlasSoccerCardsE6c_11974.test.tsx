@@ -116,7 +116,7 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
     );
     expect(html).toContain('data-testid="soccer-three-way-card"');
     expect(html).toContain("A draw is a real third outcome");
-    expect(html).toContain("Recorded three-way quotes total 99.5%");
+    expect(html).toContain("Recorded three-way quotes total 100%");
   });
 
   it("parses Polymarket and Kalshi exact-score outcomes into (homeGoals, awayGoals) coordinates without inventing unlisted cells", () => {
@@ -337,6 +337,8 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
     expect(exactHtml).toContain('data-testid="soccer-exact-score-card"');
     expect(exactHtml).toContain("The exact-score landscape");
     expect(exactHtml).toContain("Dortmund 1 – 1 Bremen");
+    expect(exactHtml).toContain(">10%</button>");
+    expect(exactHtml).not.toContain(">9.5<");
 
     const sheetProps = buildStoryCardDetailsSheetProps({
       card: cards[1],
@@ -350,7 +352,114 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
       settledResult: "won",
       openingProbability: 0.05,
       source: "kalshi",
+      sourceCount: 1,
     });
+  });
+
+  it("de-duplicates candidates by source when both game_question_matrix and gameMarkets.other describe the same venue's market", () => {
+    const sameSourceThreeWay = buildSoccerThreeWayCard({
+      gameQuestionMatrix: {
+        contract: MATRIX_CONTRACT,
+        questions: [
+          {
+            question_key: "q:soccer:3way",
+            kind: "categorical",
+            label: "Match Winner",
+            market_name: "Match Winner",
+            typing: { state: "typed" },
+            period: { key: "full_game" },
+            options: [
+              {
+                option_key: "o:home",
+                label: "Borussia Dortmund",
+                contributor_outcome_ids: [101],
+                published: { value_state: "result", source: "kalshi", observed_at: "2026-11-05T19:00:00Z" },
+                pregame_reading: {
+                  state: "available",
+                  reason: null,
+                  basis: "pregame_pin",
+                  probability: 0.65,
+                  observed_at: "2026-11-05T16:50:00Z",
+                  outcome_id: 101,
+                },
+                result: { state: "won" },
+              },
+              {
+                option_key: "o:draw",
+                label: "Draw",
+                contributor_outcome_ids: [102],
+                published: { value_state: "result", source: "kalshi", observed_at: "2026-11-05T19:00:00Z" },
+                pregame_reading: {
+                  state: "available",
+                  reason: null,
+                  basis: "pregame_pin",
+                  probability: 0.2,
+                  observed_at: "2026-11-05T16:50:00Z",
+                  outcome_id: 102,
+                },
+                result: { state: "lost" },
+              },
+              {
+                option_key: "o:away",
+                label: "Werder Bremen",
+                contributor_outcome_ids: [103],
+                published: { value_state: "result", source: "kalshi", observed_at: "2026-11-05T19:00:00Z" },
+                pregame_reading: {
+                  state: "available",
+                  reason: null,
+                  basis: "pregame_pin",
+                  probability: 0.15,
+                  observed_at: "2026-11-05T16:50:00Z",
+                  outcome_id: 103,
+                },
+                result: { state: "lost" },
+              },
+            ],
+          },
+        ],
+      },
+      otherMarkets: [
+        {
+          _market_id: 99,
+          market_name: "Match Winner",
+          outcome_name: "Borussia Dortmund",
+          pregame_mark: 0.65,
+          is_winner: true,
+          resolution_source: "exchange_settlement",
+          source: "kalshi",
+        },
+        {
+          _market_id: 99,
+          market_name: "Match Winner",
+          outcome_name: "Draw",
+          pregame_mark: 0.2,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: "kalshi",
+        },
+        {
+          _market_id: 99,
+          market_name: "Match Winner",
+          outcome_name: "Werder Bremen",
+          pregame_mark: 0.15,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: "kalshi",
+        },
+      ],
+      status: "completed",
+      commenceTime: "2026-11-05T17:00:00Z",
+      homeTeam: "Borussia Dortmund",
+      awayTeam: "Werder Bremen",
+      homeShort: "Dortmund",
+      awayShort: "Bremen",
+      nowMs: NOW_MS,
+    });
+
+    expect(sameSourceThreeWay).not.toBeNull();
+    expect(sameSourceThreeWay?.source).toBe("kalshi");
+    expect(sameSourceThreeWay?.sourceCount).toBe(1);
+    expect(sameSourceThreeWay?.legs.map((l) => l.pregameChance)).toEqual([0.65, 0.2, 0.15]);
   });
 
   it("after full-time, reads only admitted pregame_reading on soccer goal-total ladders and withholds unblended probabilities when multiple unblended sources price a three-way market (#11125 contract)", () => {

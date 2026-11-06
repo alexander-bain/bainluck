@@ -1480,9 +1480,9 @@ export function SoccerThreeWayCardView({
 }) {
   const headline = soccerThreeWayHeadline(card);
   const reason = soccerThreeWayReason(card);
-  const homeTxt = teamTextColor(teams.homeColor) ?? "#1F2937";
-  const awayTxt = teamTextColor(teams.awayColor) ?? "#1F2937";
-  const drawTxt = "#0F766E";
+  const homeTxt = teamTextColor(teams.homeColor) ?? "var(--text-primary)";
+  const awayTxt = teamTextColor(teams.awayColor) ?? "var(--text-primary)";
+  const drawTxt = "var(--accent-brand)";
   const W = 310;
   const padL = 10;
   const padR = 14;
@@ -1515,14 +1515,14 @@ export function SoccerThreeWayCardView({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-text-secondary">
         <span className="inline-flex items-center gap-1">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-            <circle cx="5" cy="5" r="3.5" fill="#FFFFFF" stroke="#4B5563" strokeWidth="1.75" />
+            <circle cx="5" cy="5" r="3.5" fill="var(--surface-card)" stroke="var(--text-secondary-strong)" strokeWidth="1.75" />
           </svg>
           Pregame chance
         </span>
         {card.phase === "during" && (
           <span className="inline-flex items-center gap-1">
             <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-              <circle cx="5" cy="5" r="3.75" fill="#1F2937" />
+              <circle cx="5" cy="5" r="3.75" fill="var(--text-primary)" />
             </svg>
             Recorded live
           </span>
@@ -1590,7 +1590,7 @@ export function SoccerThreeWayCardView({
                     x2={x(t)}
                     y1={2}
                     y2={22}
-                    stroke="rgba(0,0,0,0.08)"
+                    stroke="var(--surface-border)"
                   />
                 ))}
                 {activeChance !== null && (
@@ -1609,7 +1609,7 @@ export function SoccerThreeWayCardView({
                     cx={x(pregameMark)}
                     cy={cy}
                     r={5}
-                    fill="#FFFFFF"
+                    fill="var(--surface-card)"
                     stroke={color}
                     strokeWidth={2}
                     data-mark="pregame"
@@ -1621,7 +1621,7 @@ export function SoccerThreeWayCardView({
                     cy={cy}
                     r={5}
                     fill={color}
-                    stroke="#FFFFFF"
+                    stroke="var(--surface-card)"
                     strokeWidth={1.25}
                     data-mark="live"
                   />
@@ -1634,7 +1634,7 @@ export function SoccerThreeWayCardView({
                       y={24 + 10 * 1.25}
                       fontSize={10}
                       textAnchor="middle"
-                      fill="#4B5563"
+                      fill="var(--text-secondary-strong)"
                     >
                       {t === 0 ? "0%" : t === 1 ? "100%" : formatProbability(t)}
                     </text>
@@ -1734,7 +1734,7 @@ export function SoccerExactScoreCardView({
                     : 0;
               const pctText =
                 cell && cell.chance !== null
-                  ? `${Math.round(cell.chance * 1000) / 10}`
+                  ? formatProbability(cell.chance)
                   : isWon
                     ? "✓"
                     : cell
@@ -1766,8 +1766,8 @@ export function SoccerExactScoreCardView({
                   style={
                     cell
                       ? {
-                          backgroundColor: `rgba(15, 118, 110, ${(0.08 + ratio * 0.68).toFixed(2)})`,
-                          color: ratio > 0.55 ? "#FFFFFF" : "#111827",
+                          backgroundColor: `color-mix(in srgb, var(--accent-brand) ${(8 + ratio * 68).toFixed(0)}%, var(--surface-card))`,
+                          color: ratio > 0.55 ? "var(--surface-card)" : "var(--text-primary)",
                         }
                       : undefined
                   }
@@ -2179,8 +2179,8 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: leg.pregameObservedAt ?? leg.observedAt,
       lastProbability: !isSettled ? leg.quotedChance : null,
       lastObservedAt: leg.observedAt,
-      source: leg.source ?? card.source ?? null,
-      sourceCount: 1,
+      source: leg.source,
+      sourceCount: card.sourceCount,
       rulesText: rulesLines.join("\n"),
     };
   }
@@ -2202,8 +2202,8 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: cell.observedAt,
       lastProbability: !isSettled && card.phase === "during" ? cell.chance : null,
       lastObservedAt: cell.observedAt,
-      source: cell.source ?? card.source ?? null,
-      sourceCount: 1,
+      source: cell.source,
+      sourceCount: card.sourceCount,
       rulesText: `Exact 90-minute score: ${cell.outcomeLabel} · Unlisted score cells are not inferred as 0%`,
     };
   }
