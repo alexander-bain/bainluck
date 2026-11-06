@@ -13,6 +13,7 @@ import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy, type CopyBan } from
 import * as copy from "@/lib/evals/copy";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { GAPS } from "@/lib/evals/gaps";
+import { loadRuns } from "@/lib/evals/runs";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { RESULT_WORD, ageLabel } from "@/lib/evals/truth";
 
@@ -32,6 +33,7 @@ function readerStrings(): string[] {
     ...stringsIn(copy),
     ...GAPS.flatMap((g) => [g.text, g.planned?.waitingOn ?? ""]),
     ...EVALS_SOURCES.map((s) => s.label),
+    ...loadRuns().flatMap((r) => [r.title, r.note, r.receipt.label]),
     ...Object.values(RESULT_WORD),
     ageLabel(0),
     ageLabel(1),
@@ -54,6 +56,7 @@ describe("/evals copy passes the bans", () => {
     expect(strings).toContain(copy.TERMS[0].meaning);
     expect(strings).toContain(GAPS[0].text);
     expect(strings).toContain(EVALS_SOURCES[0].label);
+    expect(strings).toContain(loadRuns()[0].note);
     expect(strings.length).toBeGreaterThan(30);
   });
 

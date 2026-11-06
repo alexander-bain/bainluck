@@ -43,6 +43,47 @@ export const HERO_COPY = {
     "AI agents write most of the code and most of the tests on this site, and other AI agents and Alex, who builds Bain Luck, check their work. That is why the tests matter. Every number here is marked LIVE, LAST RUN with its date, or PLANNED, and links to where it came from; a list we keep by hand is marked LAST REVIEWED with its date.",
 } as const;
 
+/** The hero's tiles: each jumps to its section and carries its own label. */
+export const HERO_TILE_COPY = {
+  forwardTitle: "Forward record",
+  forwardPointsAfter: "points off on average, across",
+  forwardOutcomesAfter: "traded outcomes",
+  unavailable: "Unavailable right now",
+  loading: "Reading the live record",
+} as const;
+
+export const TIMELINE_COPY = {
+  title: "Exams on the record",
+  lead: "Each exam goes on this line with its date, what it cost and whether it passed.",
+  detail:
+    "AI runs name the model, the number of replies and the usage-rated cost; an exam done by hand says so. A mechanical failure is a result too.",
+  byHand: "By hand",
+  replies: "replies",
+  usageRated: "usage-rated",
+  includesPilot: "including the pilot",
+  receipt: "Receipt",
+} as const;
+
+export const FORWARD_COPY = {
+  title: "Do market probabilities come true?",
+  lead:
+    "When a market gives something a one-in-three chance, does it happen about one time in three? We check every source's probabilities against what actually happened.",
+  detail:
+    "This is the public record of each source's probabilities, graded against outcomes. It grades the sources each card's number is made from; the combined probability itself is not graded.",
+  proofBefore: "Across",
+  proofMiddle: "traded outcomes, the sources' probabilities land an average of",
+  proofAfter: "points from what actually happened.",
+  categoriesOf: "of",
+  categoriesInside: "categories are inside the",
+  categoriesBar: "point bar.",
+  stagedBefore: "That data was last updated",
+  builtBefore: "These numbers were built",
+  unavailable: "Unavailable right now.",
+  loading: "Reading the live record.",
+  chartLabel: "Calibration curve for traded outcomes, from the live record",
+  more: "See the full accuracy page",
+} as const;
+
 export const GAPS_COPY = {
   title: "What we have not tested yet",
   lead: "This is what we have not checked.",
@@ -75,6 +116,8 @@ export const CHIP_COPY = {
   sampleDate: "date",
   /** What prints where a date cannot be read — never a wrong date. */
   dateUnreadable: "date unreadable",
+  /** A live source has no document date; this is when it is read. */
+  readOnOpen: "live, read when the page opens",
   issue: "issue",
   pull: "pull request",
 } as const;
@@ -130,5 +173,15 @@ export const TERMS: readonly { term: string; meaning: string }[] = [
   {
     term: "Receipt",
     meaning: "The public record a number comes from: a pull request, a test run or a posted comment.",
+  },
+  {
+    term: "Traded outcomes",
+    meaning:
+      "Resolved outcomes whose probability moved after the market opened. The accuracy page shows these by default and sets the others aside.",
+  },
+  {
+    term: "Usage-rated",
+    meaning:
+      "A model run's cost, computed from each reply's token usage at the provider's published rate rather than from an invoice.",
   },
 ];

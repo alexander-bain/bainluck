@@ -18,6 +18,7 @@ import {
   pacificClockLabel,
   pacificDayLabel,
   truthChipLabel,
+  liveStamp,
 } from "@/lib/evals/truth";
 
 const SOURCE = { label: "receipt", href: "https://github.com/alexander-bain/bainluck/pull/11951" };
@@ -124,5 +125,22 @@ describe("a month in a gap row prints with its year", () => {
     expect(calendarMonthLabel("2026-07")).toBe("July 2026");
     expect(calendarMonthLabel("2026-13")).toBeNull();
     expect(calendarMonthLabel("July")).toBeNull();
+  });
+});
+
+describe("liveStamp", () => {
+  const asOf = "2026-11-06T03:28:13Z"; // Nov 5, 7:28 PM PT
+
+  it("prints the time alone on the payload's own Pacific day, and before the page has a clock", () => {
+    expect(liveStamp(asOf, new Date("2026-11-06T07:00:00Z"))).toBe("7:28 PM PT");
+    expect(liveStamp(asOf, null)).toBe("7:28 PM PT");
+  });
+
+  it("adds the day once the reader's Pacific day has moved on", () => {
+    expect(liveStamp(asOf, new Date("2026-11-06T09:00:00Z"))).toBe("Nov 5, 7:28 PM PT");
+  });
+
+  it("an unreadable stamp prints nothing", () => {
+    expect(liveStamp("not a time", new Date())).toBeNull();
   });
 });
