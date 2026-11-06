@@ -18,7 +18,6 @@ from app.utils.roundup_containers import (
 )
 from app.utils.yardstick_pair import (
     FOR_SCALE_SNOW_IN_BUFFALO_DEFINITION,
-    FOR_SCALE_SNOW_IN_BUFFALO_PRODUCER,
     FOR_SCALE_SNOW_IN_BUFFALO_SLUG,
     FOR_SCALE_SNOW_IN_DC_DEFINITION,
     FOR_SCALE_SNOW_IN_DC_PRODUCER,
@@ -29,14 +28,25 @@ from app.utils.yardstick_pair import (
     MAX_YARDSTICK_PERCENT,
     MIN_YARDSTICK_PERCENT,
     PRODUCER_KIND_YARDSTICK_PAIR,
+    build_yardstick_pair_producer,
     for_scale_snow_in_buffalo,
-    for_scale_snow_in_dc,
     for_scale_us_recession_2026,
     produce_yardstick_pair,
     select_yardstick_pair,
 )
 
 NOW_NOV_4 = datetime(2026, 11, 4, 21, 0, 0, tzinfo=timezone.utc)
+
+
+def _on_the_fixture_clock(definition: dict[str, Any]) -> Any:
+    """The registered producer for ``definition``, rebuilt to run at ``NOW_NOV_4``.
+
+    The module-level producers read the wall clock, and ``OBS_FRESH`` is fresh only
+    relative to ``NOW_NOV_4``: two tests that evaluated the registered producers
+    directly went red on 2026-11-06 ~20:15Z, when ``OBS_FRESH`` aged past the
+    observation bound (gotcha #44).
+    """
+    return build_yardstick_pair_producer(definition, now=NOW_NOV_4)
 OBS_FRESH = "2026-11-04T20:15:00Z"
 OBS_STALE = "2026-11-01T12:00:00Z"
 
@@ -277,7 +287,10 @@ class TestYardstickPairSelection:
                 market_type="container_member",
             ),
         ]
-        feed_1, container_1 = await for_scale_snow_in_dc(pool_v1)
+        snow_in_dc = _on_the_fixture_clock(FOR_SCALE_SNOW_IN_DC_DEFINITION)
+        feed_1, container_1 = await evaluate_roundup_producer(
+            snow_in_dc, pool_v1
+        )
         assert feed_1 is not None and container_1 is not None
         assert (
             feed_1["headline"]
@@ -311,7 +324,9 @@ class TestYardstickPairSelection:
                 market_type="container_member",
             ),
         ]
-        feed_2, container_2 = await for_scale_snow_in_dc(pool_v2)
+        feed_2, container_2 = await evaluate_roundup_producer(
+            snow_in_dc, pool_v2
+        )
         assert feed_2 is not None and container_2 is not None
         assert (
             feed_2["headline"]
@@ -345,7 +360,9 @@ class TestYardstickPairSelection:
                 market_type="container_member",
             ),
         ]
-        feed_3, container_3 = await for_scale_snow_in_dc(pool_v3)
+        feed_3, container_3 = await evaluate_roundup_producer(
+            snow_in_dc, pool_v3
+        )
         assert feed_3 is None and container_3 is None
 
 
@@ -696,7 +713,7 @@ class TestYardstickPairRefusals:
             ),
         ]
         feed_item, container = await evaluate_roundup_producer(
-            FOR_SCALE_SNOW_IN_BUFFALO_PRODUCER, pool
+            _on_the_fixture_clock(FOR_SCALE_SNOW_IN_BUFFALO_DEFINITION), pool
         )
         assert feed_item is not None and container is not None
 
