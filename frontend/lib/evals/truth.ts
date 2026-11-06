@@ -174,6 +174,20 @@ export function pacificClockLabel(asOf: string): string | null {
 }
 
 /**
+ * When a LIVE number is true as of: the clock on the reader's own Pacific day,
+ * and the day too when it is not today ("Nov 5, 9:31 PM PT"), so a payload
+ * built yesterday never reads as tonight's. Without a clock (prerender) only
+ * the time prints.
+ */
+export function liveStamp(asOf: string, now: Date | null): string | null {
+  const clock = pacificClockLabel(asOf);
+  if (!clock) return null;
+  if (!now) return clock;
+  const day = asOfCalendarDate(asOf);
+  return day && day !== pacificCalendarDate(now) ? `${pacificDayLabel(asOf)}, ${clock}` : clock;
+}
+
+/**
  * The words on a truth chip. A date that cannot be read says so rather than
  * printing a wrong one.
  */

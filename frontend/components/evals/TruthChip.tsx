@@ -8,7 +8,7 @@ import {
   ageInDays,
   ageLabel,
   isAgeAmber,
-  pacificClockLabel,
+  liveStamp,
   truthChipLabel,
   type Truth,
 } from "@/lib/evals/truth";
@@ -31,7 +31,7 @@ export default function TruthChip({
   const now = useNow();
   const dated = truth.kind === "last_run" || truth.kind === "reviewed";
   const days = dated && now ? ageInDays(truth.asOf, now) : null;
-  const clock = truth.kind === "live" ? pacificClockLabel(truth.asOf) : null;
+  const clock = truth.kind === "live" ? liveStamp(truth.asOf, now) : null;
   const source = truth.kind === "planned" ? undefined : truth.source;
 
   const chip = (

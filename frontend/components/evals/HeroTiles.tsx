@@ -4,6 +4,7 @@ import Figure from "@/components/evals/Figure";
 import TruthChip from "@/components/evals/TruthChip";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
 import { HERO_TILE_COPY } from "@/lib/evals/copy";
+import { stalenessHeadline } from "@/lib/calibrationStaleness";
 
 /**
  * The hero's tiles. Each jumps to its section and carries its own truth label;
@@ -43,6 +44,13 @@ export default function HeroTiles({ forward }: { forward: ForwardRecordState }) 
             HERO_TILE_COPY.unavailable
           )}
         </p>
+        {ready?.view.staleness && (
+          // The chip says LIVE for the curve; when its inputs are older, the
+          // first screen says so in the accuracy page's own words (Fable on #12124).
+          <p className="mt-1.5 text-micro text-yellow-700" data-testid="evals-hero-forward-staleness">
+            {stalenessHeadline(ready.view.staleness)}
+          </p>
+        )}
       </a>
     </div>
   );

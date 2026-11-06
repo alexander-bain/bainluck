@@ -311,6 +311,7 @@ describe("S3: the forward record", () => {
   const about = proofCohortFigures(calibrationFixtureBuckets());
 
   it("shows /about's figure under a LIVE label stamped with the payload's own time", async () => {
+    freezeClockAt("2026-11-06T04:00:00Z"); // 8 PM PT on the payload's own day
     const page = await mountPage();
     const section = page.querySelector('[data-evals-section="forward-record"]');
     expect(section?.getAttribute("data-truth-scope")).toBe("live");
@@ -320,6 +321,39 @@ describe("S3: the forward record", () => {
     const proof = section?.querySelector('[data-testid="evals-forward-proof"]');
     const figures = Array.from(proof?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
     expect(figures).toEqual([compactOutcomeCount(about?.outcomes), about?.errorPp.toFixed(1)]);
+  });
+
+  it("a LIVE stamp from another Pacific day carries its day, so yesterday's build never reads as tonight's", async () => {
+    freezeClockAt("2026-11-07T20:00:00Z");
+    const page = await mountPage();
+    const chip = page.querySelector('[data-evals-section="forward-record"] [data-truth-chip]');
+    expect(chip?.textContent).toBe("LIVEas of Nov 5, 7:28 PM PT");
+  });
+
+  it("the hero tile carries the staleness notice when the graded inputs are older than the curve", async () => {
+    // The payload shape Fable read at 10:17 PM PT: availability "stale",
+    // inputs staged ten days before generated_at, frozen over drift.
+    fetchCalibrationMock.mockResolvedValue(
+      calibrationFixture({
+        availability: "stale",
+        staged: {
+          ...(calibrationFixture().staged as Record<string, unknown>),
+          staged_at: "2026-10-27T03:28:13+00:00",
+          frozen_over_drift: true,
+        },
+      })
+    );
+    const page = await mountPage();
+    const notice = page.querySelector('[data-hero-tile="forward-record"] [data-testid="evals-hero-forward-staleness"]');
+    const section = page.querySelector('[data-testid="evals-forward-staleness"] strong');
+    expect(notice?.textContent).toBeTruthy();
+    expect(notice?.textContent).toBe(section?.textContent);
+  });
+
+  it("NEGATIVE CONTROL: a fresh payload puts no notice on the tile", async () => {
+    fetchCalibrationMock.mockResolvedValue(calibrationFixture({ availability: "fresh" }));
+    const page = await mountPage();
+    expect(page.querySelector('[data-testid="evals-hero-forward-staleness"]')).toBeNull();
   });
 
   it("the hero tile shows the same figure, linked to the section", async () => {

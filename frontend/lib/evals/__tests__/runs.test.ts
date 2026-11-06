@@ -8,8 +8,9 @@
  * in this repo, it is cited at a fixed commit: a row is a dated record, so a
  * later edit to the document (a re-run of the same exam, say) cannot change
  * what the row's receipt said. (The quotes were checked against those commits
- * with `git show <sha>:<path>` when transcribed; CI's shallow checkout cannot
- * read old commits, and reading today's file would break on a legitimate edit.)
+ * when transcribed — `git show <sha>:<path>`, or the GitHub contents API for the
+ * audit on the still-open #11956; CI's shallow checkout cannot read old
+ * commits, and reading today's file would break on a legitimate edit.)
  */
 
 import RUNS_JSON from "@/lib/evals/data/runs-2026-11.json";
@@ -18,6 +19,7 @@ import { formatUsd, loadRuns, modelName, notePieces, noteSlots, runProblem } fro
 
 type Quote = { quote: string; from: string };
 const QUOTES = RECEIPTS.quotes as Record<string, Record<string, Quote>>;
+const AUDIT_AT_COMMIT = "https://github.com/alexander-bain/bainluck/blob/a555441130/docs/calibration/AUDIT-2026-11.md";
 
 /** A number as a receipt might print it: "1285", "1,285" or "1285.0". */
 function spellings(value: number): string[] {
@@ -94,8 +96,9 @@ describe("the runs record", () => {
     for (const run of runs) {
       for (const q of Object.values(QUOTES[run.id] ?? {})) {
         // A figure's quote comes from the row's receipt, or from the audit that
-        // states the row's verdict (the calibration exit exam's).
-        expect([run.receipt.href, "https://github.com/alexander-bain/bainluck/pull/11956"]).toContain(q.from);
+        // states the row's verdict (the calibration exit exam's), cited at the
+        // audit's commit on #11956.
+        expect([run.receipt.href, AUDIT_AT_COMMIT]).toContain(q.from);
       }
     }
   });

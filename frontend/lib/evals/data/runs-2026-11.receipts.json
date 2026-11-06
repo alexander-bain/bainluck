@@ -7,7 +7,7 @@
       "positives": { "quote": "| Positives (`love`) | **1** |", "from": "https://github.com/alexander-bain/bainluck/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md" }
     },
     "calibration-exit-exam": {
-      "result": { "quote": "**Exit exam:** it last ran Aug 13 and has never passed.", "from": "https://github.com/alexander-bain/bainluck/pull/11956" }
+      "result": { "quote": "**Exit exam:** it last ran Aug 13 and has never passed.", "from": "https://github.com/alexander-bain/bainluck/blob/a555441130/docs/calibration/AUDIT-2026-11.md" }
     },
     "twin-judge-first-run": {
       "result": { "quote": "The run's last step failed", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6650478138" },
