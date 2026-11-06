@@ -560,6 +560,30 @@ describe("S4: the tests for the tests", () => {
     );
   });
 
+  it("the squares say the time they are as of, and point at the full study that started after them (Fable on #12130)", async () => {
+    const page = await mountPage();
+    const grid = page.querySelector('[data-testid="evals-reviewer"]');
+    const chip = grid?.querySelector("[data-truth-chip]");
+    expect(chip?.textContent).toMatch(/^LAST RUN · NOV 5as of 4:36 PM PT/);
+    expect(grid?.textContent).toContain(
+      "When these squares were recorded, the AI reviewer had not reviewed any of them, so each reads NOT RUN."
+    );
+    expect(grid?.textContent).not.toMatch(/has not reviewed/);
+    const full = page.querySelector('[data-testid="evals-reviewer-full-study"]');
+    expect(full?.textContent?.replace(/\s+/g, " ")).toBe(
+      "The reviews started after these squares were recorded. The full study's first result came in at Nov 5, 11:48 PM PT, and each new result follows it on the same thread: results so far."
+    );
+    expect(full?.querySelector("time")?.getAttribute("dateTime")).toBe(study?.fullStudy?.firstResultAt);
+    expect(full?.querySelector("a")?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474"
+    );
+  });
+
+  it("NEGATIVE CONTROL: a study with no full-study result shows no pointer to one", async () => {
+    const page = await mount(<TestsForTheTests board={board} study={{ ...study!, fullStudy: null }} />);
+    expect(page.querySelector('[data-testid="evals-reviewer-full-study"]')).toBeNull();
+  });
+
   it("the bug left out of the study links its issue", async () => {
     const page = await mountPage();
     const link = page.querySelector('[data-testid="evals-reviewer"] a[data-evals-ref]');

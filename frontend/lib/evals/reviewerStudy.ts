@@ -7,9 +7,11 @@
  * are our own words; the receipt's stay in `data/reviewer-study-2026-11-05.receipts.json`,
  * which only the test reads.
  *
- * The reviewer column is a result read from the record. The study has not
- * reviewed anything, so every cell is NOT RUN — never a zero, never a blank
- * that could read as a miss.
+ * The reviewer column is a result read from the record, as of the receipt's
+ * time (4:36 PM PT Nov 5). No review had run by then, so every cell is NOT RUN:
+ * never a zero, never a blank that could read as a miss. Reviews started that
+ * night; `full_study` points at the first full-study result, so the page never
+ * implies the squares are newer than their receipt.
  */
 
 import STUDY from "@/lib/evals/data/reviewer-study-2026-11-05.json";
@@ -29,8 +31,11 @@ export interface ReviewerCase {
 }
 
 export interface ReviewerStudy {
+  /** The receipt's time: the squares are as of this instant. */
   asOf: string;
   receipt: { label: string; href: string };
+  /** The full study's first result, posted after the squares' receipt, when there is one. */
+  fullStudy: { firstResultAt: string; receipt: { label: string; href: string } } | null;
   dropped: { issue: number; decided: string } | null;
   cases: ReviewerCase[];
 }
@@ -58,10 +63,12 @@ export function loadReviewerStudy(raw: unknown = STUDY): ReviewerStudy | null {
   const s = raw as {
     as_of?: unknown;
     receipt?: { label?: unknown; href?: unknown };
+    full_study?: { first_result_at?: unknown; receipt?: { label?: unknown; href?: unknown } } | null;
     dropped?: { issue?: unknown; decided?: unknown } | null;
     cases?: unknown[];
   } | null;
-  if (!s || typeof s.as_of !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s.as_of)) return null;
+  // An instant, never a bare date: the squares are as of their receipt's time.
+  if (!s || typeof s.as_of !== "string" || !/T\d{2}:\d{2}/.test(s.as_of) || Number.isNaN(Date.parse(s.as_of))) return null;
   if (typeof s.receipt?.label !== "string" || typeof s.receipt?.href !== "string") return null;
   if (!s.receipt.href.startsWith("https://")) return null;
   if (!Array.isArray(s.cases) || s.cases.length === 0) return null;
@@ -70,9 +77,19 @@ export function loadReviewerStudy(raw: unknown = STUDY): ReviewerStudy | null {
     s.dropped && Number.isInteger(s.dropped.issue) && typeof s.dropped.decided === "string"
       ? { issue: s.dropped.issue as number, decided: s.dropped.decided }
       : null;
+  const full = s.full_study;
+  let fullStudy: ReviewerStudy["fullStudy"] = null;
+  if (full) {
+    const at = full.first_result_at;
+    if (typeof at !== "string" || Number.isNaN(Date.parse(at)) || Date.parse(at) <= Date.parse(s.as_of)) return null;
+    if (typeof full.receipt?.label !== "string" || typeof full.receipt?.href !== "string") return null;
+    if (!full.receipt.href.startsWith("https://")) return null;
+    fullStudy = { firstResultAt: at, receipt: { label: full.receipt.label, href: full.receipt.href } };
+  }
   return {
     asOf: s.as_of,
     receipt: { label: s.receipt.label, href: s.receipt.href },
+    fullStudy,
     dropped,
     cases: (s.cases as Record<string, string>[]).map((c) => ({
       id: c.id,

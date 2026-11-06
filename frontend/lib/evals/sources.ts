@@ -98,9 +98,16 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   },
   {
     id: "reviewer-pilot",
-    label: "Reviewer pilot: no review ran",
+    label: "Reviewer pilot, before its first review",
     date: "2026-11-05",
     href: `${REPO}/pull/11951#issuecomment-6674832482`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-full-study",
+    label: "Reviewer study, the full study's first result",
+    date: "2026-11-05",
+    href: `${REPO}/pull/11951#issuecomment-6679966474`,
     usedBy: ["tests-for-tests"],
   },
   {

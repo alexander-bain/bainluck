@@ -10,7 +10,7 @@ import TruthChip from "@/components/evals/TruthChip";
 import { TESTS_FOR_TESTS_COPY as COPY } from "@/lib/evals/copy";
 import type { ReviewerCase, ReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { biteTruth, type Scoreboard } from "@/lib/evals/scoreboard";
-import { issueRef, type MeasuredTruth } from "@/lib/evals/truth";
+import { issueRef, pacificClockLabel, pacificDayLabel, type MeasuredTruth } from "@/lib/evals/truth";
 
 function Meter({ part, whole, tone, testId }: { part: number; whole: number; tone: string; testId: string }) {
   return (
@@ -136,12 +136,30 @@ function ReviewerGrid({ study }: { study: ReviewerStudy }) {
     <div data-testid="evals-reviewer" data-truth-scope="last_run" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-caption-strong text-text-primary">{COPY.reviewerTitle}</h3>
-        <TruthChip truth={truth} />
+        <TruthChip truth={truth} showClock />
       </div>
       <p className="text-caption text-text-secondary">
         {COPY.reviewerLeadBefore} {n(bugs.length)} {COPY.reviewerLeadMiddle} {n(healthy.length)} {COPY.reviewerLeadAfter}
       </p>
       {allOurs && noneReviewed && <p className="text-caption text-text-primary">{COPY.reviewerOursAll}</p>}
+      {study.fullStudy && (
+        <p className="text-caption text-text-secondary" data-testid="evals-reviewer-full-study">
+          {COPY.fullStudyBefore}{" "}
+          <time dateTime={study.fullStudy.firstResultAt}>
+            {pacificDayLabel(study.fullStudy.firstResultAt)}, {pacificClockLabel(study.fullStudy.firstResultAt)}
+          </time>
+          {COPY.fullStudyAfter}{" "}
+          <a
+            href={study.fullStudy.receipt.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent-brand hover:underline"
+          >
+            {COPY.fullStudyLink}
+          </a>
+          .
+        </p>
+      )}
       <p className="text-micro text-text-tertiary">{COPY.pickHint}</p>
       {grid(bugs, COPY.bugsHeading, "defect")}
       {grid(healthy, COPY.healthyHeading, "control")}

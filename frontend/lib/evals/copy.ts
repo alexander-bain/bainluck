@@ -133,7 +133,10 @@ export const TESTS_FOR_TESTS_COPY = {
   reviewerLeadMiddle: "real bugs from the site's past again, with",
   reviewerLeadAfter: "healthy changes mixed in, to see whether the AI code reviewer can tell them apart.",
   reviewerOursAll:
-    "Our own tests catch every planted bug and pass every healthy change. The AI reviewer has not reviewed any of them, so its result reads NOT RUN.",
+    "Our own tests catch every planted bug and pass every healthy change. When these squares were recorded, the AI reviewer had not reviewed any of them, so each reads NOT RUN.",
+  fullStudyBefore: "The reviews started after these squares were recorded. The full study's first result came in at",
+  fullStudyAfter: ", and each new result follows it on the same thread:",
+  fullStudyLink: "results so far",
   droppedBefore:
     "One more planted bug was left out: it was never fixed, so there is no healthy version of the code to plant it into. It is filed as",
   pickHint: "Tap a square to read what changed.",

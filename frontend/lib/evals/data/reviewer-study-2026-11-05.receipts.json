@@ -23,6 +23,8 @@
     "no_reviews": { "quote": "paid reviews 0, reviewer spend $0", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
     "local_catches": { "quote": "these are **local test catches, not hosted CI runs or reviewer catches**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
     "pilot_no_reviews": { "quote": "**0/3 real reviews**, behavioral catches **UNKNOWN**, not misses.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674832482" },
+    "snapshot_time": { "quote": "Builder B — **Nov 5, 4:36 PM PST. Reviewer evaluation preparation reconciled; paid reviews 0, reviewer spend $0.**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "full_study_first": { "quote": "Builder B — **Nov 5 11:48 PM PST. Full-set r02/pass1: CAUGHT, real exact-head CHANGES_REQUESTED.**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474" },
     "dropped": { "quote": "**Drop C246 from the seeded set**: the reviewer test runs on the other 10 defects + 5 controls", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673535640" },
     "dropped_live": { "quote": "this is an **already-present escape on master**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673535640" },
     "dropped_issue": { "quote": "I filed the real bug as #12096", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673535640" }

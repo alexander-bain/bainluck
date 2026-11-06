@@ -9,6 +9,7 @@ import {
   ageLabel,
   isAgeAmber,
   liveStamp,
+  pacificClockLabel,
   truthChipLabel,
   type Truth,
 } from "@/lib/evals/truth";
@@ -23,15 +24,23 @@ import {
 export default function TruthChip({
   truth,
   linked = true,
+  showClock = false,
 }: {
   truth: Truth;
   /** False inside something that is already a link (a hero tile), where a nested `<a>` is invalid. */
   linked?: boolean;
+  /** For a LAST RUN record that is a snapshot at a known instant: say the time as well as the day. */
+  showClock?: boolean;
 }) {
   const now = useNow();
   const dated = truth.kind === "last_run" || truth.kind === "reviewed";
   const days = dated && now ? ageInDays(truth.asOf, now) : null;
-  const clock = truth.kind === "live" ? liveStamp(truth.asOf, now) : null;
+  const clock =
+    truth.kind === "live"
+      ? liveStamp(truth.asOf, now)
+      : truth.kind === "last_run" && showClock
+        ? pacificClockLabel(truth.asOf)
+        : null;
   const source = truth.kind === "planned" ? undefined : truth.source;
 
   const chip = (
