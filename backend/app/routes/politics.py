@@ -1299,7 +1299,9 @@ def _build_presidential(
     raw_by_source: dict[str, dict[str, float]] = {"kalshi": {}, "polymarket": {}}
     outcome_id_map: dict[int, str] = {}
     headline_q = None
+    # A stale or None leg clears field_complete (#12010), leaving an incomplete field un-normalized on purpose.
     field_complete = True
+    venue_markets: list = []
 
     for src_key, src_name, headline in [
         ("kalshi", "kalshi", kalshi_headline),
@@ -1310,7 +1312,8 @@ def _build_presidential(
         if headline_q is None:
             headline_q = headline["q"]
         venue_market = headline.get("market")
-        venue_exclusive = getattr(venue_market, "mutually_exclusive", None) is not False
+        venue_markets.append(venue_market)
+        venue_exclusive = getattr(venue_market, "mutually_exclusive", None) is True
         if getattr(venue_market, "status", "open") == "open":
             unobserved = stale_observation_keys(
                 (o.id, getattr(o, "last_updated", None)) for o in headline["outcomes"]
@@ -1356,6 +1359,9 @@ def _build_presidential(
         for row in venue_rows:
             candidates_by_key[row["key"]][src_key] = round(row["probability"] * 100, 1)
 
+    blended_exclusive = bool(venue_markets) and all(
+        getattr(vm, "mutually_exclusive", None) is True for vm in venue_markets
+    )
     blended_rows: list[dict] = []
     for name_key, c in candidates_by_key.items():
         source_inputs = [
@@ -1364,6 +1370,10 @@ def _build_presidential(
             if name_key in raw_by_source[src_name]
         ]
         blended_prob = blend_probabilities(source_inputs) if source_inputs else 0.0
+        if blended_prob is None and source_inputs:
+            blended_prob = sum(inp["probability"] for inp in source_inputs) / len(
+                source_inputs
+            )
         blended_rows.append(
             {
                 "id": name_key,
@@ -1375,14 +1385,14 @@ def _build_presidential(
 
     blended_divisor = display_probability_divisor(
         blended_rows,
-        mutually_exclusive=True,
+        mutually_exclusive=blended_exclusive,
         field_complete=field_complete,
         question=headline_q,
     )
     if blended_divisor is not None and blended_divisor > 1.0:
         normalize_display_probs(
             blended_rows,
-            mutually_exclusive=True,
+            mutually_exclusive=blended_exclusive,
             field_complete=field_complete,
             question=headline_q,
         )

@@ -151,10 +151,11 @@ def _make_full_outcome(name: str, prob: float, oid: int = 1):
 
 def _make_full_market(
     name: str, outcomes: list, source: str = "kalshi", external_id: str = "kxpres2028",
-    market_id: int = 1,
+    market_id: int = 1, mutually_exclusive: bool | None = True,
 ):
     return SimpleNamespace(
         id=market_id, name=name, source=source, external_id=external_id, outcomes=outcomes,
+        mutually_exclusive=mutually_exclusive,
     )
 
 
@@ -270,4 +271,59 @@ class TestBuildPresidentialNormalization:
         by_name = {c["name"]: c for c in response["candidates"]}
         # Plain mean of (60, 15) would be 37.5; blend_probabilities gates at >=40pt spread to 60.0
         assert by_name["Jon Ossoff"]["merged"] == 60.0
+
+    def test_presidential_mutually_exclusive_none_not_rescaled_12093(self):
+        """#12093: a venue market with mutually_exclusive=None is not rescaled."""
+        outcomes = [
+            _make_full_outcome("Trump", 0.50, oid=1),
+            _make_full_outcome("DeSantis", 0.35, oid=2),
+            _make_full_outcome("Haley", 0.30, oid=3),
+        ]
+        market = _make_full_market(
+            "Who will win the 2028 presidential election?",
+            outcomes,
+            source="kalshi",
+            market_id=100,
+            mutually_exclusive=None,
+        )
+        response, _ = _build_presidential([market], now=_NOW)
+        by_name = {c["name"]: c for c in response["candidates"]}
+        assert by_name["Trump"]["kalshi"] == 50.0
+        assert by_name["DeSantis"]["kalshi"] == 35.0
+        assert by_name["Haley"]["kalshi"] == 30.0
+        assert by_name["Trump"]["merged"] == 50.0
+
+    def test_presidential_fallback_when_blend_returns_none_12093(self, monkeypatch):
+        """#12093: if blend_probabilities returns None, _build_presidential falls back
+        to the arithmetic mean rather than emitting 0.0."""
+        import app.utils.futures_source_merge as fsm
+
+        monkeypatch.setattr(fsm, "blend_probabilities", lambda _inputs: None)
+        kalshi_outcomes = [
+            _make_full_outcome("Jon Ossoff", 0.60, oid=1),
+            _make_full_outcome("Gavin Newsom", 0.25, oid=2),
+            _make_full_outcome("Josh Shapiro", 0.15, oid=3),
+        ]
+        poly_outcomes = [
+            _make_full_outcome("Jon Ossoff", 0.15, oid=4),
+            _make_full_outcome("Gavin Newsom", 0.25, oid=5),
+            _make_full_outcome("Josh Shapiro", 0.15, oid=6),
+        ]
+        kalshi_market = _make_full_market(
+            "2028 Democratic presidential nominee",
+            kalshi_outcomes,
+            source="kalshi",
+            market_id=108445,
+        )
+        poly_market = _make_full_market(
+            "Democratic Presidential Nominee 2028",
+            poly_outcomes,
+            source="polymarket",
+            external_id="poly_dem",
+            market_id=112895,
+        )
+        response, _ = _build_presidential([kalshi_market, poly_market], now=_NOW)
+        by_name = {c["name"]: c for c in response["candidates"]}
+        assert by_name["Jon Ossoff"]["merged"] == 37.5
+        assert by_name["Jon Ossoff"]["merged"] != 0.0
 
