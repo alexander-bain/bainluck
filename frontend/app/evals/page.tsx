@@ -32,6 +32,7 @@ import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { loadScoreboard } from "@/lib/evals/scoreboard";
+import { loadConfusion } from "@/lib/evals/twinConfusion";
 import { loadExam } from "@/lib/evals/twinExam";
 import { loadWatchers } from "@/lib/evals/watchers";
 import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
@@ -44,7 +45,8 @@ import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
  * reading guide and the sources; S3 the exams on the record, the live forward
  * record and its hero tile; S4 the test library, the tests for the tests and
  * their hero tile; S5 the checks that run on their own; S2 the twin exam's
- * gates, its report card and its hero tile, from Builder B's scorer record.
+ * gates, its report card and its hero tile, from Builder B's scorer record;
+ * S7 what the judge answered for each kind of pair, from its confusion counts.
  * Each later step adds its own section, its sources and its copy together.
  *
  * Truth rules, each enforced by a test under `lib/evals/__tests__/` and
@@ -56,6 +58,7 @@ import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
 
 /** The sections on the page, in order. Sources list only what these read. */
 const EXAM = loadExam();
+const CONFUSION = loadConfusion();
 const RUNS = loadRuns();
 const SCOREBOARD = loadScoreboard();
 const REVIEWER_STUDY = loadReviewerStudy();
@@ -101,7 +104,7 @@ export default function EvalsPage() {
 
       {EXAM && <ExamSection exam={EXAM} />}
 
-      {EXAM && <RelationReportCard exam={EXAM} />}
+      {EXAM && <RelationReportCard exam={EXAM} confusion={CONFUSION} />}
 
       <EvalsSection
         id="timeline"

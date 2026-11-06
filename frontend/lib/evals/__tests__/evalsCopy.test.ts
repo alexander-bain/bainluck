@@ -16,6 +16,7 @@ import { GAPS } from "@/lib/evals/gaps";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { FAMILY_WORDS } from "@/lib/evals/scoreboard";
+import { ANSWER_WORDS } from "@/lib/evals/twinConfusion";
 import { GATE_WORDS, RELATION_WORDS } from "@/lib/evals/twinExam";
 import { loadWatchers } from "@/lib/evals/watchers";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
@@ -44,6 +45,7 @@ function readerStrings(): string[] {
     ...Object.values(GATE_WORDS).flatMap((g) => [g.name, g.checks, ...Object.values(g.units)]),
     ...Object.values(RELATION_WORDS),
     ...(loadWatchers()?.watchers ?? []).flatMap((w) => [w.name, w.checks, w.verdict?.receipt.label ?? ""]),
+    ...Object.values(ANSWER_WORDS),
     ...Object.values(RESULT_WORD),
     ageLabel(0),
     ageLabel(1),

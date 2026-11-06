@@ -98,6 +98,11 @@ export const CONFUSION_COPY = {
   noneMeans: "It never used this label, so there is nothing to grade.",
   heldOutNote: "Held-out pairs stay sealed: only these counts are published, never the pairs.",
   lock: "Held-out",
+  answers: "What it answered",
+  answersRight: "the right answer",
+  heldOutCountsOnly: "Counts only: the held-out pairs stay sealed so the next exam is fair.",
+  devPairs: "The development pairs behind these counts.",
+  devPairsWaitingOn: "the development-pair export",
 } as const;
 
 export const TIMELINE_COPY = {

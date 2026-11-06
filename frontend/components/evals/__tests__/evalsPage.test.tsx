@@ -16,7 +16,9 @@
  * and each verdict is the newest on the record. S2's: the exam banner and its
  * hero tile read FAIL, the gate grid's verdicts are the record's (four passed,
  * five failed), licenses are HELD / FAIL / NOT ELIGIBLE as stored, and 0/0
- * renders as "—". Each rule has a negative
+ * renders as "—". S7's: tapping a kind shows what the judge answered, every
+ * row adding up to its kind's count, held-out rows counts only with the
+ * reason, development rows naming the pair export they wait on. Each rule has a negative
  * control, so a scanner that silently stopped reading would fail rather than
  * pass.
  *
@@ -66,6 +68,7 @@ import { familyView, loadScoreboard, type Scoreboard } from "@/lib/evals/scorebo
 import EXAM_RAW from "@/lib/evals/data/twin-exam-2026-11-05.json";
 import { RELATIONS, loadExam } from "@/lib/evals/twinExam";
 import { loadWatchers, type WatcherList } from "@/lib/evals/watchers";
+import CONFUSION_RAW from "@/lib/evals/data/twin-confusion-2026-11-05.json";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { pacificDayLabel, type MeasuredTruth } from "@/lib/evals/truth";
 import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
@@ -417,6 +420,49 @@ describe("S2: the twin exam and its gates", () => {
     expect(tile?.querySelector("a")).toBeNull();
     const figures = Array.from(tile?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
     expect(figures).toEqual(["24", "25", "2", "3", "60"]);
+  });
+});
+
+describe("S7: what the judge answered, kind by kind", () => {
+  it("each kind's answers add up to its count, the right answer first, held-out counts only", async () => {
+    const page = await mountPage();
+    for (const r of RELATIONS) {
+      const answers = page.querySelector(`[data-answers="${r}"]`);
+      const row = CONFUSION_RAW.per_pass["1"].test.rows[r];
+      expect(answers?.getAttribute("data-answers-n")).toBe(String(row.n));
+      const shown = Array.from(answers?.querySelectorAll("[data-answer]") ?? []);
+      const total = shown.reduce((sum, li) => sum + Number(li.querySelector("[data-evals-figure]")?.getAttribute("data-value")), 0);
+      expect(total).toBe(row.n);
+      if ((row.counts as Record<string, number>)[r] > 0) expect(shown[0]?.getAttribute("data-answer")).toBe(r);
+      expect(answers?.textContent).toContain("Counts only");
+      expect(answers?.querySelector("[data-planned-item]")).toBeNull();
+    }
+    const uncheckable = Array.from(page.querySelectorAll('[data-answers="uncheckable"] [data-answer]')).map((li) => [
+      li.getAttribute("data-answer"),
+      li.querySelector("[data-evals-figure]")?.textContent,
+    ]);
+    expect(uncheckable).toEqual([
+      ["same_number", "2"],
+      ["related", "1"],
+    ]);
+  });
+
+  it("development rows name the pair export they wait on, and the view still has no bare number", async () => {
+    const page = await mountPage();
+    const card = page.querySelector('[data-evals-section="confusion"]') as HTMLElement;
+    await act(async () => (card.querySelector('[data-testid="evals-confusion-split"] [data-option="dev"]') as HTMLButtonElement).click());
+    const planned = card.querySelector('[data-answers="twin"] [data-planned-item]');
+    expect(planned?.textContent).toMatch(/PLANNED\s*waiting on the development-pair export #12102/);
+    expect(scanEvalsDom(page)).toEqual({ bareNumbers: [], figuresInPlanned: [], figuresOutsideScope: [] });
+  });
+
+  it("the all-pairs view adds the two halves", async () => {
+    const page = await mountPage();
+    const card = page.querySelector('[data-evals-section="confusion"]') as HTMLElement;
+    await act(async () => (card.querySelector('[data-testid="evals-confusion-split"] [data-option="all"]') as HTMLButtonElement).click());
+    expect(card.querySelector('[data-answers="twin"]')?.getAttribute("data-answers-n")).toBe(
+      String(EXAM_RAW.per_pass["1"].all.per_relation.twin.recall.n)
+    );
   });
 });
 

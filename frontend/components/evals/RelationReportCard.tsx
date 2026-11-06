@@ -3,9 +3,10 @@
 import { useState } from "react";
 
 import EvalsSection from "@/components/evals/EvalsSection";
-import Figure from "@/components/evals/Figure";
+import Figure, { PlannedItem } from "@/components/evals/Figure";
 import { CONFUSION_COPY as COPY } from "@/lib/evals/copy";
-import type { MeasuredTruth } from "@/lib/evals/truth";
+import { issueRef, type MeasuredTruth } from "@/lib/evals/truth";
+import { ANSWERS, ANSWER_WORDS, answersFor, type TwinConfusion } from "@/lib/evals/twinConfusion";
 import {
   PASSES,
   RELATIONS,
@@ -14,6 +15,7 @@ import {
   examTruth,
   type Count,
   type PassId,
+  type Relation,
   type Split,
   type TwinExam,
 } from "@/lib/evals/twinExam";
@@ -82,6 +84,69 @@ function Metric({ name, label, count, truth }: { name: string; label: string; co
   );
 }
 
+/**
+ * Tap a kind to see what the judge answered for those pairs: a stacked bar and
+ * the counts, the right answer first. Held-out rows say why they are counts
+ * only; development rows name the pair export they wait on (Decide 43-B1).
+ */
+function Answers({
+  confusion,
+  pass,
+  split,
+  relation,
+  truth,
+}: {
+  confusion: TwinConfusion;
+  pass: PassId;
+  split: Split;
+  relation: Relation;
+  truth: MeasuredTruth;
+}) {
+  const row = answersFor(confusion, pass, split, relation);
+  if (row.n === 0) return null;
+  const given = ANSWERS.filter((a) => row.counts[a] > 0).sort((a, b) =>
+    a === relation ? -1 : b === relation ? 1 : row.counts[b] - row.counts[a]
+  );
+  return (
+    <details data-answers={relation} data-answers-n={row.n} className="group text-micro">
+      <summary className="cursor-pointer list-none text-accent-brand [&::-webkit-details-marker]:hidden">
+        <span className="inline-block group-open:rotate-90 transition-transform" aria-hidden="true">
+          ›
+        </span>{" "}
+        {COPY.answers}
+      </summary>
+      <div className="mt-1.5 space-y-1.5">
+        <div aria-hidden="true" className="flex h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
+          {given.map((a) => (
+            <div
+              key={a}
+              className={a === relation ? "bg-accent-brand/70" : "bg-accent-danger/50 border-l border-surface-card"}
+              style={{ width: `${(100 * row.counts[a]) / row.n}%` }}
+            />
+          ))}
+        </div>
+        <ul className="flex flex-wrap gap-x-3 gap-y-0.5">
+          {given.map((a) => (
+            <li key={a} data-answer={a} className={a === relation ? "text-text-primary" : "text-text-secondary"}>
+              {ANSWER_WORDS[a]}{" "}
+              <Figure truth={truth} value={String(row.counts[a])}>
+                {String(row.counts[a])}
+              </Figure>
+              {a === relation && <span className="text-text-tertiary"> ({COPY.answersRight})</span>}
+            </li>
+          ))}
+        </ul>
+        {split === "test" && <p className="text-text-tertiary">{COPY.heldOutCountsOnly}</p>}
+        {split === "dev" && (
+          <PlannedItem waitingOn={COPY.devPairsWaitingOn} repoRef={issueRef(12102)}>
+            <p className="text-text-secondary">{COPY.devPairs}</p>
+          </PlannedItem>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function Toggle<T extends string>({
   label,
   options,
@@ -126,7 +191,7 @@ function Toggle<T extends string>({
  * pairs are a tap away, and so is each pass (they are repeats of the same
  * pairs, never pooled).
  */
-export default function RelationReportCard({ exam }: { exam: TwinExam }) {
+export default function RelationReportCard({ exam, confusion = null }: { exam: TwinExam; confusion?: TwinConfusion | null }) {
   const [split, setSplit] = useState<Split>("test");
   const [pass, setPass] = useState<PassId>("1");
   const truth = examTruth(exam);
@@ -172,6 +237,7 @@ export default function RelationReportCard({ exam }: { exam: TwinExam }) {
               </p>
               <Metric name="recall" label={COPY.found} count={record.perRelation[r].recall} truth={truth} />
               <Metric name="precision" label={COPY.right} count={record.perRelation[r].precision} truth={truth} />
+              {confusion && <Answers confusion={confusion} pass={pass} split={split} relation={r} truth={truth} />}
             </li>
           ))}
         </ul>
