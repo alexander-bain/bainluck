@@ -2579,10 +2579,13 @@ export default function EventPage({ params }: EventPageProps) {
   // The header keeps its age badge only where no chart card carries the status.
   const headerCarriesAge = showsAge && suppressWinProbabilityCard;
 
-  // #11974 Step E1 — game headline phase ("Current win chance" vs
+  // #11974 Step E1/E5 — game headline phase ("Current win chance" vs
   // "Last recorded win chance") and pregame baseline beside it during play.
+  // On a held live page, `priceAgeClock(acceptedPriceClock, confirmedAtShown)`
+  // keeps the clock fresh when the live stream confirms the displayed price or
+  // delivers a one-stream preview.
   const atlasObservedAt =
-    acceptedPriceClock ??
+    priceAgeClock(acceptedPriceClock, confirmedAtShown) ??
     freshestSourceStamp ??
     event.current_odds?.captured_at ??
     null;
@@ -2964,7 +2967,10 @@ export default function EventPage({ params }: EventPageProps) {
           route's. A hero that throws must not also cost the reader the chart,
           the props and the script. */}
       <SectionErrorBoundary label="The score and probability" resetKey={event}>
-      <div className="rounded-card shadow-card overflow-hidden bg-surface-card">
+      <div
+        className="rounded-card shadow-card overflow-hidden bg-surface-card"
+        data-atlas-mode={atlasOptIn ? "true" : undefined}
+      >
         {/* Top meta row: phase + broadcast + date/time */}
         <div className="px-4 sm:px-5 py-2 flex items-center justify-between border-b border-surface-border/30">
           <div className="flex items-center gap-2">
