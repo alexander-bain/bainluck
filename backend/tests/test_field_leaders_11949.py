@@ -636,3 +636,88 @@ async def test_field_leaders_mixed_pool_survives_bad_items_per_gotcha_42():
     assert isinstance(res_econ, RoundupMembers)
     assert len(res_econ.rows) == 3
 
+
+@pytest.mark.asyncio
+async def test_field_leaders_and_sibling_family_db_loader_bounds_resolution_date_and_survives_120_stale_rows():
+    # Build >100 stale past-date open weather markets (ids 1..120) plus 3 valid tomorrow markets (ids 201..203)
+    stale_rows = [
+        _city_market(
+            i,
+            f"City{i}",
+            [("50°–51°", 0.60), ("52°–53°", 0.40)],
+            res_iso="2026-09-01T16:00:00Z",
+        )
+        for i in range(1, 121)
+    ]
+    valid_rows = [
+        _city_market(201, "New York", [("52°–53°", 0.25), ("54°–55°", 0.34), ("56°–57°", 0.41)]),
+        _city_market(202, "Chicago", [("44°–45°", 0.38), ("46°–47°", 0.32), ("48°–49°", 0.30)]),
+        _city_market(203, "Miami", [("80°–81°", 0.48), ("82°–83°", 0.32), ("84°–85°", 0.20)]),
+    ]
+    all_rows = stale_rows + valid_rows
+
+    class _FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    class _FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return _FakeScalars(self._rows)
+
+    class _FakeWeatherDB:
+        def __init__(self, rows):
+            self.rows = rows
+            self.statements = []
+
+        async def execute(self, stmt):
+            self.statements.append(stmt)
+            compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+            assert "futures_markets.resolution_date >=" in compiled
+            assert "futures_markets.resolution_date <=" in compiled
+            assert "ORDER BY futures_markets.id DESC" in compiled
+            # Simulate SQL resolution_date window + ORDER BY id DESC LIMIT 200
+            filtered = [
+                r
+                for r in sorted(self.rows, key=lambda x: -x["id"])
+                if r.get("resolution_date") and r["resolution_date"] >= "2026-11-04"
+            ][:200]
+            return _FakeResult(filtered)
+
+    fake_db = _FakeWeatherDB(all_rows)
+    res_db = await tomorrows_highs(fake_db, now=NOW_UTC)
+    assert len(fake_db.statements) == 1
+    assert isinstance(res_db, RoundupMembers)
+    assert [r["label"] for r in res_db.rows] == [
+        "Miami · 80°–81°",
+        "New York · 56°–57°",
+        "Chicago · 44°–45°",
+    ]
+
+    # Also verify box_office_opening_weekend drops undated markets with missing_resolution_date:<id>
+    undated_bo = [
+        {
+            "id": 999,
+            "name": "Wicked opening weekend box office",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "resolution_date": None,
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 9991, "name": "$80M–$100M", "probability": 0.60},
+                {"id": 9992, "name": "$100M–$120M", "probability": 0.40},
+            ],
+        }
+    ]
+    res_bo_undated = await opening_weekend(undated_bo, now=NOW_UTC)
+    assert isinstance(res_bo_undated, RoundupRefusal)
+    assert ("field_leaders", "missing_resolution_date:999") in res_bo_undated.reasons
+
+

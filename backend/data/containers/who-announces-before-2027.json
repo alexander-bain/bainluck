@@ -10,6 +10,7 @@
   "footer": "Each person is their own market; they don't add up to 100.",
   "rule": {
     "producer": "sibling_family",
+    "source": "kalshi",
     "template": "will * announce a presidential run before 2027",
     "title_template": "Who announces a presidential run {deadline}?",
     "kicker_prefix": "2028",

@@ -419,10 +419,12 @@ def select_field_leaders(
             if stored_local_date != tomorrow_local:
                 continue
         elif domain == "box_office_opening_weekend":
-            if res_dt is not None:
-                res_utc = res_dt.astimezone(timezone.utc)
-                if res_utc <= effective_now or res_utc > effective_now + timedelta(days=6):
-                    continue
+            if res_dt is None:
+                dropped_reasons.append(("field_leaders", f"missing_resolution_date:{mid}"))
+                continue
+            res_utc = res_dt.astimezone(timezone.utc)
+            if res_utc <= effective_now or res_utc > effective_now + timedelta(days=6):
+                continue
         elif domain == "economic_releases_week":
             if res_dt is not None:
                 res_utc = res_dt.astimezone(timezone.utc)
@@ -711,6 +713,7 @@ async def _load_field_leaders_from_db(
     db: Any,
     *,
     domain: str,
+    now: Optional[datetime] = None,
 ) -> tuple[dict[int, dict[str, Any]], dict[int, set[int]]]:
     """Load candidate ``FuturesMarket`` rows for ``field_leaders`` when ``db`` is a DB session."""
     if not hasattr(db, "execute") or not callable(db.execute):
@@ -723,10 +726,18 @@ async def _load_field_leaders_from_db(
     from app.models import FuturesMarket
     from app.routes.futures import withheld_price_outcome_ids_for_markets
 
+    effective_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    window_floor = effective_now - timedelta(days=1)
+    window_ceil = effective_now + timedelta(days=8)
+
     if domain == "weather_daily_highs":
-        cat_filter = or_(
-            FuturesMarket.category == "weather",
-            FuturesMarket.llm_sport_category == "weather",
+        cat_filter = and_(
+            or_(
+                FuturesMarket.category == "weather",
+                FuturesMarket.llm_sport_category == "weather",
+            ),
+            FuturesMarket.resolution_date >= window_floor,
+            FuturesMarket.resolution_date <= window_ceil,
         )
     elif domain == "box_office_opening_weekend":
         cat_filter = and_(
@@ -738,11 +749,22 @@ async def _load_field_leaders_from_db(
                 FuturesMarket.name.ilike("%opening%"),
                 FuturesMarket.name.ilike("%box office%"),
             ),
+            FuturesMarket.resolution_date >= window_floor,
+            FuturesMarket.resolution_date <= window_ceil,
         )
     else:
-        cat_filter = or_(
-            FuturesMarket.category == "economics",
-            FuturesMarket.llm_sport_category == "economics",
+        cat_filter = and_(
+            or_(
+                FuturesMarket.category == "economics",
+                FuturesMarket.llm_sport_category == "economics",
+            ),
+            or_(
+                FuturesMarket.resolution_date.is_(None),
+                and_(
+                    FuturesMarket.resolution_date >= window_floor,
+                    FuturesMarket.resolution_date <= window_ceil,
+                ),
+            ),
         )
 
     stmt = (
@@ -757,8 +779,8 @@ async def _load_field_leaders_from_db(
                 cat_filter,
             )
         )
-        .order_by(FuturesMarket.id.asc())
-        .limit(100)
+        .order_by(FuturesMarket.id.desc())
+        .limit(200)
     )
     res = await db.execute(stmt)
     if not hasattr(res, "scalars") or not callable(res.scalars):
@@ -861,7 +883,7 @@ async def produce_field_leaders(
         }
     else:
         by_id, withheld_by_market = await _load_field_leaders_from_db(
-            db, domain=domain
+            db, domain=domain, now=now
         )
 
     return select_field_leaders(
