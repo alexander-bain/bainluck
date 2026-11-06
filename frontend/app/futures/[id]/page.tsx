@@ -53,6 +53,7 @@ import { FuturesChart } from "@/components/FuturesChart";
 import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
 import {
   ATLAS_STATE_COPY,
+  formatAtlasAttribution,
   formatAtlasMarketHeading,
   formatAtlasTimestampPT,
   resolveAtlasOptIn,
@@ -1256,8 +1257,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           sourceCount={market.source_count ?? null}
           sourceLabels={heroContributorList}
           externalId={market.external_id}
-          marketId={market.id}
-          outcomeId={atlasSubjectOutcome?.id ?? null}
           rulesText={market.description}
         />
       )}
@@ -1754,6 +1753,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           excludeType="futures"
           limit={4}
           title={`More ${toTitleCaseAcronymSafe(market.llm_sport_category)}`}
+          atlas={atlasEnabled}
         />
       )}
 
@@ -1952,6 +1952,38 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </details>
         )}
       </div>
+      )}
+
+      {/* #883 Step F4: attribution footer — names contributing source(s) only,
+          with no venue prices or comparison rows, and opens the shared details
+          sheet on tap. */}
+      {atlasEnabled && (
+        <footer
+          data-testid="atlas-attribution-footer"
+          className="flex flex-wrap items-center justify-between gap-3 border-t border-surface-border pt-4 text-xs text-text-muted"
+        >
+          <span className="inline-flex items-baseline gap-1.5">
+            <span className="font-semibold uppercase tracking-[0.06em]">Source</span>
+            <span aria-hidden="true">·</span>
+            <span
+              data-testid="atlas-attribution-source"
+              className="font-medium text-text-secondary"
+            >
+              {formatAtlasAttribution(market.source, {
+                sourceCount: market.source_count ?? null,
+                sourceLabels: heroContributorList,
+              })}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setDetailsSheetOpen(true)}
+            data-testid="atlas-attribution-details-button"
+            className="text-xs font-medium text-accent-brand hover:underline"
+          >
+            Market details
+          </button>
+        </footer>
       )}
     </div>
   );
