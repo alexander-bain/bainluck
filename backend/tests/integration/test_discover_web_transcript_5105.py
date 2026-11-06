@@ -233,8 +233,8 @@ async def unavailable_replacement(client, monkeypatch, clock):
     assert retired["edition_status"] == "expired"
 
     # Before the replacement page zero arrives, the current deck turns
-    # unsupported (a conflicting game in its opening) and its base turns over.
-    holder["deck"] = [_conflicted(900)] + CROSSING_NEW
+    # unsupported (every card held back under Ruling 23-A) and its base turns over.
+    holder["deck"] = [_conflicted(900)]
     _drop_base(fake)
     headers, refused = await rec.step("unavailable-page0", at=T1 + timedelta(seconds=2))
     assert refused["cache"]["status"] == "unavailable"
@@ -282,7 +282,7 @@ async def empty_vs_refusal(client, monkeypatch, clock):
     assert empty["items"] == [] and empty["total"] == 0
     assert empty.get("cache", {}).get("status") != "unavailable"
 
-    holder["deck"] = [_conflicted(900)] + [fut(i) for i in range(0, 30)]
+    holder["deck"] = [_conflicted(900)]
     _drop_base(fake)
     # A different fresh visitor whose own first page zero is refused.
     _, refused = await rec.step("refused-page0", at=T0 + timedelta(minutes=1), session=False)
