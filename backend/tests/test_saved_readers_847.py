@@ -166,7 +166,9 @@ def produce_matured_linkage(blend=DEFAULT_BLEND, imminent=DEFAULT_IMMINENT,
         mp.setattr("app.tasks.base.get_task_session", _session_factory(router, sessions))
         mp.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: redis)
         asyncio.run(pah._precompute_admin_matured_linkage())
-    assert redis.sets == [(ML_KEY, 3600)]
+    # C-1 (2026-11-06): the producer went hourly, so its key lives 2 h.
+    assert redis.sets == [(ML_KEY, pah._ADMIN_HOURLY_CACHE_TTL)]
+    assert pah._ADMIN_HOURLY_CACHE_TTL == 7200
     raw = redis.store[ML_KEY]
     return raw.encode() if isinstance(raw, str) else raw
 

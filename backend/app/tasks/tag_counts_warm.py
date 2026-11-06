@@ -111,7 +111,16 @@ MAX_CATEGORIES = 64
 #: Four, matching `futures_categories_warm`: `background` was measured
 #: delivering p50 138-152 s against a declared 120 s, and a period sized to
 #: survive exactly one miss is a period sized to fail.
-MISSED_DELIVERY_ALLOWANCE = 4
+#:
+#: C-1 / B-10 (worker audit 2026-11-06): 4 -> 1. A pass is 28 route builds every
+#: 15 minutes for tiles that change slowly; at one permitted miss the period is
+#: 30 minutes (see `warm_period_seconds`) and the slot is still inside its 75 min
+#: TTL after one lost delivery (2 x 30 = 60). Browse tile counts can be up to 30
+#: minutes old instead of 15.
+MISSED_DELIVERY_ALLOWANCE = 1
+
+#: The periods a crontab `*/N` minute field spells evenly across an hour.
+_EVEN_MINUTE_PERIODS = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)
 
 
 def warm_period_seconds() -> int:
@@ -125,10 +134,16 @@ def warm_period_seconds() -> int:
     ``FRESH_TTL_SECONDS`` moves this too. #2236 is the incident where a period
     lived as a literal in one file and its ceiling in another, with nothing
     comparing them.
+
+    C-1: rounded DOWN to a period a `*/N` crontab spells evenly (4500 s / 2 =
+    37.5 min -> 30 min), because `*/37` would fire at :00 and :37 and leave a
+    23-minute and a 37-minute gap. Rounding down only shortens the period.
     """
     from app.utils.tag_counts_cache import FRESH_TTL_SECONDS
 
-    return FRESH_TTL_SECONDS // (MISSED_DELIVERY_ALLOWANCE + 1)
+    raw_minutes = FRESH_TTL_SECONDS // (MISSED_DELIVERY_ALLOWANCE + 1) // 60
+    even = max(p for p in _EVEN_MINUTE_PERIODS if p <= max(1, raw_minutes))
+    return even * 60
 
 
 def warm_period_minutes() -> int:

@@ -7552,7 +7552,11 @@ celery_app.conf.beat_schedule = {
     },
     "compute-gei-percentiles-hourly": {
         "task": "app.tasks.compute_gei_percentiles",
-        "schedule": crontab(minute=5),
+        # C-1 / B-15 (worker audit 2026-11-06): daily at 06:05 UTC — the key
+        # name predates it and is kept so the beat history stays one series.
+        # The thresholds are stored rows, not a TTL'd cache, so nothing goes
+        # dark between runs; EI percentile badges can be up to 24 h old.
+        "schedule": crontab(minute=5, hour=6),
     },
     "poll-futures-every-4h": {
         "task": "app.tasks.poll_futures_odds",
@@ -7847,6 +7851,9 @@ celery_app.conf.beat_schedule = {
     # census is left at 18 and nothing is spent.
     "revive-retired-future-starts": {
         "task": "app.tasks.revive_retired_future_starts",
+        # C-1 (2026-11-06) did NOT take B-11's 6/h -> 2/h here: the arm's
+        # ~10-minute cadence and its dodge of the settlement sweep's :31-:44
+        # window are both pinned by #7260's tests, and 2/h breaks both.
         "schedule": crontab(minute="0,10,20,30,45,55"),
     },
     "match-prediction-markets": {
@@ -7902,7 +7909,11 @@ celery_app.conf.beat_schedule = {
     },
     "track-statpal-usage": {
         "task": "app.tasks.track_statpal_usage",
-        "schedule": crontab(minute="*/15"),  # Every 15 minutes
+        # C-1 / B-15 (2026-11-06): hourly at :15 (was every 15 minutes). It
+        # records a DAILY request count, so four reads an hour added nothing.
+        # :15 keeps one of its old minutes, which the tennis-link offset census
+        # (`test_tennis_link_beat_restart_starvation_3316`) counts as a reader.
+        "schedule": crontab(minute=15),
     },
     "check-tier1-coverage": {
         "task": "app.tasks.check_tier1_coverage",
@@ -7921,7 +7932,9 @@ celery_app.conf.beat_schedule = {
     # cost cannot be called bounded.
     "reconcile-unanchored-events": {
         "task": "app.tasks.reconcile_unanchored_events",
-        "schedule": crontab(minute="18,48"),
+        # C-1 / B-11 (2026-11-06): daily at 09:18 UTC. It runs with
+        # apply=False — a report, 0 writes — so twice an hour bought nothing.
+        "schedule": crontab(minute=18, hour=9),
         "kwargs": {"apply": False, "limit": 1000},
         "options": {"queue": "background"},
     },
@@ -7953,6 +7966,10 @@ celery_app.conf.beat_schedule = {
     # `scripts/restore_2878_tennis_twin_ghosts.py --apply`.
     "tennis-twin-sweep": {
         "task": "app.tasks.tennis_twin_sweep",
+        # C-1 (2026-11-06) did NOT halve this (B-11): 79 of 79 candidates were
+        # already tagged in the audit window, but the race this sweep exists for
+        # measured 92 min and `test_the_cadence_beats_the_fastest_thing_that_
+        # can_mint_a_ghost` holds the longest gap at 30 min. Stays twice hourly.
         "schedule": crontab(minute="27,57"),
         "kwargs": {"apply": True, "lookback": 10, "lookahead": 5},
         "options": {"queue": "background"},
@@ -7982,7 +7999,9 @@ celery_app.conf.beat_schedule = {
     # back.
     "soccer-ghost-twin-sweep": {
         "task": "app.tasks.soccer_ghost_twin_sweep",
-        "schedule": crontab(minute="9,49"),
+        # C-1 / B-11 (worker audit 2026-11-06): hourly at :09 (was :09/:49).
+        # 102 of 102 candidates were already tagged in the audit window.
+        "schedule": crontab(minute="9"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },
@@ -8065,7 +8084,11 @@ celery_app.conf.beat_schedule = {
     },
     "merge-duplicate-events": {
         "task": "app.tasks.merge_duplicate_events",
-        "schedule": crontab(minute="*/30"),  # Every 30 min (was 10)
+        # C-1 / B-11 (2026-11-06): hourly at :22 (was */30, and */10 before
+        # that); 0 merges in the audit window. A new two-rows-for-one-game pair
+        # can stay visible up to ~60 min instead of ~30 before it folds. :22 is
+        # outside the nightly settlement sweep's 10:31+13m window.
+        "schedule": crontab(minute=22),
         "kwargs": {"dry_run": False},
     },
     "merge-degenerate-combat-events": {
@@ -8352,6 +8375,12 @@ celery_app.conf.beat_schedule = {
         # (#1910), so this moved instead. A minute census over the assembled
         # schedule says :53 carries one other beat, against 33 at :00, 24 at :30
         # and 15 at :45.
+        #
+        # C-1 (worker audit 2026-11-06) did NOT take B-14 (every 3 h). The
+        # coverage contract above needs ceil(200 / (180 // 17)) = 20 passes inside
+        # the 86,400 s mirror: 20 x 3,600 fits, 20 x 10,800 does not, so a 3 h
+        # beat would let up to two thirds of a full reachable set lapse and those
+        # team pages would pay the cold build. Stays hourly.
         "schedule": crontab(minute=53),
         "options": {"queue": "background"},
     },
@@ -9147,7 +9176,9 @@ celery_app.conf.beat_schedule = {
         # endpoint reads a warm Redis key instead of calling Sentry live. Light HTTP
         # task on the background queue; no-ops without SENTRY_AUTH_TOKEN.
         "task": "app.tasks.sentry_snapshot",
-        "schedule": crontab(minute="*/15"),
+        # C-1 / B-15 (2026-11-06): hourly at :13 (the key name predates it),
+        # with the snapshot TTL raised to 2 h so one late beat never empties it.
+        "schedule": crontab(minute=13),
     },
     "mark-resolved-futures": {
         "task": "app.tasks.mark_resolved_futures",
@@ -9859,7 +9890,10 @@ celery_app.conf.beat_schedule = {
     "precompute-admin-audit-all": {
         "task": "app.tasks.precompute_admin_audit_all",
         # */15 -> */30 (LAT-P062). Was 4 recomputes per 3600s TTL; now 2.
-        "schedule": crontab(minute="*/30"),
+        # C-1 / B-15 (2026-11-06): hourly at :08, off the crowded :00/:30, with
+        # the cache TTL raised to 2 h (`_ADMIN_HEALTH_CACHE_TTL`) so one late
+        # beat never empties it. Admin pages can be up to 1 h old.
+        "schedule": crontab(minute=8),
         "options": {"queue": "background"},
     },
     "precompute-admin-link-rate": {
@@ -9878,7 +9912,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.precompute_admin_matured_linkage",
         # */10 -> */30 (LAT-P062). Was 6 recomputes per 3600s TTL; now 2.
         # Matured-linkage headline (Item 2).
-        "schedule": crontab(minute="*/30"),
+        # C-1 / B-15 (2026-11-06): hourly at :11, TTL 2 h — as audit-all above.
+        "schedule": crontab(minute=11),
         "options": {"queue": "background"},
     },
 }

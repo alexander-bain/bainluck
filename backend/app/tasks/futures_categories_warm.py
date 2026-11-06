@@ -97,7 +97,19 @@ BUILD_TIMEOUT_SECONDS = 30
 #:
 #: It is stated as an ALLOWANCE rather than as a period because the allowance is
 #: the thing a reader of this file can judge. The period is arithmetic.
-MISSED_DELIVERY_ALLOWANCE = 4
+#:
+#: C-1 / B-15 (worker audit 2026-11-06): 4 -> 1. The census is 42 rows that
+#: cost a 305 MB buffer read twelve times an hour on `worker-background`. At one
+#: permitted miss the period is 12 minutes (25 min ceiling / 2, rounded down to
+#: an even `*/N`, see `warm_period_seconds`), five passes an hour instead of
+#: twelve. /search's empty-state categories can be up to 12 minutes old instead
+#: of 5. The audit asked for 20; 20 would need an allowance of 0, which
+#: `test_the_bounds_are_positive_numbers` refuses for this rail's delivery
+#: jitter, and a longer stale ceiling, which would make the page older still.
+MISSED_DELIVERY_ALLOWANCE = 1
+
+#: The periods a crontab `*/N` minute field spells evenly across an hour.
+_EVEN_MINUTE_PERIODS = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)
 
 
 def warm_period_seconds() -> int:
@@ -115,10 +127,15 @@ def warm_period_seconds() -> int:
     that divides an hour, because the beat spells it ``*/N`` and a period like
     7 minutes would fire at :00 and :07 and then again at :00 — a silently
     uneven cadence that no assertion on the number itself would catch.
+
+    C-1: rounded DOWN to a period a `*/N` crontab spells evenly (12.5 min -> 12),
+    so rounding only ever shortens the period.
     """
     from app.utils.futures_categories_cache import stale_serve_ceiling_seconds
 
-    return stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1)
+    raw_minutes = stale_serve_ceiling_seconds() // (MISSED_DELIVERY_ALLOWANCE + 1) // 60
+    even = max(p for p in _EVEN_MINUTE_PERIODS if p <= max(1, raw_minutes))
+    return even * 60
 
 
 def warm_period_minutes() -> int:
