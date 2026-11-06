@@ -34,7 +34,10 @@ from app.utils.cross_source_matching import (
     source as _source,
 )
 from app.utils.feed_market_quality import hard_excluded_family
-from app.utils.futures_liveness import market_reads_settled
+from app.utils.futures_liveness import (
+    leg_is_graded,
+    market_reads_settled,
+)
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 from app.utils.market_display_name import clean_served_questions
 from app.utils.market_staleness import (
@@ -42,6 +45,7 @@ from app.utils.market_staleness import (
     should_exclude_from_featured,
     stale_observation_keys,
 )
+from app.utils.ladder_monotonicity import INC, parse_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -545,6 +549,28 @@ def _normalize_outcome_probs(
                 o[key] = round(o[key] / prob_sum * 100, decimals)
 
 
+_LADDER_TIE_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _order_numeric_top_outcomes(outcomes: list[dict]) -> list[dict]:
+    """Order threshold-ladder top_outcomes by threshold when all rows share one shape (#12093)."""
+    if len(outcomes) < 2:
+        return outcomes
+    keyed = []
+    shapes = set()
+    for o in outcomes:
+        label = (o.get("name") or "").strip()
+        parsed = parse_threshold(label)
+        if parsed is None or parsed[0] != (0, len(label)):
+            return outcomes
+        shapes.add(_LADDER_TIE_NUMBER_RE.sub("#", label.lower()))
+        keyed.append((o, parsed[1], parsed[2]))
+    if len(shapes) != 1:
+        return outcomes
+    descending = keyed[0][2] == INC
+    return [o for o, _, _ in sorted(keyed, key=lambda t: t[1], reverse=descending)]
+
+
 def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     """One /politics row: the question, its leader, and its top three rungs.
 
@@ -681,10 +707,22 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         )
     else:
         unobserved = set()
+
+    def _rung_settled_loser(o) -> bool:
+        return (
+            leg_is_graded(
+                getattr(o, "is_winner", None),
+                getattr(o, "resolution_source", None),
+            )
+            and getattr(o, "is_winner", None) is not True
+        )
+
     priced = [
         o
         for o in outcomes
-        if o.current_probability is not None and o.id not in unobserved
+        if o.current_probability is not None
+        and o.id not in unobserved
+        and not _rung_settled_loser(o)
     ]
     # The newest leg is never stale, but it may be the unpriced one: nothing
     # the page prices is left to serve, and a card is withdrawn rather than
@@ -772,11 +810,11 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         normalized, mutually_exclusive=mutually_exclusive is not False,
         field_complete=len(ranked) == len(outcomes), question=market.name,
     )
-    top_outcomes = [
+    top_outcomes = _order_numeric_top_outcomes([
         {"name": o["name"], "prob": round(o["probability"] * 100, 6),
          **({"rendered_percent": o["rendered_percent"]} if "rendered_percent" in o else {})}
         for o in normalized[:3]
-    ]
+    ])
 
     # #9109 follow-up — "+N MORE" COUNTS WHAT THE PAGE SHOWS, NOT THE LADDER.
     # The card's badge was `outcome_count - 3`: every rung the ladder ever had,
@@ -790,7 +828,9 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # is the page's membership — `expired` is read over every outcome, above —
     # and never the whole board. `outcome_count` keeps its meaning; its other
     # readers gate on arity, not on what is shown.
-    page_rungs = [o for o in outcomes if o.name not in expired] or outcomes
+    page_rungs = [
+        o for o in outcomes if o.name not in expired and not _rung_settled_loser(o)
+    ] or outcomes
 
     return {
         "q": market.name,
@@ -964,6 +1004,43 @@ def _last_priced_before_the_venue_forgets(
         for s in stamps
     )
     return freshest < now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
+
+
+_MIDTERMS_2026_PASSED_UTC = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
+_MIDTERMS_TITLE_RE = re.compile(r"\bmidterms?\b", re.I)
+_NOV03_2026_TICKER_RE = re.compile(r"-26NOV03(?:-|$)", re.I)
+
+
+def _finished_midterms_market(market: FuturesMarket, now: datetime) -> bool:
+    """Is this a non-exclusive 2026 midterms market after Election Day?
+
+    #12093 Defect 2: `market_reads_settled` intentionally spares markets with
+    `mutually_exclusive = False` unless every leg is graded, so cumulative and
+    pick-several 2026 midterms contracts ("How many Senate seats will
+    Independents win in the Midterms?", "Which Senate races will be within 1
+    point?", "How many Senate seats will Republicans win in the Midterms?",
+    "Number of Republican governors after the midterms?") survive as live open
+    section cards after the November 3, 2026 election has finished — even when
+    11 of 13 rungs are already graded `api_settlement` losers.
+    """
+    if getattr(market, "mutually_exclusive", None) is not False:
+        return False
+    is_2026_midterms = bool(
+        _MIDTERMS_TITLE_RE.search(market.name or "")
+        or _NOV03_2026_TICKER_RE.search(market.external_id or "")
+    )
+    if not is_2026_midterms:
+        return False
+    outcomes = getattr(market, "outcomes", None) or []
+    if any(
+        leg_is_graded(
+            getattr(o, "is_winner", None),
+            getattr(o, "resolution_source", None),
+        )
+        for o in outcomes
+    ):
+        return True
+    return now >= _MIDTERMS_2026_PASSED_UTC
 
 
 def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
@@ -1471,33 +1548,86 @@ def _extract_control_probs(market: FuturesMarket) -> dict | None:
 
     if gop_prob is None or dem_prob is None:
         return None
-    if max(gop_prob, dem_prob) > 97:
+    settled_winner: str | None = None
+    for o in outcomes:
+        if (
+            getattr(o, "is_winner", None) is True
+            and leg_is_graded(
+                getattr(o, "is_winner", None),
+                getattr(o, "resolution_source", None),
+            )
+        ):
+            party = _stated_party(o.name or "")
+            if party == "D":
+                settled_winner = "Democratic Party"
+            elif party == "R":
+                settled_winner = "Republican Party"
+            else:
+                settled_winner = (o.name or "").strip() or None
+            break
+    if max(gop_prob, dem_prob) > 97 and not settled_winner:
         return None
     # `source` is additive and is the producer half of the badge fix: the card
     # renders `<SourceBadge source="both">` as a literal, so it asserts Kalshi
     # AND Polymarket agreement over a number that comes from one market (#8006).
     # The consumer half is ux's — this route cannot claim it.
-    return {
+    out = {
         "gop": gop_prob,
         "dem": dem_prob,
         "market_id": market.id,
         "source": _source(market),
     }
+    if settled_winner:
+        out["winner"] = settled_winner
+    return out
+
+
+_REGISTERED_CHAMBER_CONTROL_IDS: tuple[int, ...] = (
+    108620,
+    112902,
+    108621,
+    112903,
+)
+_CONTROL_CYCLE_YEAR_RE = re.compile(r"\b(20\d\d)\b")
+_CONTROL_TICKER_YEAR_RE = re.compile(r"-(20\d\d|\d{2})(?:-|$)")
+
+
+def _control_cycle_year(market: FuturesMarket) -> int | None:
+    """Election cycle year for a chamber-control market (e.g. 2026 vs 2028)."""
+    m = _CONTROL_CYCLE_YEAR_RE.search(market.name or "")
+    if m:
+        return int(m.group(1))
+    t = _CONTROL_TICKER_YEAR_RE.search(getattr(market, "external_id", None) or "")
+    if t:
+        raw = t.group(1)
+        return int(raw) if len(raw) == 4 else 2000 + int(raw)
+    if getattr(market, "id", None) in _REGISTERED_CHAMBER_CONTROL_IDS:
+        return 2026
+    return None
 
 
 def _control_candidates(
     markets: list[FuturesMarket], pattern: re.Pattern
 ) -> list[dict]:
     """Every market that both READS as a chamber-control question and IS one."""
-    out = []
+    staged: list[tuple[int | None, dict]] = []
     for m in markets:
         name = m.name or ""
-        if _is_resolved(m) or not pattern.search(name) or _names_a_state(name):
+        if not pattern.search(name) or _names_a_state(name):
             continue
         probs = _extract_control_probs(m)
-        if probs:
-            out.append(probs)
-    return out
+        if not probs:
+            continue
+        if _is_resolved(m) and not probs.get("winner"):
+            continue
+        staged.append((_control_cycle_year(m), probs))
+    years = [y for y, _ in staged if y is not None]
+    nearest_year = min(years) if years else None
+    return [
+        probs
+        for y, probs in staged
+        if nearest_year is None or y is None or y == nearest_year
+    ]
 
 
 def _best_control(candidates: list[dict]) -> dict | None:
@@ -1833,7 +1963,10 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
                 *[FuturesMarket.external_id.like(f"{prefix.upper()}%")
                   for prefix, _ in _THEME_BY_TICKER],
             ),
-            FuturesMarket.status == "open",
+            or_(
+                FuturesMarket.status == "open",
+                FuturesMarket.id.in_(_REGISTERED_CHAMBER_CONTROL_IDS),
+            ),
         )
     )
     all_markets = list(result.scalars().unique().all())
@@ -1937,6 +2070,8 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         # what is dropped here backfills from the same sorted pool.
         if hard_excluded_family(m.name, m.external_id):
             continue
+        if _finished_midterms_market(m, now):
+            continue
         if is_seat:
             senate_seat_markets.append(m)
         if featured_block:
@@ -2025,7 +2160,13 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
 
     # Congressional — with chamber control + senate map
     congressional_markets = themed.get("congressional", [])
-    chamber_control = _find_chamber_control(congressional_markets)
+    chamber_control_pool = list(congressional_markets) + [
+        m
+        for m in all_markets
+        if getattr(m, "id", None) in _REGISTERED_CHAMBER_CONTROL_IDS
+        and m not in congressional_markets
+    ]
+    chamber_control = _find_chamber_control(chamber_control_pool)
     senate_map = _build_senate_map(senate_seat_markets)
     _t = _mark("congressional", _t)
 

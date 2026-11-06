@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchPolitics } from "@/lib/api";
 import type {
+  ChamberControl,
   PoliticsData,
   PoliticsMarketRow,
   PoliticsCandidate,
@@ -763,8 +764,16 @@ export default function PoliticsPage() {
               totalLabel={`${t.congressional.markets?.length || 0} shown · ${t.congressional.count} total`}
             />
             <PartyControlRow
-              senate={t.congressional.chamber_control?.senate || null}
-              house={t.congressional.chamber_control?.house || null}
+              senate={reconcileChamberControl(
+                t.congressional.chamber_control?.senate || null,
+                "Senate",
+                pinnedCollection,
+              )}
+              house={reconcileChamberControl(
+                t.congressional.chamber_control?.house || null,
+                "House",
+                pinnedCollection,
+              )}
             />
             <SenateMap map={t.congressional.senate_map} />
             {t.congressional.markets && t.congressional.markets.length > 0 && (
@@ -801,6 +810,35 @@ export default function PoliticsPage() {
 // ─────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────
+
+function reconcileChamberControl(
+  control: ChamberControl | null,
+  chamber: "Senate" | "House",
+  pinnedCollection: ReturnType<typeof usePinnedCollection>,
+): ChamberControl | null {
+  if (control?.winner) return control;
+  const subtitle =
+    pinnedCollection?.subtitle ??
+    (pinnedCollection as { collection?: { subtitle?: string } } | null)?.collection
+      ?.subtitle;
+  if (!subtitle) return control;
+  const pattern =
+    chamber === "Senate"
+      ? /Senate Settled\s*-\s*([A-Za-z ]+?)(?:\s*-\s*House|\s*$)/i
+      : /House Settled\s*-\s*([A-Za-z ]+?)(?:\s*$)/i;
+  const match = subtitle.match(pattern);
+  if (!match) return control;
+  const winner = match[1].trim();
+  if (!winner) return control;
+  const isDem = /democrat/i.test(winner);
+  return {
+    gop: isDem ? 0 : 100,
+    dem: isDem ? 100 : 0,
+    market_id: chamber === "Senate" ? 108620 : 108621,
+    source: "kalshi",
+    winner,
+  };
+}
 
 function formatTimeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();

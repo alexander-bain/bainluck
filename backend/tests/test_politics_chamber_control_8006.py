@@ -237,3 +237,143 @@ class TestSelectionOverTheRealPool:
 
     def test_an_empty_pool_yields_no_card_rather_than_a_guess(self):
         assert _find_chamber_control([]) == {"senate": None, "house": None}
+
+
+class TestSettled2026ChamberControlAndFinishedMidterms12093:
+    """#12093 Defect 2 — settled 2026 chamber control markets carry winner and
+    outrank 2028 control markets; finished 2026 midterms non-exclusive cards
+    and graded loser rungs are excluded."""
+
+    def test_settled_2026_chamber_control_beats_open_2028_market(self):
+        settled_senate_2026 = SimpleNamespace(
+            id=108620,
+            name="Which party will win the U.S. Senate?",
+            external_id="CONTROLS-2026",
+            source="kalshi",
+            status="resolved",
+            mutually_exclusive=True,
+            outcomes=[
+                SimpleNamespace(
+                    name="Democratic Party",
+                    current_probability=1.0,
+                    is_winner=True,
+                    resolution_source="api_settlement",
+                ),
+                SimpleNamespace(
+                    name="Republican Party",
+                    current_probability=0.0,
+                    is_winner=False,
+                    resolution_source="api_settlement",
+                ),
+            ],
+        )
+        open_senate_2028 = SimpleNamespace(
+            id=68336537,
+            name="Which party will win the Senate in 2028?",
+            external_id="which-party-will-win-the-senate-in-2028",
+            source="polymarket",
+            status="open",
+            mutually_exclusive=True,
+            outcomes=[
+                SimpleNamespace(
+                    name="Democratic Party",
+                    current_probability=0.87,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+                SimpleNamespace(
+                    name="Republican Party",
+                    current_probability=0.12,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+            ],
+        )
+        control = _find_chamber_control([open_senate_2028, settled_senate_2026])
+        assert control["senate"] is not None
+        assert control["senate"]["market_id"] == 108620
+        assert control["senate"]["winner"] == "Democratic Party"
+
+    def test_finished_midterms_non_exclusive_markets_and_graded_loser_rungs(self):
+        from datetime import datetime, timezone
+        from app.routes.politics import _finished_midterms_market, _market_row
+
+        now = datetime(2026, 11, 5, 18, 0, tzinfo=timezone.utc)
+        finished_ind = SimpleNamespace(
+            id=62368131,
+            name="How many Senate seats will Independents win in the Midterms?",
+            external_id="KXISENATEWON-26NOV03",
+            source="kalshi",
+            status="open",
+            mutually_exclusive=False,
+            outcomes=[
+                SimpleNamespace(
+                    id=1,
+                    name="At least 1",
+                    current_probability=0.23,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+            ],
+        )
+        assert _finished_midterms_market(finished_ind, now) is True
+
+        graded_loser_ladder = SimpleNamespace(
+            id=62368128,
+            name="How many Senate seats will Republicans win in the Midterms?",
+            external_id="KXRSENATEWON-26NOV03",
+            source="kalshi",
+            status="open",
+            mutually_exclusive=False,
+            outcomes=[
+                SimpleNamespace(
+                    id=10,
+                    name="At least 23",
+                    current_probability=0.0,
+                    is_winner=False,
+                    resolution_source="api_settlement",
+                    last_updated=now,
+                ),
+                SimpleNamespace(
+                    id=11,
+                    name="At least 51",
+                    current_probability=0.01,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+            ],
+        )
+        assert _finished_midterms_market(graded_loser_ladder, now) is True
+        row = _market_row(graded_loser_ladder, now=now)
+        assert row is not None
+        assert [o["name"] for o in row["top_outcomes"]] == ["At least 51"]
+
+    def test_market_row_orders_threshold_ladder_rungs_by_threshold(self):
+        from datetime import datetime, timezone
+        from app.routes.politics import _market_row
+
+        now = datetime(2026, 11, 5, 18, 0, tzinfo=timezone.utc)
+        market = SimpleNamespace(
+            id=99001,
+            name="How many seats will flip?",
+            external_id="KXFLIP-28",
+            source="kalshi",
+            status="open",
+            mutually_exclusive=False,
+            outcomes=[
+                SimpleNamespace(id=1, name="At least 2", current_probability=0.02, last_updated=now),
+                SimpleNamespace(id=2, name="At least 3", current_probability=0.01, last_updated=now),
+                SimpleNamespace(id=3, name="At least 1", current_probability=0.01, last_updated=now),
+            ],
+        )
+        row = _market_row(market, now=now)
+        assert row is not None
+        assert [o["name"] for o in row["top_outcomes"]] == [
+            "At least 1",
+            "At least 2",
+            "At least 3",
+        ]
+
+
