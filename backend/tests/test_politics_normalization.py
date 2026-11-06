@@ -217,3 +217,57 @@ class TestBuildPresidentialNormalization:
         assert response["candidates"][0]["merged"] == 45.0
         assert response["candidates"][1]["merged"] == 25.0
         assert response["candidates"][2]["merged"] == 15.0
+
+    def test_one_cent_floor_legs_excluded_from_presidential_divisor_12093(self):
+        """#12093 (Defects 1 & 5a): Kalshi 1c floor bounds must not dilute the field."""
+        outcomes = [
+            _make_full_outcome("Jon Ossoff", 0.50, oid=1),
+            _make_full_outcome("Alexandria Ocasio-Cortez", 0.30, oid=2),
+            _make_full_outcome("Gavin Newsom", 0.20, oid=3),
+            *[
+                _make_full_outcome(f"Longshot {i}", 0.01, oid=10 + i)
+                for i in range(12)
+            ],
+        ]
+        market = _make_full_market(
+            "2028 Democratic presidential nominee",
+            outcomes,
+            source="kalshi",
+            market_id=108445,
+        )
+        response, _ = _build_presidential([market], now=_NOW)
+        by_name = {c["name"]: c for c in response["candidates"]}
+        assert by_name["Jon Ossoff"]["kalshi"] == 50.0
+        assert by_name["Jon Ossoff"]["merged"] == 50.0
+
+    def test_presidential_uses_blend_probabilities_not_plain_mean_12093(self):
+        """#12093 (Defect 1): _build_presidential blends via blend_probabilities."""
+        kalshi_outcomes = [
+            _make_full_outcome("Jon Ossoff", 0.60, oid=1),
+            _make_full_outcome("Gavin Newsom", 0.25, oid=2),
+            _make_full_outcome("Josh Shapiro", 0.15, oid=3),
+        ]
+        poly_outcomes = [
+            # 45pt spread on Jon Ossoff trips blend_probabilities's 40pt divergence gate
+            _make_full_outcome("Jon Ossoff", 0.15, oid=4),
+            _make_full_outcome("Gavin Newsom", 0.25, oid=5),
+            _make_full_outcome("Josh Shapiro", 0.15, oid=6),
+        ]
+        kalshi_market = _make_full_market(
+            "2028 Democratic presidential nominee",
+            kalshi_outcomes,
+            source="kalshi",
+            market_id=108445,
+        )
+        poly_market = _make_full_market(
+            "Democratic Presidential Nominee 2028",
+            poly_outcomes,
+            source="polymarket",
+            external_id="poly_dem",
+            market_id=112895,
+        )
+        response, _ = _build_presidential([kalshi_market, poly_market], now=_NOW)
+        by_name = {c["name"]: c for c in response["candidates"]}
+        # Plain mean of (60, 15) would be 37.5; blend_probabilities gates at >=40pt spread to 60.0
+        assert by_name["Jon Ossoff"]["merged"] == 60.0
+
