@@ -9,6 +9,7 @@ import RunTimeline from "@/components/evals/RunTimeline";
 import SourceList from "@/components/evals/SourceList";
 import TestLibrary from "@/components/evals/TestLibrary";
 import TestsForTheTests from "@/components/evals/TestsForTheTests";
+import Watchers from "@/components/evals/Watchers";
 import { useForwardRecord } from "@/components/evals/useForwardRecord";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import {
@@ -21,11 +22,13 @@ import {
   SOURCES_COPY,
   TESTS_FOR_TESTS_COPY,
   TIMELINE_COPY,
+  WATCHERS_COPY,
 } from "@/lib/evals/copy";
 import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { loadScoreboard } from "@/lib/evals/scoreboard";
+import { loadWatchers } from "@/lib/evals/watchers";
 import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
 
 /**
@@ -35,8 +38,8 @@ import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
  * that has no data yet is absent, not empty. S1 carried the hero, the gaps, the
  * reading guide and the sources; S3 the exams on the record, the live forward
  * record and its hero tile; S4 the test library, the tests for the tests and
- * their hero tile. Each later step adds its own section, its sources and its
- * copy together.
+ * their hero tile; S5 the checks that run on their own. Each later step adds
+ * its own section, its sources and its copy together.
  *
  * Truth rules, each enforced by a test under `lib/evals/__tests__/` and
  * `components/evals/__tests__/`: every number renders through `Figure` with a
@@ -49,12 +52,14 @@ import { sourcesFor, type EvalsSectionId } from "@/lib/evals/sources";
 const RUNS = loadRuns();
 const SCOREBOARD = loadScoreboard();
 const REVIEWER_STUDY = loadReviewerStudy();
+const WATCHERS = loadWatchers();
 
 const SECTIONS_ON_PAGE: readonly EvalsSectionId[] = [
   "timeline",
   "forward-record",
   ...(SCOREBOARD ? (["test-library"] as const) : []),
   ...(SCOREBOARD || REVIEWER_STUDY ? (["tests-for-tests"] as const) : []),
+  ...(WATCHERS ? (["watchers"] as const) : []),
   "gaps",
 ];
 
@@ -63,6 +68,7 @@ const SECTION_TITLES: Record<EvalsSectionId, string> = {
   "forward-record": FORWARD_COPY.title,
   "test-library": LIBRARY_COPY.title,
   "tests-for-tests": TESTS_FOR_TESTS_COPY.title,
+  watchers: WATCHERS_COPY.title,
   gaps: GAPS_COPY.title,
 };
 
@@ -97,6 +103,8 @@ export default function EvalsPage() {
       {SCOREBOARD && <TestLibrary board={SCOREBOARD} />}
 
       {(SCOREBOARD || REVIEWER_STUDY) && <TestsForTheTests board={SCOREBOARD} study={REVIEWER_STUDY} />}
+
+      {WATCHERS && <Watchers list={WATCHERS} />}
 
       <EvalsSection
         id="gaps"
