@@ -484,4 +484,216 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
     expect(multiThreeWay?.legs.map((l) => l.pregameChance)).toEqual([null, null, null]);
     expect(multiThreeWay?.legs.map((l) => l.result)).toEqual(["won", "lost", "lost"]);
   });
+
+  it("never falls back to opening_probability after full-time on gameMarkets.other or gameMarkets.totals, withholds when multiple candidates have null source, and never cross-assigns clubs that share a stem", () => {
+    // 1. After full-time, opening_probability is ignored when pregame_mark is null
+    const finishedThreeWayOpeningOnly = buildSoccerThreeWayCard({
+      otherMarkets: [
+        {
+          market_name: "Borussia Dortmund vs Werder Bremen",
+          outcome_name: "Borussia Dortmund",
+          opening_probability: 0.65,
+          pregame_mark: null,
+          is_winner: true,
+          resolution_source: "exchange_settlement",
+          source: "kalshi",
+        },
+        {
+          market_name: "Borussia Dortmund vs Werder Bremen",
+          outcome_name: "Draw",
+          opening_probability: 0.2,
+          pregame_mark: null,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: "kalshi",
+        },
+        {
+          market_name: "Borussia Dortmund vs Werder Bremen",
+          outcome_name: "Werder Bremen",
+          opening_probability: 0.15,
+          pregame_mark: null,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: "kalshi",
+        },
+      ],
+      status: "completed",
+      commenceTime: "2026-11-05T17:00:00Z",
+      homeTeam: "Borussia Dortmund",
+      awayTeam: "Werder Bremen",
+      homeShort: "Dortmund",
+      awayShort: "Bremen",
+      nowMs: NOW_MS,
+    });
+    expect(finishedThreeWayOpeningOnly).not.toBeNull();
+    expect(finishedThreeWayOpeningOnly?.legs.map((l) => l.pregameChance)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+
+    const finishedExactOpeningOnly = buildSoccerExactScoreCard({
+      otherMarkets: ["1-0", "2-0", "1-1", "2-1"].map((score, idx) => ({
+        market_name: "Borussia Dortmund vs Werder Bremen: Correct Score",
+        outcome_name: score,
+        opening_probability: 0.12,
+        pregame_mark: null,
+        is_winner: idx === 0,
+        resolution_source: "exchange_settlement",
+        source: "kalshi",
+      })),
+      status: "completed",
+      commenceTime: "2026-11-05T17:00:00Z",
+      homeTeam: "Borussia Dortmund",
+      awayTeam: "Werder Bremen",
+      homeShort: "Dortmund",
+      awayShort: "Bremen",
+      nowMs: NOW_MS,
+    });
+    expect(finishedExactOpeningOnly).not.toBeNull();
+    expect(finishedExactOpeningOnly?.cells.every((c) => c.chance === null && c.pregameChance === null)).toBe(true);
+
+    const finishedTotalsOpeningOnly = buildSoccerGoalTotalCard({
+      totalsMarkets: [1.5, 2.5, 3.5].map((threshold) => ({
+        threshold,
+        over_probability: 1.0,
+        opening_probability: 0.55,
+        pregame_mark: null,
+        is_winner: true,
+        resolution_source: "exchange_settlement",
+        market_type: "game_total",
+        market_name: `Over ${threshold} goals`,
+        source: "kalshi",
+      })),
+      status: "completed",
+      commenceTime: "2026-11-05T17:00:00Z",
+      homeScore: 3,
+      awayScore: 2,
+      homeShort: "Dortmund",
+      awayShort: "Bremen",
+      nowMs: NOW_MS,
+    });
+    expect(finishedTotalsOpeningOnly).not.toBeNull();
+    expect(finishedTotalsOpeningOnly?.points.every((p) => p.chance === null && p.detail.baseline === null)).toBe(true);
+
+    // 2. Multiple unblended candidates with source: null still withhold probabilities
+    const multiNullSource = buildSoccerThreeWayCard({
+      otherMarkets: [
+        {
+          _market_id: 10,
+          market_name: "Match Winner A",
+          outcome_name: "Borussia Dortmund",
+          pregame_mark: 0.62,
+          is_winner: true,
+          resolution_source: "exchange_settlement",
+          source: null,
+        },
+        {
+          _market_id: 10,
+          market_name: "Match Winner A",
+          outcome_name: "Draw",
+          pregame_mark: 0.22,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: null,
+        },
+        {
+          _market_id: 10,
+          market_name: "Match Winner A",
+          outcome_name: "Werder Bremen",
+          pregame_mark: 0.16,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: null,
+        },
+        {
+          _market_id: 11,
+          market_name: "Match Winner B",
+          outcome_name: "Borussia Dortmund",
+          pregame_mark: 0.70,
+          is_winner: true,
+          resolution_source: "exchange_settlement",
+          source: null,
+        },
+        {
+          _market_id: 11,
+          market_name: "Match Winner B",
+          outcome_name: "Draw",
+          pregame_mark: 0.18,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: null,
+        },
+        {
+          _market_id: 11,
+          market_name: "Match Winner B",
+          outcome_name: "Werder Bremen",
+          pregame_mark: 0.12,
+          is_winner: false,
+          resolution_source: "exchange_settlement",
+          source: null,
+        },
+      ],
+      status: "completed",
+      commenceTime: "2026-11-05T17:00:00Z",
+      homeTeam: "Borussia Dortmund",
+      awayTeam: "Werder Bremen",
+      homeShort: "Dortmund",
+      awayShort: "Bremen",
+      nowMs: NOW_MS,
+    });
+    expect(multiNullSource).not.toBeNull();
+    expect(multiNullSource?.source).toBeNull();
+    expect(multiNullSource?.legs.map((l) => l.pregameChance)).toEqual([null, null, null]);
+
+    // 3. Clubs sharing a stem ("AC Milan" vs "Inter Milan") never cross-assign Home and Away
+    const derbyCard = buildSoccerThreeWayCard({
+      otherMarkets: [
+        {
+          market_name: "AC Milan vs Inter Milan",
+          outcome_name: "Inter Milan",
+          probability: 0.45,
+          observed_at: "2026-11-05T19:55:00Z",
+          source: "kalshi",
+        },
+        {
+          market_name: "AC Milan vs Inter Milan",
+          outcome_name: "Draw",
+          probability: 0.27,
+          observed_at: "2026-11-05T19:55:00Z",
+          source: "kalshi",
+        },
+        {
+          market_name: "AC Milan vs Inter Milan",
+          outcome_name: "AC Milan",
+          probability: 0.28,
+          observed_at: "2026-11-05T19:55:00Z",
+          source: "kalshi",
+        },
+      ],
+      status: "scheduled",
+      commenceTime: "2026-11-05T22:00:00Z",
+      homeTeam: "AC Milan",
+      awayTeam: "Inter Milan",
+      homeShort: "AC Milan",
+      awayShort: "Inter Milan",
+      nowMs: NOW_MS,
+    });
+    expect(derbyCard).not.toBeNull();
+    expect(derbyCard?.legs.map((l) => ({ role: l.role, quoted: l.quotedChance }))).toEqual([
+      { role: "home", quoted: 0.28 },
+      { role: "draw", quoted: 0.27 },
+      { role: "away", quoted: 0.45 },
+    ]);
+
+    expect(
+      parseSoccerExactScoreOutcome(
+        "Inter Milan wins 2-1",
+        "AC Milan",
+        "Inter Milan",
+        "AC Milan",
+        "Inter Milan",
+      ),
+    ).toEqual({ homeGoals: 1, awayGoals: 2 });
+  });
 });
