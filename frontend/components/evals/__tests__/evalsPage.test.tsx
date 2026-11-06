@@ -11,7 +11,9 @@
  * an older payload shows the staleness sentence, and a failed read shows
  * "Unavailable right now" with no number. S4's: the scoreboard's recorded time
  * and commit render, the bite meter shows both of its numbers, and all fifteen
- * reviewer squares read NOT RUN with no zero-filling. Each rule has a negative
+ * reviewer squares read NOT RUN with no zero-filling. S5's: every watcher row
+ * has a source link, its times are worked out in Pacific on the reader's date,
+ * and each verdict is the newest on the record. Each rule has a negative
  * control, so a scanner that silently stopped reading would fail rather than
  * pass.
  *
@@ -48,6 +50,7 @@ import Figure from "@/components/evals/Figure";
 import HeroTiles from "@/components/evals/HeroTiles";
 import TestLibrary from "@/components/evals/TestLibrary";
 import TestsForTheTests from "@/components/evals/TestsForTheTests";
+import Watchers from "@/components/evals/Watchers";
 import { fetchCalibration } from "@/lib/api";
 import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofFigures";
 import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy } from "@/lib/copyBans";
@@ -57,6 +60,7 @@ import { GAPS, GAPS_REVIEWED_AT } from "@/lib/evals/gaps";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { familyView, loadScoreboard, type Scoreboard } from "@/lib/evals/scoreboard";
+import { loadWatchers, type WatcherList } from "@/lib/evals/watchers";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { pacificDayLabel, type MeasuredTruth } from "@/lib/evals/truth";
 import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
@@ -163,6 +167,7 @@ describe("/evals S1 renders the shell", () => {
       "forward-record",
       "test-library",
       "tests-for-tests",
+      "watchers",
       "gaps",
       "how-to-read",
       "sources",
@@ -213,7 +218,7 @@ describe("/evals S1 renders the shell", () => {
     const listed = Array.from(page.querySelectorAll("[data-source-id]")).map((s) =>
       s.getAttribute("data-source-id")
     );
-    const onPage = ["timeline", "forward-record", "test-library", "tests-for-tests", "gaps"];
+    const onPage = ["timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps"];
     expect(listed).toEqual(
       EVALS_SOURCES.filter((s) => s.usedBy.some((id) => onPage.includes(id))).map((s) => s.id)
     );
@@ -604,6 +609,144 @@ describe("S4: the tests for the tests", () => {
     const page = await mount(<HeroTiles forward={{ status: "loading" }} board={null} />);
     expect(page.querySelector('[data-hero-tile="tests-for-tests"]')).toBeNull();
     expect(page.querySelector('[data-hero-tile="forward-record"]')).not.toBeNull();
+  });
+});
+
+describe("S5: checks that run on their own", () => {
+  const list = loadWatchers();
+  /** Noon Pacific on a November day (standard time) and on a July day (daylight time). */
+  const NOVEMBER = "2026-11-05T20:00:00Z";
+  const JULY = "2026-07-15T19:00:00Z";
+  const row = (page: HTMLElement, id: string) => page.querySelector(`[data-watcher="${id}"]`);
+
+  it("lists every watcher under LAST REVIEWED, through the day and every night", async () => {
+    freezeClockAt(NOVEMBER);
+    const page = await mountPage();
+    const section = page.querySelector('[data-evals-section="watchers"]');
+    expect(section?.getAttribute("data-truth-scope")).toBe("reviewed");
+    expect(section?.querySelector("[data-truth-chip]")?.textContent?.startsWith("LAST REVIEWED · NOV 6")).toBe(true);
+    const ids = Array.from(section?.querySelectorAll("[data-watcher]") ?? []).map((r) => r.getAttribute("data-watcher"));
+    expect(ids).toEqual(list?.watchers.map((w) => w.id));
+    expect(section?.querySelectorAll('[data-watcher-group="day"] [data-watcher]')).toHaveLength(2);
+    expect(section?.querySelectorAll('[data-watcher-group="night"] [data-watcher]')).toHaveLength(10);
+  });
+
+  it("every row links where its check lives", async () => {
+    const page = await mountPage();
+    const rows = Array.from(page.querySelectorAll("[data-watcher]"));
+    expect(rows.length).toBe(list?.watchers.length);
+    for (const r of rows) {
+      expect(r.querySelector("a[data-watcher-source]")?.getAttribute("href")).toMatch(
+        /^https:\/\/github\.com\/alexander-bain\/bainluck\/blob\/[0-9a-f]{10}\/backend\/app\/tasks\//
+      );
+    }
+  });
+
+  it("works out each run's Pacific time on the reader's date: 11:10 PM in November, 12:10 AM in July", async () => {
+    freezeClockAt(NOVEMBER);
+    let page = await mountPage();
+    expect(page.querySelector('[data-schedule="flow-sentinel-daily"]')?.textContent).toBe("Every day at 11:10 PM PT");
+    expect(page.querySelector('[data-schedule="matching-reconciliation"]')?.textContent).toBe("Every 15 minutes");
+    expect(page.querySelector('[data-schedule="data-quality-watchdog"]')?.textContent).toBe("Every 2 hours");
+    expect(page.querySelector('[data-day-strip="flow-sentinel-daily"] [data-run-minute]')?.getAttribute("data-run-minute")).toBe(
+      String(23 * 60 + 10)
+    );
+    await act(async () => root?.unmount());
+
+    freezeClockAt(JULY);
+    page = await mountPage();
+    expect(page.querySelector('[data-schedule="flow-sentinel-daily"]')?.textContent).toBe("Every day at 12:10 AM PT");
+    expect(page.querySelector('[data-day-strip="flow-sentinel-daily"] [data-run-minute]')?.getAttribute("data-run-minute")).toBe(
+      "10"
+    );
+  });
+
+  it("draws a dot for every run in the day: twelve, ninety-six, or one", async () => {
+    const page = await mountPage();
+    const runs = (id: string) => page.querySelector(`[data-day-strip="${id}"]`)?.getAttribute("data-runs");
+    expect(runs("data-quality-watchdog")).toBe("12");
+    expect(runs("matching-reconciliation")).toBe("96");
+    expect(runs("grid-sentinel-daily")).toBe("1");
+  });
+
+  it("shows each verdict with its own date, its chip, and the issues its run posted to", async () => {
+    freezeClockAt(NOVEMBER);
+    const page = await mountPage();
+    const refs = (r: Element | null) => Array.from(r?.querySelectorAll("a[data-evals-ref]") ?? []).map((a) => a.textContent);
+    const withVerdict = (list?.watchers ?? []).filter((w) => w.verdict);
+    expect(withVerdict.length).toBeGreaterThan(0);
+    for (const w of withVerdict) {
+      const v = w.verdict!;
+      const r = row(page, w.id);
+      expect(r?.getAttribute("data-verdict-state")).toBe(v.state);
+      expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe(
+        {
+          red_reporting: "Running red, reporting",
+          red_stopped: "Running red, reporting stopped",
+          closed_fixed: "Closed as fixed",
+        }[v.state]
+      );
+      const day = (pacificDayLabel(v.runAt) as string).toUpperCase();
+      expect(r?.querySelector("[data-truth-chip]")?.textContent?.startsWith(`LAST RUN · ${day}`)).toBe(true);
+      const context = [v.earlier, v.fix].filter((n): n is number => n !== null);
+      expect(refs(r)).toEqual([...v.issues, ...v.closed, ...context].map((n) => `#${n}`));
+      expect(r?.querySelector("a[data-verdict-receipt]")?.getAttribute("href")).toBe(v.receipt.href);
+    }
+  });
+
+  it("a run that closed issues as fixed says so, and a run that only closed issues is never green", async () => {
+    freezeClockAt(NOVEMBER);
+    const page = await mountPage();
+    const closing = (list?.watchers ?? []).filter((w) => (w.verdict?.closed.length ?? 0) > 0);
+    expect(closing.length).toBeGreaterThan(0);
+    for (const w of closing) {
+      const v = w.verdict!;
+      const r = row(page, w.id);
+      const text = r?.textContent?.replace(/\s+/g, " ") ?? "";
+      const issues = v.closed.map((n) => `#${n}`).join(" ");
+      if (v.state === "closed_fixed") {
+        const words = v.closed.length === 1 ? "re-checked the problem it had reported, found it fixed, and closed it:" : "re-checked the problems it had reported, found them fixed, and closed them:";
+        expect(text).toContain(`${words} ${issues}.`);
+        expect(r?.querySelector("[data-verdict-chip]")?.className).not.toMatch(/green/);
+      } else {
+        expect(text).toContain(`It also found ${issues} fixed, and closed ${v.closed.length === 1 ? "it" : "them"}.`);
+      }
+    }
+    expect(page.querySelector('[data-evals-section="watchers"] [data-result="pass"]')).toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: a run that could not post reads running red, reporting stopped", async () => {
+    const stoppedList: WatcherList = JSON.parse(JSON.stringify(list));
+    const first = stoppedList.watchers.find((w) => w.verdict)!;
+    first.verdict = { ...first.verdict!, state: "red_stopped", issues: [11958], closed: [], earlier: null, fix: null };
+    const page = await mount(<Watchers list={stoppedList} />);
+    const r = page.querySelector(`[data-watcher="${first.id}"]`);
+    expect(r?.getAttribute("data-verdict-state")).toBe("red_stopped");
+    expect(r?.querySelector("[data-verdict-chip]")?.textContent).toBe("Running red, reporting stopped");
+    expect(r?.textContent?.replace(/\s+/g, " ")).toContain(
+      "found problems but could not file them. The stopped reporting is tracked in #11958."
+    );
+    expect(page.querySelectorAll('[data-verdict-state="red_stopped"]')).toHaveLength(1);
+  });
+
+  it("a watcher with no public record of its last result says UNKNOWN, never green", async () => {
+    const page = await mountPage();
+    const unknown = Array.from(page.querySelectorAll('[data-verdict-state="unknown"]'));
+    expect(unknown).toHaveLength((list?.watchers ?? []).filter((w) => !w.verdict).length);
+    for (const r of unknown) {
+      expect(r.querySelector('[data-result="unknown"]')?.textContent).toBe("UNKNOWN");
+      expect(r.querySelector("[data-verdict-chip]")).toBeNull();
+    }
+    expect(page.querySelector('[data-evals-section="watchers"] [data-result="pass"]')).toBeNull();
+  });
+
+  it("links the open alerts without counting them (Decide 43-F1)", async () => {
+    const page = await mountPage();
+    const link = page.querySelector("a[data-alerts-link]");
+    expect(link?.getAttribute("href")).toBe(
+      "https://github.com/alexander-bain/bainluck/issues?q=is%3Aopen+label%3Aalert-intake"
+    );
+    expect(link?.textContent).not.toMatch(/\d/);
   });
 });
 
