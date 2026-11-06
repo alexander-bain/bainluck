@@ -448,10 +448,6 @@ async def produce_window_events_closest(
             )
 
         cards_by_id, _failed = await _hydrate_event_cards(db, candidate_ids)
-        if _failed:
-            return _rc().RoundupRefusal(
-                (("window", f"hydrate_failed_{len(_failed)}"),)
-            )
         folded_map = (
             await folded_card_numbers_batch(db, list(events_by_id.values()))
             if events_by_id
