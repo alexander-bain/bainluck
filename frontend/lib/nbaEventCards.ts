@@ -211,10 +211,13 @@ export interface LadderPoint {
   detail: OptionDetail;
 }
 
+export type LadderUnit = "points" | "runs" | "goals" | "games";
+
 export interface LadderCard {
   kind: "ladder";
   id: "total" | "margin";
   family: LadderFamily;
+  unit?: LadderUnit;
   phase: LadderPhase;
   points: LadderPoint[];
   /** Total (home + away) or home margin (home − away) from the page's score; null before play. */
@@ -373,6 +376,10 @@ export function ladderCaption(card: LadderCard): string {
 }
 
 export function ladderTitle(card: LadderCard): string {
+  if (card.unit === "runs" && card.family === "total") return "Run totals";
+  if (card.unit === "goals" && card.family === "total") return "Goal expectations";
+  if (card.unit === "goals" && card.family === "margin") return "Puck-line margin";
+  if (card.unit === "games" && card.family === "total") return "Total games";
   return card.family === "total" ? "Scoring expectations" : "Winning margin";
 }
 
