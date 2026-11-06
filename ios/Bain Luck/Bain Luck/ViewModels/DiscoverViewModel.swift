@@ -1120,7 +1120,8 @@ final class DiscoverViewModel: ObservableObject {
                 // must run inside each section rather than across the boundary.
                 let seating = Self.acceptedSeating(
                     response, paintedEdition: staged.edition, enabled: openingEditionEnabled)
-                if mayReorder || !hasPublishedNetworkFeed {
+                let allowReorder = (mayReorder && !isRecoveryAttempt) || items.isEmpty
+                if allowReorder {
                     acceptedSeatedEdition = seating?.edition
                     acceptedSeatedStart = seating?.start
                     if let seating { acceptedSeatedLimit = seating.limit }
@@ -1137,7 +1138,6 @@ final class DiscoverViewModel: ObservableObject {
                 // a card the reader was mid-way through could move or vanish the
                 // moment the network answered. Now the server's own edition token
                 // and `mayReorder` decide whether a reorder is legal at all.
-                let allowReorder = mayReorder || !hasPublishedNetworkFeed
                 switch DiscoverFeedReconcile.decision(
                     paintedCount: items.count,
                     mayReorder: allowReorder,
@@ -1303,7 +1303,7 @@ final class DiscoverViewModel: ObservableObject {
                 // where it was. Anything else means a caller-initiated load overtook
                 // us mid-flight and now owns the feed.
                 let before = self.loadGeneration
-                await self.load(isRecoveryAttempt: true)
+                await self.load(isRecoveryAttempt: true, mayReorder: false)
                 guard !Task.isCancelled else { return }
                 guard self.loadGeneration == before &+ 1 else { break }
                 owned = self.loadGeneration

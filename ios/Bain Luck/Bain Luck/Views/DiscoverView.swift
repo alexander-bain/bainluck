@@ -1,7 +1,7 @@
 import SwiftUI
 import Combine
 
-private enum DiscoverGroupedItem: Identifiable {
+enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
     case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil, sharedQuestion: String? = nil, collectionRef: FeedThemeCollectionRef? = nil)
 
@@ -1519,17 +1519,51 @@ struct DiscoverView: View {
     /// (#11984 Ruling C). When a pull-to-refresh or account switch bumps
     /// `pullEpoch`, this returns `[]` so the refreshed deck is evaluated fresh.
     private var retainedItemIdsForCurrentPull: Set<String> {
-        guard let cached = presentationCache.cachedValue, cached.pullEpoch == pullEpoch else {
+        Self.retainedItemIds(from: presentationCache, pullEpoch: pullEpoch)
+    }
+
+    static func retainedItemIds(
+        from cache: MemoizedPresentation<GroupedPresentation>,
+        pullEpoch: Int
+    ) -> Set<String> {
+        guard let cached = cache.cachedValue, cached.pullEpoch == pullEpoch else {
             return []
         }
         return cached.admittedIds
+    }
+
+    static func evaluatePresentationRetention(
+        _ items: [FeedItem],
+        in cache: MemoizedPresentation<GroupedPresentation>,
+        signature: String,
+        pullEpoch: Int,
+        now: Date = Date()
+    ) -> [FeedItem] {
+        _ = cache.resolve(signature: signature) {
+            let retained = retainedItemIds(from: cache, pullEpoch: pullEpoch)
+            let sanitized = sanitizedFeedItems(items, now: now, retainingIds: retained)
+            let eligible = eligibleItems(sanitized, now: now, retainingIds: retained)
+            let admitted = retained.union(admittedItemIds(in: eligible))
+            return GroupedPresentation(
+                items: eligible.map { .single($0) },
+                continuationStart: nil,
+                admittedIds: admitted,
+                pullEpoch: pullEpoch
+            )
+        }
+        let retained = retainedItemIds(from: cache, pullEpoch: pullEpoch)
+        return eligibleItems(
+            sanitizedFeedItems(items, now: now, retainingIds: retained),
+            now: now,
+            retainingIds: retained
+        )
     }
 
     /// The memoized grouped feed, plus (#5105) the index where its continuation
     /// begins. The boundary is produced BY the grouping, never re-derived from a
     /// grouped card afterwards: a bundle's lead is one of its children, which the
     /// server never placed, so reading it back would misplace the heading.
-    fileprivate struct GroupedPresentation {
+    struct GroupedPresentation {
         let items: [DiscoverGroupedItem]
         /// Nil = no section to draw (legacy deck, or no continuation card survived).
         let continuationStart: Int?
@@ -1865,7 +1899,7 @@ struct DiscoverView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button("Retry") {
-                            Task { await vm.load() }
+                            Task { await vm.load(mayReorder: false) }
                         }
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.blue)
@@ -1892,7 +1926,7 @@ struct DiscoverView: View {
                         }
                         Spacer()
                         Button("Retry") {
-                            Task { await vm.load() }
+                            Task { await vm.load(mayReorder: false) }
                         }
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.blue)
