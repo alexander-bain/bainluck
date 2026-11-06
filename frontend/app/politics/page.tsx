@@ -25,6 +25,8 @@ import PartyControlRow from "@/components/politics/PartyControlRow";
 import MarketCard from "@/components/politics/MarketCard";
 import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
 import { usePinnedCollection } from "@/hooks/usePinnedCollection";
+import PoliticsAtlasView from "@/components/politics/PoliticsAtlasView";
+import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -658,7 +660,11 @@ export default function PoliticsPage() {
     refreshInterval: 60000,
   });
 
-  if (error) {
+  const atlasQuery =
+    typeof window !== "undefined" ? window.location.search : undefined;
+  const atlasEnabled = resolveAtlasOptIn(atlasQuery);
+
+  if (error || (data as { error?: string } | undefined)?.error === "timeout") {
     return (
       <div className={s.page}>
         {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
@@ -673,6 +679,25 @@ export default function PoliticsPage() {
         {pinnedCollection && <div className="mb-4"><DiscoverCollectionCard entry={pinnedCollection} /></div>}
         <PoliticsSkeleton />
       </div>
+    );
+  }
+
+  if (atlasEnabled) {
+    return (
+      <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
+        <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
+          {pinnedCollection && (
+            <div className="max-w-[1120px] mx-auto px-4 md:px-6 pt-6">
+              <DiscoverCollectionCard entry={pinnedCollection} />
+            </div>
+          )}
+          <PoliticsAtlasView data={data} />
+          <footer className={s.footer}>
+            Bain Luck translates prediction-market prices into probabilities.
+            Prediction market data. Not financial advice.
+          </footer>
+        </div>
+      </ErrorBoundary>
     );
   }
 

@@ -22,6 +22,8 @@ import type {
 } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
 import EntertainmentSkeleton from "@/components/skeletons/EntertainmentSkeleton";
+import EntertainmentAtlasView from "@/components/entertainment/EntertainmentAtlasView";
+import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
 import s from "./entertainment.module.css";
 
 // ─────────────────────────────────────────────────────────
@@ -1587,12 +1589,16 @@ export default function EntertainmentPage() {
   useScrollDepth({ pageType: "entertainment" });
   useEngagementTime({ pageType: "entertainment" });
 
+  const atlasQuery =
+    typeof window !== "undefined" ? window.location.search : undefined;
+  const atlasEnabled = resolveAtlasOptIn(atlasQuery);
+
   const [filter, setFilter] = useState<FilterKey>("all");
   const { data, error } = useSWR("entertainment-data-v2", fetchEntertainment, {
     refreshInterval: 60000,
   });
 
-  if (error) {
+  if (error || (data as { error?: string } | undefined)?.error === "timeout") {
     return (
       <div className={s.page}>
         <ErrorState message="Failed to load entertainment data" onRetry={() => window.location.reload()} />
@@ -1605,6 +1611,16 @@ export default function EntertainmentPage() {
       <div className={s.page}>
         <EntertainmentSkeleton />
       </div>
+    );
+  }
+
+  if (atlasEnabled) {
+    return (
+      <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
+        <div className={`${s.page} -mx-3 md:-mx-6 -mt-4`}>
+          <EntertainmentAtlasView data={data} />
+        </div>
+      </ErrorBoundary>
     );
   }
 
