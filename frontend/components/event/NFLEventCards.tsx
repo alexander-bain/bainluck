@@ -1894,7 +1894,7 @@ export function TennisSetsCardView({
                             cx="5"
                             cy="5"
                             r="3.5"
-                            fill="#FFFFFF"
+                            fill="var(--surface-card)"
                             stroke={step.winnerSide === "home" ? homeInk : awayInk}
                             strokeWidth="1.75"
                           />
@@ -1929,9 +1929,11 @@ export function TennisSetsCardView({
                   </span>
                   {step.label}
                 </span>
-                <span className="text-[11px] text-text-secondary">
-                  {step.source ?? "Recorded quote"}
-                </span>
+                {step.source && (
+                  <span className="text-[11px] text-text-secondary">
+                    {step.source}
+                  </span>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-2 pt-0.5">
                 {([step.home, step.away] as const).map((opt) => {
@@ -1946,6 +1948,11 @@ export function TennisSetsCardView({
                         {opt.shortName}
                       </span>
                       <span className="inline-flex items-center gap-1 text-xs font-bold tabular-nums text-text-primary shrink-0">
+                        {opt.result === "pending" && (
+                          <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
+                            Pending
+                          </span>
+                        )}
                         {chance !== null ? (
                           <>
                             <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true">
@@ -1953,18 +1960,18 @@ export function TennisSetsCardView({
                                 cx="5"
                                 cy="5"
                                 r="3.5"
-                                fill={opt.liveProbability !== null ? ink : "#FFFFFF"}
+                                fill={opt.liveProbability !== null ? ink : "var(--surface-card)"}
                                 stroke={ink}
                                 strokeWidth="1.75"
                               />
                             </svg>
                             {formatProbability(chance)}
                           </>
-                        ) : (
+                        ) : opt.result !== "pending" ? (
                           <span className="text-[11px] font-medium text-text-muted">
                             {ATLAS_STATE_COPY.noRecentPrice}
                           </span>
-                        )}
+                        ) : null}
                       </span>
                     </div>
                   );
@@ -2020,6 +2027,7 @@ export function TennisExactScoreCardView({
         {card.outcomes.map((outcome) => {
           const isWon = outcome.result === "won";
           const isLost = outcome.result === "lost";
+          const isPending = outcome.result === "pending";
           const chance = outcome.liveProbability ?? outcome.pregameProbability;
           return (
             <button
@@ -2047,6 +2055,11 @@ export function TennisExactScoreCardView({
                     {ATLAS_STATE_COPY.lostWithCross}
                   </span>
                 )}
+                {isPending && (
+                  <span className="inline-flex items-center rounded bg-surface-card px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary shrink-0">
+                    Pending
+                  </span>
+                )}
               </div>
               <div className="flex items-center justify-between gap-1 text-[11px] text-text-secondary">
                 <span>
@@ -2058,7 +2071,11 @@ export function TennisExactScoreCardView({
                   </span>
                 ) : (
                   <span className="text-[10px] text-text-muted shrink-0">
-                    {outcome.result ? "Settled" : ATLAS_STATE_COPY.noRecentPrice}
+                    {isPending
+                      ? "Pending"
+                      : outcome.result
+                        ? "Settled"
+                        : ATLAS_STATE_COPY.noRecentPrice}
                   </span>
                 )}
               </div>
@@ -2109,7 +2126,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: focusOpt.pregameObservedAt ?? focusOpt.observedAt,
       lastProbability: !isSettled ? focusOpt.liveProbability : null,
       lastObservedAt: focusOpt.observedAt,
-      source: step.source ?? "sportsbooks",
+      source: focusOpt.source,
       sourceCount: 1,
       rulesText: `${step.label}: ${step.home.playerName} vs ${step.away.playerName}`,
     };
@@ -2138,7 +2155,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: outcome.pregameObservedAt ?? outcome.observedAt,
       lastProbability: !isSettled ? outcome.liveProbability : null,
       lastObservedAt: outcome.observedAt,
-      source: outcome.source ?? card.source ?? "sportsbooks",
+      source: outcome.source,
       sourceCount: 1,
       rulesText: `Exact match score in sets (${outcome.scoreLabel}). Games handicaps and games totals stay in a separate unit-specific group.`,
     };

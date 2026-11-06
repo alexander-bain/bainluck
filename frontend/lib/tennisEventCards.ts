@@ -11,8 +11,19 @@
  *   "Total games" from `Match O/U` total-games questions, with `actual: null`
  *   always enforced (`COMPONENT-CONTRACT.md` §7: "Missing actual/projection stays
  *   absent; tennis sets cannot supply games actual").
+ *
+ * Number & settlement rules (shared with E6a–E6c):
+ * 1. Print only a served number: a server-combined row (`source === "blended" | "blend"`),
+ *    or exactly one source. Several sources with no combined row print no number.
+ *    Never average on the client.
+ * 2. Before the game, a recent quote. During the game, the pregame pin. After the
+ *    final, only the producer's `pregame_reading` (or `pregame_mark` on fallback rows;
+ *    never `opening_probability`).
+ * 3. Settlement goes through `outcomeRowVerdict`; venues that disagree show Pending.
+ * 4. A card with nothing to show is not drawn.
  */
 
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import { isFinishedStatus } from "./eventState";
 import {
   decodeQuestionMatrix,
@@ -30,6 +41,20 @@ export interface TennisGameMarketsLike {
 }
 
 export type EventStage = "before" | "during" | "after";
+
+/** Quotes older than 6 hours before the match are treated as stale. */
+const RECENT_QUOTE_MAX_AGE_MS = 6 * 3600 * 1000;
+
+function isRecentQuote(observedAt: string | null | undefined, nowMs: number): boolean {
+  if (!observedAt) return true;
+  const parsed = Date.parse(observedAt);
+  if (Number.isNaN(parsed)) return true;
+  return nowMs - parsed <= RECENT_QUOTE_MAX_AGE_MS;
+}
+
+function isServerBlendedSource(source: string | null | undefined): boolean {
+  return source === "blended" || source === "blend";
+}
 
 function resolveTennisStage(
   status: string | null | undefined,
@@ -61,6 +86,7 @@ export function tennisCardsApply(
 export type TennisOutcomeResultState =
   | "won"
   | "lost"
+  | "pending"
   | "closed_no_winner"
   | null;
 
@@ -328,30 +354,115 @@ function capitalizeWord(w: string): string {
   return w ? w[0].toUpperCase() + w.slice(1) : w;
 }
 
-function extractRawResultState(rawOpt: RawRecord): TennisOutcomeResultState {
+function singleEvidenceVerdict(
+  ev: RawRecord,
+  stage: EventStage,
+): "won" | "lost" | "pending" | null {
+  const res = asRecord(ev.result);
+  const state = typeof res?.state === "string" ? res.state : null;
+  const evidenceKind =
+    typeof res?.evidence_kind === "string" ? res.evidence_kind : null;
+  if (evidenceKind === "ungradeable_result" || state === "disputed" || state === "pending") {
+    return "pending";
+  }
+  if (state === "won") return "won";
+  if (state === "lost") return "lost";
+  const verdict = outcomeRowVerdict(
+    {
+      is_winner: typeof ev.is_winner === "boolean" ? ev.is_winner : null,
+      resolution_source:
+        ev.resolution_source === null
+          ? null
+          : typeof ev.resolution_source === "string"
+            ? ev.resolution_source
+            : undefined,
+    },
+    stage === "after",
+  );
+  if (verdict === "won") return "won";
+  if (verdict === "lost") return "lost";
+  return null;
+}
+
+/**
+ * Resolves an option's settled state through `outcomeRowVerdict` (#4788).
+ * If contributing venues disagree (`won` vs `lost`), returns `"pending"`.
+ */
+function extractRawResultState(
+  rawOpt: RawRecord,
+  stage: EventStage,
+): TennisOutcomeResultState {
+  const evidenceList = Array.isArray(rawOpt.source_evidence)
+    ? (rawOpt.source_evidence.map(asRecord).filter(Boolean) as RawRecord[])
+    : [];
+  if (evidenceList.length > 1) {
+    let sawWon = false;
+    let sawLost = false;
+    let sawPending = false;
+    for (const ev of evidenceList) {
+      const v = singleEvidenceVerdict(ev, stage);
+      if (v === "won") sawWon = true;
+      else if (v === "lost") sawLost = true;
+      else if (v === "pending") sawPending = true;
+    }
+    if ((sawWon && sawLost) || sawPending) return "pending";
+  }
+
   const res = asRecord(rawOpt.result);
   const state = typeof res?.state === "string" ? res.state : null;
   const evidenceKind =
     typeof res?.evidence_kind === "string" ? res.evidence_kind : null;
-  if (evidenceKind === "ungradeable_result") return null;
+  if (evidenceKind === "ungradeable_result" || state === "disputed" || state === "pending") {
+    return stage === "after" ? "pending" : null;
+  }
   if (state === "closed_no_winner" || rawOpt.settlement_kind === "fair_value") {
     return "closed_no_winner";
   }
   if (state === "won") return "won";
   if (state === "lost") return "lost";
+
+  const verdict = outcomeRowVerdict(
+    {
+      is_winner: typeof rawOpt.is_winner === "boolean" ? rawOpt.is_winner : null,
+      resolution_source:
+        rawOpt.resolution_source === null
+          ? null
+          : typeof rawOpt.resolution_source === "string"
+            ? rawOpt.resolution_source
+            : undefined,
+    },
+    stage === "after",
+  );
+  if (verdict === "won") return "won";
+  if (verdict === "lost") return "lost";
   if (
-    rawOpt.resolution_source &&
-    rawOpt.resolution_source !== "ungradeable_result" &&
-    typeof rawOpt.is_winner === "boolean"
+    stage === "after" &&
+    (rawOpt.resolution_source === "ungradeable_result" ||
+      rawOpt.resolution_source === null)
   ) {
-    return rawOpt.is_winner ? "won" : "lost";
+    return "pending";
   }
   return null;
+}
+
+function combineCandidateResults(
+  results: TennisOutcomeResultState[],
+  stage: EventStage,
+): TennisOutcomeResultState {
+  const hasWon = results.includes("won");
+  const hasLost = results.includes("lost");
+  if (hasWon && hasLost) return "pending";
+  if (results.includes("pending")) return "pending";
+  if (hasWon) return "won";
+  if (hasLost) return "lost";
+  if (results.includes("closed_no_winner")) return "closed_no_winner";
+  return stage === "after" && results.length > 1 ? "pending" : null;
 }
 
 function extractRawOptionProbabilities(
   rawOpt: RawRecord,
   stage: EventStage,
+  nowMs: number,
 ): {
   pregameProbability: number | null;
   liveProbability: number | null;
@@ -365,9 +476,23 @@ function extractRawOptionProbabilities(
   const comparison = asRecord(rawOpt.comparison);
   const pregameReading = asRecord(rawOpt.pregame_reading);
   const baselineObj = asRecord(comparison?.baseline);
-  const sourceEvidence = Array.isArray(rawOpt.source_evidence)
-    ? asRecord(rawOpt.source_evidence[0])
-    : null;
+  const evidenceList = Array.isArray(rawOpt.source_evidence)
+    ? (rawOpt.source_evidence.map(asRecord).filter(Boolean) as RawRecord[])
+    : [];
+  const sourceEvidence = evidenceList[0] ?? null;
+
+  const isMatrixOption =
+    published !== null || comparison !== null || pregameReading !== null;
+
+  const rawSource =
+    (typeof published?.source === "string" ? published.source : null) ??
+    (typeof rawOpt.source === "string" ? rawOpt.source : null) ??
+    (evidenceList.length === 1 && typeof sourceEvidence?.source === "string"
+      ? (sourceEvidence.source as string)
+      : null);
+
+  const multiSourceEvidenceUnblended =
+    !isServerBlendedSource(rawSource) && evidenceList.length > 1;
 
   const publishedValue =
     published?.value_state === "quoted" ? asProb(published.value) : null;
@@ -386,45 +511,65 @@ function extractRawOptionProbabilities(
       : null;
   const baselineObservedAt = asIso(baselineObj?.observed_at);
 
-  const directOpening = asProb(
-    rawOpt.pregame_mark ?? rawOpt.opening_probability,
-  );
+  // #11125 single-contributor contract: never read `opening_probability` on fallback rows.
+  const directPregameMark = asProb(rawOpt.pregame_mark);
   const directProb = asProb(rawOpt.probability);
   const isSettledRow =
     Boolean(rawOpt.resolution_source) || typeof rawOpt.is_winner === "boolean";
 
-  let pregameProbability: number | null = null;
-  let pregameObservedAt: string | null = null;
-  let liveProbability: number | null = null;
-  let observedAt: string | null =
+  const observedAt: string | null =
     publishedObservedAt ??
     asIso(rawOpt.observed_at) ??
     asIso(sourceEvidence?.observed_at);
 
-  if (stage === "before") {
-    pregameProbability =
-      publishedValue ??
-      readingProb ??
-      baselineProb ??
-      directOpening ??
-      (!isSettledRow ? directProb : null);
-    pregameObservedAt =
-      publishedObservedAt ?? readingObservedAt ?? baselineObservedAt ?? observedAt;
-  } else if (stage === "during") {
-    pregameProbability = readingProb ?? baselineProb ?? directOpening;
-    pregameObservedAt = readingObservedAt ?? baselineObservedAt;
-    liveProbability =
-      publishedValue ?? (!isSettledRow ? directProb : null);
-  } else {
-    pregameProbability = readingProb ?? baselineProb ?? directOpening;
-    pregameObservedAt = readingObservedAt ?? baselineObservedAt;
-    liveProbability = null;
+  let pregameProbability: number | null = null;
+  let pregameObservedAt: string | null = null;
+  let liveProbability: number | null = null;
+
+  if (!multiSourceEvidenceUnblended) {
+    if (isMatrixOption) {
+      if (stage === "before") {
+        // Before the game: recent quote only.
+        pregameProbability = isRecentQuote(publishedObservedAt, nowMs)
+          ? publishedValue
+          : null;
+        pregameObservedAt =
+          pregameProbability !== null ? publishedObservedAt : null;
+      } else if (stage === "during") {
+        // During the game: pregame pin (`comparison.baseline`) + live recent quote.
+        pregameProbability = baselineProb;
+        pregameObservedAt =
+          pregameProbability !== null ? baselineObservedAt : null;
+        liveProbability = isRecentQuote(publishedObservedAt, nowMs)
+          ? publishedValue
+          : null;
+      } else {
+        // After the final: only the producer's `pregame_reading` (#11125).
+        pregameProbability = readingProb;
+        pregameObservedAt =
+          pregameProbability !== null ? readingObservedAt : null;
+        liveProbability = null;
+      }
+    } else {
+      // Fallback row (`gameMarkets.other`):
+      if (stage === "before") {
+        pregameProbability =
+          !isSettledRow && isRecentQuote(observedAt, nowMs) ? directProb : null;
+        pregameObservedAt = pregameProbability !== null ? observedAt : null;
+      } else if (stage === "during") {
+        pregameProbability = directPregameMark;
+        pregameObservedAt = null;
+        liveProbability =
+          !isSettledRow && isRecentQuote(observedAt, nowMs) ? directProb : null;
+      } else {
+        pregameProbability = directPregameMark;
+        pregameObservedAt = null;
+        liveProbability = null;
+      }
+    }
   }
 
-  const source =
-    (typeof published?.source === "string" ? published.source : null) ??
-    (typeof rawOpt.source === "string" ? rawOpt.source : null) ??
-    (typeof sourceEvidence?.source === "string" ? sourceEvidence.source : null);
+  const source = multiSourceEvidenceUnblended ? null : rawSource;
 
   const marketIds = Array.isArray(rawOpt.market_ids) ? rawOpt.market_ids : [];
   const marketId =
@@ -464,22 +609,48 @@ function extractRawOptionProbabilities(
   };
 }
 
+function resolveCandidateSetOutcome(
+  candidates: TennisSetPlayerOutcome[],
+  stage: EventStage,
+): TennisSetPlayerOutcome | null {
+  if (candidates.length === 0) return null;
+  const blended = candidates.find((c) => isServerBlendedSource(c.source));
+  const multiUnblended = !blended && candidates.length > 1;
+  const chosen = blended ?? candidates[0]!;
+  const combinedResult =
+    candidates.length > 1
+      ? combineCandidateResults(
+          candidates.map((c) => c.result),
+          stage,
+        )
+      : chosen.result;
+
+  return {
+    ...chosen,
+    pregameProbability: multiUnblended ? null : chosen.pregameProbability,
+    liveProbability: multiUnblended ? null : chosen.liveProbability,
+    source: multiUnblended ? null : chosen.source,
+    result: combinedResult,
+  };
+}
+
 function buildTennisSetsCard(
   inputs: TennisCardInputs,
   stage: EventStage,
   rawMatrixQuestions: RawRecord[],
+  nowMs: number,
 ): TennisSetsCard | null {
   const bySet = new Map<number, TennisSetStepRow>();
 
   const tryRegisterSetMarket = (
+    setNumber: number,
     marketName: string,
     rawOptions: RawRecord[],
   ) => {
-    const setNumber = parseSetWinnerNumber(marketName);
-    if (setNumber === null || bySet.has(setNumber)) return;
+    if (bySet.has(setNumber)) return;
 
-    let homeOpt: TennisSetPlayerOutcome | null = null;
-    let awayOpt: TennisSetPlayerOutcome | null = null;
+    const homeCandidates: TennisSetPlayerOutcome[] = [];
+    const awayCandidates: TennisSetPlayerOutcome[] = [];
 
     for (const rawOpt of rawOptions) {
       const label = String(
@@ -499,8 +670,8 @@ function buildTennisSetsCard(
 
       if (matchesHome === matchesAway) continue;
       const side: "home" | "away" = matchesHome ? "home" : "away";
-      const probs = extractRawOptionProbabilities(rawOpt, stage);
-      const result = extractRawResultState(rawOpt);
+      const probs = extractRawOptionProbabilities(rawOpt, stage, nowMs);
+      const result = extractRawResultState(rawOpt, stage);
       const optionKey =
         typeof rawOpt.option_key === "string"
           ? rawOpt.option_key
@@ -521,24 +692,42 @@ function buildTennisSetsCard(
         outcomeId: probs.outcomeId,
       };
 
-      if (side === "home" && !homeOpt) homeOpt = entry;
-      if (side === "away" && !awayOpt) awayOpt = entry;
+      if (side === "home") homeCandidates.push(entry);
+      else awayCandidates.push(entry);
     }
 
+    const homeOpt = resolveCandidateSetOutcome(homeCandidates, stage);
+    const awayOpt = resolveCandidateSetOutcome(awayCandidates, stage);
     if (!homeOpt || !awayOpt) return;
 
-    const winnerSide: "home" | "away" | null =
-      homeOpt.result === "won"
-        ? "home"
-        : awayOpt.result === "won"
-          ? "away"
-          : null;
+    // If both sides claim "won", venues/legs disagree -> mark both pending and clear winnerSide.
+    let winnerSide: "home" | "away" | null = null;
+    if (homeOpt.result === "won" && awayOpt.result === "won") {
+      homeOpt.result = "pending";
+      awayOpt.result = "pending";
+    } else if (homeOpt.result === "pending" || awayOpt.result === "pending") {
+      winnerSide = null;
+    } else if (homeOpt.result === "won") {
+      winnerSide = "home";
+    } else if (awayOpt.result === "won") {
+      winnerSide = "away";
+    }
+
     const winnerName =
       winnerSide === "home"
         ? inputs.homeTeam
         : winnerSide === "away"
           ? inputs.awayTeam
           : null;
+
+    const hasAnythingToShow =
+      homeOpt.pregameProbability !== null ||
+      homeOpt.liveProbability !== null ||
+      awayOpt.pregameProbability !== null ||
+      awayOpt.liveProbability !== null ||
+      homeOpt.result !== null ||
+      awayOpt.result !== null;
+    if (!hasAnythingToShow) return;
 
     bySet.set(setNumber, {
       setNumber,
@@ -553,32 +742,52 @@ function buildTennisSetsCard(
     });
   };
 
+  const matrixBySet = new Map<
+    number,
+    { marketName: string; options: RawRecord[] }
+  >();
   for (const q of rawMatrixQuestions) {
     const marketName = String(q.market_name ?? q.label ?? "").trim();
+    const setNumber = parseSetWinnerNumber(marketName);
+    if (setNumber === null) continue;
     const opts = Array.isArray(q.options)
       ? (q.options.map(asRecord).filter(Boolean) as RawRecord[])
       : [];
-    if (marketName && opts.length >= 2) {
-      tryRegisterSetMarket(marketName, opts);
+    if (opts.length === 0) continue;
+    const existing = matrixBySet.get(setNumber);
+    if (existing) {
+      existing.options.push(...opts);
+    } else {
+      matrixBySet.set(setNumber, { marketName, options: [...opts] });
     }
+  }
+  for (const [setNumber, group] of matrixBySet.entries()) {
+    tryRegisterSetMarket(setNumber, group.marketName, group.options);
   }
 
   const otherRows = Array.isArray(inputs.gameMarkets?.other)
     ? inputs.gameMarkets!.other
     : [];
   if (otherRows.length > 0) {
-    const grouped = new Map<string, RawRecord[]>();
+    const groupedBySet = new Map<
+      number,
+      { marketName: string; rows: RawRecord[] }
+    >();
     for (const row of otherRows) {
       const r = asRecord(row);
       if (!r) continue;
       const mName = String(r.market_name ?? r.question ?? "").trim();
-      if (!mName || parseSetWinnerNumber(mName) === null) continue;
-      const list = grouped.get(mName) ?? [];
-      list.push(r);
-      grouped.set(mName, list);
+      const setNumber = mName ? parseSetWinnerNumber(mName) : null;
+      if (setNumber === null || bySet.has(setNumber)) continue;
+      const existing = groupedBySet.get(setNumber);
+      if (existing) {
+        existing.rows.push(r);
+      } else {
+        groupedBySet.set(setNumber, { marketName: mName, rows: [r] });
+      }
     }
-    for (const [mName, list] of grouped.entries()) {
-      tryRegisterSetMarket(mName, list);
+    for (const [setNumber, group] of groupedBySet.entries()) {
+      tryRegisterSetMarket(setNumber, group.marketName, group.rows);
     }
   }
 
@@ -613,9 +822,10 @@ function buildTennisExactScoreCard(
   inputs: TennisCardInputs,
   stage: EventStage,
   rawMatrixQuestions: RawRecord[],
+  nowMs: number,
 ): TennisExactScoreCard | null {
   let matchedMarketName: string | null = null;
-  let matchedOptions: RawRecord[] = [];
+  const matchedOptions: RawRecord[] = [];
 
   for (const q of rawMatrixQuestions) {
     const marketName = String(q.market_name ?? q.label ?? "").trim();
@@ -624,9 +834,8 @@ function buildTennisExactScoreCard(
       ? (q.options.map(asRecord).filter(Boolean) as RawRecord[])
       : [];
     if (opts.length >= 2) {
-      matchedMarketName = marketName;
-      matchedOptions = opts;
-      break;
+      if (!matchedMarketName) matchedMarketName = marketName;
+      matchedOptions.push(...opts);
     }
   }
 
@@ -634,29 +843,19 @@ function buildTennisExactScoreCard(
     const otherRows = Array.isArray(inputs.gameMarkets?.other)
       ? inputs.gameMarkets!.other
       : [];
-    const grouped = new Map<string, RawRecord[]>();
     for (const row of otherRows) {
       const r = asRecord(row);
       if (!r) continue;
       const mName = String(r.market_name ?? r.question ?? "").trim();
       if (!mName || !isExactMatchScoreMarketName(mName)) continue;
-      const list = grouped.get(mName) ?? [];
-      list.push(r);
-      grouped.set(mName, list);
-    }
-    for (const [mName, list] of grouped.entries()) {
-      if (list.length >= 2) {
-        matchedMarketName = mName;
-        matchedOptions = list;
-        break;
-      }
+      if (!matchedMarketName) matchedMarketName = mName;
+      matchedOptions.push(r);
     }
   }
 
   if (!matchedMarketName || matchedOptions.length === 0) return null;
 
-  const outcomes: TennisExactScoreOutcome[] = [];
-  const seenKeys = new Set<string>();
+  const candidatesByKey = new Map<string, TennisExactScoreOutcome[]>();
 
   for (const rawOpt of matchedOptions) {
     const outcomeName = String(
@@ -674,11 +873,8 @@ function buildTennisExactScoreCard(
     if (!parsed) continue;
 
     const dedupeKey = `${parsed.winnerSide}:${parsed.winnerSets}-${parsed.loserSets}`;
-    if (seenKeys.has(dedupeKey)) continue;
-    seenKeys.add(dedupeKey);
-
-    const probs = extractRawOptionProbabilities(rawOpt, stage);
-    const result = extractRawResultState(rawOpt);
+    const probs = extractRawOptionProbabilities(rawOpt, stage, nowMs);
+    const result = extractRawResultState(rawOpt, stage);
     const winnerName =
       parsed.winnerSide === "home" ? inputs.homeTeam : inputs.awayTeam;
     const winnerShort =
@@ -688,7 +884,7 @@ function buildTennisExactScoreCard(
         ? rawOpt.option_key
         : `tennis:exact:${dedupeKey}`;
 
-    outcomes.push({
+    const candidate: TennisExactScoreOutcome = {
       optionKey,
       outcomeName,
       winnerSide: parsed.winnerSide,
@@ -706,10 +902,52 @@ function buildTennisExactScoreCard(
       marketName: matchedMarketName,
       marketId: probs.marketId,
       outcomeId: probs.outcomeId,
+    };
+
+    const list = candidatesByKey.get(dedupeKey) ?? [];
+    list.push(candidate);
+    candidatesByKey.set(dedupeKey, list);
+  }
+
+  const outcomes: TennisExactScoreOutcome[] = [];
+  for (const candidates of candidatesByKey.values()) {
+    const blended = candidates.find((c) => isServerBlendedSource(c.source));
+    const multiUnblended = !blended && candidates.length > 1;
+    const chosen = blended ?? candidates[0]!;
+    const combinedResult =
+      candidates.length > 1
+        ? combineCandidateResults(
+            candidates.map((c) => c.result),
+            stage,
+          )
+        : chosen.result;
+
+    outcomes.push({
+      ...chosen,
+      pregameProbability: multiUnblended ? null : chosen.pregameProbability,
+      liveProbability: multiUnblended ? null : chosen.liveProbability,
+      source: multiUnblended ? null : chosen.source,
+      result: combinedResult,
     });
   }
 
   if (outcomes.length < 2) return null;
+
+  // If multiple distinct exact-score outcomes claim "won", venues disagree -> mark conflicting outcomes Pending.
+  const wonOutcomes = outcomes.filter((o) => o.result === "won");
+  if (wonOutcomes.length > 1) {
+    for (const o of wonOutcomes) {
+      o.result = "pending";
+    }
+  }
+
+  const hasVisibleContent = outcomes.some(
+    (o) =>
+      o.pregameProbability !== null ||
+      o.liveProbability !== null ||
+      o.result !== null,
+  );
+  if (!hasVisibleContent) return null;
 
   outcomes.sort((a, b) => {
     if (a.winnerSide !== b.winnerSide) {
@@ -741,7 +979,7 @@ function buildTennisExactScoreCard(
     title,
     subtitle,
     marketName: matchedMarketName,
-    source: outcomes[0]?.source ?? null,
+    source: outcomes.find((o) => o.source !== null)?.source ?? null,
     homePlayer: inputs.homeTeam,
     awayPlayer: inputs.awayTeam,
     homeShort: inputs.homeShort,
@@ -774,11 +1012,16 @@ function buildTennisTotalGamesCard(
   stage: EventStage,
   decodedQuestions: MatrixQuestion[],
   rawMatrixQuestions: RawRecord[],
+  nowMs: number,
 ): LadderCard | null {
   const phase: LadderPhase = stage;
   const byLine = new Map<number, LadderPoint>();
 
   // 1. Check typed count_threshold questions in game_question_matrix first
+  const typedByLine = new Map<
+    number,
+    Array<{ q: MatrixQuestion; overOpt: MatrixOption }>
+  >();
   for (const q of decodedQuestions) {
     if (
       q.typed &&
@@ -788,47 +1031,81 @@ function buildTennisTotalGamesCard(
       q.relation === "ge"
     ) {
       const line = q.line ?? (q.bound !== null ? q.bound - 0.5 : null);
-      if (line === null || byLine.has(line)) continue;
+      if (line === null) continue;
       const overOpt = q.options.find(
         (o: MatrixOption) =>
           o.side === "over" || /^over\b/i.test(o.label.trim()),
       );
       if (!overOpt) continue;
-      const chance =
-        phase === "before"
-          ? overOpt.quoted
-          : phase === "during"
-            ? overOpt.baseline
-            : overOpt.reading;
-      const now = phase === "during" ? overOpt.quoted : null;
-      byLine.set(line, {
-        optionKey: overOpt.optionKey,
-        x: line,
-        label: `Over ${line} games`,
-        side: "game",
-        chance,
-        now,
-        observedAt: overOpt.observedAt,
-        result: phase === "after" ? overOpt.result : null,
-        detail: {
-          detail: "option",
-          label: overOpt.label || q.label,
-          marketName: q.marketName,
-          source: overOpt.source,
-          quoted: overOpt.quoted,
-          observedAt: overOpt.observedAt,
-          baseline: phase === "after" ? overOpt.reading : overOpt.baseline,
-          baselineObservedAt:
-            phase === "after"
-              ? overOpt.readingObservedAt
-              : overOpt.baselineObservedAt,
-          result: overOpt.result,
-        },
-      });
+      const list = typedByLine.get(line) ?? [];
+      list.push({ q, overOpt });
+      typedByLine.set(line, list);
     }
   }
+  for (const [line, candidates] of typedByLine.entries()) {
+    const blended = candidates.find((c) =>
+      isServerBlendedSource(c.overOpt.source),
+    );
+    const multiUnblended = !blended && candidates.length > 1;
+    const chosen = blended ?? candidates[0]!;
+    const { q, overOpt } = chosen;
+    const rawChance =
+      phase === "before"
+        ? isRecentQuote(overOpt.observedAt, nowMs)
+          ? overOpt.quoted
+          : null
+        : phase === "during"
+          ? overOpt.baseline
+          : overOpt.reading;
+    const rawNow =
+      phase === "during" && isRecentQuote(overOpt.observedAt, nowMs)
+        ? overOpt.quoted
+        : null;
+    const chance = multiUnblended ? null : rawChance;
+    const now = multiUnblended ? null : rawNow;
+    const source = multiUnblended ? null : overOpt.source;
 
-  // 2. Check untyped `Match O/U X.5` questions in raw game_question_matrix
+    const hasWon = candidates.some((c) => c.overOpt.result === true);
+    const hasLost = candidates.some((c) => c.overOpt.result === false);
+    const result =
+      phase === "after" && !(hasWon && hasLost) ? overOpt.result : null;
+
+    byLine.set(line, {
+      optionKey: overOpt.optionKey,
+      x: line,
+      label: `Over ${line} games`,
+      side: "game",
+      chance,
+      now,
+      observedAt: overOpt.observedAt,
+      result,
+      detail: {
+        detail: "option",
+        label: overOpt.label || q.label,
+        marketName: q.marketName,
+        source,
+        quoted: multiUnblended ? null : overOpt.quoted,
+        observedAt: overOpt.observedAt,
+        baseline:
+          multiUnblended
+            ? null
+            : phase === "after"
+              ? overOpt.reading
+              : overOpt.baseline,
+        baselineObservedAt:
+          phase === "after"
+            ? overOpt.readingObservedAt
+            : overOpt.baselineObservedAt,
+        result,
+      },
+    });
+  }
+
+  // 2. Check untyped `Match O/U X.5` questions in raw game_question_matrix (explicit Over only; never invert Under)
+  const untypedByLine = new Map<
+    number,
+    Array<{ marketName: string; overRaw: RawRecord }>
+  >();
   for (const rawQ of rawMatrixQuestions) {
     const marketName = String(rawQ.market_name ?? rawQ.label ?? "").trim();
     const line = parseTennisTotalGamesThreshold(marketName);
@@ -847,35 +1124,41 @@ function buildTennisTotalGamesCard(
         legSide === "over"
       );
     });
-    const underRaw =
-      !overRaw && opts.length === 1
-        ? opts.find((o) => {
-            const lbl = String(o.label ?? o.outcome_name ?? "").trim();
-            return /^under\b/i.test(lbl);
-          })
-        : null;
+    if (!overRaw) continue;
+    const list = untypedByLine.get(line) ?? [];
+    list.push({ marketName, overRaw });
+    untypedByLine.set(line, list);
+  }
+  for (const [line, candidates] of untypedByLine.entries()) {
+    const extracted = candidates.map((c) => ({
+      ...c,
+      probs: extractRawOptionProbabilities(c.overRaw, stage, nowMs),
+      rawRes: extractRawResultState(c.overRaw, stage),
+    }));
+    const blended = extracted.find((c) =>
+      isServerBlendedSource(c.probs.source),
+    );
+    const multiUnblended = !blended && extracted.length > 1;
+    const chosen = blended ?? extracted[0]!;
+    const chance = multiUnblended ? null : chosen.probs.pregameProbability;
+    const now = multiUnblended ? null : chosen.probs.liveProbability;
+    const source = multiUnblended ? null : chosen.probs.source;
 
-    const chosenRaw = overRaw ?? underRaw;
-    if (!chosenRaw) continue;
-    const isInvertedUnder = Boolean(!overRaw && underRaw);
-    const probs = extractRawOptionProbabilities(chosenRaw, stage);
-    const rawRes = extractRawResultState(chosenRaw);
-
-    const invertProb = (p: number | null) =>
-      p === null ? null : isInvertedUnder ? Math.max(0, Math.min(1, 1 - p)) : p;
-
-    const chance = invertProb(probs.pregameProbability);
-    const now = invertProb(probs.liveProbability);
+    const combinedRes =
+      extracted.length > 1
+        ? combineCandidateResults(
+            extracted.map((c) => c.rawRes),
+            stage,
+          )
+        : chosen.rawRes;
     const result =
-      stage === "after" && (rawRes === "won" || rawRes === "lost")
-        ? isInvertedUnder
-          ? rawRes === "lost"
-          : rawRes === "won"
+      stage === "after" && (combinedRes === "won" || combinedRes === "lost")
+        ? combinedRes === "won"
         : null;
 
     const optionKey =
-      typeof chosenRaw.option_key === "string"
-        ? chosenRaw.option_key
+      typeof chosen.overRaw.option_key === "string"
+        ? chosen.overRaw.option_key
         : `tennis:total:${line}`;
 
     byLine.set(line, {
@@ -885,17 +1168,17 @@ function buildTennisTotalGamesCard(
       side: "game",
       chance,
       now,
-      observedAt: probs.observedAt,
+      observedAt: chosen.probs.observedAt,
       result,
       detail: {
         detail: "option",
         label: `Over ${line} games`,
-        marketName,
-        source: probs.source,
+        marketName: chosen.marketName,
+        source,
         quoted: now ?? (stage === "before" ? chance : null),
-        observedAt: probs.observedAt,
+        observedAt: chosen.probs.observedAt,
         baseline: chance,
-        baselineObservedAt: probs.pregameObservedAt,
+        baselineObservedAt: chosen.probs.pregameObservedAt,
         result,
       },
     });
@@ -905,6 +1188,7 @@ function buildTennisTotalGamesCard(
   const totalsRows = Array.isArray(inputs.gameMarkets?.totals)
     ? inputs.gameMarkets!.totals
     : [];
+  const totalsByLine = new Map<number, RawRecord[]>();
   for (const row of totalsRows) {
     const r = asRecord(row);
     if (!r) continue;
@@ -922,27 +1206,74 @@ function buildTennisTotalGamesCard(
     ) {
       continue;
     }
-
-    const overProb = asProb(r.over_probability ?? r.probability);
-    const isSettled =
-      Boolean(r.resolution_source) || typeof r.is_winner === "boolean";
     const outcomeName = String(r.outcome_name ?? "Over").trim();
     const isUnderRow = /^under\b/i.test(outcomeName);
+    if (isUnderRow && r.over_probability === undefined) continue;
+    const list = totalsByLine.get(threshold) ?? [];
+    list.push(r);
+    totalsByLine.set(threshold, list);
+  }
+
+  for (const [threshold, candidates] of totalsByLine.entries()) {
+    const blended = candidates.find((c) =>
+      isServerBlendedSource(typeof c.source === "string" ? c.source : null),
+    );
+    const multiUnblended = !blended && candidates.length > 1;
+    const chosen = blended ?? candidates[0]!;
+    const marketName = String(chosen.market_name ?? "").trim();
+    const observedAt = asIso(chosen.observed_at);
+    const overProb = asProb(chosen.over_probability ?? chosen.probability);
+    const isSettled =
+      Boolean(chosen.resolution_source) ||
+      typeof chosen.is_winner === "boolean";
+
+    const verdicts = candidates.map((c) => {
+      const outcomeName = String(c.outcome_name ?? "Over").trim();
+      const isUnderRow = /^under\b/i.test(outcomeName);
+      const v = outcomeRowVerdict(
+        {
+          is_winner: typeof c.is_winner === "boolean" ? c.is_winner : null,
+          resolution_source:
+            c.resolution_source === null
+              ? null
+              : typeof c.resolution_source === "string"
+                ? c.resolution_source
+                : undefined,
+        },
+        stage === "after",
+      );
+      if (v === null) return null;
+      return isUnderRow ? v === "lost" : v === "won";
+    });
+    const hasWon = verdicts.includes(true);
+    const hasLost = verdicts.includes(false);
     const result =
-      stage === "after" &&
-      r.resolution_source &&
-      r.resolution_source !== "ungradeable_result" &&
-      typeof r.is_winner === "boolean"
-        ? isUnderRow
-          ? !r.is_winner
-          : r.is_winner
+      stage === "after" && !(hasWon && hasLost)
+        ? hasWon
+          ? true
+          : hasLost
+            ? false
+            : null
         : null;
 
-    const chance =
-      stage === "before" && !isSettled
+    // #11125 single-contributor contract: never read `opening_probability` on fallback rows.
+    const rawChance =
+      stage === "before"
+        ? !isSettled && isRecentQuote(observedAt, nowMs)
+          ? overProb
+          : null
+        : asProb(chosen.pregame_mark);
+    const rawNow =
+      stage === "during" && !isSettled && isRecentQuote(observedAt, nowMs)
         ? overProb
-        : asProb(r.pregame_mark ?? r.opening_probability);
-    const now = stage === "during" && !isSettled ? overProb : null;
+        : null;
+    const chance = multiUnblended ? null : rawChance;
+    const now = multiUnblended ? null : rawNow;
+    const source = multiUnblended
+      ? null
+      : typeof chosen.source === "string"
+        ? chosen.source
+        : null;
     const optionKey = `tennis:total:${threshold}`;
 
     byLine.set(threshold, {
@@ -952,15 +1283,15 @@ function buildTennisTotalGamesCard(
       side: "game",
       chance,
       now,
-      observedAt: asIso(r.observed_at),
+      observedAt,
       result,
       detail: {
         detail: "option",
         label: `Over ${threshold} games`,
         marketName: marketName || `Match O/U ${threshold}`,
-        source: typeof r.source === "string" ? r.source : null,
+        source,
         quoted: now ?? (stage === "before" ? chance : null),
-        observedAt: asIso(r.observed_at),
+        observedAt,
         baseline: chance,
         baselineObservedAt: null,
         result,
@@ -970,6 +1301,11 @@ function buildTennisTotalGamesCard(
 
   const points = [...byLine.values()].sort((a, b) => a.x - b.x);
   if (points.length < 2) return null;
+
+  const hasVisibleContent = points.some(
+    (p) => p.chance !== null || p.now !== null || p.result !== null,
+  );
+  if (!hasVisibleContent) return null;
 
   // CRITICAL TRUTH GUARD (COMPONENT-CONTRACT.md §7, line 117):
   // "Missing actual/projection stays absent; tennis sets cannot supply games actual."
@@ -991,6 +1327,7 @@ function buildTennisTotalGamesCard(
 export function tennisCards(inputs: TennisCardInputs): TennisStoryCard[] {
   if (!tennisCardsApply(inputs.sportKey, inputs.atlasMode)) return [];
 
+  const nowMs = inputs.nowMs ?? Date.now();
   const normalizedInputs: TennisCardInputs = {
     ...inputs,
     homeShort:
@@ -1006,7 +1343,7 @@ export function tennisCards(inputs: TennisCardInputs): TennisStoryCard[] {
   const stage = resolveTennisStage(
     normalizedInputs.status,
     normalizedInputs.commenceTime,
-    normalizedInputs.nowMs ?? Date.now(),
+    nowMs,
   );
 
   const matrixSource =
@@ -1024,6 +1361,7 @@ export function tennisCards(inputs: TennisCardInputs): TennisStoryCard[] {
     normalizedInputs,
     stage,
     rawMatrixQuestions,
+    nowMs,
   );
   if (setsCard) cards.push(setsCard);
 
@@ -1031,6 +1369,7 @@ export function tennisCards(inputs: TennisCardInputs): TennisStoryCard[] {
     normalizedInputs,
     stage,
     rawMatrixQuestions,
+    nowMs,
   );
   if (exactScoreCard) cards.push(exactScoreCard);
 
@@ -1039,6 +1378,7 @@ export function tennisCards(inputs: TennisCardInputs): TennisStoryCard[] {
     stage,
     decodedQuestions,
     rawMatrixQuestions,
+    nowMs,
   );
   if (totalGamesCard) cards.push(totalGamesCard);
 
