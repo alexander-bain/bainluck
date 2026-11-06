@@ -132,11 +132,15 @@ export function formatAtlasAttribution(
     sourceLabels?: string[];
   },
 ): string {
-  if (options?.sourceLabels && options.sourceLabels.length > 0) {
-    return options.sourceLabels.join(' · ');
+  const labels = (options?.sourceLabels ?? [])
+    .map((label) => label.trim())
+    .filter(Boolean);
+  if (labels.length > 0) {
+    return labels.join(' · ');
   }
-  if ((options?.sourceCount ?? 0) >= 2) {
-    return 'Both Kalshi and Polymarket';
+  const count = options?.sourceCount ?? 0;
+  if (count >= 2) {
+    return `${count} sources`;
   }
   const normalized = (source || '').trim().toLowerCase();
   if (normalized === 'kalshi') return 'Kalshi';
