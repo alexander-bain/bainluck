@@ -202,6 +202,111 @@ def _classify_kind(market: FuturesMarket, outcome_count: int) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_BUCKET_UNIT_MULT = {
+    "k": 1e3,
+    "thousand": 1e3,
+    "m": 1e6,
+    "million": 1e6,
+    "b": 1e9,
+    "billion": 1e9,
+    "t": 1e12,
+    "trillion": 1e12,
+}
+_BUCKET_NUM = r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?"
+_BUCKET_UNIT = r"(?:%|\s*(?:thousand|million|billion|trillion|[kmbtKMBT])\b|\s*(?:st|nd|rd|th)\b|\s*bps\b)?"
+_BUCKET_RANGE_RE = re.compile(
+    rf"^(?:rank\s+)?\$?({_BUCKET_NUM})({_BUCKET_UNIT})\s*(?:to|[–—-])\s*\$?({_BUCKET_NUM})({_BUCKET_UNIT})$",
+    re.I,
+)
+_BUCKET_LOWER_PREFIX_RE = re.compile(
+    rf"^(?:<|≤|<=|below\s+|under\s+|less\s+than\s+|at\s+most\s+)\$?({_BUCKET_NUM})({_BUCKET_UNIT})$",
+    re.I,
+)
+_BUCKET_LOWER_SUFFIX_RE = re.compile(
+    rf"^\$?({_BUCKET_NUM})({_BUCKET_UNIT})\s+(?:or\s+(?:below|less|lower|under)|and\s+(?:below|under))$",
+    re.I,
+)
+_BUCKET_ORDINAL_HIGHER_RE = re.compile(
+    r"^(\d+)\s*(?:st|nd|rd|th)\s+or\s+higher$",
+    re.I,
+)
+_BUCKET_ORDINAL_BELOW_RE = re.compile(
+    r"^below\s+(\d+)\s*(?:st|nd|rd|th)$",
+    re.I,
+)
+_BUCKET_UPPER_PREFIX_RE = re.compile(
+    rf"^(?:>|≥|>=|above\s+|at\s+least\s+|over\s+|more\s+than\s+|greater\s+than\s+)\$?({_BUCKET_NUM})({_BUCKET_UNIT})$",
+    re.I,
+)
+_BUCKET_UPPER_SUFFIX_RE = re.compile(
+    rf"^\$?({_BUCKET_NUM})({_BUCKET_UNIT})(?:\+|\s+or\s+(?:above|more|higher)|\s+and\s+(?:above|more|higher))$",
+    re.I,
+)
+_BUCKET_EXACT_RE = re.compile(
+    rf"^(?:exactly\s+)?\$?({_BUCKET_NUM})({_BUCKET_UNIT})$",
+    re.I,
+)
+
+
+def _bucket_unit_mult(unit: str | None) -> float:
+    if not unit:
+        return 1.0
+    return _BUCKET_UNIT_MULT.get(unit.strip().lower(), 1.0)
+
+
+def _parse_numeric_bucket_key(label: str | None) -> tuple[float, int, float] | None:
+    """Return a numeric sort key when ``label`` is a quantity/threshold/rank bucket."""
+    s = (label or "").strip()
+    if not s or ("," in s and ":" in s):
+        return None
+    m = _BUCKET_ORDINAL_HIGHER_RE.match(s)
+    if m:
+        v = float(m.group(1))
+        return (v, -1, v)
+    m = _BUCKET_ORDINAL_BELOW_RE.match(s)
+    if m:
+        v = float(m.group(1))
+        return (v, 2, v)
+    m = _BUCKET_RANGE_RE.match(s)
+    if m:
+        n1, u1, n2, u2 = m.groups()
+        v1 = float(n1.replace(",", ""))
+        v2 = float(n2.replace(",", ""))
+        eff_u1 = u1.strip() if u1 and u1.strip() else (u2.strip() if u2 else "")
+        eff_u2 = u2.strip() if u2 and u2.strip() else eff_u1
+        return (v1 * _bucket_unit_mult(eff_u1), 0, v2 * _bucket_unit_mult(eff_u2))
+    for rx in (_BUCKET_LOWER_PREFIX_RE, _BUCKET_LOWER_SUFFIX_RE):
+        m = rx.match(s)
+        if m:
+            n1, u1 = m.groups()
+            v = float(n1.replace(",", "")) * _bucket_unit_mult(u1)
+            return (v, -1, v)
+    for rx in (_BUCKET_UPPER_PREFIX_RE, _BUCKET_UPPER_SUFFIX_RE):
+        m = rx.match(s)
+        if m:
+            n1, u1 = m.groups()
+            v = float(n1.replace(",", "")) * _bucket_unit_mult(u1)
+            return (v, 1, v)
+    m = _BUCKET_EXACT_RE.match(s)
+    if m:
+        n1, u1 = m.groups()
+        v = float(n1.replace(",", "")) * _bucket_unit_mult(u1)
+        return (v, 0, v)
+    return None
+
+
+def _order_numeric_outcomes(outcomes: list) -> list:
+    """Order ``outcomes`` by quantity/threshold when every item is a numeric bucket (#12093)."""
+    if len(outcomes) < 2:
+        return outcomes
+    keyed = []
+    for idx, o in enumerate(outcomes):
+        key = _parse_numeric_bucket_key(getattr(o, "name", None))
+        if key is None:
+            return outcomes
+        keyed.append((key, idx, o))
+    return [o for _, _, o in sorted(keyed, key=lambda t: (t[0], t[1]))]
+
 
 def _market_row(
     market: FuturesMarket,
@@ -299,7 +404,7 @@ def _market_row(
     #
     # `outcome_count` keeps reading the full list — the filter drops rungs from
     # the SLICE, never from the ladder's arity.
-    top = priced[:max_outcomes]
+    top = _order_numeric_outcomes(priced[:max_outcomes])
     outcome_count = len(outcomes)
     return {
         **_ladder_headline(market, priced),
@@ -478,13 +583,19 @@ def _extract_threshold_label(q: str) -> str:
     return q[:30]
 
 
+def _threshold_sort_key(row: dict) -> tuple[int, float]:
+    m = _THRESHOLD_NUM_RE.search(row.get("q") or "")
+    return (int(m.group(1)) if m else 0, -(row.get("prob") or 0.0))
+
+
 def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict]]:
     """Group markets that share an entity but differ by threshold."""
     by_entity: dict[str, list[dict]] = defaultdict(list)
     ungrouped = []
 
     for row in markets:
-        key = _normalize_group_key(row["q"])
+        q = row.get("q") or ""
+        key = _normalize_group_key(q) if _THRESHOLD_NUM_RE.search(q) else None
         if key:
             by_entity[key].append(row)
         else:
@@ -506,7 +617,7 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
                         "prob": r["prob"],
                         "market_id": r["market_id"],
                     }
-                    for r in sorted(rows, key=lambda r: -r["prob"])
+                    for r in sorted(rows, key=_threshold_sort_key)
                 ],
             })
         else:

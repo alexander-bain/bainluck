@@ -2514,6 +2514,7 @@ export interface CrossSourceMatch {
   outcome?: string;
   kalshi: number;
   poly: number;
+  merged?: number;
   delta: number;
   category: string;
   kalshi_market_id: number;

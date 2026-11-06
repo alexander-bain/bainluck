@@ -1222,7 +1222,12 @@ def _build_presidential(
                     "src": src,
                     "contest": _contest_key(name_lower),
                     "market": m,
-                    "entry": {"market_id": m.id, "q": m.name, "outcomes": outcomes},
+                    "entry": {
+                        "market_id": m.id,
+                        "q": m.name,
+                        "outcomes": outcomes,
+                        "market": m,
+                    },
                 })
                 continue
         row = _market_row(m, now=now)
@@ -1284,21 +1289,49 @@ def _build_presidential(
     )
 
     # Merge candidates by normalized name + build outcome_id → candidate map
+    from app.utils.futures_source_merge import blend_probabilities
+    from app.utils.outcome_display import (
+        display_probability_divisor,
+        normalize_display_probs,
+    )
+
     candidates_by_key: dict[str, dict] = {}
+    raw_by_source: dict[str, dict[str, float]] = {"kalshi": {}, "polymarket": {}}
     outcome_id_map: dict[int, str] = {}
     headline_q = None
+    # A stale or None leg clears field_complete (#12010), leaving an incomplete field un-normalized on purpose.
+    field_complete = True
+    venue_markets: list = []
 
-    for src_key, headline in [("kalshi", kalshi_headline), ("poly", poly_headline)]:
+    for src_key, src_name, headline in [
+        ("kalshi", "kalshi", kalshi_headline),
+        ("poly", "polymarket", poly_headline),
+    ]:
         if not headline:
             continue
         if headline_q is None:
             headline_q = headline["q"]
+        venue_market = headline.get("market")
+        venue_markets.append(venue_market)
+        venue_exclusive = getattr(venue_market, "mutually_exclusive", None) is True
+        if getattr(venue_market, "status", "open") == "open":
+            unobserved = stale_observation_keys(
+                (o.id, getattr(o, "last_updated", None)) for o in headline["outcomes"]
+            )
+        else:
+            unobserved = set()
+        venue_rows: list[dict] = []
+        venue_complete = True
         for o in headline["outcomes"]:
             name = (o.name or "").strip()
             if _BUCKET_LABEL_RE.match(name):
                 continue
+            if o.current_probability is None or o.id in unobserved:
+                venue_complete = False
+                field_complete = False
+                continue
             name_key = name.lower()
-            prob_val = round(float(o.current_probability or 0) * 100, 1)
+            raw_prob = float(o.current_probability)
             outcome_id_map[o.id] = name_key
             if name_key not in candidates_by_key:
                 candidates_by_key[name_key] = {
@@ -1307,32 +1340,72 @@ def _build_presidential(
                     "kalshi": None,
                     "poly": None,
                 }
-            candidates_by_key[name_key][src_key] = prob_val
+            raw_by_source[src_name][name_key] = raw_prob
+            venue_rows.append({"name": name, "key": name_key, "probability": raw_prob})
+
+        venue_divisor = display_probability_divisor(
+            venue_rows,
+            mutually_exclusive=venue_exclusive,
+            field_complete=venue_complete,
+            question=headline["q"],
+        )
+        if venue_divisor is not None and venue_divisor > 1.0:
+            normalize_display_probs(
+                venue_rows,
+                mutually_exclusive=venue_exclusive,
+                field_complete=venue_complete,
+                question=headline["q"],
+            )
+        for row in venue_rows:
+            candidates_by_key[row["key"]][src_key] = round(row["probability"] * 100, 1)
+
+    blended_exclusive = bool(venue_markets) and all(
+        getattr(vm, "mutually_exclusive", None) is True for vm in venue_markets
+    )
+    blended_rows: list[dict] = []
+    for name_key, c in candidates_by_key.items():
+        source_inputs = [
+            {"source": src_name, "probability": raw_by_source[src_name][name_key]}
+            for src_name in ("kalshi", "polymarket")
+            if name_key in raw_by_source[src_name]
+        ]
+        blended_prob = blend_probabilities(source_inputs) if source_inputs else 0.0
+        if blended_prob is None and source_inputs:
+            blended_prob = sum(inp["probability"] for inp in source_inputs) / len(
+                source_inputs
+            )
+        blended_rows.append(
+            {
+                "id": name_key,
+                "name": c["name"],
+                "key": name_key,
+                "probability": float(blended_prob or 0.0),
+            }
+        )
+
+    blended_divisor = display_probability_divisor(
+        blended_rows,
+        mutually_exclusive=blended_exclusive,
+        field_complete=field_complete,
+        question=headline_q,
+    )
+    if blended_divisor is not None and blended_divisor > 1.0:
+        normalize_display_probs(
+            blended_rows,
+            mutually_exclusive=blended_exclusive,
+            field_complete=field_complete,
+            question=headline_q,
+        )
 
     candidates = []
-    for c in candidates_by_key.values():
-        probs = [p for p in [c["kalshi"], c["poly"]] if p is not None]
-        c["merged"] = round(sum(probs) / len(probs), 1) if probs else 0
+    for row in blended_rows:
+        c = candidates_by_key[row["key"]]
+        c["merged"] = round(row["probability"] * 100, 1)
+        if "rendered_percent" in row:
+            c["rendered_percent"] = row["rendered_percent"]
         c["change_7d"] = None
         c["history"] = []
         candidates.append(c)
-
-    candidates.sort(key=lambda c: -c["merged"])
-
-    # Normalize candidate probabilities when independent binary markets
-    # cause the sum to exceed 105%.  Same pattern as feed.py BR27 fix.
-    # Normalize each source independently, then recompute merged.
-    for src_key in ("kalshi", "poly"):
-        src_sum = sum(c.get(src_key) or 0 for c in candidates)
-        if src_sum > 105:
-            for c in candidates:
-                if c.get(src_key) is not None:
-                    c[src_key] = round(c[src_key] / src_sum * 100, 1)
-
-    # Recompute merged from normalized per-source values
-    for c in candidates:
-        probs = [p for p in [c["kalshi"], c["poly"]] if p is not None]
-        c["merged"] = round(sum(probs) / len(probs), 1) if probs else 0
 
     candidates.sort(key=lambda c: -c["merged"])
 

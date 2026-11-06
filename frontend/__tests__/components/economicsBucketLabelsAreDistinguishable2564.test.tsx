@@ -1,6 +1,6 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Histogram, sharedBucketPrefix } from "../../components/economics/atoms";
+import { Histogram, orderNumericBuckets, sharedBucketPrefix } from "../../components/economics/atoms";
 
 // #2564 clause 3 — a histogram's rows must be tellable apart.
 //
@@ -126,5 +126,57 @@ describe("the label column", () => {
     const markup = html([[45, "1.9 to 2.1%"], [41.5, "1.6 to 1.8%"]]);
     expect(markup).toContain("1.9 to 2.1%");
     expect(markup).toContain("45%");
+  });
+});
+
+describe("numeric bracket ordering (#12093)", () => {
+  it("orders US Trade Deficit dollar brackets from lowest to highest", () => {
+    const deficit: [number, string][] = [
+      [36.7, "900B–1T"],
+      [31.2, "800–900B"],
+      [12.4, "700–800B"],
+      [4.7, "600–700B"],
+      [4.7, "500–600B"],
+      [4.5, "1T–1.1T"],
+      [3.9, "1.1T+"],
+      [1.9, "<500B"],
+    ];
+    expect(orderNumericBuckets(deficit).map((b) => b[1])).toEqual([
+      "<500B",
+      "500–600B",
+      "600–700B",
+      "700–800B",
+      "800–900B",
+      "900B–1T",
+      "1T–1.1T",
+      "1.1T+",
+    ]);
+  });
+
+  it("orders GDP percentage ranges in ascending numeric order", () => {
+    const gdp: [number, string][] = [
+      [79.5, "2.1% to 2.5%"],
+      [10.3, "1.6% to 2.0%"],
+      [3.9, "2.6% to 3.0%"],
+      [1.9, "0.1% to 0.5%"],
+      [1.0, "4.6% to 5.0%"],
+      [0.9, "3.1% to 3.5%"],
+    ];
+    expect(orderNumericBuckets(gdp).map((b) => b[1])).toEqual([
+      "0.1% to 0.5%",
+      "1.6% to 2.0%",
+      "2.1% to 2.5%",
+      "2.6% to 3.0%",
+      "3.1% to 3.5%",
+      "4.6% to 5.0%",
+    ]);
+  });
+
+  it("leaves non-numeric labels untouched", () => {
+    const contenders: [number, string][] = [
+      [52.0, "Avengers: Doomsday"],
+      [28.0, "Spider-Man: Brand New Day"],
+    ];
+    expect(orderNumericBuckets(contenders)).toEqual(contenders);
   });
 });

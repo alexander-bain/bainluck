@@ -73,6 +73,7 @@ def _route_market(md):
         image_url=None,
         hook_description=None,
         status="open",
+        mutually_exclusive=True,
     )
 
 
