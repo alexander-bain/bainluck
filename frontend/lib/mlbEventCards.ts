@@ -756,6 +756,12 @@ export function buildMlbExtraInningsCard(opts: {
     };
   });
 
+  // Before/during the game, omit the card when no outcome has a usable pregame number;
+  // keep the card after the game so the settled result is shown.
+  if (phase !== "after" && !outcomes.some((o) => o.pregameChance !== null)) {
+    return null;
+  }
+
   // Sort Yes before No when both are present
   outcomes.sort((a, b) => {
     const order = (l: string) => (l === "Yes" ? 0 : l === "No" ? 1 : 2);
