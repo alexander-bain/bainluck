@@ -74,6 +74,7 @@ export interface NhlScorerEntry {
   actualGoals: number | null;
   hit: boolean | null;
   side: PropSide;
+  source: string | null;
   sourceCount: number;
   marketTitle: string;
 }
@@ -197,6 +198,8 @@ export function buildNhlScoringCard(opts: {
 
     const rId = propRowId(primaryRow);
     const sideRow = group.rows.find((r) => r.player_team === "home" || r.player_team === "away");
+    const singleSource =
+      blendedRow?.source ?? (group.sources.size === 1 ? ([...group.sources][0] ?? null) : null);
     all.push({
       id: `nhl-scorer:${rId}`,
       rowId: rId,
@@ -206,6 +209,7 @@ export function buildNhlScoringCard(opts: {
       actualGoals,
       hit,
       side: sideRow?.player_team === "home" || sideRow?.player_team === "away" ? sideRow.player_team : "unknown",
+      source: singleSource,
       sourceCount: Math.max(1, group.sources.size),
       marketTitle: `${group.player} · 1+ goals`,
     });
@@ -268,7 +272,8 @@ function pointChanceForNhl(
     return { chance: recent ? o.quoted : null, observedAt: o.observedAt, now: null };
   }
   if (phase === "after") {
-    return { chance: o.reading ?? o.baseline, observedAt: null, now: null };
+    // After the final, read ONLY the producer's admitted `pregame_reading` (#11125 contract).
+    return { chance: o.reading, observedAt: null, now: null };
   }
   const now = o.quoted !== null && isRecentQuote(o.observedAt, nowMs) ? o.quoted : null;
   return { chance: o.baseline, observedAt: null, now };
@@ -311,8 +316,8 @@ export function buildNhlGoalTotalsCard(opts: {
         source: o.source,
         quoted: o.quoted,
         observedAt: o.observedAt,
-        baseline: settled ? (o.reading ?? o.baseline) : o.baseline,
-        baselineObservedAt: settled ? (o.readingObservedAt ?? o.baselineObservedAt) : o.baselineObservedAt,
+        baseline: settled ? o.reading : o.baseline,
+        baselineObservedAt: settled ? o.readingObservedAt : o.baselineObservedAt,
         result: o.result,
       },
     });
@@ -381,8 +386,8 @@ export function buildNhlPuckLineMarginCard(opts: {
         source: o.source,
         quoted: o.quoted,
         observedAt: o.observedAt,
-        baseline: settled ? (o.reading ?? o.baseline) : o.baseline,
-        baselineObservedAt: settled ? (o.readingObservedAt ?? o.baselineObservedAt) : o.baselineObservedAt,
+        baseline: settled ? o.reading : o.baseline,
+        baselineObservedAt: settled ? o.readingObservedAt : o.baselineObservedAt,
         result: o.result,
       },
     });
