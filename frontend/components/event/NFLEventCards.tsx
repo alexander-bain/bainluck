@@ -1247,50 +1247,55 @@ export function MlbSeriesCardView({
           })}
         </div>
       )}
-      {activeQuestion && (
-        <div className="grid grid-cols-2 gap-2">
-          {activeQuestion.options.map((opt) => {
-            const isSelected = opt.optionKey === selectedKey;
-            return (
-              <button
-                key={opt.optionKey}
-                type="button"
-                onClick={() => {
-                  onSelect(card.id, opt.optionKey);
-                  onDetails?.(opt.optionKey);
-                }}
-                className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left ${
-                  isSelected
-                    ? "border-text-primary bg-surface-elevated"
-                    : "border-surface-border bg-surface-card hover:bg-surface-elevated"
-                }`}
-              >
-                <span className="text-xs font-bold text-text-primary line-clamp-2">{opt.label}</span>
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-text-secondary">Chance before this game</span>
-                  <span
-                    className="text-sm font-bold tabular-nums"
-                    style={{ color: opt.pregame !== null ? accent : undefined }}
-                  >
-                    {opt.pregame !== null ? formatProbability(opt.pregame) : "Unavailable"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 text-[11px] text-text-secondary">
-                  {opt.result === "won" && (
-                    <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+      {activeQuestion && (() => {
+        const anyPregame = activeQuestion.options.some((o) => o.pregame !== null);
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            {activeQuestion.options.map((opt) => {
+              const isSelected = opt.optionKey === selectedKey;
+              return (
+                <button
+                  key={opt.optionKey}
+                  type="button"
+                  onClick={() => {
+                    onSelect(card.id, opt.optionKey);
+                    onDetails?.(opt.optionKey);
+                  }}
+                  className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left ${
+                    isSelected
+                      ? "border-text-primary bg-surface-elevated"
+                      : "border-surface-border bg-surface-card hover:bg-surface-elevated"
+                  }`}
+                >
+                  <span className="text-xs font-bold text-text-primary line-clamp-2">{opt.label}</span>
+                  {anyPregame && (
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-text-secondary">Chance before this game</span>
+                      <span
+                        className="text-sm font-bold tabular-nums"
+                        style={{ color: opt.pregame !== null ? accent : undefined }}
+                      >
+                        {opt.pregame !== null ? formatProbability(opt.pregame) : "Unavailable"}
+                      </span>
+                    </div>
                   )}
-                  {opt.result === "lost" && (
-                    <span className="font-semibold text-text-secondary">{ATLAS_STATE_COPY.lostWithCross}</span>
-                  )}
-                  {opt.result !== "won" && opt.result !== "lost" && (
-                    <span>{mlbVenueResultLabel(opt.result)}</span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+                  <div className="flex items-center gap-1 text-[11px] text-text-secondary">
+                    {opt.result === "won" && (
+                      <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+                    )}
+                    {opt.result === "lost" && (
+                      <span className="font-semibold text-text-secondary">{ATLAS_STATE_COPY.lostWithCross}</span>
+                    )}
+                    {opt.result !== "won" && opt.result !== "lost" && (
+                      <span>{mlbVenueResultLabel(opt.result)}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
       <p className="text-[11px] text-text-secondary">
         {optionCount} series {optionCount === 1 ? "outcome" : "outcomes"} · all in the Series section
       </p>
@@ -2157,7 +2162,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: leg.pregameObservedAt ?? leg.observedAt,
       lastProbability: !isSettled ? leg.quotedChance : null,
       lastObservedAt: leg.observedAt,
-      source: leg.source ?? card.source ?? "sportsbooks",
+      source: leg.source ?? card.source ?? null,
       sourceCount: 1,
       rulesText: rulesLines.join("\n"),
     };
@@ -2180,7 +2185,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: cell.observedAt,
       lastProbability: !isSettled && card.phase === "during" ? cell.chance : null,
       lastObservedAt: cell.observedAt,
-      source: cell.source ?? card.source ?? "sportsbooks",
+      source: cell.source ?? card.source ?? null,
       sourceCount: 1,
       rulesText: `Exact 90-minute score: ${cell.outcomeLabel} · Unlisted score cells are not inferred as 0%`,
     };
@@ -2208,7 +2213,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingProbability: entry.pregameChance,
       openingObservedAt: entry.observedAt,
       lastObservedAt: entry.observedAt,
-      source: "blended",
+      source: entry.source,
       sourceCount: entry.sourceCount,
       rulesText: rulesLines.join("\n"),
     };

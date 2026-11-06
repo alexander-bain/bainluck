@@ -539,7 +539,7 @@ function pointChanceForMlb(
     return { chance: recent ? o.quoted : null, observedAt: o.observedAt, now: null };
   }
   if (phase === "after") {
-    return { chance: o.reading ?? o.baseline, observedAt: null, now: null };
+    return { chance: o.reading, observedAt: null, now: null };
   }
   const now = o.quoted !== null && isRecentQuote(o.observedAt, nowMs) ? o.quoted : null;
   return { chance: o.baseline, observedAt: null, now };
@@ -582,8 +582,8 @@ export function buildMlbRunTotalsCard(opts: {
         source: o.source,
         quoted: o.quoted,
         observedAt: o.observedAt,
-        baseline: settled ? (o.reading ?? o.baseline) : o.baseline,
-        baselineObservedAt: settled ? (o.readingObservedAt ?? o.baselineObservedAt) : o.baselineObservedAt,
+        baseline: settled ? o.reading : o.baseline,
+        baselineObservedAt: settled ? o.readingObservedAt : o.baselineObservedAt,
         result: o.result,
       },
     });
@@ -800,18 +800,45 @@ export interface MlbSeriesCard {
   questions: MlbSeriesQuestion[];
 }
 
-export function buildMlbSeriesCard(seriesQuestionMatrix: unknown): MlbSeriesCard | null {
+export function buildMlbSeriesCard(
+  seriesQuestionMatrix: unknown,
+  opts?: {
+    status?: string | null;
+    commenceTime?: string | null;
+    nowMs?: number;
+  },
+): MlbSeriesCard | null {
   const m = asObj(seriesQuestionMatrix);
   if (!m || m.contract !== "10238.v1" || m.display_scope !== "series") return null;
   const decoded = decodeQuestionMatrix(seriesQuestionMatrix);
+  const explicitPhase =
+    opts && opts.nowMs !== undefined ? phaseOf(opts.status, opts.commenceTime, opts.nowMs) : null;
   const questions: MlbSeriesQuestion[] = [];
   for (const q of decoded) {
     if (!q.typed || q.options.length === 0) continue;
+    const inferredSettled = q.options.some((o) => o.result !== null || o.valueState === "not_quoted");
+    const phase: LadderPhase = explicitPhase ?? (inferredSettled ? "after" : "during");
     const options: MlbSeriesOption[] = q.options.map((o) => {
-      // Take only `baseline` (`comparison.baseline`, pregame_pin) for "Chance before this game";
-      // never mislabel a live `quoted` value as pregame.
-      const pregame = openChance(o.baseline);
-      const observedAt = o.baselineObservedAt;
+      // Same rule as NBA's ladders:
+      // - before the game: a recent `quoted`
+      // - during: `baseline` (`comparison.baseline`, pregame_pin)
+      // - after the final: `reading` (`pregame_reading`, single contributor)
+      let pregame: number | null = null;
+      let observedAt: string | null = null;
+      if (phase === "before") {
+        const recent =
+          o.quoted !== null &&
+          opts?.nowMs !== undefined &&
+          isRecentQuote(o.observedAt, opts.nowMs);
+        pregame = recent ? openChance(o.quoted) : null;
+        observedAt = pregame !== null ? o.observedAt : null;
+      } else if (phase === "during") {
+        pregame = openChance(o.baseline);
+        observedAt = o.baselineObservedAt;
+      } else {
+        pregame = openChance(o.reading);
+        observedAt = o.readingObservedAt;
+      }
       const result: MlbVenueResult =
         o.result === true ? "won" : o.result === false ? "lost" : o.valueState === "quoted" ? "open" : "pending";
       return {
@@ -916,7 +943,11 @@ export function buildMlbEventCards(opts: {
     commenceTime: opts.commenceTime,
     nowMs: opts.nowMs,
   });
-  const series = buildMlbSeriesCard(opts.relatedFutures?.series_question_matrix);
+  const series = buildMlbSeriesCard(opts.relatedFutures?.series_question_matrix, {
+    status: opts.status,
+    commenceTime: opts.commenceTime,
+    nowMs: opts.nowMs,
+  });
 
   return [homeRuns, strikeouts, totals, extraInnings, series].filter((c): c is MlbStoryCard => c !== null);
 }

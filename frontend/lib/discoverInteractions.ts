@@ -408,6 +408,32 @@ export interface DiscoverInteractionItem {
   surface: "web";
   source: string;
   market_type: MarketShape;
+  /** #12095 — the feed `edition` the card was served in; absent unless the server sent `ranker_version`. */
+  slate_id?: string;
+  /** #12095 — the deploy that ranked that slate. */
+  ranker_version?: string;
+}
+
+/**
+ * #12095 (Decide 37-B) — the slate the current Discover deck came from: the
+ * feed's `edition` token and the `ranker_version` that ranked it. Every event
+ * sent afterwards carries both, so a swipe joins to the list it was made in.
+ *
+ * The server sends `ranker_version` only while `RANKING_SNAPSHOTS` is on; a
+ * page without it clears the slate, so with the switch off every event is
+ * byte-for-byte what it was.
+ */
+let currentSlate: { slate_id: string; ranker_version: string } | null = null;
+
+export function noteDiscoverSlate(
+  page: { edition?: string | null; ranker_version?: string | null } | null | undefined,
+): void {
+  const slateId = page?.edition;
+  const version = page?.ranker_version;
+  currentSlate =
+    typeof slateId === "string" && slateId && typeof version === "string" && version
+      ? { slate_id: slateId, ranker_version: version }
+      : null;
 }
 
 /**
@@ -564,6 +590,7 @@ export function sendDiscoverInteraction(
       surface: "web",
       source,
       market_type: analytics.market_type,
+      ...(currentSlate ?? {}),
     });
 
     // A full batch goes now — the server rejects a 51st, so the cap is a
