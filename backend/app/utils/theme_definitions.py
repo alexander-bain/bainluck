@@ -974,6 +974,7 @@ def resolve_collection_target(
     *,
     registry: Optional[Mapping[str, ThemeDefinition]] = None,
     feed_key_map: Optional[Mapping[str, str]] = None,
+    require_all_preview: bool = True,
 ) -> tuple[Optional[CandidateContainer], Optional[str]]:
     """(intended target, None) or (None, reason).
 
@@ -982,6 +983,9 @@ def resolve_collection_target(
        it an all-AI swings bundle with |C| = 1 resolves to ``ai``.
     1. Feed key: ``story_key`` for story bundles, ``group_id`` for awards.
     2. C = candidates admitting EVERY preview id, in any publication state.
+       ``require_all_preview=False`` locates the intended page from overlap
+       before Discover projects the card onto its snapshot (decision 62-A).
+       That projection must still pass the strict all-members link check.
     3. A mapped key names exactly one subject in C (zero or many -> no ref, and
        never a fallback to another member of C). An unmapped key resolves only
        when exactly one container in C exists (R4e, resolved by root).
@@ -997,7 +1001,17 @@ def resolve_collection_target(
     preview = frozenset(preview_ids)
     if not preview:
         return None, PREVIEW_EMPTY
-    admitting = [c for c in candidates if preview <= frozenset(c.theme_rule_member_ids)]
+    # 62-A: Discover first locates the page, then projects its card onto that
+    # page's live snapshot. Search still requires its whole family to belong.
+    admitting = [
+        c
+        for c in candidates
+        if (
+            preview <= c.theme_rule_member_ids
+            if require_all_preview
+            else bool(preview & c.theme_rule_member_ids)
+        )
+    ]
 
     mapped_subject = fmap.get(feed_key) if feed_key is not None else None
     if mapped_subject is not None:
