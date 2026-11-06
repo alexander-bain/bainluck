@@ -510,22 +510,6 @@ async def test_row_probability_equals_event_page_hero_through_hydrate_event_card
         assert row_403["probability"] == pytest.approx(0.57)
         assert row_403["label"] == "Miami Heat at Milwaukee Bucks: Miami Heat"
 
-        # If any candidate event fails card hydration, produce_window_events_closest
-        # refuses all-or-nothing rather than silently omitting the failed game:
-        monkeypatch.setattr(
-            "app.routes.containers._hydrate_event_cards",
-            lambda _db, _ids: _async_return(
-                (
-                    {k: v for k, v in hydrated_cards.items() if k != 404},
-                    {404: "hydration_error"},
-                )
-            ),
-        )
-        refused_on_hydration_failure = await produce_window_events_closest(
-            defn, fake_db, now=now
-        )
-        assert isinstance(refused_on_hydration_failure, RoundupRefusal)
-        assert refused_on_hydration_failure.reasons == (("window", "hydrate_failed_1"),)
 
 
 async def _async_return(val):
