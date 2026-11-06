@@ -1,7 +1,8 @@
 "use client";
 
-import { probColor, weatherProbability, type EventMarket } from "./data";
+import { probColor, weatherProbability, weatherRowSettled, type EventMarket } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import { SourceBadge } from "./SourceBadge";
 import MarketLink from "./MarketLink";
 
@@ -141,7 +142,7 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
             </div>
 
             <span
-              className="font-mono"
+              className="font-mono whitespace-nowrap"
               style={{
                 fontSize: 14,
                 fontWeight: 600,
@@ -150,12 +151,14 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
                 textAlign: "right",
               }}
             >
-              {/* UX-P046 on the value (#6616): "Hurricane Marie category? —
-                  Category 1 or above" printed `100%` over a book that does not
-                  close until December. */}
-              {formatProbabilityPercent(weatherProbability(item), {
-                rendered: item.prob,
-              })}
+              {/* UX-P046 on the value (#6616) and result word on settled rows
+                  (#12093): "Hurricane Trudy category? — Category 3 or above"
+                  prints "✓ Won" when settled rather than a bare "100%". */}
+              {weatherRowSettled(item)
+                ? ATLAS_STATE_COPY.wonWithCheck
+                : formatProbabilityPercent(weatherProbability(item), {
+                    rendered: item.prob,
+                  })}
             </span>
           </MarketLink>
         ))}
