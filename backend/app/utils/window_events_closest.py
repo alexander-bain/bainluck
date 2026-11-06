@@ -195,13 +195,13 @@ def _extract_blended_leader(
     """
     if card.get("hero_probability_source") != "blend":
         return None
-    home_prob = card.get("hero_probability")
-    away_prob = card.get("hero_probability_away")
-    if home_prob is None or away_prob is None:
+    home_blend = card.get("hero_probability")
+    away_blend = card.get("hero_probability_away")
+    if home_blend is None or away_blend is None:
         return None
     try:
-        hp = float(home_prob)
-        ap = float(away_prob)
+        hp = float(home_blend)
+        ap = float(away_blend)
     except (TypeError, ValueError):
         return None
     if not (math.isfinite(hp) and math.isfinite(ap)):
