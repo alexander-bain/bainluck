@@ -75,6 +75,33 @@ test('all eight required shards pass despite failed optional Watch and pending a
   assert.deepEqual(result.failures, []);
 });
 
+test('CI becoming green after 46 minutes still starts the exact-head reviewer', async () => {
+  const pending = required.map(r => check(r.context));
+  pending[7].status = 'in_progress';
+  const result = await run({rounds: [
+    ...Array.from({length: 46}, () => ({checks: pending})),
+    {checks: required.map(r => check(r.context))},
+  ]});
+  assert.deepEqual(result.ready, [['ready', 'true']]);
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.elapsed, 46 * 60 * 1000);
+});
+
+test('a permanently pending shard stops at the bounded 90-minute deadline', async () => {
+  const pending = required.map(r => check(r.context));
+  pending[7].status = 'in_progress';
+  const result = await run({checks: pending});
+  assert.deepEqual(result.ready, []);
+  assert.match(result.failures[0], /Timed out after 90 minutes/);
+  assert.equal(result.elapsed, 90 * 60 * 1000);
+});
+
+test('the job leaves at least 30 minutes for checkout, setup and the actual review', () => {
+  const jobMinutes = Number(workflow.match(/timeout-minutes: (\d+)/)[1]);
+  const waitMinutes = Number(workflow.match(/const deadline = Date.now\(\) \+ (\d+) \* 60 \* 1000/)[1]);
+  assert.ok(jobMinutes - waitMinutes >= 30);
+});
+
 test('any one of eight required shards failing prevents the reviewer', async () => {
   for (let failed = 0; failed < 8; failed++) {
     const result = await run({checks: required.map((r, i) => check(r.context, i === failed ? 'failure' : 'success'))});
