@@ -12,7 +12,9 @@ import {
 } from './atlasStateCopy';
 
 export function useAtlasPageOptIn(): boolean {
-  const [search, setSearch] = useState<string | undefined>(undefined);
+  const [search, setSearch] = useState<string | undefined>(() =>
+    typeof window !== 'undefined' ? window.location.search : undefined,
+  );
   useEffect(() => {
     if (typeof window !== 'undefined') {
       setSearch(window.location.search);
