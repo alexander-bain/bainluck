@@ -1,7 +1,9 @@
 """The replay must retain refusals, reproduce publications, and expose bad rows."""
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -15,7 +17,16 @@ from scripts.evals.blend_replay_export import (
     rebuild_betting,
     read_packets,
 )
-from scripts.evals.blend_scorer import metrics, replay, score_export
+from scripts.evals.blend_scorer import (
+    candidate_prediction,
+    committed_protocol,
+    metrics,
+    paired_interval,
+    paired_metrics,
+    replay,
+    score_candidate,
+    score_export,
+)
 
 STAMP = "2026-10-05T19:00:00+00:00"
 START = "2026-10-06T20:00:00+00:00"
@@ -338,3 +349,161 @@ def test_existing_receipt_refuses_before_database_read(monkeypatch, tmp_path):
         exporter.main()
     read.assert_not_called()
     assert output.read_text() == "preserve"
+
+
+def test_reconstruction_disagreement_cannot_hide_behind_exact_recorded_replay():
+    raw = packet()
+    for book in raw["odds_snapshots"]:
+        book["home_win_probability"] = 0.9
+    report = score_export(build_export([raw], SWITCH), replicates=100)
+    assert report["recorded_reproduction"] == {"n": 4, "mismatches": 0}
+    assert report["reconstruction_agreement"]["k"] == 0
+    assert report["reconstruction_agreement"]["n"] == 4
+    assert report["result"] == "FAIL"
+
+
+def test_historical_bank_cannot_become_prospective_heldout_evidence():
+    raw = packet()
+    raw["event"]["start"] = (SWITCH + timedelta(days=2)).isoformat()
+    exported = build_export([raw], SWITCH)
+    assert all(not row["recorded"] for row in exported["coverage"])
+    assert not any(row["kind"] == "served" for row in exported["rows"])
+    report = score_export(exported, replicates=100)
+    assert report["cohorts"] == []
+    assert report["result"] == "UNKNOWN"
+
+
+def test_heldout_reconstructions_are_compared_but_never_graded_as_served():
+    raw = packet()
+    raw["event"]["start"] = (SWITCH + timedelta(days=2)).isoformat()
+    raw["publications"][0]["recorded_at"] = (SWITCH + timedelta(hours=1)).isoformat()
+    report = score_export(build_export([raw], SWITCH), replicates=100)
+    assert len(report["cohorts"]) == 4
+    assert all(
+        row["kind"] == "served" and row["split"] == "held_out"
+        for row in report["cohorts"]
+    )
+
+
+def test_unreadable_coverage_counts_as_failure():
+    exported = build_export([packet()], SWITCH)
+    exported["coverage"].append({"broken": True})
+    report = score_export(exported, replicates=100)
+    assert report["failures"]["unreadable_coverage"] == 1
+    assert report["result"] == "FAIL"
+
+
+def test_candidate_runs_actual_cascade_and_restores_current_weights():
+    from app.utils.aggregation import SOURCE_WEIGHTS
+
+    exported = build_export([packet()], SWITCH)
+    row = next(r for r in exported["rows"] if r["kind"] == "served")
+    row["sources"]["kalshi"] = {"value": 0.8, "updated_at": STAMP}
+    original = dict(SOURCE_WEIGHTS)
+    weights = {**original, "betting": 0.01, "kalshi": 5.0}
+    assert replay(row)[0] == 0.61
+    assert candidate_prediction(row, weights)[0] == 0.8
+    assert dict(SOURCE_WEIGHTS) == original
+
+
+@pytest.mark.parametrize("damage", ["new_feature", "negative", "nonfinite", "all_zero"])
+def test_unregistered_candidate_feature_or_invalid_weight_is_refused(damage):
+    from app.utils.aggregation import SOURCE_WEIGHTS
+
+    weights = dict(SOURCE_WEIGHTS)
+    if damage == "new_feature":
+        weights["invented"] = 1
+    elif damage == "negative":
+        weights["betting"] = -1
+    elif damage == "nonfinite":
+        weights["betting"] = float("nan")
+    else:
+        weights = {name: 0 for name in weights}
+    row = next(
+        r for r in build_export([packet()], SWITCH)["rows"] if r["kind"] == "served"
+    )
+    with pytest.raises(ValueError):
+        candidate_prediction(row, weights)
+
+
+def test_candidate_intervals_are_paired_and_keep_the_delta_direction():
+    rows = [
+        {"baseline": 0.6, "candidate": 0.8, "outcome": 1, "cluster_id": str(i)}
+        for i in range(4)
+    ]
+    delta = paired_metrics(rows)
+    assert delta["ece"] == -20
+    assert delta["brier"] == pytest.approx(-0.12)
+    interval = paired_interval(rows, replicates=100, seed=1)
+    assert interval["bounds"]["log_loss"][1] < 0
+
+
+def test_training_fit_never_earns_a_heldout_licence():
+    from app.utils.aggregation import SOURCE_WEIGHTS
+
+    exported = build_export([packet()], SWITCH)
+    candidate = {"method_id": "fixture", "weights": dict(SOURCE_WEIGHTS)}
+    result = score_candidate(exported, candidate, replicates=100, seed=1)
+    assert result["shared_guardrail"] == "UNKNOWN_NO_HELDOUT"
+    assert not any(row["statistical_bar_met"] for row in result["cohorts"])
+    assert result["licence"] == "HELD" and result["activation"] == "NONE"
+
+
+def test_protocol_requires_committed_bytes_even_if_new_checksum_is_supplied(tmp_path):
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "scripts/evals/blend_replay_protocol.json"
+    path = tmp_path / "protocol.json"
+    path.write_bytes(source.read_bytes())
+    for args in [
+        ["init", "-q", "-b", "codex/protocol-fixture"],
+        ["add", "--", "protocol.json"],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "Freeze fixture protocol",
+        ],
+    ]:
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
+    original = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert (
+        committed_protocol(path, original, repository=tmp_path)["activation"] == "NONE"
+    )
+    path.write_bytes(path.read_bytes() + b"\n")
+    replacement = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="committed"):
+        committed_protocol(path, replacement, repository=tmp_path)
+
+
+def test_a_corrupted_time_split_is_a_failure_not_extra_training_data():
+    exported = build_export([packet()], SWITCH)
+    exported["rows"][0]["split"] = "held_out"
+    report = score_export(exported, replicates=100)
+    assert report["result"] == "FAIL"
+    assert report["failures"]["unreadable_row"] >= 1
+
+
+def test_committed_protocol_cannot_weaken_nonmetric_guards(monkeypatch, tmp_path):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from scripts.evals import blend_scorer
+
+    source = Path(__file__).parents[1] / "scripts/evals/blend_replay_protocol.json"
+    protocol = json.loads(source.read_bytes())
+    protocol["speed_gate_required"] = False
+    raw = json.dumps(protocol).encode()
+    path = tmp_path / "protocol.json"
+    path.write_bytes(raw)
+    monkeypatch.setattr(
+        blend_scorer.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=raw),
+    )
+    with pytest.raises(ValueError, match="adopted gates"):
+        committed_protocol(path, hashlib.sha256(raw).hexdigest(), repository=tmp_path)

@@ -1,5 +1,7 @@
 """#12108 PR 2: freeze per-event replay inputs; never write a database.
 
+Extends calibration_population_integrity (ruling 002).
+
 Offline: python -m scripts.evals.blend_replay_export --input packets.json \
   --recording-start 2026-11-06T05:00:00Z --output replay.json
 
@@ -322,6 +324,7 @@ def reconstruction(packet: dict, at: datetime) -> dict:
         },
         "reconstruction_evidence": {
             "betting": betting,
+            "books": books,
             "book_snapshot_ids": [b["id"] for b in books],
             "source_snapshot_ids": [s["id"] for s in snapshots],
             "clock_basis": "capture_not_original_writer_stamp",
@@ -347,7 +350,7 @@ def time_split(start: datetime, recording_start: datetime, league: str) -> str:
 
 
 def build_export(packets: list[dict], recording_start: datetime) -> dict:
-    rows, failures = [], []
+    rows, failures, coverage = [], [], []
     events_seen: set[int] = set()
     clusters: dict[str, str] = {}
     for packet_index, packet in enumerate(packets):
@@ -369,6 +372,12 @@ def build_export(packets: list[dict], recording_start: datetime) -> dict:
             if outcome not in (0, 1) or isinstance(outcome, bool):
                 raise ValueError("binary home-win outcome must be known")
             publications = packet["publications"]
+            if split == "held_out":
+                publications = [
+                    p
+                    for p in publications
+                    if instant(p["recorded_at"]) >= recording_start
+                ]
             selected = select_horizon_rows(
                 [
                     (p["rev"], instant(p["recorded_at"]), p["blend_probability"])
@@ -391,12 +400,40 @@ def build_export(packets: list[dict], recording_start: datetime) -> dict:
                     "horizon": horizon,
                     "split": split,
                     "outcome": outcome,
+                    "target": "home_win",
                 }
-                if split != "held_out":
-                    event_rows.append({**base, **reconstruction(packet, at)})
+                publication = (
+                    by_rev[selected[horizon]["rev"]]
+                    if selected[horizon] is not None
+                    else None
+                )
+                reconstructed_at = (
+                    instant(publication["recorded_at"]) if publication else at
+                )
+                reconstructed = reconstruction(packet, reconstructed_at)
+                reconstructed["reconstructed_at"] = reconstructed_at.isoformat()
+                if publication:
+                    # Known inputs from this exact stored instant; never take
+                    # the mutable event's present-day fallback or status.
+                    reconstructed["event_status"] = publication["event_status"]
+                    reconstructed["blend_inputs"] = publication["blend_inputs"]
+                    reconstructed["reconstruction_evidence"][
+                        "historical_fallbacks"
+                    ] = "recorded_overlap"
+                event_rows.append({**base, **reconstructed})
+                coverage.append(
+                    {
+                        "event_id": event_id,
+                        "league": league,
+                        "horizon": horizon,
+                        "split": split,
+                        "recorded": publication is not None,
+                        "recorded_probability": publication is not None
+                        and publication["blend_probability"] is not None,
+                    }
+                )
                 # Held-out rows are prospective recorded values only.
                 if selected[horizon] is not None:
-                    publication = by_rev[selected[horizon]["rev"]]
                     event_rows.append(
                         {
                             **base,
@@ -426,6 +463,7 @@ def build_export(packets: list[dict], recording_start: datetime) -> dict:
         "recording_start": recording_start.isoformat(),
         "source_packets_sha256": digest(packets),
         "rows": rows,
+        "coverage": coverage,
         "failures": failures,
         "result": "FAIL" if failures or not rows else "EXPORTED_NOT_VALIDATED",
     }
