@@ -630,10 +630,11 @@ class TestFormationIsParsedNotAssumed:
 
     def test_prefork_children_each_hold_their_own_throttle_table(self):
         assert sdk_processes(FORMATION["worker-realtime"]) == 5  # parent + 4
-        assert sdk_processes(FORMATION["worker-background"]) == 3
+        # #12042 (Decide 45-A, Nov 5): one background child, not two.
+        assert sdk_processes(FORMATION["worker-background"]) == 2
         assert sdk_processes(FORMATION["worker-heavy"]) == 3
         assert sdk_processes(FORMATION["web"]) == 1
-        assert STEADY_SDK_PROCESSES == 14
+        assert STEADY_SDK_PROCESSES == 13
 
     def test_release_is_excluded_as_transient(self):
         assert "release" in FORMATION and "release" not in STEADY_TYPES
@@ -678,8 +679,9 @@ class TestFleetVolumeCeiling:
         563 observed ``server_name`` values appear on exactly one day, i.e. ~70
         process incarnations per day, and each dyno hosts several of them."""
         result = replay(census, "dyno")
-        assert result["sent"] == 588, "policy changed — re-derive and update the report"
-        assert round(result["per_day"], 1) == 73.5
+        # #12042: re-derived for the one-child background pool (was 588 / 73.5).
+        assert result["sent"] == 549, "policy changed — re-derive and update the report"
+        assert round(result["per_day"], 1) == 68.6
         assert result["per_day"] < DAILY_BUDGET
 
     def test_measured_volume_worst_case(self, census):
@@ -695,8 +697,13 @@ class TestFleetVolumeCeiling:
         margin is the one THERE, not the one here.
         """
         result = replay(census, "process")
-        assert result["sent"] == 1_090
-        assert round(result["per_day"], 1) == 136.2
+        # #12042: re-derived for the one-child background pool (was 1,090 / 136.2).
+        assert result["sent"] == 1_051
+        assert round(result["per_day"], 1) == 131.4
+        # The runtime price (136.2, two children) still covers the one-child replay.
+        from app.utils import sentry_budget
+
+        assert result["per_day"] <= sentry_budget.CENSUS_REPLAY_PER_DAY_AT_CAP_1
         assert result["per_day"] < DAILY_BUDGET, (
             "the worst-case fleet/day ceiling must fit the quota"
         )
@@ -755,7 +762,8 @@ class TestBudgetSurvivesItsNegativeControls:
             "the backstop no longer binds the watchdog — the fail-open path is "
             "unpriced again and the cooldown's happy path is back in the budget"
         )
-        assert watchdog_ceiling_per_day(BACKSTOP_PER_WINDOW) == 10
+        # #12042: one background child halves the backstop ceiling (was 10).
+        assert watchdog_ceiling_per_day(BACKSTOP_PER_WINDOW) == 5
         # And the control that would have caught the original: at the certified
         # cap the fail-open path exceeded what the model charged for it.
         assert watchdog_ceiling_per_day(3) > WATCHDOG_PAIRS_PER_DAY * WATCHDOG_COOLDOWN_WINDOWS_PER_DAY / 2

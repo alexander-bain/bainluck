@@ -17,6 +17,7 @@ import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
 import { FAMILY_WORDS } from "@/lib/evals/scoreboard";
 import { GATE_WORDS, RELATION_WORDS } from "@/lib/evals/twinExam";
+import { loadWatchers } from "@/lib/evals/watchers";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { RESULT_WORD, ageLabel } from "@/lib/evals/truth";
 
@@ -42,6 +43,7 @@ function readerStrings(): string[] {
     loadReviewerStudy()?.receipt.label ?? "",
     ...Object.values(GATE_WORDS).flatMap((g) => [g.name, g.checks, ...Object.values(g.units)]),
     ...Object.values(RELATION_WORDS),
+    ...(loadWatchers()?.watchers ?? []).flatMap((w) => [w.name, w.checks, w.verdict?.receipt.label ?? ""]),
     ...Object.values(RESULT_WORD),
     ageLabel(0),
     ageLabel(1),
@@ -70,6 +72,8 @@ describe("/evals copy passes the bans", () => {
     expect(strings).toContain(copy.TESTS_FOR_TESTS_COPY.biteNoneReal);
     expect(strings).toContain(GATE_WORDS.wrong_merges.checks);
     expect(strings).toContain(copy.CONFUSION_COPY.heldOutNote);
+    expect(strings).toContain(loadWatchers()?.watchers[0].checks);
+    expect(strings).toContain(copy.WATCHERS_COPY.stateRedStopped);
     expect(strings.length).toBeGreaterThan(30);
   });
 
