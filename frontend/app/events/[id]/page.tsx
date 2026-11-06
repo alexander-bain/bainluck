@@ -4308,7 +4308,7 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && !venueVoided && (
         <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
           <div id={ALL_MARKETS_ANCHOR_ID} className="scroll-mt-20 empty:hidden">
-            <QuestionCatalog data={gameMarkets} status={event.status} />
+            <QuestionCatalog data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />
           </div>
         </SectionErrorBoundary>
       )}
