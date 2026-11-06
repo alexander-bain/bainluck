@@ -59,6 +59,10 @@ import {
   type SoccerExactScoreCard,
   type SoccerThreeWayCard,
 } from "@/lib/soccerEventCards";
+import {
+  type TennisExactScoreCard,
+  type TennisSetsCard,
+} from "@/lib/tennisEventCards";
 
 /** Selected original row per milestone card, keyed by card id. */
 export type CardSelection = Record<string, string>;
@@ -859,14 +863,19 @@ export function LadderCardView({
           </button>
         )}
       </div>
-      {(actualText || forecastText) && (
+      {(actualText || forecastText || (atlasMode && card.unit === "games" && card.phase === "after")) && (
         <div className="flex gap-6">
-          {actualText && (
+          {actualText ? (
             <div className="flex flex-col">
               <span className="text-[11px] text-text-secondary">{card.phase === "after" ? "Actual final" : "So far"}</span>
               <strong className="text-lg font-bold tabular-nums text-text-primary">{actualText}{!margin ? ` ${card.unit ?? "points"}` : ""}</strong>
             </div>
-          )}
+          ) : atlasMode && card.unit === "games" && card.phase === "after" ? (
+            <div className="flex flex-col" data-testid="tennis-total-games-actual-absent">
+              <span className="text-[11px] text-text-secondary">Actual final</span>
+              <strong className="text-lg font-bold tabular-nums text-text-secondary">—</strong>
+            </div>
+          ) : null}
           {forecastText && (
             <div className="flex flex-col">
               <span className="text-[11px] text-text-secondary">Pregame projection</span>
@@ -1788,6 +1797,258 @@ export function SoccerExactScoreCardView({
   );
 }
 
+// ─── Tennis story cards (#11974 Step E6d) ──────────────────────────────────
+
+export function TennisSetsCardView({
+  card,
+  teams,
+  onDetails,
+}: {
+  card: TennisSetsCard;
+  teams: CardTeams;
+  onDetails?: (rowId: string) => void;
+}) {
+  const firstStep = card.sets[0];
+  const homeInk = inkColor(teams.homeColor);
+  const awayInk = inkColor(teams.awayColor);
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="tennis-sets-card">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+            {card.stage === "after" ? "RESOLVED SET WINNERS" : "SET-BY-SET PATH"}
+          </span>
+          <h4 className="text-base font-bold text-text-primary leading-snug">
+            {card.title}
+          </h4>
+          <span className="text-xs text-text-secondary">{card.subtitle}</span>
+        </div>
+        {onDetails && firstStep && (
+          <button
+            type="button"
+            onClick={() => onDetails(`set:${firstStep.setNumber}`)}
+            aria-label={`Details for ${card.title}`}
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2" role="list" aria-label={card.title}>
+        {card.sets.map((step) => {
+          const isResolved = step.winnerSide !== null;
+          const winnerOpt =
+            step.winnerSide === "home"
+              ? step.home
+              : step.winnerSide === "away"
+                ? step.away
+                : null;
+
+          if (isResolved && winnerOpt) {
+            return (
+              <button
+                key={step.setNumber}
+                type="button"
+                onClick={() => onDetails?.(`set:${step.setNumber}`)}
+                data-testid={`tennis-set-step-${step.setNumber}`}
+                className="flex flex-col gap-1.5 rounded-lg border border-surface-border bg-surface-elevated/50 px-3 py-2.5 text-left hover:bg-surface-elevated"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-card border border-surface-border text-[11px] font-bold tabular-nums text-text-primary">
+                      {step.setNumber}
+                    </span>
+                    <span className="text-xs font-medium text-text-secondary">
+                      {step.label}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {winnerOpt.pregameProbability !== null && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium tabular-nums text-text-secondary">
+                        <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true">
+                          <circle
+                            cx="5"
+                            cy="5"
+                            r="3.5"
+                            fill="#FFFFFF"
+                            stroke={step.winnerSide === "home" ? homeInk : awayInk}
+                            strokeWidth="1.75"
+                          />
+                        </svg>
+                        {formatProbability(winnerOpt.pregameProbability)} pregame
+                      </span>
+                    )}
+                    <span className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent-live">
+                      {ATLAS_STATE_COPY.wonWithCheck}
+                    </span>
+                  </div>
+                </div>
+                <span className="pl-7 text-sm font-bold text-text-primary">
+                  {winnerOpt.playerName}
+                </span>
+              </button>
+            );
+          }
+
+          return (
+            <button
+              key={step.setNumber}
+              type="button"
+              onClick={() => onDetails?.(`set:${step.setNumber}`)}
+              data-testid={`tennis-set-step-${step.setNumber}`}
+              className="flex flex-col gap-1.5 rounded-lg border border-surface-border bg-surface-elevated/50 px-3 py-2.5 text-left hover:bg-surface-elevated"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-text-primary">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-surface-card border border-surface-border text-[11px] font-bold tabular-nums">
+                    {step.setNumber}
+                  </span>
+                  {step.label}
+                </span>
+                <span className="text-[11px] text-text-secondary">
+                  {step.source ?? "Recorded quote"}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-0.5">
+                {([step.home, step.away] as const).map((opt) => {
+                  const chance = opt.liveProbability ?? opt.pregameProbability;
+                  const ink = opt.side === "home" ? homeInk : awayInk;
+                  return (
+                    <div
+                      key={opt.side}
+                      className="flex items-center justify-between gap-1.5 rounded bg-surface-card px-2 py-1 border border-surface-border/70"
+                    >
+                      <span className="text-xs font-semibold text-text-primary truncate">
+                        {opt.shortName}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-xs font-bold tabular-nums text-text-primary shrink-0">
+                        {chance !== null ? (
+                          <>
+                            <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true">
+                              <circle
+                                cx="5"
+                                cy="5"
+                                r="3.5"
+                                fill={opt.liveProbability !== null ? ink : "#FFFFFF"}
+                                stroke={ink}
+                                strokeWidth="1.75"
+                              />
+                            </svg>
+                            {formatProbability(chance)}
+                          </>
+                        ) : (
+                          <span className="text-[11px] font-medium text-text-muted">
+                            {ATLAS_STATE_COPY.noRecentPrice}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function TennisExactScoreCardView({
+  card,
+  onDetails,
+}: {
+  card: TennisExactScoreCard;
+  onDetails?: (rowId: string) => void;
+}) {
+  const defaultOutcome = card.winningOutcome ?? card.outcomes[0] ?? null;
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="tennis-exact-score-card">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+            EXACT MATCH SCORE · SETS
+          </span>
+          <h4 className="text-base font-bold text-text-primary leading-snug">
+            {card.title}
+          </h4>
+          <span className="text-xs text-text-secondary">{card.subtitle}</span>
+        </div>
+        {onDetails && defaultOutcome && (
+          <button
+            type="button"
+            onClick={() => onDetails(defaultOutcome.optionKey)}
+            aria-label={`Details for ${card.title}`}
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+
+      <div
+        className="grid grid-cols-2 gap-2"
+        role="group"
+        aria-label="Exact match score outcomes"
+      >
+        {card.outcomes.map((outcome) => {
+          const isWon = outcome.result === "won";
+          const isLost = outcome.result === "lost";
+          const chance = outcome.liveProbability ?? outcome.pregameProbability;
+          return (
+            <button
+              key={outcome.optionKey}
+              type="button"
+              onClick={() => onDetails?.(outcome.optionKey)}
+              data-testid={`tennis-exact-score-tile-${outcome.winnerSide}-${outcome.winnerSets}-${outcome.loserSets}`}
+              className={`flex flex-col justify-between gap-1.5 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                isWon
+                  ? "border-accent-live bg-accent-live/10"
+                  : "border-surface-border bg-surface-elevated/50 hover:bg-surface-elevated"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="text-xs font-bold text-text-primary">
+                  {outcome.winnerShort} {outcome.winnerSets}–{outcome.loserSets}
+                </span>
+                {isWon && (
+                  <span className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent-live shrink-0">
+                    {ATLAS_STATE_COPY.wonWithCheck}
+                  </span>
+                )}
+                {isLost && (
+                  <span className="inline-flex items-center rounded bg-surface-card px-1.5 py-0.5 text-[10px] font-semibold text-text-muted shrink-0">
+                    {ATLAS_STATE_COPY.lostWithCross}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-1 text-[11px] text-text-secondary">
+                <span>
+                  {outcome.winnerSets}–{outcome.loserSets} sets
+                </span>
+                {chance !== null ? (
+                  <span className="font-bold tabular-nums text-text-primary shrink-0">
+                    {formatProbability(chance)}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-text-muted shrink-0">
+                    {outcome.result ? "Settled" : ATLAS_STATE_COPY.noRecentPrice}
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Shared Atlas details-sheet adapter (#11974 Step E3) ───────────────────
 
 export function buildStoryCardDetailsSheetProps(opts: {
@@ -1799,6 +2060,69 @@ export function buildStoryCardDetailsSheetProps(opts: {
   teams: CardTeams;
 }): Omit<AtlasDetailsSheetProps, "open" | "onClose"> | null {
   const { card, rowId, row, lead, rows, teams } = opts;
+  if (card?.kind === "tennis-sets") {
+    const step =
+      card.sets.find((s) => `set:${s.setNumber}` === rowId) ??
+      card.sets[0] ??
+      null;
+    if (!step) return null;
+    const focusOpt =
+      step.winnerSide === "away"
+        ? step.away
+        : step.winnerSide === "home"
+          ? step.home
+          : step.home;
+    const isSettled = focusOpt.result === "won" || focusOpt.result === "lost";
+    const settledResult =
+      focusOpt.result === "won"
+        ? "won"
+        : focusOpt.result === "lost"
+          ? "lost"
+          : null;
+    return {
+      subjectName: `${step.label} · ${focusOpt.playerName}`,
+      marketTitle: step.marketName,
+      isSettled,
+      settledResult,
+      openingProbability: focusOpt.pregameProbability,
+      openingObservedAt: focusOpt.pregameObservedAt ?? focusOpt.observedAt,
+      lastProbability: !isSettled ? focusOpt.liveProbability : null,
+      lastObservedAt: focusOpt.observedAt,
+      source: step.source ?? "sportsbooks",
+      sourceCount: 1,
+      rulesText: `${step.label}: ${step.home.playerName} vs ${step.away.playerName}`,
+    };
+  }
+
+  if (card?.kind === "tennis-exact-score") {
+    const outcome =
+      card.outcomes.find((o) => o.optionKey === rowId) ??
+      card.winningOutcome ??
+      card.outcomes[0] ??
+      null;
+    if (!outcome) return null;
+    const isSettled = outcome.result === "won" || outcome.result === "lost";
+    const settledResult =
+      outcome.result === "won"
+        ? "won"
+        : outcome.result === "lost"
+          ? "lost"
+          : null;
+    return {
+      subjectName: outcome.outcomeName,
+      marketTitle: outcome.marketName,
+      isSettled,
+      settledResult,
+      openingProbability: outcome.pregameProbability,
+      openingObservedAt: outcome.pregameObservedAt ?? outcome.observedAt,
+      lastProbability: !isSettled ? outcome.liveProbability : null,
+      lastObservedAt: outcome.observedAt,
+      source: outcome.source ?? card.source ?? "sportsbooks",
+      sourceCount: 1,
+      rulesText: `Exact match score in sets (${outcome.scoreLabel}). Games handicaps and games totals stay in a separate unit-specific group.`,
+    };
+  }
+
   if (card?.kind === "soccer-three-way") {
     const leg = card.legs.find((l) => l.role === rowId) ?? card.legs[0] ?? null;
     if (!leg) return null;
@@ -2086,6 +2410,12 @@ export function EventCardView({
   expanded?: boolean;
   atlasMode?: boolean;
 }) {
+  if (card.kind === "tennis-sets") {
+    return <TennisSetsCardView card={card} teams={teams} onDetails={onDetails} />;
+  }
+  if (card.kind === "tennis-exact-score") {
+    return <TennisExactScoreCardView card={card} onDetails={onDetails} />;
+  }
   if (card.kind === "soccer-three-way") {
     return <SoccerThreeWayCardView card={card} teams={teams} onDetails={onDetails} />;
   }
