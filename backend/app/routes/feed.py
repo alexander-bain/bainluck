@@ -241,6 +241,7 @@ from app.utils.feed_quality_debug import (
 from app.utils.feed_cache import (
     FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS,
     FEED_PREWARM_KEY_SCOPE_KEY,
+    FEED_PREWARM_OPENING_SCOPE_KEY,
     FEED_PREWARM_SCOPE_KEY,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_STALE_TTL_SECONDS,
@@ -4204,6 +4205,23 @@ async def get_feed(
             **{k: v for k, v in _cache_shape.items() if k not in ("offset", "edition")}
         )
 
+    _opening_reader_kind = (
+        "prewarm"
+        if _prewarm_rebuild
+        else (
+            "user"
+            if feed_user is not None
+            else ("session" if feed_session_id else "anonymous")
+        )
+    )
+    _opening_log_shape = _declared_opening_request_shape(
+        mode=mode,
+        event_pct=event_pct,
+        limit=limit,
+        offset=offset,
+        edition_requested=bool(_edition_request),
+    )
+
     async def _serve_shared_last_good(base_key, reason, *, singleflight, **finalize):
         """#11259: the base's durable copy, served as THIS page, or ``None``.
 
@@ -4250,6 +4268,15 @@ async def get_feed(
                 requested_token=_edition_request,
                 requested_policy=_edition_policy,
                 now=_request_now,
+            )
+            _log_opening_outcome(
+                _lg_opening,
+                path="shared_copy",
+                input_count=len(base["items"]),
+                request_now=_request_now,
+                request_shape=_opening_log_shape,
+                reader_kind=_opening_reader_kind,
+                request_obj=request,
             )
             if not _lg_opening.usable:
                 return None
@@ -4346,6 +4373,15 @@ async def get_feed(
             requested_token=_edition_request,
             requested_policy=_edition_policy,
             now=_request_now,
+        )
+        _log_opening_outcome(
+            outcome,
+            path="waiting_request",
+            input_count=len(carried["items"]),
+            request_now=_request_now,
+            request_shape=_opening_log_shape,
+            reader_kind=_opening_reader_kind,
+            request_obj=request,
         )
         if not (
             outcome.usable
@@ -5158,6 +5194,15 @@ async def get_feed(
                         requested_token=_edition_request,
                         requested_policy=_edition_policy,
                         now=_request_now,
+                    )
+                    _log_opening_outcome(
+                        _base_opening,
+                        path="cached_deck",
+                        input_count=len(_base_deck),
+                        request_now=_request_now,
+                        request_shape=_opening_log_shape,
+                        reader_kind=_opening_reader_kind,
+                        request_obj=request,
                     )
                     if not _base_opening.usable:
                         if _is_build_leader and _sf_future is not None:
@@ -6348,6 +6393,15 @@ async def get_feed(
                 requested_policy=_edition_policy,
                 now=now,
             )
+            _log_opening_outcome(
+                _opening,
+                path="fresh_build",
+                input_count=len(feed_items),
+                request_now=now,
+                request_shape=_opening_log_shape,
+                reader_kind=_opening_reader_kind,
+                request_obj=request,
+            )
             if not _opening.usable:
                 await _release_incomplete_build(
                     "opening_unsupported", session_cancelled=False
@@ -7508,6 +7562,290 @@ def _with_opening_leader_deck(payload: dict, deck: list, policy: str) -> dict:
     handed = dict(payload)
     handed[_OPENING_LEADER_DECK_KEY] = {"items": deck, "policy": policy}
     return handed
+
+
+#: #12041 (Ruling 23-A) — rate-limit window (seconds) and per-offender-identity
+#: last-logged timestamp for opening-seating warnings (1 per process per
+#: offender per minute).
+_OPENING_OFFENDER_LOG_WINDOW_S = 60.0
+_OPENING_OFFENDER_LOG_LAST_TS: dict[str, float] = {}
+
+
+def _opening_offender_log_clock() -> float:
+    """Monotonic clock seam for the opening-offender log rate limiter."""
+    return time.monotonic()
+
+
+def _reset_opening_offender_log_for_tests() -> None:
+    _OPENING_OFFENDER_LOG_LAST_TS.clear()
+
+
+def _should_log_opening_offender(
+    identity: str, *, now_ts: Optional[float] = None
+) -> bool:
+    ts = _opening_offender_log_clock() if now_ts is None else float(now_ts)
+    last = _OPENING_OFFENDER_LOG_LAST_TS.get(identity)
+    if last is not None and 0.0 <= (ts - last) < _OPENING_OFFENDER_LOG_WINDOW_S:
+        return False
+    _OPENING_OFFENDER_LOG_LAST_TS[identity] = ts
+    return True
+
+
+_OPENING_LOG_MODES: tuple[str, ...] = ("discover", "sports", "trending", "for_you")
+_OPENING_LOG_LIMITS: tuple[int, ...] = (
+    1,
+    2,
+    3,
+    5,
+    10,
+    12,
+    15,
+    20,
+    24,
+    25,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+)
+_OPENING_LOG_OFFSETS: tuple[int, ...] = (0, 10, 20, 30, 40, 50, 60, 80, 100)
+_OPENING_LOG_PCTS: tuple[float, ...] = (
+    0.0,
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3,
+    0.5,
+    1.0,
+)
+
+
+def _declared_opening_request_shape(
+    *,
+    mode: str | None = None,
+    event_pct: float | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+    edition_requested: bool = False,
+) -> dict[str, Any]:
+    """Return an untainted request-shape dict for §5 opening outcome logs.
+
+    Query parameters are user-provided taint sources (`py/log-injection`).
+    Every value in the returned dict is chosen from module-constant literal
+    tuples by equality comparison (`showcase_futures._declared_slug` pattern),
+    so no request-derived value reaches a log sink.
+    """
+    mode_norm = (mode or "discover").strip().lower() if isinstance(mode, str) else "discover"
+    declared_mode = next((m for m in _OPENING_LOG_MODES if m == mode_norm), "other")
+    declared_pct = (
+        next((p for p in _OPENING_LOG_PCTS if p == event_pct), -1.0)
+        if isinstance(event_pct, (int, float))
+        else None
+    )
+    declared_limit = (
+        next((n for n in _OPENING_LOG_LIMITS if n == limit), -1)
+        if isinstance(limit, int)
+        else None
+    )
+    declared_offset = (
+        next((n for n in _OPENING_LOG_OFFSETS if n == offset), -1)
+        if isinstance(offset, int)
+        else None
+    )
+    return {
+        "mode": declared_mode,
+        "event_pct": declared_pct,
+        "limit": declared_limit,
+        "offset": declared_offset,
+        "edition_requested": True if edition_requested else False,
+    }
+
+
+def _log_opening_outcome(
+    outcome: Any,
+    *,
+    path: str,
+    input_count: int,
+    request_now: datetime,
+    request_shape: dict,
+    reader_kind: str,
+    request_obj: Any = None,
+) -> None:
+    """#12041 (Ruling 23-A): record the pre-warm scope summary and emit a
+    rate-limited structured warning (1 per process per offender per minute)
+    whenever a card is held back or an opening edition refuses."""
+    usable = bool(getattr(outcome, "usable", True))
+    withheld = list(getattr(outcome, "withheld", None) or [])
+    pin_withheld = list(getattr(outcome, "pin_withheld", None) or [])
+    refusals = list(getattr(outcome, "refusals", None) or [])
+    pin_seating = getattr(outcome, "pin_seating", None)
+    deck_seating = getattr(outcome, "deck_seating", None)
+
+    scope = getattr(request_obj, "scope", None) if request_obj is not None else None
+    if isinstance(scope, dict) and scope.get(FEED_PREWARM_SCOPE_KEY):
+        refusal_cls = (
+            withheld[0]["refusal_class"]
+            if withheld
+            else (
+                refusals[0].refusal_class
+                if refusals
+                else (
+                    getattr(deck_seating, "refusal_class", None)
+                    if not usable
+                    else None
+                )
+            )
+        )
+        detail_str = (
+            refusals[0].detail[:500]
+            if refusals
+            else (
+                (getattr(outcome, "detail", "") or "")[:500]
+                if not usable
+                else None
+            )
+        )
+        scope[FEED_PREWARM_OPENING_SCOPE_KEY] = {
+            "withheld": [w["identity"] for w in withheld],
+            "offenders": list(withheld),
+            "class": refusal_cls,
+            "detail": detail_str,
+            "usable": usable,
+        }
+
+    if usable and not withheld and not pin_withheld:
+        return
+
+    served_items = getattr(outcome, "items", None)
+    served_count = len(served_items) if usable and isinstance(served_items, list) else 0
+    clock_iso = (
+        request_now.isoformat()
+        if isinstance(request_now, datetime)
+        else str(request_now)
+    )
+
+    events_to_log: list[tuple[str, str, str, dict]] = []
+    seen_current: set[str] = set()
+    for off in withheld:
+        seen_current.add(off["identity"])
+        events_to_log.append(
+            (
+                "opening_card_withheld" if usable else "opening_unsupported",
+                "current",
+                "withheld_and_seated" if usable else "unavailable",
+                off,
+            )
+        )
+    for off in pin_withheld:
+        if off["identity"] not in seen_current:
+            events_to_log.append(
+                (
+                    "pinned_opening_refused",
+                    "held",
+                    "pinned_expired_and_recomposed" if usable else "unavailable",
+                    off,
+                )
+            )
+    if not events_to_log and not usable:
+        fallback_detail = (
+            getattr(deck_seating, "detail", None)
+            or getattr(pin_seating, "detail", None)
+            or getattr(outcome, "detail", "")
+            or "opening_unsupported"
+        )
+        fallback_class = (
+            getattr(deck_seating, "refusal_class", None)
+            or getattr(pin_seating, "refusal_class", None)
+            or "unsupported"
+        )
+        events_to_log.append(
+            (
+                "opening_unsupported",
+                "current",
+                "unavailable",
+                {
+                    "identity": "?",
+                    "seat": None,
+                    "kind": None,
+                    "refusal_class": fallback_class,
+                    "fields": {},
+                    "detail": str(fallback_detail)[:500],
+                },
+            )
+        )
+
+    for reason_tok, deck_kind, resolution, off in events_to_log:
+        ident = str(off.get("identity") or "?")
+        if not _should_log_opening_offender(ident):
+            continue
+        detail_trunc = str(off.get("detail") or getattr(outcome, "detail", "") or "")[
+            :500
+        ]
+        safe_shape = _declared_opening_request_shape(
+            mode=request_shape.get("mode") if isinstance(request_shape, dict) else None,
+            event_pct=(
+                request_shape.get("event_pct")
+                if isinstance(request_shape, dict)
+                else None
+            ),
+            limit=(
+                request_shape.get("limit") if isinstance(request_shape, dict) else None
+            ),
+            offset=(
+                request_shape.get("offset") if isinstance(request_shape, dict) else None
+            ),
+            edition_requested=bool(
+                request_shape.get("edition_requested")
+                if isinstance(request_shape, dict)
+                else False
+            ),
+        )
+        record = {
+            "reason": reason_tok,
+            "path": path,
+            "deck_kind": deck_kind,
+            "request_shape": safe_shape,
+            "reader_kind": reader_kind,
+            "refusal_class": off.get("refusal_class") or "unsupported",
+            "offender_identity": ident,
+            "offender_seat": off.get("seat"),
+            "offender_kind": off.get("kind"),
+            "offender_fields": dict(off.get("fields") or {}),
+            "offenders": [off],
+            "request_clock": clock_iso,
+            "resolution": resolution,
+            "input_count": input_count,
+            "withheld_count": len(withheld),
+            "served_count": served_count,
+            "detail": detail_trunc,
+        }
+        logger.warning(
+            "discover_opening_outcome reason=%s path=%s deck_kind=%s reader_kind=%s "
+            "refusal_class=%s offender=%s seat=%s kind=%s fields=%s "
+            "request_shape=%s request_clock=%s resolution=%s "
+            "counts=%d/%d/%d detail=%s",
+            record["reason"],
+            record["path"],
+            record["deck_kind"],
+            record["reader_kind"],
+            record["refusal_class"],
+            record["offender_identity"],
+            record["offender_seat"],
+            record["offender_kind"],
+            _json_module.dumps(record["offender_fields"], sort_keys=True, default=str),
+            _json_module.dumps(record["request_shape"], sort_keys=True, default=str),
+            record["request_clock"],
+            record["resolution"],
+            record["input_count"],
+            record["withheld_count"],
+            record["served_count"],
+            record["detail"],
+            extra={"opening_outcome": record},
+        )
 
 
 def _feed_page_payload(
