@@ -1838,7 +1838,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: leg.pregameObservedAt ?? leg.observedAt,
       lastProbability: !isSettled ? leg.quotedChance : null,
       lastObservedAt: leg.observedAt,
-      source: leg.source ?? card.source ?? "sportsbooks",
+      source: leg.source ?? card.source ?? null,
       sourceCount: 1,
       rulesText: rulesLines.join("\n"),
     };
@@ -1861,7 +1861,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingObservedAt: cell.observedAt,
       lastProbability: !isSettled && card.phase === "during" ? cell.chance : null,
       lastObservedAt: cell.observedAt,
-      source: cell.source ?? card.source ?? "sportsbooks",
+      source: cell.source ?? card.source ?? null,
       sourceCount: 1,
       rulesText: `Exact 90-minute score: ${cell.outcomeLabel} · Unlisted score cells are not inferred as 0%`,
     };

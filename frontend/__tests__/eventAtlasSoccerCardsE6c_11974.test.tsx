@@ -3,10 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   buildSoccerEventCards,
   buildSoccerExactScoreCard,
+  buildSoccerGoalTotalCard,
   buildSoccerThreeWayCard,
   parseSoccerExactScoreOutcome,
   soccerCardsApply,
 } from "@/lib/soccerEventCards";
+import { MATRIX_CONTRACT } from "@/lib/nbaEventCards";
 import { cardTitle } from "@/lib/nflEventCardDeck";
 import {
   buildStoryCardDetailsSheetProps,
@@ -349,5 +351,137 @@ describe("#11974 Step E6c — Soccer story cards in mark grammar behind ?atlas=1
       openingProbability: 0.05,
       source: "kalshi",
     });
+  });
+
+  it("after full-time, reads only admitted pregame_reading on soccer goal-total ladders and withholds unblended probabilities when multiple unblended sources price a three-way market (#11125 contract)", () => {
+    const gameQuestionMatrix = {
+      contract: MATRIX_CONTRACT,
+      questions: [1.5, 2.5, 3.5, 4.5].map((line, idx) => ({
+        question_key: `q:soccer:goals:${line}`,
+        kind: "count_threshold",
+        label: `Total Goals Over/Under ${line}`,
+        market_name: `Total Goals O/U ${line}`,
+        typing: { state: "typed" },
+        quantity: { key: "goals" },
+        subject: { side: "game" },
+        period: { key: "full_game" },
+        predicate: { relation: "ge", line },
+        options: [
+          {
+            option_key: `o:soccer:goals:${line}`,
+            label: `Over ${line} goals`,
+            side: "over",
+            contributor_outcome_ids: idx === 3 ? [603, 604] : [600 + idx],
+            published: { value_state: "result", source: "kalshi", observed_at: "2026-11-05T19:00:00Z" },
+            comparison: {
+              state: "comparable",
+              baseline: {
+                basis: "pregame_pin",
+                probability: 0.85 - idx * 0.2,
+                observed_at: "2026-11-05T16:50:00Z",
+              },
+            },
+            pregame_reading:
+              idx === 3
+                ? { state: "unavailable", reason: "multi_contributor" }
+                : {
+                    state: "available",
+                    reason: null,
+                    basis: "pregame_pin",
+                    probability: 0.85 - idx * 0.2,
+                    observed_at: "2026-11-05T16:50:00Z",
+                    outcome_id: 600 + idx,
+                  },
+            result: { state: "won" },
+          },
+        ],
+      })),
+    };
+
+    const totalCard = buildSoccerGoalTotalCard({
+      gameQuestionMatrix,
+      status: "completed",
+      commenceTime: "2026-11-05T17:00:00Z",
+      homeScore: 3,
+      awayScore: 2,
+      homeShort: "Dortmund",
+      awayShort: "Bremen",
+      nowMs: NOW_MS,
+    });
+    expect(totalCard).not.toBeNull();
+    const unpinnedLine = totalCard?.points.find((p) => p.x === 4.5);
+    expect(unpinnedLine?.chance).toBeNull();
+    expect(unpinnedLine?.detail.baseline).toBeNull();
+
+    // Multi-source unblended three-way market withholds pregameChance rather than picking one source
+    const multiThreeWay = buildSoccerThreeWayCard({
+      otherMarkets: [
+        {
+          _market_id: 1,
+          market_name: "Borussia Dortmund vs Werder Bremen",
+          outcome_name: "Borussia Dortmund",
+          pregame_mark: 0.66,
+          is_winner: true,
+          resolution_source: "kalshi",
+          source: "kalshi",
+        },
+        {
+          _market_id: 1,
+          market_name: "Borussia Dortmund vs Werder Bremen",
+          outcome_name: "Draw",
+          pregame_mark: 0.20,
+          is_winner: false,
+          resolution_source: "kalshi",
+          source: "kalshi",
+        },
+        {
+          _market_id: 1,
+          market_name: "Borussia Dortmund vs Werder Bremen",
+          outcome_name: "Werder Bremen",
+          pregame_mark: 0.14,
+          is_winner: false,
+          resolution_source: "kalshi",
+          source: "kalshi",
+        },
+        {
+          _market_id: 2,
+          market_name: "BV Borussia 09 Dortmund vs. SV Werder Bremen",
+          outcome_name: "BV Borussia 09 Dortmund",
+          pregame_mark: 0.69,
+          is_winner: true,
+          resolution_source: "polymarket",
+          source: "polymarket",
+        },
+        {
+          _market_id: 2,
+          market_name: "BV Borussia 09 Dortmund vs. SV Werder Bremen",
+          outcome_name: "Draw (BV Borussia 09 Dortmund vs. SV Werder Bremen)",
+          pregame_mark: 0.18,
+          is_winner: false,
+          resolution_source: "polymarket",
+          source: "polymarket",
+        },
+        {
+          _market_id: 2,
+          market_name: "BV Borussia 09 Dortmund vs. SV Werder Bremen",
+          outcome_name: "SV Werder Bremen",
+          pregame_mark: 0.13,
+          is_winner: false,
+          resolution_source: "polymarket",
+          source: "polymarket",
+        },
+      ],
+      status: "completed",
+      commenceTime: "2026-11-05T17:00:00Z",
+      homeTeam: "Borussia Dortmund",
+      awayTeam: "Werder Bremen",
+      homeShort: "Dortmund",
+      awayShort: "Bremen",
+      nowMs: NOW_MS,
+    });
+    expect(multiThreeWay).not.toBeNull();
+    expect(multiThreeWay?.source).toBeNull();
+    expect(multiThreeWay?.legs.map((l) => l.pregameChance)).toEqual([null, null, null]);
+    expect(multiThreeWay?.legs.map((l) => l.result)).toEqual(["won", "lost", "lost"]);
   });
 });

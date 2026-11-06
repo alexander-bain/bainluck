@@ -247,8 +247,9 @@ export function buildSoccerThreeWayCard(opts: {
       if (!role || legsByRole.has(role)) break;
       const quotedChance =
         !finished && isRecentQuote(o.observedAt, opts.nowMs) ? openChance(o.quoted) : null;
-      const pregameChance = openChance(o.reading ?? o.baseline);
-      const pregameObservedAt = o.readingObservedAt ?? o.baselineObservedAt ?? null;
+      // After full-time, read ONLY the producer's admitted `pregame_reading` (#11125 contract).
+      const pregameChance = openChance(finished ? o.reading : o.baseline);
+      const pregameObservedAt = finished ? o.readingObservedAt : o.baselineObservedAt;
       const result: "won" | "lost" | null =
         finished && typeof o.result === "boolean" ? (o.result ? "won" : "lost") : null;
       legsByRole.set(role, {
@@ -308,7 +309,9 @@ export function buildSoccerThreeWayCard(opts: {
       const quotedChance =
         !finished && isRecentQuote(observedAt, opts.nowMs) ? openChance(row.probability) : null;
       const pregameChance = openChance(
-        row.pregame_mark ?? row.opening_probability ?? (phase === "before" ? row.probability : null),
+        row.pregame_mark ??
+          row.opening_probability ??
+          (phase === "before" && isRecentQuote(observedAt, opts.nowMs) ? row.probability : null),
       );
       const result: "won" | "lost" | null = outcomeRowVerdict(
         {
@@ -348,16 +351,47 @@ export function buildSoccerThreeWayCard(opts: {
 
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
+  const blendedCandidate = candidates.find(
+    (c) => c.source === "blended" || c.source === "blend",
+  );
+  const distinctSources = new Set(
+    candidates.map((c) => c.source).filter((s): s is string => Boolean(s)),
+  );
+  const multiUnblended = !blendedCandidate && distinctSources.size > 1;
+  const best = blendedCandidate ?? candidates[0];
 
-  const homeLeg = best.legsByRole.get("home")!;
-  const drawLeg = best.legsByRole.get("draw")!;
-  const awayLeg = best.legsByRole.get("away")!;
-  const legs: [SoccerThreeWayLeg, SoccerThreeWayLeg, SoccerThreeWayLeg] = [
-    homeLeg,
-    drawLeg,
-    awayLeg,
+  const rawLegs: [SoccerThreeWayLeg, SoccerThreeWayLeg, SoccerThreeWayLeg] = [
+    best.legsByRole.get("home")!,
+    best.legsByRole.get("draw")!,
+    best.legsByRole.get("away")!,
   ];
+
+  // When multiple unblended sources supply competing three-way markets without a
+  // server-blended market, withhold the unblended probabilities rather than picking one source.
+  const legs: [SoccerThreeWayLeg, SoccerThreeWayLeg, SoccerThreeWayLeg] = multiUnblended
+    ? (rawLegs.map((l) => {
+        const verdicts = new Set<"won" | "lost">();
+        for (const c of candidates) {
+          const leg = c.legsByRole.get(l.role);
+          if (leg?.result) verdicts.add(leg.result);
+        }
+        const agreedResult =
+          verdicts.has("won") && verdicts.has("lost")
+            ? null
+            : verdicts.has("won")
+              ? "won"
+              : verdicts.has("lost")
+                ? "lost"
+                : null;
+        return {
+          ...l,
+          quotedChance: null,
+          pregameChance: null,
+          result: agreedResult,
+          source: null,
+        };
+      }) as [SoccerThreeWayLeg, SoccerThreeWayLeg, SoccerThreeWayLeg])
+    : rawLegs;
 
   // Refuse if no leg has either a valid probability (before/during) or a settled result (after)
   const hasAnySignal = finished
@@ -376,7 +410,7 @@ export function buildSoccerThreeWayCard(opts: {
     phase,
     legs,
     marketTitle: best.marketTitle,
-    source: best.source,
+    source: multiUnblended ? null : best.source,
     quotedSum,
   };
 }
@@ -537,7 +571,8 @@ export function buildSoccerExactScoreCard(opts: {
       if (!parsed) continue;
       const quoted =
         !finished && isRecentQuote(o.observedAt, opts.nowMs) ? openChance(o.quoted) : null;
-      const pregame = openChance(o.reading ?? o.baseline);
+      const pregame = openChance(finished ? o.reading : o.baseline);
+      const pregameObservedAt = finished ? o.readingObservedAt : o.baselineObservedAt;
       const chance = finished ? pregame : (quoted ?? pregame);
       const result: "won" | "lost" | null =
         finished && typeof o.result === "boolean" ? (o.result ? "won" : "lost") : null;
@@ -547,7 +582,7 @@ export function buildSoccerExactScoreCard(opts: {
           outcomeLabel: o.label,
           chance,
           pregameChance: pregame,
-          observedAt: o.observedAt ?? o.readingObservedAt ?? o.baselineObservedAt ?? null,
+          observedAt: o.observedAt ?? pregameObservedAt ?? null,
           result,
           source: o.source,
           marketTitle: title,
@@ -565,7 +600,7 @@ export function buildSoccerExactScoreCard(opts: {
         outcomeLabel: o.label,
         chance,
         pregameChance: pregame,
-        observedAt: o.observedAt ?? o.readingObservedAt ?? o.baselineObservedAt ?? null,
+        observedAt: o.observedAt ?? pregameObservedAt ?? null,
         result,
         source: o.source,
         marketTitle: title,
@@ -615,7 +650,9 @@ export function buildSoccerExactScoreCard(opts: {
       const quoted =
         !finished && isRecentQuote(observedAt, opts.nowMs) ? openChance(row.probability) : null;
       const pregame = openChance(
-        row.pregame_mark ?? row.opening_probability ?? (phase === "before" ? row.probability : null),
+        row.pregame_mark ??
+          row.opening_probability ??
+          (phase === "before" && isRecentQuote(observedAt, opts.nowMs) ? row.probability : null),
       );
       const chance = finished ? pregame : (quoted ?? pregame);
       const result: "won" | "lost" | null = outcomeRowVerdict(
@@ -672,10 +709,25 @@ export function buildSoccerExactScoreCard(opts: {
 
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
-  const cells = Array.from(best.cellsByKey.values()).sort(
+  const blendedCandidate = candidates.find(
+    (c) => c.source === "blended" || c.source === "blend",
+  );
+  const distinctSources = new Set(
+    candidates.map((c) => c.source).filter((s): s is string => Boolean(s)),
+  );
+  const multiUnblended = !blendedCandidate && distinctSources.size > 1;
+  const best = blendedCandidate ?? candidates[0];
+  const rawCells = Array.from(best.cellsByKey.values()).sort(
     (a, b) => a.awayGoals - b.awayGoals || a.homeGoals - b.homeGoals,
   );
+  const cells = multiUnblended
+    ? rawCells.map((c) => ({
+        ...c,
+        chance: null,
+        pregameChance: null,
+        source: null,
+      }))
+    : rawCells;
 
   const hasSignal = cells.some((c) => c.chance !== null || c.result !== null);
   if (!hasSignal) return null;
@@ -705,10 +757,14 @@ export function buildSoccerExactScoreCard(opts: {
     maxGoals,
     maxChance,
     cells,
-    otherCell: best.otherCell,
+    otherCell: multiUnblended
+      ? best.otherCell
+        ? { ...best.otherCell, chance: null, pregameChance: null, source: null }
+        : null
+      : best.otherCell,
     defaultSelectedKey,
     marketTitle: best.marketTitle,
-    source: best.source,
+    source: multiUnblended ? null : best.source,
   };
 }
 
@@ -721,13 +777,14 @@ function pointChanceForSoccer(
 ): { chance: number | null; observedAt: string | null; now: number | null } {
   if (phase === "before") {
     const recent = o.quoted !== null && isRecentQuote(o.observedAt, nowMs);
-    return { chance: recent ? o.quoted : o.reading, observedAt: o.observedAt, now: null };
+    return { chance: recent ? o.quoted : null, observedAt: o.observedAt, now: null };
   }
   if (phase === "after") {
-    return { chance: o.reading ?? o.baseline, observedAt: null, now: null };
+    // After the final, read ONLY the producer's admitted `pregame_reading` (#11125 contract).
+    return { chance: o.reading, observedAt: null, now: null };
   }
   const now = o.quoted !== null && isRecentQuote(o.observedAt, nowMs) ? o.quoted : null;
-  return { chance: o.baseline ?? o.reading, observedAt: null, now };
+  return { chance: o.baseline, observedAt: null, now };
 }
 
 function parseSoccerGoalThresholdFromLabel(label: string): number | null {
@@ -797,9 +854,9 @@ export function buildSoccerGoalTotalCard(opts: {
         source: overOpt.source,
         quoted: overOpt.quoted,
         observedAt: overOpt.observedAt,
-        baseline: settled ? (overOpt.reading ?? overOpt.baseline) : overOpt.baseline,
+        baseline: settled ? overOpt.reading : overOpt.baseline,
         baselineObservedAt: settled
-          ? (overOpt.readingObservedAt ?? overOpt.baselineObservedAt)
+          ? overOpt.readingObservedAt
           : overOpt.baselineObservedAt,
         result: overOpt.result,
       },
@@ -823,7 +880,7 @@ export function buildSoccerGoalTotalCard(opts: {
       const pregame = openChance(
         row.pregame_mark ??
           row.opening_probability ??
-          (phase === "before" ? row.over_probability : null),
+          (phase === "before" && isRecentQuote(observedAt, opts.nowMs) ? row.over_probability : null),
       );
       const verdict = outcomeRowVerdict(
         {
