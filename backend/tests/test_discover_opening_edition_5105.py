@@ -474,41 +474,49 @@ def _conflicted(card):
     return bad
 
 
-def test_a_conflict_in_the_pinned_opening_refuses_without_mutating_input():
+def test_a_conflict_in_the_pinned_opening_expires_the_pin_withholds_the_offender_and_restarts():
+    """#12041 (Ruling 23-A): a conflict in the pinned opening expires the held
+    deck and restarts at page one over a replacement that holds back only the
+    offender, without mutating the input."""
     minted = _mint(_opening_deck())
     current = _refresh(minted.items)
     current[2] = _conflicted(current[2])
     before = copy.deepcopy(current)
     order = list(current)
     out = _request(current, minted)
-    assert out.status == UNSUPPORTED and not out.usable
-    assert out.edition_status is None  # neither held nor shown expired
-    assert out.retire_requested and not out.restart_at_page_one
-    assert out.token is None and out.manifest is None and out.deck_seating is None
+    assert out.status == COMPOSED and out.usable
+    assert out.edition_status == EDITION_STATUS_EXPIRED
+    assert out.seating_expiry == SEATING_EXPIRY_OPENING_ORDER
+    assert out.retire_requested and out.restart_at_page_one
+    assert out.token is not None and out.token != minted.token
+    assert out.manifest is not None and out.manifest["token"] == out.token
     assert out.pin_seating.refused_conflicts == ["event:900"]
+    assert [w["identity"] for w in out.withheld] == ["event:900"]
+    assert "event:900" not in _ids(out.items)
+    assert len(out.items) == len(current) - 1
     assert current == before and current == order
-    assert all(a is b for a, b in zip(out.items, order)) and out.items is not current
+    assert all(any(a is b for b in order) for a in out.items) and out.items is not current
 
 
-def test_a_refused_replacement_keeps_the_requested_status_and_is_not_usable():
+def test_a_refused_replacement_with_no_surviving_cards_keeps_the_requested_status_and_is_not_usable():
     minted = _mint(_opening_deck())
-    current = _refresh(minted.items)
-    current[2] = _conflicted(current[2])
+    current = [_conflicted(_event(900))]
     late = T0 + timedelta(seconds=EDITION_LEASE_SECONDS + 1)
     out = _request(current, minted, now=late)
     assert out.status == UNSUPPORTED and not out.usable
     assert out.edition_status == EDITION_STATUS_EXPIRED
     assert out.deck_seating.refused_conflicts == ["event:900"]
+    assert [w["identity"] for w in out.withheld] == ["event:900"]
 
 
-def test_an_unpinned_refusal_is_unsupported_not_a_deck():
-    deck = _opening_deck()
-    deck[2] = _conflicted(deck[2])
+def test_an_unpinned_refusal_with_no_surviving_cards_is_unsupported_not_a_deck():
+    deck = [_conflicted(_event(900))]
     out = compose_opening_edition(
         deck, None, requested_token=None, requested_policy=POLICY, now=T1
     )
     assert out.status == UNSUPPORTED and out.edition_status == EDITION_STATUS_UNPINNED
     assert not out.retire_requested and out.token is None
+    assert [w["identity"] for w in out.withheld] == ["event:900"]
 
 
 def test_a_bundle_whose_child_goes_live_expires_the_pin_and_recomposes():
