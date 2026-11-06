@@ -207,14 +207,32 @@ CHECKS: list[dict[str, Any]] = [
     # --- DataGolf freshness (P1) ---
     {
         "name": "datagolf_freshness",
+        # #12092: the old unconditional "0 DataGolf updates in 12h" form fired a
+        # P1 (and an email to Alex) on every golf off-day — #1765 re-observed it
+        # from Aug 11 to Nov 4 — the same crying-wolf class as espn_freshness.
+        # DataGolf rows move around tournaments; a Monday-Wednesday has 12-hour
+        # gaps by nature. Now PLAY-GATED: it fails only while an open DataGolf
+        # market's tournament is under way — started at least 12 h ago
+        # (`commence_time` is the start date at 00:00Z) and not past its final day
+        # (`resolution_date` is the final day at 00:00Z, so + 1 day) — AND no
+        # DataGolf market updated in 18 h. 18 h, not 12: golf plays by day, and
+        # the overnight gap between one round's last shot and the next round's
+        # first tee runs up to ~16 h. Returns 1 (real gap) / 0 (no play, or healthy).
         "query": (
-            "SELECT COUNT(*) FROM futures_markets "
-            "WHERE source = 'datagolf' AND updated_at > NOW() - INTERVAL '12 hours'"
+            "SELECT CASE WHEN EXISTS ("
+            "  SELECT 1 FROM futures_markets fm"
+            "  WHERE fm.source = 'datagolf' AND fm.status = 'open'"
+            "    AND fm.commence_time <= NOW() - INTERVAL '12 hours'"
+            "    AND fm.resolution_date + INTERVAL '1 day' > NOW()"
+            ") AND (SELECT COUNT(*) FROM futures_markets"
+            "       WHERE source = 'datagolf'"
+            "       AND updated_at > NOW() - INTERVAL '18 hours') = 0"
+            " THEN 1 ELSE 0 END"
         ),
-        "threshold": 1,
-        "comparison": "gte",
+        "threshold": 0,
+        "comparison": "lte",
         "severity": "P1",
-        "message": "No DataGolf markets updated in 12 hours — golf leaderboards and probabilities may be stale",
+        "message": "A golf tournament is under way and no DataGolf market updated in 18 hours — golf leaderboards and probabilities may be stale (play-gated: fires only during a tournament)",
     },
     # --- MLB win probability freshness (P1) ---
     {
