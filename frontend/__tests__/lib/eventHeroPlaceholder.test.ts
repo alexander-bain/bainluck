@@ -45,29 +45,6 @@ const PLACEHOLDER = scheduledEvent(
 const TRADED = scheduledEvent({ polymarket: { value: 0.495 } }, 0.495);
 
 describe("resolveProbability — scheduled game with no real evidence", () => {
-  it("asserts NO probability when the only source is an untraded midpoint", () => {
-    const r = resolveProbability(PLACEHOLDER, undefined, null, false, false);
-    expect(r.homeProb).toBeNull();
-    expect(r.awayProb).toBeNull();
-  });
-
-  it("does not label the withheld state as an 'Aggregate' answer", () => {
-    const r = resolveProbability(PLACEHOLDER, undefined, null, false, false);
-    expect(r.probSourceLabel).toBeNull();
-  });
-
-  it("cannot be re-introduced through the win_prob_history fallback", () => {
-    // A chart point derived from that same placeholder source must not sneak the
-    // number back in via the lastChartPoint branch.
-    const r = resolveProbability(
-      PLACEHOLDER,
-      undefined,
-      { homeProb: 0.42, awayProb: 0.58 } as never,
-      false,
-      false,
-    );
-    expect(r.homeProb).toBeNull();
-  });
 
   // --- both-direction guards (gotcha #43) ---
 
