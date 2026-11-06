@@ -55,11 +55,9 @@ export const RELATION_WORDS: Record<Relation, string> = {
  * Plain words for each gate: its name, what it checks, and how each of its
  * counts reads. A count named here as a failure count (wrongly combined, cut
  * off, unreadable, not word for word) is a count of failures, as the record's
- * identifiers say.
- */
-/**
- * Plain words for each gate. `scope` names what a gate measured across the
- * passes counts, when "every reply" would be wrong for it.
+ * identifiers say. `scope`, when set, replaces the default line naming the
+ * pairs a gate was scored on (held-out or all), for a gate whose counts take
+ * in every pair.
  */
 export const GATE_WORDS: Record<string, { name: string; checks: string; units: Record<string, string>; scope?: string }> = {
   twin_detection: {
