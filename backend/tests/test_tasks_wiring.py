@@ -326,7 +326,7 @@ class TestBeatScheduleCompleteness:
         # "check-tier1-coverage" retired by C-1 / B-7 (2026-11-06): one log line, no reader.
         "daily-digest",
         "backfill-polymarket-price-history",
-        "backfill-kalshi-price-history",
+        # "backfill-kalshi-price-history" retired by C-1 / B-12: no watermark, cannot drain.
         "kalshi-cliff-drain",
         "backfill-polymarket-open-sparse",
         "backfill-kalshi-open-sparse",

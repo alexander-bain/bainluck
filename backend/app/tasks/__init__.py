@@ -9226,12 +9226,12 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"limit": 500},
         "options": {"queue": "background"},
     },
-    "backfill-kalshi-price-history": {
-        "task": "app.tasks.backfill_kalshi_history",
-        "schedule": crontab(minute=30, hour="4,10,16,22"),  # Every 6h, 30min after Polymarket
-        "kwargs": {"limit": 500},
-        "options": {"queue": "background"},
-    },
+    # "backfill-kalshi-price-history" (the `resolved_zero` mode) retired by C-1 /
+    # B-12 (worker audit 2026-11-06): it has no watermark, so it re-selects the
+    # same empty head rows every run and cannot drain (`kalshi_cliff.py` header,
+    # reasons 1-3). `kalshi-cliff-drain` below covers the same resolved cohort
+    # hourly with a watermark, and `repair-openings-from-first-snapshot` covers
+    # the opening-null arm. The task and its other modes stay.
     # #1586 (queue 355): the cliff drain. HOURLY, deliberately — unlike every
     # other backfill here, the work this one does not do today cannot be done
     # at all: ~7,800 Kalshi markets cross the 86-day retention horizon every
@@ -9575,8 +9575,13 @@ celery_app.conf.beat_schedule = {
         # poller alone — the background worker is concurrency 2 and a long
         # co-scheduled beat is how three of these siblings starved before
         # (gotcha #12/#39). Our own wall is 480s, so the run ends by :56.
+        #
+        # C-1 / B-12 (worker audit 2026-11-06): DAILY, the 04:48 UTC slot of
+        # the four above. The drain's steady state is "examined a slice,
+        # restored zero" (see `repair_openings_from_first_snapshot`), so three
+        # of four runs were ~480 s of table walk that fixed nothing.
         "task": "app.tasks.repair_openings_from_first_snapshot",
-        "schedule": crontab(minute=48, hour="4,10,16,22"),
+        "schedule": crontab(minute=48, hour=4),
         "options": {"queue": "background"},
     },
     "compute-calibration-prices": {

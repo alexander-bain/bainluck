@@ -190,3 +190,31 @@ def test_the_tier1_coverage_beat_is_retired_but_the_task_stays():
 
     assert "check-tier1-coverage" not in celery_app.conf.beat_schedule
     assert "app.tasks.check_tier1_coverage" in celery_app.tasks
+
+
+# --- B-12: drained slow beats ------------------------------------------------
+
+
+def test_the_openings_repair_runs_once_a_day_in_its_own_slot():
+    from celery.schedules import crontab
+
+    from app.tasks import celery_app
+
+    entry = celery_app.conf.beat_schedule["repair-openings-from-first-snapshot"]
+    assert entry["schedule"] == crontab(minute=48, hour=4)
+    assert entry["options"]["queue"] == "background"
+
+
+def test_the_kalshi_resolved_zero_beat_is_retired_and_the_cliff_drain_covers_it():
+    from app.tasks import celery_app
+
+    beats = celery_app.conf.beat_schedule
+    assert "backfill-kalshi-price-history" not in beats
+    # Its cohort is drained hourly by the watermarked rail; its other modes run.
+    assert beats["kalshi-cliff-drain"]["task"] == "app.tasks.kalshi_cliff_drain"
+    modes = sorted(
+        (e.get("kwargs") or {}).get("mode", "resolved_zero")
+        for e in beats.values()
+        if e["task"] == "app.tasks.backfill_kalshi_history"
+    )
+    assert modes == ["open_sparse", "pregame_gap"]
