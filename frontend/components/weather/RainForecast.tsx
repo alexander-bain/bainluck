@@ -1,9 +1,10 @@
 "use client";
 
 import useSWR from "swr";
-import { probColor, nycToday, weatherProbability } from "./data";
+import { probColor, nycToday, weatherProbability, weatherRowSettled } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import { SourceBadge } from "./SourceBadge";
 import { fetchRain } from "@/lib/weatherApi";
 import { rainCardHeading, rainGridStyle } from "@/lib/rainCardHeading";
@@ -90,7 +91,7 @@ function RainDaySkeleton() {
 // Francisco" rendered as "San Francis…". 104px is measured, not computed —
 // `tools/look-local.mjs` at 390px with all ten cities, which is also the width
 // where the bar has least room to give.
-const MONTHLY_GRID = "104px 1fr 42px 36px";
+const MONTHLY_GRID = "104px 1fr 52px 36px";
 
 function MonthlySkeleton() {
   return (
@@ -313,16 +314,17 @@ export default function RainForecast() {
                         />
                       </div>
                       <span
-                        className="text-right font-mono font-bold text-sm"
+                        className="text-right font-mono font-bold text-sm whitespace-nowrap"
                         style={{ color: col }}
                       >
-                        {/* UX-P046 on the value (#6616). Miami, Seattle, NYC
-                            and Houston are all stored at 0.995000 on OPEN
-                            "Above 1 inch" markets and all four printed a flat
-                            `100%` — four cities the card called settled rain. */}
-                        {formatProbabilityPercent(weatherProbability(m), {
-                          rendered: m.prob,
-                        })}
+                        {/* UX-P046 on the value (#6616) and result word on
+                            settled rows (#12093): a settled 1.0 leg shows
+                            "✓ Won" rather than a bare "100%". */}
+                        {weatherRowSettled(m)
+                          ? ATLAS_STATE_COPY.wonWithCheck
+                          : formatProbabilityPercent(weatherProbability(m), {
+                              rendered: m.prob,
+                            })}
                       </span>
                       <span
                         className="text-right font-mono text-[10px]"

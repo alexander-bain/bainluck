@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchPolitics } from "@/lib/api";
 import type {
+  ChamberControl,
   PoliticsData,
   PoliticsMarketRow,
   PoliticsCandidate,

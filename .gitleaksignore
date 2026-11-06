@@ -120,3 +120,7 @@ aeeb6fe11415997b649e57a6beee611d26d1f459:artifacts/web-event-quotes-9484/INDEPEN
 # authority reference copy, never built or served; not a credential.
 2ba4ef13007a67799bc43710b6cd1c76164fb0ca:docs/designs/event-page-atlas-2026-10/src/playerDuelEvidence.ts:generic-api-key:37
 7f29d5bc5033309911f8949553b56eb81de799d5:.gitleaksignore:generic-api-key:119
+
+# #12102: SHA256 of frozen adjudicated labels, not a credential.
+# Exact historical finding; recomputed from the original private JSON.
+d54c97d3403d8973d11dd640a39ee7105c74e638:frontend/lib/evals/data/twin-exam-2026-11-05.json:generic-api-key:246
