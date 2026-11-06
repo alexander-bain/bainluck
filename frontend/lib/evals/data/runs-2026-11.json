@@ -1,0 +1,120 @@
+{
+  "schema": "evals-runs/1",
+  "runs": [
+    {
+      "id": "discover-interest-baseline",
+      "date": "2026-08-10",
+      "title": "Is the feed interesting? The first baseline",
+      "by": "by_hand",
+      "result": "not_eligible",
+      "note": "{labels} human labels, {positives} of them positive: too few for a baseline, so no change to the feed could be measured against one.",
+      "figures": {
+        "labels": {
+          "value": 24,
+          "format": "count"
+        },
+        "positives": {
+          "value": 1,
+          "format": "count"
+        }
+      },
+      "cost": null,
+      "receipt": {
+        "label": "Discover exit exam, the interest baseline",
+        "href": "https://github.com/alexander-bain/bainluck/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md"
+      }
+    },
+    {
+      "id": "calibration-exit-exam",
+      "date": "2026-08-13",
+      "title": "Calibration exit exam",
+      "by": "by_hand",
+      "result": "fail",
+      "note": "Alex's checklist for the accuracy page. An item turns green only with linked proof, and the exam has not passed.",
+      "figures": {},
+      "cost": null,
+      "receipt": {
+        "label": "Calibration exit exam scoreboard",
+        "href": "https://github.com/alexander-bain/bainluck/blob/91ae8c8e1c/docs/CALIBRATION-EXIT-EXAM.md"
+      }
+    },
+    {
+      "id": "twin-judge-first-run",
+      "date": "2026-11-03",
+      "title": "AI twin judge, first run",
+      "by": "ai_model",
+      "model": "claude-sonnet-5-5",
+      "result": "fail",
+      "note": "{cut_off} of its {replies} replies were cut off mid-answer and counted as a no, so the run could not show how good the judge was.",
+      "figures": {
+        "replies": {
+          "value": 120,
+          "format": "count"
+        },
+        "cut_off": {
+          "value": 43,
+          "format": "count"
+        }
+      },
+      "cost": {
+        "value": 0.51,
+        "basis": "usage_rated"
+      },
+      "receipt": {
+        "label": "Twin exam brief, the first run's cost",
+        "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6650478138"
+      }
+    },
+    {
+      "id": "twin-judge-exam-run-1",
+      "date": "2026-11-05",
+      "title": "AI twin judge exam, first run",
+      "by": "ai_model",
+      "model": "claude-sonnet-5-5",
+      "result": "fail",
+      "note": "Three passes over the same pairs, after a {pilot_replies}-reply pilot. No license was granted, so a person still checks the judge's work.",
+      "figures": {
+        "replies": {
+          "value": 360,
+          "format": "count"
+        },
+        "pilot_replies": {
+          "value": 10,
+          "format": "count"
+        }
+      },
+      "cost": {
+        "value": 6.807833,
+        "basis": "usage_rated",
+        "includes": "pilot"
+      },
+      "receipt": {
+        "label": "Twin exam receipt",
+        "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673312127"
+      }
+    },
+    {
+      "id": "twin-judge-exam-run-2",
+      "date": "2026-11-05",
+      "title": "AI twin judge exam, second run",
+      "by": "ai_model",
+      "model": "claude-sonnet-5-5",
+      "result": "fail",
+      "note": "A repeat of the first run, with two instruction blocks rewritten after its held-out results had been seen, so it is not a fresh blind test. It made no unsafe joins, but it marked most true twins as impossible to check.",
+      "figures": {
+        "replies": {
+          "value": 360,
+          "format": "count"
+        }
+      },
+      "cost": {
+        "value": 7.737527,
+        "basis": "usage_rated"
+      },
+      "receipt": {
+        "label": "Twin exam, second run receipt",
+        "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674874973"
+      }
+    }
+  ]
+}
