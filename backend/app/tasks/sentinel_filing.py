@@ -268,22 +268,42 @@ def issue_has_label(issue: dict, label: str) -> bool:
     return False
 
 
+#: GitHub accepts no more comments on an issue that already has 2,500 — the
+#: comment POST answers 403. #11958: Matching Drift's #2728 reached exactly 2,500
+#: on Sep 29, and from then on every RED run "filed" a 403 and reached nobody.
+GITHUB_COMMENT_CAP = 2500
+
+
+def issue_is_full(issue: dict) -> bool:
+    """True when GitHub will refuse another comment on this issue (the list
+    API's ``comments`` count is at the cap)."""
+    try:
+        return int(issue.get("comments") or 0) >= GITHUB_COMMENT_CAP
+    except (TypeError, ValueError):
+        return False
+
+
 def find_matching_issue(
     open_issues: list[dict],
     fingerprint: str,
     marker_key: str,
     title_prefix: str | None = None,
+    *,
+    accepting_comments: bool = False,
 ) -> int | None:
     """Pure dedup lookup over a list of open issues → matching issue number.
 
     Returns the LOWEST matching number so a stable canonical issue wins when
     duplicates already exist (the r252 cleanup: comment/close the oldest, not a
-    later dupe)."""
+    later dupe). ``accepting_comments`` (the RED path) skips an issue GitHub
+    will no longer take a comment on, so the episode continues on a successor
+    issue instead of 403-ing forever (#11958)."""
     matches = [
         i["number"]
         for i in (open_issues or [])
         if isinstance(i, dict)
         and i.get("number") is not None
+        and not (accepting_comments and issue_is_full(i))
         and issue_matches(i, fingerprint, marker_key, title_prefix)
     ]
     return min(matches) if matches else None
@@ -420,7 +440,9 @@ def reconcile_issue(
         snapshot = open_issues  # plain list — trusted (back-compat)
 
     if red:
-        existing = find_matching_issue(snapshot, fingerprint, marker_key, title_prefix)
+        existing = find_matching_issue(
+            snapshot, fingerprint, marker_key, title_prefix, accepting_comments=True
+        )
         if existing is not None:
             try:
                 gh.comment_on_issue(
@@ -456,7 +478,9 @@ def reconcile_issue(
             # re-read fall back to the snapshot (never abort a legitimate file).
             fresh = fetch_open_alert_issues()
             if fresh.ok:
-                raced = find_matching_issue(fresh.issues, fingerprint, marker_key, title_prefix)
+                raced = find_matching_issue(
+                    fresh.issues, fingerprint, marker_key, title_prefix, accepting_comments=True
+                )
                 if raced is not None:
                     try:
                         gh.comment_on_issue(
@@ -472,6 +496,14 @@ def reconcile_issue(
                         action="commented", issue=raced, body_refresh=_refresh_body(raced)
                     )
                     return result
+        # #11958: an open issue for this fingerprint that GitHub will take no
+        # more comments on is continued, not abandoned — the successor names it.
+        full = find_matching_issue(snapshot, fingerprint, marker_key, title_prefix)
+        if full is not None:
+            body = (
+                f"{body}\n\nContinues #{full}, which reached GitHub's limit of "
+                f"{GITHUB_COMMENT_CAP:,} comments on one issue."
+            )
         try:
             number, node_id = gh.create_github_issue(title, body, filing_labels(labels))
         except Exception as exc:
