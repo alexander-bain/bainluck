@@ -330,6 +330,119 @@ async def test_a_withdrawal_rebuilds_the_page_and_survives_the_next_pass(world):
 
 
 @pytest.mark.asyncio
+async def test_9925_the_page_governs_the_card_through_admission_and_withdrawal(world, monkeypatch):
+    """62-A: reproduce the GPT Sol mismatch without changing stored rules.
+
+    A fixture-only rule widening then proves an automatic pass admits the new
+    market while preserving an operator withdrawal, and the card follows both.
+    """
+
+    import re
+
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.tasks.theme_assembly import (
+        _run_assemble_theme_collections,
+        _run_rebuild_theme_snapshot,
+    )
+    from app.utils import container_corrections as cc
+    from app.utils import theme_collection_ref as tcr
+    from app.utils import theme_definitions as td
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+        sol = FuturesMarket(
+            id=62178321,
+            source="polymarket",
+            external_id="PM-GPT-SOL",
+            name="What will GPT Sol's output token price hit in 2026?",
+            status="open",
+            category="tech",
+            llm_sport_category="tech",
+            market_tier=2,
+            resolution_date=datetime(2026, 12, 31, tzinfo=timezone.utc),
+        )
+        db.add(sol)
+        await db.flush()
+        db.add(
+            FuturesOutcome(
+                market_id=sol.id,
+                external_id="SOL-YES",
+                name="Yes",
+                current_probability=0.41,
+            )
+        )
+        await db.commit()
+    cid = await _assemble_and_publish(world)
+    withdrawn = ids["PM-GROK5"]
+    async with world["Session"]() as db:
+        await cc.withdraw_member(
+            db,
+            container_id=cid,
+            child_type="market",
+            child_id=withdrawn,
+            reason="not this story",
+            actor="test",
+        )
+        await db.commit()
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    preview = [*ids.values(), sol.id]
+    bundle = {
+        "type": "bundle",
+        "score": 50,
+        "data": {
+            "id": "theme:story:ai:fixture",
+            "kind": "theme",
+            "story_key": "story:ai",
+            "member_ids": preview,
+            "item_count": len(preview),
+            "items": [
+                {"type": "futures", "score": 50, "data": {"id": mid}} for mid in preview
+            ],
+        },
+    }
+
+    async def check_card():
+        page = await _get(world, AI_SLUG)
+        pub = await tcr.read_published_themes(session_factory=world["Session"])
+        deck = await tcr.attach_theme_collection_refs(
+            [bundle],
+            published=pub,
+            session_factory=world["Session"],
+        )
+        card = deck[0]["data"]
+        assert card["collection_ref"]["slug"] == AI_SLUG
+        assert card["collection_ref"]["revision"] == page["revision"]
+        assert (
+            card["collection_ref"]["collection_count"] == page["counts"]["shown_count"]
+        )
+        assert set(card["member_ids"]) == set(_page_ids(page))
+        assert withdrawn not in card["member_ids"]
+        assert card["item_count"] == len(card["items"])
+        assert {m["data"]["id"] for m in deck[1:]} == set(preview) - set(
+            card["member_ids"]
+        )
+        return card
+
+    assert sol.id not in (await check_card())["member_ids"]
+    # Simulate a reviewed future rule admission, in this fixture only. No
+    # membership id list is introduced into either product selector.
+    terms = (*td._AI_ENTITY_TERMS, "gpt")
+    monkeypatch.setattr(
+        td,
+        "_AI_ENTITY_RE",
+        re.compile(
+            r"\b(" + "|".join(t for t in terms if t != "gemini") + r")\b",
+            re.I,
+        ),
+    )
+    monkeypatch.setattr(td, "AI_ENTITY_PG", r"\y(" + "|".join(terms) + r")\y")
+    assert (await _run_assemble_theme_collections(only=AI_SLUG))[
+        "terminal"
+    ] == "complete"
+    assert sol.id in (await check_card())["member_ids"]
+
+
+@pytest.mark.asyncio
 async def test_the_last_member_withdrawn_still_rebuilds_to_an_empty_page(world):
     """Mutation: read the theme identity from a surviving edge after the delete
     → the second transaction sends nothing and this goes red."""
@@ -638,11 +751,13 @@ async def _card(world, ids):
     published = await tcr.read_published_themes(
         budget_seconds=5.0, session_factory=world["Session"]
     )
-    (out,) = await tcr.attach_theme_collection_refs(
-        [_ai_bundle(ids)], published=published, budget_seconds=5.0,
+    bundle = _ai_bundle(ids)
+    deck = await tcr.attach_theme_collection_refs(
+        [bundle], published=published, budget_seconds=5.0,
         observe=reports.append, session_factory=world["Session"],
     )
-    reason = reports[0][out["data"]["id"]] if reports else None
+    out = deck[0]
+    reason = reports[0][bundle["data"]["id"]] if reports else None
     return out["data"].get("collection_ref"), reason, published
 
 
@@ -691,10 +806,9 @@ async def test_9925_the_card_links_to_the_page_it_counts_and_only_while_it_can(w
     assert page["revision"] == live
     assert set(preview) <= set(_page_ids(page))
 
-    # A false friend in the preview: ai does not admit it, and the map never
-    # falls back, so no link.
+    # 62-A: a false friend leaves the preview; the page's remaining set links.
     ref, reason, _ = await _card(world, [*preview, ids["PM-MONET"]])
-    assert ref is None and reason == "mapped_target_absent"
+    assert ref["slug"] == AI_SLUG and reason == tcr.EMITTED
 
     # A member withdrawal moves the revision: no link while the page builds,
     # then the new revision's link, counting one fewer.
