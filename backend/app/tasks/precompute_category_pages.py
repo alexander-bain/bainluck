@@ -1151,6 +1151,100 @@ def _build_prewarm_request(scope_key: str):
     )
 
 
+#: #12041 (Ruling 23-A) — per-shape opening withholding tracker for the warm
+#: rail: warns when a shape's held-back set changes, and logs an error once if
+#: the same card(s) remain held back after 15 minutes (900s).
+FEED_PREWARM_OPENING_ESCALATE_AFTER_S = 900.0
+_PREWARM_OPENING_WITHHELD_STATE: dict[str, dict] = {}
+
+
+def _prewarm_opening_clock() -> float:
+    return datetime.now(timezone.utc).timestamp()
+
+
+def _reset_prewarm_opening_withheld_for_tests() -> None:
+    _PREWARM_OPENING_WITHHELD_STATE.clear()
+
+
+def _record_prewarm_opening_outcome(
+    label: str,
+    scope_opening: dict | None,
+    *,
+    now_epoch: float | None = None,
+) -> dict | None:
+    """Track, log and escalate held-back opening cards per shape (#12041)."""
+    if not isinstance(scope_opening, dict):
+        return None
+    epoch = _prewarm_opening_clock() if now_epoch is None else float(now_epoch)
+    withheld = [str(x) for x in (scope_opening.get("withheld") or [])]
+    refusal_class = scope_opening.get("class")
+    detail = scope_opening.get("detail")
+    prev = _PREWARM_OPENING_WITHHELD_STATE.get(label)
+
+    if not withheld:
+        if prev and prev.get("withheld"):
+            logger.warning(
+                "Feed pre-warm opening withholding cleared for %s (was=%s) (#12041)",
+                label,
+                prev["withheld"],
+            )
+            _PREWARM_OPENING_WITHHELD_STATE.pop(label, None)
+        return {
+            "withheld": [],
+            "class": None,
+            "detail": None,
+            "since": None,
+        }
+
+    prev_withheld = tuple(prev.get("withheld") or ()) if prev else ()
+    if prev is None or prev_withheld != tuple(withheld):
+        since_iso = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+        _PREWARM_OPENING_WITHHELD_STATE[label] = {
+            "withheld": list(withheld),
+            "class": refusal_class,
+            "detail": detail,
+            "since_ts": epoch,
+            "since": since_iso,
+            "escalated": False,
+        }
+        logger.warning(
+            "Feed pre-warm opening held back %d card(s) for %s: withheld=%s "
+            "class=%s since=%s detail=%s (#12041)",
+            len(withheld),
+            label,
+            withheld,
+            refusal_class,
+            since_iso,
+            detail,
+        )
+    else:
+        since_ts = float(prev.get("since_ts", epoch))
+        since_iso = str(prev.get("since") or datetime.fromtimestamp(since_ts, tz=timezone.utc).isoformat())
+        prev["class"] = refusal_class
+        prev["detail"] = detail
+        elapsed_s = max(0.0, epoch - since_ts)
+        if elapsed_s >= FEED_PREWARM_OPENING_ESCALATE_AFTER_S and not prev.get("escalated"):
+            prev["escalated"] = True
+            logger.error(
+                "Feed pre-warm opening offender(s) still held back after %.0fs "
+                "(>= %ds) for %s: withheld=%s class=%s since=%s detail=%s (#12041)",
+                elapsed_s,
+                int(FEED_PREWARM_OPENING_ESCALATE_AFTER_S),
+                label,
+                withheld,
+                refusal_class,
+                since_iso,
+                detail,
+            )
+
+    return {
+        "withheld": list(withheld),
+        "class": refusal_class,
+        "detail": detail,
+        "since": _PREWARM_OPENING_WITHHELD_STATE[label]["since"],
+    }
+
+
 async def _prewarm_feed_shape(
     shape: dict, rc, *, deadline_s: float = FEED_PREWARM_PASS_BUDGET_S
 ) -> dict:
@@ -1172,6 +1266,7 @@ async def _prewarm_feed_shape(
     from app.utils.feed_cache import (
         FEED_LIVE_REPUBLISH_MIN_HEADROOM_S,
         FEED_PREWARM_KEY_SCOPE_KEY,
+        FEED_PREWARM_OPENING_SCOPE_KEY,
         FEED_PREWARM_SCOPE_KEY,
         FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
         feed_payload_was_built_by_this_request,
@@ -1241,6 +1336,9 @@ async def _prewarm_feed_shape(
         }
 
     duration_s = round(_time.monotonic() - started, 1)
+    _opening_report = _record_prewarm_opening_outcome(
+        label, request.scope.get(FEED_PREWARM_OPENING_SCOPE_KEY)
+    )
 
     # A DEGRADED build must never become shared truth — same contract the request
     # path enforces (Queue 283 / C80). Leave the prior last-good in place.
@@ -1281,19 +1379,31 @@ async def _prewarm_feed_shape(
         _status = (
             _cache_meta.get("status") if isinstance(_cache_meta, dict) else None
         )
-        logger.warning(
-            "Feed pre-warm produced an EMPTY feed for %s (cache_status=%s "
-            "reason=%s) — keeping last-good",
-            label,
-            _status,
-            _reason,
-        )
-        return {
+        if _reason == "opening_unsupported":
+            logger.warning(
+                "Feed pre-warm produced an EMPTY feed for %s (cache_status=%s "
+                "reason=%s) — seated shape has no last-good fallback (#12041)",
+                label,
+                _status,
+                _reason,
+            )
+        else:
+            logger.warning(
+                "Feed pre-warm produced an EMPTY feed for %s (cache_status=%s "
+                "reason=%s) — keeping last-good",
+                label,
+                _status,
+                _reason,
+            )
+        _empty_result = {
             "outcome": "empty",
             "duration_s": duration_s,
             "empty_reason": _reason,
             "cache_status": _status,
         }
+        if _opening_report is not None:
+            _empty_result["opening"] = _opening_report
+        return _empty_result
 
     # #3941: THE THIRD REFUSAL, and it is the same refusal as the two above.
     #
@@ -1491,7 +1601,7 @@ async def _prewarm_feed_shape(
         live,
         _artifact_age_s,
     )
-    return {
+    _ok_result = {
         "outcome": "ok",
         "duration_s": duration_s,
         "items": len(items),
@@ -1503,6 +1613,9 @@ async def _prewarm_feed_shape(
         # zero is the MEASURED one (gotcha #53 / the empty-200 rule, #53).
         "artifact_age_s": _artifact_age_s,
     }
+    if _opening_report is not None:
+        _ok_result["opening"] = _opening_report
+    return _ok_result
 
 
 async def _prewarm_grouped_feed_shape(
