@@ -1035,6 +1035,11 @@ export function MlbHomeRunCardView({
                       {ATLAS_STATE_COPY.wonWithCheck}
                     </span>
                   )}
+                  {!homered && entry.finalCount === 0 && (
+                    <span className="inline-flex items-center rounded bg-surface-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
+                      {ATLAS_STATE_COPY.lostWithCross}
+                    </span>
+                  )}
                   <span className="text-xs font-bold tabular-nums text-text-primary">{finalText}</span>
                 </div>
               </div>
@@ -1102,7 +1107,7 @@ export function MlbExtraInningsCardView({
     <div className="flex flex-col gap-2.5" data-card-kind="mlb-extra-innings" data-testid="mlb-extra-innings-card">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">
-          Extra innings · venue market
+          Extra innings
         </p>
         {onDetails && firstOutcome && (
           <button
@@ -1118,7 +1123,7 @@ export function MlbExtraInningsCardView({
       </div>
       <h3 className="text-lg font-bold text-text-primary leading-snug">Extra innings</h3>
       <p className="text-xs text-text-secondary">
-        {hasPregame ? "Chance before first pitch and venue settlement" : "Pregame chance unavailable for this market"}
+        {hasPregame ? "Chance before first pitch and settled result" : "Pregame chance unavailable for this market"}
       </p>
       <div className="flex flex-col divide-y divide-surface-border">
         {card.outcomes.map((outcome) => (
@@ -1130,9 +1135,6 @@ export function MlbExtraInningsCardView({
           >
             <div className="flex flex-col min-w-0">
               <span className="text-sm font-semibold text-text-primary">{outcome.label}</span>
-              {outcome.venue && (
-                <span className="text-[11px] text-text-secondary">{outcome.venue}</span>
-              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {outcome.pregameChance !== null && (
@@ -1146,9 +1148,16 @@ export function MlbExtraInningsCardView({
                   {ATLAS_STATE_COPY.wonWithCheck}
                 </span>
               )}
-              <span className="text-xs font-semibold text-text-secondary">
-                Venue result: {mlbVenueResultLabel(outcome.venueResult)}
-              </span>
+              {outcome.venueResult === "lost" && (
+                <span className="inline-flex items-center rounded bg-surface-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
+                  {ATLAS_STATE_COPY.lostWithCross}
+                </span>
+              )}
+              {outcome.venueResult !== "won" && outcome.venueResult !== "lost" && (
+                <span className="text-xs font-semibold text-text-secondary">
+                  {mlbVenueResultLabel(outcome.venueResult)}
+                </span>
+              )}
             </div>
           </button>
         ))}
@@ -1258,7 +1267,9 @@ export function MlbSeriesCardView({
                   {opt.result === "lost" && (
                     <span className="font-semibold text-text-secondary">{ATLAS_STATE_COPY.lostWithCross}</span>
                   )}
-                  <span>Venue result: {mlbVenueResultLabel(opt.result)}</span>
+                  {opt.result !== "won" && opt.result !== "lost" && (
+                    <span>{mlbVenueResultLabel(opt.result)}</span>
+                  )}
                 </div>
               </button>
             );
@@ -1473,9 +1484,20 @@ export function buildStoryCardDetailsSheetProps(opts: {
   if (card?.kind === "mlb-home-runs") {
     const entry = card.entries.find((e) => e.id === rowId) ?? card.entries[0] ?? null;
     if (!entry) return null;
-    const isSettled = entry.finalState === "final" && entry.finalCount !== null;
+    const isSettled =
+      (entry.finalState === "final" && entry.finalCount !== null) ||
+      entry.venueResult === "won" ||
+      entry.venueResult === "lost";
     const settledResult =
-      isSettled && entry.finalCount !== null ? (entry.finalCount >= 1 ? "won" : "lost") : null;
+      entry.finalCount !== null
+        ? entry.finalCount >= 1
+          ? "won"
+          : "lost"
+        : entry.venueResult === "won"
+          ? "won"
+          : entry.venueResult === "lost"
+            ? "lost"
+            : null;
     const rulesLines = [
       `Official final: ${
         entry.finalCount !== null
@@ -1484,7 +1506,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
             ? "Pending"
             : "Unavailable"
       }`,
-      `Venue settlement: ${mlbVenueResultLabel(entry.venueResult)}`,
+      `Result: ${mlbVenueResultLabel(entry.venueResult)}`,
     ];
     if (entry.finalSourceLabel && entry.finalCount !== null) {
       rulesLines.push(`Final source: ${entry.finalSourceLabel}`);
@@ -1497,8 +1519,8 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingProbability: entry.saved,
       openingObservedAt: entry.observedAt,
       lastObservedAt: entry.observedAt,
-      source: entry.venue ?? "sportsbooks",
-      sourceCount: 1,
+      source: "blended",
+      sourceCount: entry.sourceCount,
       rulesText: rulesLines.join("\n"),
     };
   }
@@ -1517,9 +1539,9 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingProbability: outcome.pregameChance,
       openingObservedAt: outcome.observedAt,
       lastObservedAt: outcome.observedAt,
-      source: outcome.venue ?? "sportsbooks",
-      sourceCount: 1,
-      rulesText: `Venue result: ${mlbVenueResultLabel(outcome.venueResult)}`,
+      source: "blended",
+      sourceCount: outcome.sourceCount,
+      rulesText: `Result: ${mlbVenueResultLabel(outcome.venueResult)}`,
     };
   }
 
@@ -1537,9 +1559,9 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingProbability: opt.pregame,
       openingObservedAt: opt.observedAt,
       lastObservedAt: opt.observedAt,
-      source: opt.venue ?? "sportsbooks",
-      sourceCount: 1,
-      rulesText: `Separate series market · Venue result: ${mlbVenueResultLabel(opt.result)}`,
+      source: "blended",
+      sourceCount: opt.sourceCount,
+      rulesText: `Separate series market · Result: ${mlbVenueResultLabel(opt.result)}`,
     };
   }
 
