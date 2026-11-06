@@ -1,0 +1,2082 @@
+{
+  "bite_rate": {
+    "mutation_bites": 40,
+    "real_boundaries": 0,
+    "total": 40
+  },
+  "families": [
+    {
+      "canonical": "eval_registry_contract",
+      "cases": 81,
+      "domain": "eval-governance",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/eval_registry_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 11,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_eval_registry_contract.py"
+            ]
+          },
+          "name": "eval_registry_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/eval_bite_rate_audit.json",
+              "selector": [
+                "samples"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 40,
+          "last_result": {
+            "failed": 0,
+            "passed": 3,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_eval_bite_rate_audit.py"
+            ]
+          },
+          "name": "eval_bite_rate_audit"
+        },
+        {
+          "case_sources": [
+            {
+              "kind": "test_functions",
+              "path": "backend/tests/evals/test_scoreboard.py",
+              "unit": "reporting tests"
+            }
+          ],
+          "cases": 4,
+          "last_result": null,
+          "name": "scoreboard"
+        },
+        {
+          "case_sources": [
+            {
+              "kind": "test_functions",
+              "path": "backend/tests/test_mutation_guard.py",
+              "unit": "shared guard tests (not independent cases)"
+            }
+          ],
+          "cases": 26,
+          "last_result": null,
+          "name": "_mutation_guard"
+        },
+        {
+          "case_sources": [
+            {
+              "kind": "test_functions",
+              "path": "backend/tests/test_mutation_guard.py",
+              "unit": "shared guard tests (not independent cases)"
+            }
+          ],
+          "cases": 26,
+          "last_result": null,
+          "name": "scan_mutation_residue"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "admin_surface_truth_contract",
+      "cases": 130,
+      "domain": "admin-health",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/admin_surface_truth_contract.json",
+              "selector": [
+                "headlines"
+              ],
+              "unit": "fixture rows"
+            },
+            {
+              "path": "backend/tests/evals/fixtures/admin_surface_truth_contract.json",
+              "selector": [
+                "classification"
+              ],
+              "unit": "fixture rows"
+            },
+            {
+              "path": "backend/tests/evals/fixtures/admin_surface_truth_contract.json",
+              "selector": [
+                "labeling"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 11,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_admin_surface_truth_contract.py"
+            ]
+          },
+          "name": "admin_surface_truth_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/admin_health_evidence_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 22,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_admin_health_evidence_contract.py"
+            ]
+          },
+          "name": "admin_health_evidence_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/admin_health_closure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 20,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_admin_health_closure_contract.py"
+            ]
+          },
+          "name": "admin_health_closure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/admin_destructive_boundary_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 15,
+          "last_result": {
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_admin_destructive_boundary_contract.py"
+            ]
+          },
+          "name": "admin_destructive_boundary_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/admin_auth_gate_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": {
+            "failed": 0,
+            "passed": 14,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_admin_auth_gate_mutations.py"
+            ]
+          },
+          "name": "admin_auth_gate_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "kind": "test_functions",
+              "path": "backend/tests/evals/test_admin_destructive_audit_sanitization.py",
+              "unit": "named generated tests"
+            }
+          ],
+          "cases": 3,
+          "last_result": {
+            "failed": 0,
+            "passed": 17,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_admin_destructive_audit_sanitization.py"
+            ]
+          },
+          "name": "admin_destructive_audit_sanitization"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/admin_verdict_parity_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 22,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_admin_verdict_parity_contract.py"
+            ]
+          },
+          "name": "admin_verdict_parity_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/measurement_surface_truth_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 15,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_measurement_surface_truth_contract.py"
+            ]
+          },
+          "name": "measurement_surface_truth_contract"
+        },
+        {
+          "case_sources": [],
+          "cases": null,
+          "last_result": null,
+          "name": "grid_freshness_query_authority_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/query_plan_rail_authority_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_query_plan_rail_authority_contract.py"
+            ]
+          },
+          "name": "query_plan_rail_authority_contract"
+        }
+      ],
+      "unknown_case_counts": [
+        "grid_freshness_query_authority_contract"
+      ]
+    },
+    {
+      "canonical": "browser_audit_replacement_contract",
+      "cases": 108,
+      "domain": "browser-audit",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/browser_audit_replacement_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 20,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_browser_audit_replacement_contract.py"
+            ]
+          },
+          "name": "browser_audit_replacement_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/browser_edge_failure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 29,
+          "last_result": {
+            "failed": 0,
+            "passed": 6,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_browser_edge_failure_contract.py"
+            ]
+          },
+          "name": "browser_edge_failure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/browser_filer_privilege_residual_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_browser_filer_privilege_residual_contract.py"
+            ]
+          },
+          "name": "browser_filer_privilege_residual_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/browser_product_jank_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 23,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_browser_product_jank_contract.py"
+            ]
+          },
+          "name": "browser_product_jank_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/browser_replacement_closure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 8,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_browser_replacement_closure_contract.py"
+            ]
+          },
+          "name": "browser_replacement_closure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/browser_sweep_filing_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 16,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_browser_sweep_filing_contract.py"
+            ]
+          },
+          "name": "browser_sweep_filing_contract"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "cache_failure_resilience",
+      "cases": 356,
+      "domain": "cache-resilience",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/cache_failure_resilience_fixtures.json",
+              "selector": [
+                "scenarios"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 14,
+          "last_result": {
+            "failed": 0,
+            "passed": 20,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_cache_failure_resilience.py"
+            ]
+          },
+          "name": "cache_failure_resilience"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/cache_connection_ownership_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 32,
+          "last_result": {
+            "failed": 0,
+            "passed": 13,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_cache_connection_ownership_contract.py"
+            ]
+          },
+          "name": "cache_connection_ownership_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/degraded_feed_publication_fixtures.json",
+              "selector": [
+                "scenarios"
+              ],
+              "unit": "fixture rows"
+            },
+            {
+              "path": "backend/scripts/evals/degraded_feed_publication_fixtures.json",
+              "selector": [
+                "rejected_counterexamples"
+              ],
+              "unit": "fixture rows"
+            },
+            {
+              "path": "backend/scripts/evals/kid_session_privacy_fixtures.json",
+              "selector": [
+                "scenarios"
+              ],
+              "unit": "fixture rows"
+            },
+            {
+              "path": "backend/scripts/evals/kid_session_privacy_fixtures.json",
+              "selector": [
+                "rejected_counterexamples"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 22,
+          "last_result": {
+            "failed": 0,
+            "passed": 9,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_degraded_cache_privacy_contract.py"
+            ]
+          },
+          "name": "degraded_cache_privacy_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/event_cache_repair_closure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_event_cache_repair_closure_contract.py"
+            ]
+          },
+          "name": "event_cache_repair_closure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/event_negative_cache_precedence_contract.json",
+              "selector": [],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 7,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_event_negative_cache_precedence_contract.py"
+            ]
+          },
+          "name": "event_negative_cache_precedence_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/politics_cache_tier_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 15,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_politics_cache_tier_contract.py"
+            ]
+          },
+          "name": "politics_cache_tier_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/cache_refresh_behind_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": null,
+          "name": "cache_refresh_behind_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/feed_prewarm_absent_shape_net_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 13,
+          "last_result": null,
+          "name": "feed_prewarm_absent_shape_net_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "CENSUS_MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/futures_categories_census_mutations.py",
+              "unit": "mutants"
+            },
+            {
+              "key": "SERVE_STALE_MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/futures_categories_census_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 17,
+          "last_result": null,
+          "name": "futures_categories_census_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/futures_categories_warm_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 15,
+          "last_result": null,
+          "name": "futures_categories_warm_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/futures_detail_sources_cache_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 17,
+          "last_result": null,
+          "name": "futures_detail_sources_cache_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/futures_movers_warm_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 7,
+          "last_result": null,
+          "name": "futures_movers_warm_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/game_markets_shared_cache_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 19,
+          "last_result": null,
+          "name": "game_markets_shared_cache_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/golf_schedule_cache_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 17,
+          "last_result": null,
+          "name": "golf_schedule_cache_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/league_context_grid_cache_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 8,
+          "last_result": null,
+          "name": "league_context_grid_cache_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/prop_families_cache_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 31,
+          "last_result": null,
+          "name": "prop_families_cache_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/prop_families_partial_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 30,
+          "last_result": null,
+          "name": "prop_families_partial_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/related_futures_shared_cache_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 19,
+          "last_result": null,
+          "name": "related_futures_shared_cache_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_suggestions_cold_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 21,
+          "last_result": null,
+          "name": "search_suggestions_cold_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/season_market_discovery_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 20,
+          "last_result": null,
+          "name": "season_market_discovery_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/typeahead_warmer_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": null,
+          "name": "typeahead_warmer_mutations"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "calibration_population_integrity",
+      "cases": 227,
+      "domain": "calibration-evidence",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/calibration_population_integrity_fixtures.json",
+              "selector": [
+                "scenarios"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 16,
+          "last_result": {
+            "failed": 0,
+            "passed": 7,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_population_integrity.py"
+            ]
+          },
+          "name": "calibration_population_integrity"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/calibration_independence_disclosure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_independence_disclosure_contract.py"
+            ]
+          },
+          "name": "calibration_independence_disclosure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/calibration_census_closure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 8,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_census_closure_contract.py"
+            ]
+          },
+          "name": "calibration_census_closure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/calibration_fingerprint_derived_map.json",
+              "selector": [
+                "inputs"
+              ],
+              "unit": "fingerprint inputs"
+            }
+          ],
+          "cases": 91,
+          "last_result": {
+            "failed": 0,
+            "passed": 13,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_fingerprint_derived_map.py"
+            ]
+          },
+          "name": "calibration_fingerprint_derived_map"
+        },
+        {
+          "case_sources": [
+            {
+              "kind": "test_functions",
+              "path": "backend/tests/evals/test_calibration_metric_robustness.py",
+              "unit": "named generated tests"
+            }
+          ],
+          "cases": 7,
+          "last_result": {
+            "failed": 0,
+            "passed": 7,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_metric_robustness.py"
+            ]
+          },
+          "name": "calibration_metric_robustness"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/calibration_publish_gate_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 14,
+          "last_result": {
+            "failed": 0,
+            "passed": 11,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_publish_gate_contract.py"
+            ]
+          },
+          "name": "calibration_publish_gate_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/calibration_surface_population_authority.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_surface_population_authority.py"
+            ]
+          },
+          "name": "calibration_surface_population_authority"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/calibration_rendered_parity_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 4,
+          "last_result": {
+            "failed": 0,
+            "passed": 3,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_rendered_parity_contract.py"
+            ]
+          },
+          "name": "calibration_rendered_parity_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/calibration_subcohort_diagnosis_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 9,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_calibration_subcohort_diagnosis_contract.py"
+            ]
+          },
+          "name": "calibration_subcohort_diagnosis_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/matched_calibration_evidence_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 14,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_matched_calibration_evidence_contract.py"
+            ]
+          },
+          "name": "matched_calibration_evidence_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/nonexclusive_bundle_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 20,
+          "last_result": {
+            "failed": 0,
+            "passed": 11,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_nonexclusive_bundle_contract.py"
+            ]
+          },
+          "name": "nonexclusive_bundle_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/trading_activity_authority_contract.json",
+              "selector": [],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 6,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_trading_activity_authority_contract.py"
+            ]
+          },
+          "name": "trading_activity_authority_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/staged_calibration_convergence_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 14,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_staged_calibration_convergence_contract.py"
+            ]
+          },
+          "name": "staged_calibration_convergence_contract"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "feed_card_trust_contract",
+      "cases": 205,
+      "domain": "event-page-trust",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/feed_card_trust_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 24,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_feed_card_trust_contract.py"
+            ]
+          },
+          "name": "feed_card_trust_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/additional_markets_authority_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 16,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_additional_markets_authority_contract.py"
+            ]
+          },
+          "name": "additional_markets_authority_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/golf_event_membership_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 15,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_golf_event_membership_contract.py"
+            ]
+          },
+          "name": "golf_event_membership_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/prop_divergence_grouping_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 10,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_prop_divergence_grouping_contract.py"
+            ]
+          },
+          "name": "prop_divergence_grouping_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/settled_event_result_authority.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 19,
+          "last_result": {
+            "failed": 0,
+            "passed": 12,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_settled_event_result_authority.py"
+            ]
+          },
+          "name": "settled_event_result_authority"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/settlement_authority_ladder_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 8,
+          "last_result": {
+            "failed": 0,
+            "passed": 3,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_settlement_authority_ladder_contract.py"
+            ]
+          },
+          "name": "settlement_authority_ladder_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/settled_prop_grade_authority_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 10,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_settled_prop_grade_authority_contract.py"
+            ]
+          },
+          "name": "settled_prop_grade_authority_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/tournament_ux_closure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 23,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_tournament_ux_closure_contract.py"
+            ]
+          },
+          "name": "tournament_ux_closure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "RESOLVER_MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+              "unit": "mutants"
+            },
+            {
+              "key": "COMPONENT_MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+              "unit": "mutants"
+            },
+            {
+              "key": "VIEW_MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/event_hero_duel_percent_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": null,
+          "name": "event_hero_duel_percent_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/ios_duel_percent_served_pair_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 16,
+          "last_result": null,
+          "name": "ios_duel_percent_served_pair_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/kalshi_segment_resolved_link_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 13,
+          "last_result": null,
+          "name": "kalshi_segment_resolved_link_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/market_born_duplicate_drain_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 23,
+          "last_result": null,
+          "name": "market_born_duplicate_drain_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/polymarket_leg_label_drain_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 17,
+          "last_result": null,
+          "name": "polymarket_leg_label_drain_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/observed_product_quality_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 1,
+          "last_result": {
+            "failed": 0,
+            "passed": 9,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_observed_product_quality_contract.py"
+            ]
+          },
+          "name": "observed_product_quality_contract"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "native_parity_inventory",
+      "cases": 29,
+      "domain": "native-trust",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/native_parity_inventory.json",
+              "selector": [
+                "capabilities"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 17,
+          "last_result": {
+            "failed": 0,
+            "passed": 8,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_native_parity_inventory.py"
+            ]
+          },
+          "name": "native_parity_inventory"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/native_surface_authority_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 2,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_native_surface_authority_contract.py"
+            ]
+          },
+          "name": "native_surface_authority_contract"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "first_card_client_contract",
+      "cases": 211,
+      "domain": "frontend-performance",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/first_card_client_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 29,
+          "last_result": {
+            "failed": 0,
+            "passed": 8,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_first_card_client_contract.py"
+            ]
+          },
+          "name": "first_card_client_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/animation_dependency_equivalence_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 13,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_animation_dependency_equivalence_contract.py"
+            ]
+          },
+          "name": "animation_dependency_equivalence_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/first_content_latency_attribution_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 18,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_first_content_latency_attribution_contract.py"
+            ]
+          },
+          "name": "first_content_latency_attribution_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/browse_single_scan_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 13,
+          "last_result": null,
+          "name": "browse_single_scan_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/cold_path_rejected_sample_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 5,
+          "last_result": null,
+          "name": "cold_path_rejected_sample_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "ADHERENCE_MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/duration_sample_window_mutations.py",
+              "unit": "mutants"
+            },
+            {
+              "key": "REDIS_MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/duration_sample_window_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 13,
+          "last_result": null,
+          "name": "duration_sample_window_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/feed_personalization_roundtrip_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 8,
+          "last_result": null,
+          "name": "feed_personalization_roundtrip_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/futures_source_breakdown_loose_scan_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 16,
+          "last_result": null,
+          "name": "futures_source_breakdown_loose_scan_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/latest_observation_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 18,
+          "last_result": null,
+          "name": "latest_observation_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/league_rails_fence_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": null,
+          "name": "league_rails_fence_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/tennis_population_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 36,
+          "last_result": null,
+          "name": "tennis_population_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/typeahead_fuzzy_index_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 9,
+          "last_result": null,
+          "name": "typeahead_fuzzy_index_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/typeahead_outcome_arm_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 23,
+          "last_result": null,
+          "name": "typeahead_outcome_arm_mutations"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "discover_lead_order_contract",
+      "cases": 18,
+      "domain": "discover-ordering",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/discover_lead_order_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 8,
+          "last_result": {
+            "failed": 0,
+            "passed": 14,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_discover_lead_order_contract.py"
+            ]
+          },
+          "name": "discover_lead_order_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/tag_counts_group_by_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": null,
+          "name": "tag_counts_group_by_mutations"
+        }
+      ],
+      "unknown_case_counts": []
+    },
+    {
+      "canonical": "search_truth_closure_contract",
+      "cases": 384,
+      "domain": "search-truth",
+      "members": [
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_truth_closure_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_truth_closure_contract.py"
+            ]
+          },
+          "name": "search_truth_closure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_concept_containment_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 24,
+          "last_result": {
+            "failed": 0,
+            "passed": 13,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_concept_containment_contract.py"
+            ]
+          },
+          "name": "search_concept_containment_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_degraded_response_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 24,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_degraded_response_contract.py"
+            ]
+          },
+          "name": "search_degraded_response_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_dropdown_cross_surface_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 12,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_dropdown_cross_surface_contract.py"
+            ]
+          },
+          "name": "search_dropdown_cross_surface_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_enrichment_failure_contract.json",
+              "selector": [],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 5,
+          "last_result": {
+            "failed": 0,
+            "passed": 4,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_enrichment_failure_contract.py"
+            ]
+          },
+          "name": "search_enrichment_failure_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_latency_budget_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 23,
+          "last_result": {
+            "failed": 0,
+            "passed": 15,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_latency_budget_contract.py"
+            ]
+          },
+          "name": "search_latency_budget_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_missing_answer_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 16,
+          "last_result": {
+            "failed": 0,
+            "passed": 6,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_missing_answer_contract.py"
+            ]
+          },
+          "name": "search_missing_answer_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_observability_truth_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 18,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_observability_truth_contract.py"
+            ]
+          },
+          "name": "search_observability_truth_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_recovery_state_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 24,
+          "last_result": {
+            "failed": 0,
+            "passed": 5,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_recovery_state_contract.py"
+            ]
+          },
+          "name": "search_recovery_state_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/tests/evals/fixtures/search_response_truth_contract.json",
+              "selector": [
+                "cases"
+              ],
+              "unit": "fixture rows"
+            }
+          ],
+          "cases": 22,
+          "last_result": {
+            "failed": 0,
+            "passed": 15,
+            "skipped": 0,
+            "test_files": [
+              "backend/tests/evals/test_search_response_truth_contract.py"
+            ]
+          },
+          "name": "search_response_truth_contract"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/search_gold_probes.json",
+              "selector": [
+                "probes"
+              ],
+              "unit": "shared gold probes (not independent cases)"
+            }
+          ],
+          "cases": 60,
+          "last_result": null,
+          "name": "build_search_gold_registry"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/offline_rerank_fidelity_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 14,
+          "last_result": null,
+          "name": "offline_rerank_fidelity_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/outcome_evidence_class_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 8,
+          "last_result": null,
+          "name": "outcome_evidence_class_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/search_gold_probes.json",
+              "selector": [
+                "probes"
+              ],
+              "unit": "shared gold probes (not independent cases)"
+            }
+          ],
+          "cases": 60,
+          "last_result": null,
+          "name": "search_bucket_producer"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/search_gold_probes.json",
+              "selector": [
+                "probes"
+              ],
+              "unit": "shared gold probes (not independent cases)"
+            }
+          ],
+          "cases": 60,
+          "last_result": null,
+          "name": "search_offline_rerank"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_origin_channel_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": null,
+          "name": "search_origin_channel_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "path": "backend/scripts/evals/search_gold_probes.json",
+              "selector": [
+                "probes"
+              ],
+              "unit": "shared gold probes (not independent cases)"
+            }
+          ],
+          "cases": 60,
+          "last_result": null,
+          "name": "search_results_producer"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_scorer_wiring_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 10,
+          "last_result": null,
+          "name": "search_scorer_wiring_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_stemmer_alias_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 8,
+          "last_result": null,
+          "name": "search_stemmer_alias_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_suggestions_mirror_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 14,
+          "last_result": null,
+          "name": "search_suggestions_mirror_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_suggestions_movers_pool_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 36,
+          "last_result": null,
+          "name": "search_suggestions_movers_pool_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_tier_split_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 8,
+          "last_result": null,
+          "name": "search_tier_split_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTANTS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/search_word_test_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 29,
+          "last_result": null,
+          "name": "search_word_test_mutations"
+        },
+        {
+          "case_sources": [
+            {
+              "key": "MUTATIONS",
+              "kind": "ast_list",
+              "path": "backend/scripts/evals/typeahead_concept_provenance_mutations.py",
+              "unit": "mutants"
+            }
+          ],
+          "cases": 7,
+          "last_result": null,
+          "name": "typeahead_concept_provenance_mutations"
+        }
+      ],
+      "unknown_case_counts": []
+    }
+  ],
+  "golden": {
+    "declared_total": 709,
+    "floor": 666,
+    "passing": 666,
+    "total": 709
+  },
+  "mutation_residue": {
+    "broad_checks": 5060510,
+    "command": "python3 scripts/evals/scan_mutation_residue.py --all-tracked",
+    "disk_free_batteries": 4,
+    "files_scanned": 10790,
+    "needles": 602,
+    "preexisting_literals": 52,
+    "recorded_at_pt": "2026-11-03 8:50:23 PM PT",
+    "scope": "all tracked files: 5,060,510 broad checks",
+    "short_replacements_excluded": 133,
+    "source_sha": "54470c89fdf9a4a00356160465af48e81d375bf0",
+    "targets": 51,
+    "verdict": "CLEAN"
+  },
+  "recorded_at_pt": "2026-11-03 8:48:47 PM PT",
+  "recorded_source_sha": "54470c89fdf9a4a00356160465af48e81d375bf0",
+  "registry": {
+    "grandfathered": 100,
+    "legacy": 0,
+    "legacy_names": [],
+    "registered": 110,
+    "unregistered": 0,
+    "unregistered_names": []
+  },
+  "schema_version": "eval-scoreboard/v1"
+}

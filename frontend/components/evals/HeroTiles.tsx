@@ -5,23 +5,23 @@ import TruthChip from "@/components/evals/TruthChip";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
 import { HERO_TILE_COPY } from "@/lib/evals/copy";
 import { stalenessHeadline } from "@/lib/calibrationStaleness";
+import { biteTruth, type Scoreboard } from "@/lib/evals/scoreboard";
+
+const TILE =
+  "block rounded-xl border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors";
 
 /**
  * The hero's tiles. Each jumps to its section and carries its own truth label;
- * a tile whose section is not on the page is absent. This step (S3) has the
- * forward record's; the exam and tests-for-the-tests tiles arrive with S2 and S4.
+ * a tile whose section is not on the page is absent. S3 brought the forward
+ * record's and S4 the tests-for-the-tests'; the exam's arrives with S2.
  */
-export default function HeroTiles({ forward }: { forward: ForwardRecordState }) {
+export default function HeroTiles({ forward, board }: { forward: ForwardRecordState; board: Scoreboard | null }) {
   const ready = forward.status === "ready" ? forward : null;
   const proof = ready?.view.proof ?? null;
+  const bite = board ? biteTruth(board) : null;
   return (
     <div className="grid gap-3 sm:grid-cols-3 text-left" data-testid="evals-hero-tiles">
-      <a
-        href="#forward-record"
-        data-hero-tile="forward-record"
-        data-truth-scope={ready ? "live" : undefined}
-        className="block rounded-xl border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors"
-      >
+      <a href="#forward-record" data-hero-tile="forward-record" data-truth-scope={ready ? "live" : undefined} className={TILE}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-caption-strong text-text-primary">{HERO_TILE_COPY.forwardTitle}</span>
           {ready && <TruthChip truth={ready.truth} linked={false} />}
@@ -52,6 +52,32 @@ export default function HeroTiles({ forward }: { forward: ForwardRecordState }) 
           </p>
         )}
       </a>
+      {board && bite && (
+        <a href="#tests-for-tests" data-hero-tile="tests-for-tests" data-truth-scope="last_run" className={TILE}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-caption-strong text-text-primary">{HERO_TILE_COPY.testsTitle}</span>
+            <TruthChip truth={bite} linked={false} />
+          </div>
+          <p className="mt-2 text-caption text-text-secondary">
+            <Figure truth={bite} value={String(board.bite.caught)} className="text-prob-sm text-text-primary">
+              {board.bite.caught.toLocaleString("en-US")}
+            </Figure>{" "}
+            {HERO_TILE_COPY.testsOf}{" "}
+            <Figure truth={bite} value={String(board.bite.total)}>
+              {board.bite.total.toLocaleString("en-US")}
+            </Figure>{" "}
+            {HERO_TILE_COPY.testsCaughtAfter}{" "}
+            <Figure truth={bite} value={String(board.bite.realCode)} className="text-prob-sm text-text-primary">
+              {board.bite.realCode.toLocaleString("en-US")}
+            </Figure>{" "}
+            {HERO_TILE_COPY.testsOf}{" "}
+            <Figure truth={bite} value={String(board.bite.total)}>
+              {board.bite.total.toLocaleString("en-US")}
+            </Figure>{" "}
+            {HERO_TILE_COPY.testsRealAfter}
+          </p>
+        </a>
+      )}
     </div>
   );
 }

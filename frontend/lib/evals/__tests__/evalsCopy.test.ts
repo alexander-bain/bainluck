@@ -13,7 +13,9 @@ import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy, type CopyBan } from
 import * as copy from "@/lib/evals/copy";
 import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { GAPS } from "@/lib/evals/gaps";
+import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { loadRuns } from "@/lib/evals/runs";
+import { FAMILY_WORDS } from "@/lib/evals/scoreboard";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { RESULT_WORD, ageLabel } from "@/lib/evals/truth";
 
@@ -34,6 +36,9 @@ function readerStrings(): string[] {
     ...GAPS.flatMap((g) => [g.text, g.planned?.waitingOn ?? ""]),
     ...EVALS_SOURCES.map((s) => s.label),
     ...loadRuns().flatMap((r) => [r.title, r.note, r.receipt.label]),
+    ...Object.values(FAMILY_WORDS).flatMap((w) => [w.name, w.checks]),
+    ...(loadReviewerStudy()?.cases ?? []).flatMap((c) => [c.label, c.text]),
+    loadReviewerStudy()?.receipt.label ?? "",
     ...Object.values(RESULT_WORD),
     ageLabel(0),
     ageLabel(1),
@@ -57,6 +62,9 @@ describe("/evals copy passes the bans", () => {
     expect(strings).toContain(GAPS[0].text);
     expect(strings).toContain(EVALS_SOURCES[0].label);
     expect(strings).toContain(loadRuns()[0].note);
+    expect(strings).toContain(FAMILY_WORDS.search_truth_closure_contract.checks);
+    expect(strings).toContain(loadReviewerStudy()?.cases[0].text);
+    expect(strings).toContain(copy.TESTS_FOR_TESTS_COPY.biteNoneReal);
     expect(strings.length).toBeGreaterThan(30);
   });
 

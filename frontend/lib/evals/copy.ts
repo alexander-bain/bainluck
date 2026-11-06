@@ -50,6 +50,10 @@ export const HERO_TILE_COPY = {
   forwardOutcomesAfter: "traded outcomes",
   unavailable: "Unavailable right now",
   loading: "Reading the live record",
+  testsTitle: "Tests for the tests",
+  testsOf: "of",
+  testsCaughtAfter: "planted changes caught;",
+  testsRealAfter: "built on the site's own code",
 } as const;
 
 export const TIMELINE_COPY = {
@@ -82,6 +86,65 @@ export const FORWARD_COPY = {
   loading: "Reading the live record.",
   chartLabel: "Calibration curve for traded outcomes, from the live record",
   more: "See the full accuracy page",
+} as const;
+
+export const LIBRARY_COPY = {
+  title: "The test library",
+  lead: "We keep a library of small automatic tests. Each one feeds the site a tricky example and checks the answer.",
+  detail:
+    "Most of these tests check a simplified model of a decision the site makes, not the site's own code. The golden set is the exception: it runs real markets through the real matcher.",
+  recordedBefore: "Results as recorded on",
+  recordedAt: "at commit",
+  checksIn: "checks in",
+  families: "families.",
+  olderAfter: "older test files came before the list of checks and are not counted in these families.",
+  cases: "cases",
+  casesAtLeast: "or more cases",
+  checks: "checks",
+  recordedRun: "Recorded run:",
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+  unrecordedOf: "of its",
+  unrecordedAfter: "checks have no recorded run.",
+  unrecordedAfterOne: "checks has no recorded run.",
+  goldenTitle: "Golden set",
+  goldenGets: "The real matcher gets",
+  goldenOf: "of",
+  goldenAfter: "real markets right, sending each to its correct event or to none.",
+  floorBefore: "The floor is",
+  floorAfter: ": a change that lowers the count fails its check unless it names each market that stopped matching.",
+} as const;
+
+export const TESTS_FOR_TESTS_COPY = {
+  title: "Tests for the tests",
+  lead: "How do we know a test works? We plant a bug on purpose and see whether the test catches it.",
+  detail:
+    "A test that misses a planted bug is broken. We plant bugs two ways: small changes to the library's own cases, and real bugs from the site's past, planted again for the AI code reviewer.",
+  biteTitle: "Planted changes",
+  biteOf: "of",
+  biteCaught: "caught",
+  biteReal: "built on the site's own code",
+  biteExplain: "We changed one thing in each case and checked that its test noticed.",
+  biteNoneReal:
+    "None of these cases runs the site's own code: each checks a simplified model of a decision. So a catch shows the test can fail, not that the site is right.",
+  reviewerTitle: "The AI code reviewer, tested",
+  reviewerLeadBefore: "We planted",
+  reviewerLeadMiddle: "real bugs from the site's past again, with",
+  reviewerLeadAfter: "healthy changes mixed in, to see whether the AI code reviewer can tell them apart.",
+  reviewerOursAll:
+    "Our own tests catch every planted bug and pass every healthy change. The AI reviewer has not reviewed any of them, so its result reads NOT RUN.",
+  droppedBefore:
+    "One more planted bug was left out: it was never fixed, so there is no healthy version of the code to plant it into. It is filed as",
+  pickHint: "Tap a square to read what changed.",
+  bug: "Planted bug",
+  healthy: "Healthy change",
+  bugsHeading: "Planted bugs",
+  healthyHeading: "Healthy changes",
+  ourTests: "Our tests",
+  caught: "caught it",
+  passedIt: "passed it",
+  reviewer: "AI reviewer",
 } as const;
 
 export const GAPS_COPY = {
@@ -183,5 +246,18 @@ export const TERMS: readonly { term: string; meaning: string }[] = [
     term: "Usage-rated",
     meaning:
       "A model run's cost, computed from each reply's token usage at the provider's published rate rather than from an invoice.",
+  },
+  {
+    term: "Case",
+    meaning: "One example a test feeds in, with the answer the test expects.",
+  },
+  {
+    term: "Golden set",
+    meaning:
+      "A fixed set of real markets, each with the event it belongs to or with none, that we run through the real matcher to check it.",
+  },
+  {
+    term: "Planted bug",
+    meaning: "A change made on purpose to break something, to check that a test or a reviewer notices.",
   },
 ];
