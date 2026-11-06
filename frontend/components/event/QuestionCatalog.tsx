@@ -58,7 +58,7 @@ function QuestionGroupCard({
               <strong className="font-mono tabular-nums whitespace-nowrap">
                 {formatProbabilityPercent(outcome.probability)}
               </strong>
-            ) : atlasMode && !settled ? (
+            ) : atlasMode && !settled && outcome.stale ? (
               <span
                 className="text-xs text-text-secondary whitespace-nowrap"
                 data-testid="atlas-no-recent-probability"
