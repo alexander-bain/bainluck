@@ -256,6 +256,7 @@ import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
 import { ATLAS_STATE_COPY, resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
 import {
   EVENT_HEADLINE_PHASE_LABELS,
+  resolveAtlasHeadlineObservedAt,
   resolveEventHeadlineBaseline,
   resolveEventHeadlinePhase,
 } from "@/lib/event/eventHeadlinePhase";
@@ -2671,14 +2672,15 @@ export default function EventPage({ params }: EventPageProps) {
 
   // #11974 Step E1/E5 — game headline phase ("Current win chance" vs
   // "Last recorded win chance") and pregame baseline beside it during play.
-  // On a held live page, `priceAgeClock(acceptedPriceClock, confirmedAtShown)`
-  // keeps the clock fresh when the live stream confirms the displayed price or
-  // delivers a one-stream preview.
-  const atlasObservedAt =
-    priceAgeClock(acceptedPriceClock, confirmedAtShown) ??
-    freshestSourceStamp ??
-    event.current_odds?.captured_at ??
-    null;
+  // On a held live page, `resolveAtlasHeadlineObservedAt` uses `priceAgeClock`
+  // so steady prices confirmed by the SSE stream or admitted previews keep the
+  // clock fresh.
+  const atlasObservedAt = resolveAtlasHeadlineObservedAt({
+    acceptedPriceClock,
+    confirmedAtShown,
+    freshestSourceStamp,
+    currentOddsCapturedAt: event.current_odds?.captured_at,
+  });
   const atlasHeadlinePhase = atlasOptIn
     ? resolveEventHeadlinePhase({
         status: event.status,
