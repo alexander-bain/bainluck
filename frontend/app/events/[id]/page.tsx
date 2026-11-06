@@ -2612,15 +2612,8 @@ export default function EventPage({ params }: EventPageProps) {
         })
       : null;
   const atlasSettledWinnerSide: "home" | "away" | null =
-    isFinished &&
-    !venueVoided &&
-    !heroScoreIsStoppageFiller &&
-    bestHomeScore != null &&
-    bestAwayScore != null &&
-    bestHomeScore !== bestAwayScore
-      ? bestHomeScore > bestAwayScore
-        ? "home"
-        : "away"
+    isFinished && !venueVoided && stoppageLabel === null
+      ? (settledOutcome?.winnerSide ?? null)
       : null;
 
   // L2-112 Item 4: the Score Differential card must hide when there is no
