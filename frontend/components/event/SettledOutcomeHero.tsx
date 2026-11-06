@@ -22,6 +22,7 @@
  * the authority ladder that decides which of those two cases a given event is.
  */
 
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import type { SettledOutcome } from "@/lib/eventOutcome";
 import { renderedPercent } from "@/lib/renderedPercent";
 
@@ -50,6 +51,8 @@ export interface SettledOutcomeHeroProps {
   loserPregameProb?: number | null;
   /** The loser's whole percent from the same pair rounding as the winner's. */
   loserPregamePercent?: number | null;
+  /** #11974 Step E1 — opt-in atlas mode (`?atlas=1`): `✓ Won` + hollow pregame mark. */
+  atlasMode?: boolean;
 }
 
 /** #10159 — `CLOSE_MATCHUP_MIN` in backend/app/utils/highlights.py (#2753). */
@@ -94,6 +97,7 @@ export default function SettledOutcomeHero({
   winnerPregameLabel = null,
   loserPregameProb = null,
   loserPregamePercent = null,
+  atlasMode = false,
 }: SettledOutcomeHeroProps) {
   const wasUnderdog = pregameUpset({
     winnerProb: winnerPregameProb,
@@ -123,8 +127,13 @@ export default function SettledOutcomeHero({
           <span className="text-base sm:text-lg font-semibold text-text-primary tracking-tight text-center">
             {outcome.winnerName}
           </span>
-          <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">
-            Won
+          <span
+            className={`text-[11px] font-semibold ${
+              atlasMode ? "tracking-wide" : "uppercase tracking-wide"
+            } px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live`}
+            data-testid="event-hero-settled-verdict"
+          >
+            {atlasMode ? ATLAS_STATE_COPY.wonWithCheck : "Won"}
           </span>
           {outcome.resultLine && (
             /* The result, in the units the sport is scored in. `resultKind`
@@ -173,6 +182,13 @@ export default function SettledOutcomeHero({
               data-testid="event-hero-pregame"
               data-prematch-source={winnerPregameSource ?? ""}
             >
+              {atlasMode && (
+                <span
+                  aria-hidden="true"
+                  data-testid="event-hero-pregame-mark"
+                  className="inline-block h-2 w-2 shrink-0 rounded-full border-[1.5px] border-current bg-surface-card mr-1 align-middle"
+                />
+              )}
               {wasUnderdog ? "Upset · " : ""}
               {winnerPregamePercent ?? renderedPercent(winnerPregameProb)}% pregame
             </span>
