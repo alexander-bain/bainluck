@@ -109,6 +109,40 @@ _CONFLICTING_AWARD_CATEGORY_TOKENS = (
     "limited series",
 )
 
+_CONFLICTING_CEREMONY_TOKENS = (
+    "oscar",
+    "academy award",
+    "bafta",
+    "emmy",
+    "grammy",
+    "sag award",
+    "tony award",
+    "cannes",
+    "sundance",
+)
+
+
+def _has_conflicting_ceremony(text: str, ceremony: str) -> bool:
+    folded = _fold_subject(text)
+    ceremony_folded = _fold_subject(ceremony)
+    for token in _CONFLICTING_CEREMONY_TOKENS:
+        if token in folded and token not in ceremony_folded:
+            return True
+    return False
+
+
+def _ceremony_matches(text: str, ceremony: str) -> bool:
+    folded = _fold_subject(text)
+    if not folded:
+        return False
+    if _has_conflicting_ceremony(text, ceremony):
+        return False
+    ceremony_folded = _fold_subject(ceremony)
+    if not ceremony_folded:
+        return True
+    ceremony_stem = ceremony_folded.rstrip("s")
+    return bool(ceremony_stem and ceremony_stem in folded)
+
 
 def _category_matches(
     text: str,
@@ -120,6 +154,8 @@ def _category_matches(
     folded = _fold_subject(text)
     if not folded:
         return False
+    if _has_conflicting_ceremony(text, ceremony):
+        return False
     cat_folded = _fold_subject(category_name)
     for token in _CONFLICTING_AWARD_CATEGORY_TOKENS:
         if token in folded and token not in cat_folded:
@@ -127,8 +163,6 @@ def _category_matches(
     candidates = [cat_folded] + [
         _fold_subject(alias) for alias in category_aliases if _fold_subject(alias)
     ]
-    if "motion picture" in cat_folded or "best picture" in cat_folded:
-        candidates.extend(["best motion picture", "best picture"])
     return any(cand and cand in folded for cand in candidates)
 
 
@@ -139,14 +173,8 @@ def _winner_market_matches_rule(
     category_name: str,
     category_aliases: Sequence[str] = (),
 ) -> bool:
-    folded = _fold_subject(name)
-    if not folded:
+    if not _ceremony_matches(name, ceremony):
         return False
-    ceremony_folded = _fold_subject(ceremony)
-    if ceremony_folded:
-        ceremony_stem = ceremony_folded.rstrip("s")
-        if ceremony_stem and ceremony_stem not in folded:
-            return False
     return _category_matches(
         name,
         ceremony=ceremony,
@@ -232,6 +260,13 @@ def select_awards_category_roundup(
         is_explicit_nom = mid in nomination_id_set or m.get("awards_role") == "nomination"
         if m_nom is not None or is_explicit_nom:
             if nomination_id_set and mid not in nomination_id_set:
+                continue
+            ceremony_text = f"{name} {m.get('ceremony') or ''}".strip()
+            if _has_conflicting_ceremony(ceremony_text, ceremony):
+                continue
+            if mid not in nomination_id_set and not _ceremony_matches(
+                ceremony_text, ceremony
+            ):
                 continue
             captured_cat = (
                 str(m.get("category_name") or "").strip()
@@ -535,10 +570,9 @@ async def _load_awards_markets_from_db(
         if isinstance(x, int) and not isinstance(x, bool) and int(x) > 0
     ]
 
+    ceremony_stem = ceremony.rstrip("s") or ceremony
     clauses = [
-        FuturesMarket.name.ilike(f"%{ceremony}%"),
-        FuturesMarket.name.ilike(f"%{category_name}%"),
-        FuturesMarket.name.ilike("Will % be nominated for %"),
+        FuturesMarket.name.ilike(f"%{ceremony_stem}%"),
     ]
     if explicit_ids:
         clauses.append(FuturesMarket.id.in_(explicit_ids))
@@ -551,6 +585,7 @@ async def _load_awards_markets_from_db(
             FuturesMarket.llm_sport_category == "entertainment",
             or_(*clauses),
         )
+        .order_by(FuturesMarket.id.desc())
         .limit(200)
     )
     res = await db.execute(stmt)

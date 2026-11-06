@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import math
 import os
 import re
@@ -205,6 +206,12 @@ def select_register_closest(
 
         if primary is None:
             continue
+        if poly_id is not None and twin is None:
+            logging.getLogger(__name__).debug(
+                "register_closest: registered polymarket twin %s missing from pool for kalshi %s",
+                poly_id,
+                kalshi_id,
+            )
 
         primary_settled = _market_is_settled(primary)
         twin_settled = _market_is_settled(twin) if twin is not None else False

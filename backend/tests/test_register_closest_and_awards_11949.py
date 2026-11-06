@@ -186,7 +186,7 @@ async def test_awards_category_roundup_pairs_nomination_and_win_and_withholds_wh
     nomination_binaries = [
         {
             "id": 901,
-            "name": "Will One Battle After Another be nominated for Best Motion Picture - Drama?",
+            "name": "Will One Battle After Another be nominated for Best Motion Picture - Drama at the Golden Globes?",
             "status": "open",
             "source": "kalshi",
             "category": "entertainment",
@@ -198,7 +198,7 @@ async def test_awards_category_roundup_pairs_nomination_and_win_and_withholds_wh
         },
         {
             "id": 902,
-            "name": "Will Sinners be nominated for Best Motion Picture - Drama?",
+            "name": "Will Sinners be nominated for Best Motion Picture - Drama at the Golden Globes?",
             "status": "open",
             "source": "kalshi",
             "category": "entertainment",
@@ -210,7 +210,7 @@ async def test_awards_category_roundup_pairs_nomination_and_win_and_withholds_wh
         },
         {
             "id": 903,
-            "name": "Will Hamnet be nominated for Best Motion Picture - Drama?",
+            "name": "Will Hamnet be nominated for Best Motion Picture - Drama at the Golden Globes?",
             "status": "open",
             "source": "kalshi",
             "category": "entertainment",
@@ -349,7 +349,7 @@ async def test_awards_category_roundup_refusal_reasons_and_tolerance_boundary():
     nomination_too_low = [
         {
             "id": 901,
-            "name": "Will One Battle After Another be nominated for Best Motion Picture - Drama?",
+            "name": "Will One Battle After Another be nominated for Best Motion Picture - Drama at the Golden Globes?",
             "status": "open",
             "source": "kalshi",
             "outcomes": [
@@ -359,7 +359,7 @@ async def test_awards_category_roundup_refusal_reasons_and_tolerance_boundary():
         },
         {
             "id": 902,
-            "name": "Will Sinners be nominated for Best Motion Picture - Drama?",
+            "name": "Will Sinners be nominated for Best Motion Picture - Drama at the Golden Globes?",
             "status": "open",
             "source": "kalshi",
             "outcomes": [
@@ -369,7 +369,7 @@ async def test_awards_category_roundup_refusal_reasons_and_tolerance_boundary():
         },
         {
             "id": 903,
-            "name": "Will Hamnet be nominated for Best Motion Picture - Drama?",
+            "name": "Will Hamnet be nominated for Best Motion Picture - Drama at the Golden Globes?",
             "status": "open",
             "source": "kalshi",
             "outcomes": [
@@ -444,7 +444,7 @@ async def test_awards_category_roundup_refusal_reasons_and_tolerance_boundary():
                 },
                 {
                     "id": 999,
-                    "name": "Golden Globes: Best Picture Drama Winner",
+                    "name": "Golden Globes: Best Motion Picture — Drama Winner",
                     "status": "open",
                     "source": "kalshi",
                     "category": "entertainment",
@@ -754,7 +754,7 @@ async def test_awards_category_roundup_loads_from_async_db_session_and_rejects_w
         ),
         SimpleNamespace(
             id=901,
-            name="Will One Battle After Another be nominated for Best Motion Picture - Drama?",
+            name="Will One Battle After Another be nominated for Best Motion Picture - Drama at the Golden Globes?",
             status="open",
             source="kalshi",
             resolution_date=None,
@@ -780,7 +780,7 @@ async def test_awards_category_roundup_loads_from_async_db_session_and_rejects_w
         ),
         SimpleNamespace(
             id=902,
-            name="Will Sinners be nominated for Best Motion Picture - Drama?",
+            name="Will Sinners be nominated for Best Motion Picture - Drama at the Golden Globes?",
             status="open",
             source="kalshi",
             resolution_date=None,
@@ -806,7 +806,7 @@ async def test_awards_category_roundup_loads_from_async_db_session_and_rejects_w
         ),
         SimpleNamespace(
             id=903,
-            name="Will Hamnet be nominated for Best Motion Picture - Drama?",
+            name="Will Hamnet be nominated for Best Motion Picture - Drama at the Golden Globes?",
             status="open",
             source="kalshi",
             resolution_date=None,
@@ -860,5 +860,89 @@ async def test_awards_category_roundup_loads_from_async_db_session_and_rejects_w
     ]
     assert [r["rendered_percent"] for r in res_db.rows] == [42, 31, 27]
     assert [r["secondary_rendered_percent"] for r in res_db.rows] == [84, 79, 74]
+
+
+@pytest.mark.parametrize(
+    ("case_name", "foreign_nomination_name"),
+    [
+        (
+            "oscars_best_picture",
+            "Will One Battle After Another be nominated for Best Picture at the Oscars?",
+        ),
+        (
+            "academy_awards_best_picture",
+            "Will One Battle After Another be nominated for an Academy Award for Best Picture?",
+        ),
+        (
+            "bafta_best_motion_picture_drama",
+            "Will One Battle After Another be nominated for Best Motion Picture - Drama at BAFTA?",
+        ),
+        (
+            "bare_best_picture_without_ceremony",
+            "Will One Battle After Another be nominated for Best Picture?",
+        ),
+        (
+            "bare_best_motion_picture_drama_without_ceremony",
+            "Will One Battle After Another be nominated for Best Motion Picture - Drama?",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_awards_category_roundup_rejects_cross_ceremony_and_bare_nomination_binaries(
+    case_name: str,
+    foreign_nomination_name: str,
+):
+    pool = [
+        {
+            "id": 900,
+            "name": "Golden Globes: Best Motion Picture - Drama Winner",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 9001, "name": "One Battle After Another", "probability": 0.42},
+                {"id": 9002, "name": "Sinners", "probability": 0.31},
+                {"id": 9003, "name": "Hamnet", "probability": 0.27},
+            ],
+        },
+        {
+            "id": 901,
+            "name": foreign_nomination_name,
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "outcomes": [
+                {"id": 9011, "name": "Yes", "probability": 0.90},
+                {"id": 9012, "name": "No", "probability": 0.10},
+            ],
+        },
+        {
+            "id": 902,
+            "name": "Will Sinners be nominated for Best Motion Picture - Drama at the Golden Globes?",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "outcomes": [
+                {"id": 9021, "name": "Yes", "probability": 0.79},
+                {"id": 9022, "name": "No", "probability": 0.21},
+            ],
+        },
+        {
+            "id": 903,
+            "name": "Will Hamnet be nominated for Best Motion Picture - Drama at the Golden Globes?",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "outcomes": [
+                {"id": 9031, "name": "Yes", "probability": 0.74},
+                {"id": 9032, "name": "No", "probability": 0.26},
+            ],
+        },
+    ]
+    res = await golden_globes_best_picture(pool)
+    assert isinstance(res, RoundupRefusal), f"Expected refusal for {case_name}"
+    assert res.reasons == (("awards_category", "too_few_paired_nominees"),)
+
 
 
