@@ -165,3 +165,19 @@ def test_export_writes_the_scorecard_shape_pseudonymizes_kids_and_never_overwrit
     assert gr.export_path(tmp_path, alex).name == "2026-11-06-discover-s-alex.json"
     (tmp_path / "2026-11-06-discover-s-alex.json").write_text(json.dumps({"slate_id": "s", "grader": "alex"}))
     assert gr.export_path(tmp_path, alex).name == "2026-11-06-discover-s-alex-web.json"
+
+
+def test_a_kids_note_is_not_exported_but_an_adults_is():
+    """A kid's free-text note could carry a name; the export is public, so it is dropped."""
+    gr = _grades_tool()
+    rows = [
+        {"slate_id": "s", "surface": "discover", "grader": "Sam", "expert": False, "position": 1,
+         "item_key": "futures:1", "grade": "shareable", "note": "my friend Robin likes this",
+         "graded_at": "2026-11-06T17:00:00+00:00"},
+        {"slate_id": "s", "surface": "discover", "grader": "Alex", "expert": True, "position": 1,
+         "item_key": "futures:1", "grade": "interesting", "note": "good hook",
+         "graded_at": "2026-11-06T17:00:00+00:00"},
+    ]
+    kid, alex = sorted(gr.export_documents(rows), key=lambda d: d["expert"])
+    assert kid["items"][0]["note"] == "" and "Robin" not in json.dumps(kid)
+    assert alex["items"][0]["note"] == "good hook"

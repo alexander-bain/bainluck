@@ -135,8 +135,11 @@ def export_documents(grades: list[dict]) -> list[dict]:
                 "items": [],
             },
         )
+        # A kid's free-text note could carry a name, so it stays in the
+        # database and is not exported; an adult's note is.
+        note = (g.get("note") or "") if expert else ""
         doc["items"].append(
-            {"position": g["position"], "item_key": g["item_key"], "grade": g["grade"], "note": g.get("note") or ""}
+            {"position": g["position"], "item_key": g["item_key"], "grade": g["grade"], "note": note}
         )
     for doc in docs.values():
         doc["items"].sort(key=lambda i: i["position"])
