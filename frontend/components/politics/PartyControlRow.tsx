@@ -1,13 +1,72 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import type { ChamberControl } from "@/lib/api";
+import useSWR from "swr";
+import { fetchFuturesHistory, type ChamberControl } from "@/lib/api";
+import { servedPartialHistory } from "@/lib/historyRange";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { isSettlementPoint } from "@/lib/chartSettlementPoints";
+import type { FuturesOutcomeHistory } from "@/lib/types";
 import { TwoSidedHistoryTimeline } from "@/components/event/TwoSidedTimeline";
 import { SourceBadge } from "./atoms";
 import s from "@/app/politics/politics.module.css";
 
 type Control = ChamberControl & { source?: string; winner?: string };
+
+function ChamberHistoryTimeline({
+  marketId,
+  defaultHours = 8760,
+  height = 180,
+}: {
+  marketId: number;
+  defaultHours?: number;
+  height?: number;
+}) {
+  const [hours] = useState(defaultHours);
+  const { data, error, mutate } = useSWR(
+    marketId ? ["event-twosided", marketId, hours] : null,
+    () =>
+      fetchFuturesHistory(
+        marketId,
+        hours,
+        undefined,
+        4,
+        undefined,
+        hours === 8760 ? { range: "full" } : undefined,
+      ),
+    { revalidateOnFocus: false },
+  );
+
+  const outcomes: FuturesOutcomeHistory[] = Array.isArray(data?.outcomes) ? data.outcomes : [];
+  const hasHistory = outcomes.some(
+    (o) =>
+      Array.isArray(o.history) &&
+      o.history.filter((p) => p.probability != null && !isSettlementPoint(p)).length >= 2,
+  );
+  const historyWithheld = servedPartialHistory(data);
+
+  if (error && !hasHistory && !historyWithheld) {
+    return (
+      <div
+        className="mt-3 flex items-center justify-between gap-2 text-xs text-text-muted"
+        role="status"
+        data-testid="two-sided-history-timeline-error"
+      >
+        <span>Update interrupted</span>
+        <button
+          type="button"
+          onClick={() => void mutate()}
+          className="text-accent-brand hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return <TwoSidedHistoryTimeline marketId={marketId} defaultHours={defaultHours} height={height} />;
+}
 
 export default function PartyControlRow({
   senate,
@@ -58,8 +117,8 @@ function ChamberControlCard({
             <div aria-hidden className="flex h-1.5 overflow-hidden rounded-full bg-surface-elevated"><span style={{ width: `${probs.dem}%`, backgroundColor: "var(--party-democratic)" }} /><span style={{ width: `${probs.gop}%`, backgroundColor: "var(--party-republican)" }} /></div>
           </>}
         </Link>
-        {!probs.winner && probs.market_id > 0 && (
-          <TwoSidedHistoryTimeline
+        {probs.market_id > 0 && (
+          <ChamberHistoryTimeline
             marketId={probs.market_id}
             defaultHours={8760}
             height={180}
