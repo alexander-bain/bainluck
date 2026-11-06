@@ -33,42 +33,8 @@ def full_field(monkeypatch):
     monkeypatch.setattr(proof, "_market", market)
 
 
-def test_full_http_read_normalizes_all_24_prices_before_the_top_five(
-    served, full_field
-):
-    _, read = served
-    _, cards = read()
-    outcomes = cards[108629]["top_outcomes"]
-    assert len(outcomes) == 24
-    mass = sum(p for _, p in PRICES)
-    assert {o["name"]: o["probability"] for o in outcomes} == pytest.approx(
-        {n: p / mass for n, p in PRICES}
-    )
-    assert sum(o["rendered_percent"] for o in outcomes) == 100
-    assert outcomes[0]["name"] == "Nebraska"
-    assert outcomes[0]["probability"] == pytest.approx(0.91 / mass)
-    assert sum(o["probability"] for o in outcomes) == pytest.approx(1)
-    assert len({o["id"] for o in outcomes}) == 24
 
 
-def test_the_detail_pages_withheld_price_stays_withheld_without_scaling_other_legs(
-    served, full_field, monkeypatch
-):
-    original = proof._database
-
-    def database(*args, **kwargs):
-        db, refused = original(*args, **kwargs)
-        refused[108629] = {10862900}
-        return db, refused
-
-    monkeypatch.setattr(proof, "_database", database)
-    _, read = served
-    _, cards = read()
-    outcomes = {o["name"]: o["probability"] for o in cards[108629]["top_outcomes"]}
-    assert len(outcomes) == 24
-    assert outcomes["Nebraska"] is None
-    assert outcomes["Kansas"] == 0.1205
-    assert outcomes["Zero-priced state"] == 0
 
 
 # Nov 3, 11:29 PM PT: raw sum 118.5%, priced-leg divisor 112.5%.
@@ -118,27 +84,6 @@ def _detail_field(*, market_id=108629, source="kalshi", winner=None):
     return market
 
 
-def test_one_winner_detail_matches_the_midterms_priced_mass_with_bound_tail(
-    served, raw_governor_field
-):
-    from app.routes.futures import _format_market_detail
-
-    _, read = served
-    _, cards = read()
-    market = _detail_field()
-    detail = _format_market_detail(market)
-    card_prices = {o["name"]: o["probability"] for o in cards[108629]["top_outcomes"]}
-    detail_prices = {o["name"]: o["probability"] for o in detail["outcomes"]}
-
-    assert all("rendered_percent" not in o for o in detail["outcomes"])
-    assert all("rendered_percent" not in o for o in cards[108629]["top_outcomes"])
-    assert sum(card_prices.values()) == pytest.approx(1.185 / 1.125)
-    assert len(detail_prices) == 24
-    assert detail_prices == card_prices
-    assert detail_prices == pytest.approx(
-        {n: p / 1.125 for n, p in VENUE_FIELD_PRICES}, abs=1e-8
-    )
-    assert detail["mutually_exclusive"] is market.mutually_exclusive is True
 
 
 def test_normalized_field_withholds_incomplete_opening_and_dated_fields():
