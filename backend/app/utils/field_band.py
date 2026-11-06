@@ -256,7 +256,7 @@ def _build_section_market_card(
     category: str,
     shown_outcomes: Sequence[_PricedOutcome],
     board_outcomes: Sequence[_PricedOutcome],
-    total_outcome_count: int,
+    remaining_count: int,
     mutually_exclusive: bool,
 ) -> dict[str, Any]:
     """Build the container member card for one section of a ``field_band`` container.
@@ -266,8 +266,6 @@ def _build_section_market_card(
     (such as the 12-winner CFP qualifiers spine), probabilities are preserved verbatim
     without ever normalizing to 100, and ``discover_card.field_is_a_race`` is ``False``.
     """
-    total_count = max(len(board_outcomes), int(total_outcome_count))
-    remaining_count = max(0, total_count - len(board_outcomes))
     prices_updated_at = _newest_stamp(
         shown_outcomes,
         base_market.get("prices_updated_at") or base_market.get("updated_at"),
@@ -311,13 +309,13 @@ def _build_section_market_card(
         "mutually_exclusive": bool(mutually_exclusive),
         "resolution_date": resolution_date,
         "top_outcomes": top_outcomes,
-        "outcome_count": total_count,
+        "outcome_count": len(shown_outcomes) + int(remaining_count),
         "updated_at": _iso_utc(base_market.get("updated_at")) or prices_updated_at,
         "prices_updated_at": prices_updated_at,
         "discover_card": {
             "suggested_format": "outcome_distribution",
             "distribution_outcomes": distribution_outcomes,
-            "remaining_outcome_count": remaining_count,
+            "remaining_outcome_count": int(remaining_count),
             "field_is_a_race": bool(mutually_exclusive),
         },
     }
@@ -456,7 +454,7 @@ def select_field_band(
         category=category,
         shown_outcomes=band_outcomes,
         board_outcomes=band_outcomes[:4],
-        total_outcome_count=len(band_outcomes),
+        remaining_count=max(0, len(band_outcomes) - 4),
         mutually_exclusive=bool(normalize),
     )
     bubble_member = {
@@ -531,7 +529,7 @@ def select_field_band(
             category=category,
             shown_outcomes=sec_sorted[:5],
             board_outcomes=sec_sorted[:4],
-            total_outcome_count=len(sec_sorted),
+            remaining_count=max(0, len(sec_sorted) - 4),
             mutually_exclusive=sec_mutually_exclusive,
         )
         sec_member = {
