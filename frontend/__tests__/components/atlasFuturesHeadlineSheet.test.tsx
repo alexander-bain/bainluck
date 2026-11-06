@@ -66,8 +66,20 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       expect(formatAtlasAttribution('kalshi')).toBe('Kalshi');
       expect(formatAtlasAttribution('polymarket')).toBe('Polymarket');
       expect(formatAtlasAttribution('kalshi', { sourceCount: 2 })).toBe(
-        'Both Kalshi and Polymarket',
+        '2 sources',
       );
+      expect(
+        formatAtlasAttribution('datagolf', {
+          sourceCount: 2,
+          sourceLabels: [],
+        }),
+      ).toBe('2 sources');
+      expect(
+        formatAtlasAttribution('odds_api', {
+          sourceCount: 3,
+          sourceLabels: ['  '],
+        }),
+      ).toBe('3 sources');
       expect(
         formatAtlasAttribution('kalshi', {
           sourceLabels: ['Kalshi', 'Polymarket'],
@@ -262,7 +274,8 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       );
 
       expect(html).not.toContain('data-testid="atlas-details-opening"');
-      expect(html).toContain('Both Kalshi and Polymarket');
+      expect(html).toContain('2 sources');
+      expect(html).not.toContain('Both Kalshi and Polymarket');
       expect(html).toContain('data-testid="atlas-details-last-observation"');
       expect(html).toContain('>97%<');
       expect(html).not.toContain('data-testid="atlas-details-original-market"');
