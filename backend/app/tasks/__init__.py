@@ -2875,10 +2875,16 @@ def snapshot_discover_candidate_pool(
 def snapshot_ranking_slate(self):
     """#12095: one nightly Discover slate for the ranking eval harness.
 
-    Inert unless ``RANKING_SNAPSHOTS`` is on (``app/utils/ranking_eval.py``).
+    Inert unless ``RANKING_SNAPSHOTS`` is on (``app/utils/ranking_slate_capture.py``).
     """
+    from app.utils.ranking_eval import ranking_snapshots_enabled
+
+    # Off means off: no session, no run record (and no counter that reads a
+    # disabled job as a run).
+    if not ranking_snapshots_enabled():
+        return {"status": "disabled"}
     from app.services.database import async_session_maker
-    from app.utils.ranking_eval import snapshot_ranking_slate as _snapshot_slate
+    from app.utils.ranking_slate_capture import snapshot_ranking_slate as _snapshot_slate
 
     async def _snapshot():
         async with async_session_maker() as db:
@@ -8236,11 +8242,11 @@ celery_app.conf.beat_schedule = {
         "options": {"queue": "background"},
     },
     # #12095 (Decide 37-B): the served Discover slate for the ranking eval
-    # harness. 12:15 UTC = 4:15 AM PST, clear of the 2-3 AM PT maintenance hour.
-    # Inert unless RANKING_SNAPSHOTS is on.
+    # harness. 15:15 UTC = 7:15 AM PST (8:15 AM PDT): the opening ten Alex sees
+    # in the morning, not a 4 AM deck. Inert unless RANKING_SNAPSHOTS is on.
     "snapshot-ranking-slate-daily": {
         "task": "app.tasks.snapshot_ranking_slate",
-        "schedule": crontab(minute=15, hour=12),
+        "schedule": crontab(minute=15, hour=15),
         "options": {"queue": "background"},
     },
     "import-external-curator-ground-truth-daily": {

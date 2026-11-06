@@ -97,4 +97,26 @@ describe('#12095 slate fields on Discover events', () => {
     expect('slate_id' in queued).toBe(false);
     expect('ranker_version' in queued).toBe(false);
   });
+
+  it('a category feed after Discover clears the slate (the api call sites pass null)', () => {
+    const di = setup();
+    di.noteDiscoverSlate({ edition: 'ae0bc760eb204e34', ranker_version: '0123456789ab' });
+    // What lib/api.ts fetchFeed does for a non-Discover shape:
+    di.noteDiscoverSlate(null);
+    di.sendDiscoverInteraction(ITEM, 'unlike', 0);
+    const [queued] = di.peekPendingDiscoverInteractions();
+    expect('slate_id' in queued).toBe(false);
+    expect('ranker_version' in queued).toBe(false);
+  });
+
+  it('lib/api.ts notes or clears the slate on every feed reply, never notes a non-Discover one', () => {
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const src = fs.readFileSync(path.join(__dirname, '../../lib/api.ts'), 'utf8');
+    const calls = src.match(/noteDiscoverSlate\([^)]*\)/g) ?? [];
+    expect(calls).toEqual([
+      'noteDiscoverSlate(isDiscoverDeck ? parsed : null)',
+      'noteDiscoverSlate(isDiscoverDeck ? page : null)',
+    ]);
+  });
 });

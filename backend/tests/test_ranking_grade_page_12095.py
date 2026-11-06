@@ -69,7 +69,7 @@ def wired(monkeypatch):
 
 def grade(**kw):
     body = {
-        "slate_id": "ae0bc760eb204e34", "grader": "  Daphne  ", "kid": True, "position": 3,
+        "slate_id": "ae0bc760eb204e34", "grader": "  Robin  ", "kid": True, "position": 3,
         "item_key": "futures:3", "grade": "interesting", "note": " fun ",
     }
     body.update(kw)
@@ -82,7 +82,7 @@ class TestPostGrade:
         assert await admin.post_grade(grade(), _request(), secret=None, db=db) == {"status": "ok"}
         (row,) = db.added
         assert isinstance(row, RankingGrade)
-        assert row.grader == "Daphne" and row.expert is False and row.note == "fun"
+        assert row.grader == "Robin" and row.expert is False and row.note == "fun"
         assert (row.position, row.item_key, row.grade) == (3, "futures:3", "interesting")
         assert db.commits == 1
 
@@ -122,9 +122,9 @@ def test_the_latest_grade_per_grader_and_card_wins_and_the_tally_counts_since_pa
         _row(1, "Alex", "futures:1", "neither", datetime(2026, 11, 6, 16, 0, tzinfo=timezone.utc)),
         _row(2, "Alex", "futures:1", "shareable", datetime(2026, 11, 6, 17, 0, tzinfo=timezone.utc)),
         _row(3, "Alex", "futures:2", "interesting", datetime(2026, 11, 6, 17, 1, tzinfo=timezone.utc)),
-        _row(4, "Dexter", "futures:1", "shareable", datetime(2026, 11, 6, 17, 2, tzinfo=timezone.utc), expert=False),
+        _row(4, "Sam", "futures:1", "shareable", datetime(2026, 11, 6, 17, 2, tzinfo=timezone.utc), expert=False),
         # 11:00 PM PT the day before: not today.
-        _row(5, "Daphne", "futures:1", "neither", datetime(2026, 11, 6, 7, 0, tzinfo=timezone.utc), expert=False),
+        _row(5, "Robin", "futures:1", "neither", datetime(2026, 11, 6, 7, 0, tzinfo=timezone.utc), expert=False),
     ]
     grades = admin.latest_grades(rows)
     alex1 = [g for g in grades if g["grader"] == "Alex" and g["item_key"] == "futures:1"]
@@ -132,7 +132,7 @@ def test_the_latest_grade_per_grader_and_card_wins_and_the_tally_counts_since_pa
     tally = admin.family_tally(grades, now=datetime(2026, 11, 6, 18, 0, tzinfo=timezone.utc))
     assert tally == [
         {"grader": "Alex", "kid": False, "today": 2},
-        {"grader": "Dexter", "kid": True, "today": 1},
+        {"grader": "Sam", "kid": True, "today": 1},
     ]
 
 
@@ -143,17 +143,25 @@ def _grades_tool():
     return mod
 
 
-def test_export_writes_the_scorecard_shape_and_never_overwrites_a_hand_sheet(tmp_path):
+def test_export_writes_the_scorecard_shape_pseudonymizes_kids_and_never_overwrites_a_hand_sheet(tmp_path):
     gr = _grades_tool()
     rows = [
-        {"slate_id": "s", "surface": "discover", "grader": "Dexter", "expert": False, "position": 2,
+        {"slate_id": "s", "surface": "discover", "grader": "Sam", "expert": False, "position": 2,
          "item_key": "futures:2", "grade": "neither", "note": "", "graded_at": "2026-11-06T17:00:00+00:00"},
-        {"slate_id": "s", "surface": "discover", "grader": "Dexter", "expert": False, "position": 1,
+        {"slate_id": "s", "surface": "discover", "grader": "Sam", "expert": False, "position": 1,
          "item_key": "futures:1", "grade": "shareable", "note": "wow", "graded_at": "2026-11-06T17:00:00+00:00"},
+        {"slate_id": "s", "surface": "discover", "grader": "Alex", "expert": True, "position": 1,
+         "item_key": "futures:1", "grade": "interesting", "note": "", "graded_at": "2026-11-07T06:30:00+00:00"},
     ]
-    (doc,) = gr.export_documents(rows)
-    assert doc["expert"] is False and doc["source"] == "grade-page"
-    assert [i["position"] for i in doc["items"]] == [1, 2] and doc["items"][0]["grade"] == "shareable"
-    assert gr.export_path(tmp_path, doc).name == "2026-11-06-discover-dexter.json"
-    (tmp_path / "2026-11-06-discover-dexter.json").write_text(json.dumps({"slate_id": "s", "grader": "Dexter"}))
-    assert gr.export_path(tmp_path, doc).name == "2026-11-06-discover-dexter-s.json"
+    kid, alex = sorted(gr.export_documents(rows), key=lambda d: d["expert"])
+    # The kid's typed name never reaches the file: a stable pseudonym does.
+    assert kid["grader"] == gr.kid_pseudonym("sam") and gr.KID_ID.match(kid["grader"])
+    assert "Sam" not in json.dumps(kid)
+    assert kid["expert"] is False and kid["source"] == "grade-page"
+    assert [i["position"] for i in kid["items"]] == [1, 2] and kid["items"][0]["grade"] == "shareable"
+    assert gr.validate_grades(kid) == [] and gr.validate_grades(alex) == []
+    # Dated in Pacific time: 06:30Z Nov 7 is still Nov 6 in PT.
+    assert alex["date"] == "2026-11-06" and alex["grader"] == "Alex"
+    assert gr.export_path(tmp_path, alex).name == "2026-11-06-discover-s-alex.json"
+    (tmp_path / "2026-11-06-discover-s-alex.json").write_text(json.dumps({"slate_id": "s", "grader": "alex"}))
+    assert gr.export_path(tmp_path, alex).name == "2026-11-06-discover-s-alex-web.json"

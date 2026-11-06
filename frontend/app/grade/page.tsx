@@ -18,6 +18,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
 import DiscoverCard from "@/components/DiscoverCard";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
+import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import {
   GRADES,
   GRADE_LABELS,
@@ -35,6 +36,13 @@ export default function GradePage() {
   usePageTracking({ pageType: "admin_grade" });
   useScrollDepth({ pageType: "admin_grade" });
   useEngagementTime({ pageType: "admin_grade" });
+  // A grader's look at a card is not a reader's interest: the Discover writers
+  // are closed for as long as this page is mounted (#9643's gate), on top of
+  // the card being inert.
+  useEffect(() => {
+    setDiscoverLearningGate(() => false);
+    return () => setDiscoverLearningGate(null);
+  }, []);
   return (
     <AdminAuthProvider>
       <GradeSession />

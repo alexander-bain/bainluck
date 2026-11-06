@@ -8,7 +8,7 @@ describe('gradeSession', () => {
   });
 
   it('normalizes a grader name', () => {
-    expect(normalizeGraderName('  Daphne   B ')).toBe('Daphne B');
+    expect(normalizeGraderName('  Robin   B ')).toBe('Robin B');
     expect(normalizeGraderName('   ')).toBe('');
     expect(normalizeGraderName('x'.repeat(60))).toHaveLength(40);
   });
@@ -17,11 +17,11 @@ describe('gradeSession', () => {
     expect(
       formatTally([
         { grader: 'Alex', kid: false, today: 10 },
-        { grader: 'Dexter', kid: true, today: 10 },
-        { grader: 'Daphne', kid: true, today: 7 },
+        { grader: 'Sam', kid: true, today: 10 },
+        { grader: 'Robin', kid: true, today: 7 },
         { grader: 'Nobody', kid: false, today: 0 },
       ]),
-    ).toBe('Alex 10 · Dexter 10 · Daphne 7 today');
+    ).toBe('Alex 10 · Sam 10 · Robin 7 today');
     expect(formatTally([])).toBe('');
   });
 });

@@ -44,7 +44,7 @@ export function normalizeGraderName(raw: string): string {
   return raw.trim().split(/\s+/).filter(Boolean).join(" ").slice(0, 40);
 }
 
-/** "Alex 10 · Dexter 10 · Daphne 7 today"; empty when nobody has graded today. */
+/** "Alex 10 · Sam 10 · Robin 7 today"; empty when nobody has graded today. */
 export function formatTally(tally: TallyEntry[]): string {
   const parts = tally.filter((t) => t.today > 0).map((t) => `${t.grader} ${t.today}`);
   return parts.length ? `${parts.join(" · ")} today` : "";
