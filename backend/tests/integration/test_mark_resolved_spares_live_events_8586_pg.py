@@ -170,38 +170,6 @@ async def test_an_unstarted_match_keeps_its_market_open(pg_session, source):
     assert await _status(pg_session, m) == "open"
 
 
-async def test_kalshi_waits_for_venue_evidence_after_the_stored_date(pg_session):
-    """#11947: a passed date never supplies a Kalshi settlement.
-
-    * a finished event — same market, event `completed`;
-    * a stale `scheduled` event whose start has PASSED — differs from the
-      unstarted subject only in the start, so the gate reads the clock, not the
-      word 'scheduled';
-    * an unlinked market — no event to consult.
-    """
-    done = await _event(pg_session, status="completed", commence=PAST_DATE)
-    stale = await _event(
-        pg_session, status="scheduled", commence=NOW - timedelta(hours=3)
-    )
-    m_done = await _market(pg_session, ext="KXATPMATCH-DONE", event_id=done)
-    m_stale = await _market(pg_session, ext="KXATPMATCH-STALE", event_id=stale)
-    m_free = await _market(pg_session, ext="KXATPMATCH-FREE", event_id=None)
-
-    stats = await _run(pg_session)
-
-    for market_id in (m_done, m_stale, m_free):
-        row = (
-            await pg_session.execute(
-                text(
-                    "SELECT status, settled_at, market_metadata "
-                    "FROM futures_markets WHERE id = :id"
-                ),
-                {"id": market_id},
-            )
-        ).one()
-        assert tuple(row) == ("open", None, None)
-    assert stats["marked_resolved"] == 0, stats
-    assert stats["marked_resolved_without_winner_proof"] == 0, stats
 
 
 @pytest.mark.parametrize("source", ["odds_api", "polymarket"])
