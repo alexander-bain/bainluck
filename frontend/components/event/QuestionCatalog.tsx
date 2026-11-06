@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
+import { ATLAS_STATE_COPY, resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
 import type { GameMarketsResponse } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { buildQuestionCatalog, type CatalogGroup } from "@/lib/questionCatalog";
@@ -125,13 +125,16 @@ function QuestionGroupCard({
 export default function QuestionCatalog({
   data,
   status,
-  atlasMode = false,
+  atlasMode,
 }: {
   data: GameMarketsResponse;
   status?: string;
   atlasMode?: boolean;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const resolvedAtlasMode =
+    atlasMode ??
+    (typeof window !== "undefined" ? resolveAtlasOptIn(window.location.search) : false);
   const groups = buildQuestionCatalog(data, status, Date.now());
   if (!groups.length) return null;
   const settled = isSettledStatus(status);
@@ -161,7 +164,7 @@ export default function QuestionCatalog({
               group={group}
               expanded={expanded.has(group.key)}
               onToggle={() => toggle(group.key)}
-              atlasMode={atlasMode}
+              atlasMode={resolvedAtlasMode}
               settled={settled}
             />
           ),

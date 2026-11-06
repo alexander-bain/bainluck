@@ -113,7 +113,7 @@ export default function CategoriesIndexPage() {
                         )}
                       </p>
                     )}
-                    {total === 0 && (
+                    {countsByKey && total === 0 && (
                       <p className="text-micro text-text-muted">No items</p>
                     )}
                   </Link>

@@ -260,6 +260,11 @@ describe("when counts have not arrived (green on main too)", () => {
   it("still shows Poker in that state rather than silently dropping it", () => {
     expect(render(undefined)).toContain('href="/categories/poker"');
   });
+
+  it("does not print 'No items' on every tile when counts have not arrived or fetch failed (#12093)", () => {
+    expect(render(undefined)).not.toContain("No items");
+    expect(render({})).not.toContain("No items");
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

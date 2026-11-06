@@ -36,7 +36,7 @@ export function CrossSourceSpotlight({ matches }: { matches: CrossSourceMatch[] 
 
 export function CrossSourceCard({ market }: { market: CrossSourceMatch }) {
   const delta = market.delta;
-  const merged = (market.kalshi + market.poly) / 2;
+  const merged = market.merged ?? (market.kalshi + market.poly) / 2;
   const arbitrage = delta > 5;
   const disagree = delta > 2;
   const borderColor = BORDER_COLOR[market.category] || "#9CA3AF";
