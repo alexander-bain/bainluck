@@ -127,6 +127,7 @@ describe("#11974 Step E6b — NHL story cards behind ?atlas=1", () => {
       isSettled: true,
       settledResult: "won",
       openingProbability: 0.265,
+      source: "kalshi",
     });
   });
 
@@ -372,7 +373,93 @@ describe("#11974 Step E6b — NHL story cards behind ?atlas=1", () => {
       pregameChance: null,
       actualGoals: 1,
       hit: null,
+      source: null,
       sourceCount: 2,
     });
+    const multiSheet = buildStoryCardDetailsSheetProps({
+      card: scoringCard!,
+      rowId: scoringCard!.entries[0].id,
+      teams: TEAMS,
+    });
+    expect(multiSheet?.source).toBeNull();
+    expect(multiSheet?.sourceCount).toBe(2);
+  });
+
+  it("after the final, reads only admitted pregame_reading on NHL ladders and prints no pregame chance when only comparison.baseline exists (#11125 contract)", () => {
+    const gameQuestionMatrix = {
+      contract: MATRIX_CONTRACT,
+      questions: [4.5, 5.5, 6.5, 7.5].map((line, idx) => ({
+        question_key: `q:goals:${line}`,
+        kind: "count_threshold",
+        label: `Total Goals Over/Under ${line}`,
+        market_name: `Total Goals O/U ${line}`,
+        typing: { state: "typed" },
+        quantity: { key: "goals" },
+        subject: { side: "game" },
+        period: { key: "full_game" },
+        predicate: { relation: "ge", line },
+        options: [
+          {
+            option_key: `o:goals:${line}`,
+            label: `Over ${line} goals`,
+            side: "over",
+            // Line 7.5 has two contributors so pregame_reading is not admitted,
+            // even though comparison.baseline has a pregame_pin probability of 0.30.
+            contributor_outcome_ids: idx === 3 ? [403, 404] : [400 + idx],
+            published: { value_state: "result", source: "kalshi", observed_at: "2026-11-05T03:00:00Z" },
+            comparison: {
+              state: "comparable",
+              baseline: {
+                basis: "pregame_pin",
+                probability: 0.78 - idx * 0.16,
+                observed_at: "2026-11-04T23:50:00Z",
+              },
+            },
+            pregame_reading:
+              idx === 3
+                ? { state: "unavailable", reason: "multi_contributor" }
+                : {
+                    state: "available",
+                    reason: null,
+                    basis: "pregame_pin",
+                    probability: 0.78 - idx * 0.16,
+                    observed_at: "2026-11-04T23:50:00Z",
+                    outcome_id: 400 + idx,
+                  },
+            result: { state: "won" },
+          },
+        ],
+      })),
+    };
+
+    const totalsCard = buildNhlGoalTotalsCard({
+      gameQuestionMatrix,
+      status: "completed",
+      commenceTime: "2026-11-05T00:08:00Z",
+      homeScore: 2,
+      awayScore: 6,
+      homeShort: "Penguins",
+      awayShort: "Bruins",
+      nowMs: NOW_MS,
+    });
+
+    expect(totalsCard).not.toBeNull();
+    const unpinnedLine = totalsCard?.points.find((p) => p.x === 7.5);
+    expect(unpinnedLine).toBeDefined();
+    expect(unpinnedLine?.chance).toBeNull();
+    expect(unpinnedLine?.detail.baseline).toBeNull();
+    expect(unpinnedLine?.detail.baselineObservedAt).toBeNull();
+
+    const html = renderToStaticMarkup(
+      <EventCardView
+        card={totalsCard!}
+        teams={TEAMS}
+        selection={{ total: "o:goals:7.5" }}
+        onSelect={() => {}}
+        atlasMode
+        onDetails={() => {}}
+      />,
+    );
+    expect(html).not.toContain("30% pregame");
   });
 });

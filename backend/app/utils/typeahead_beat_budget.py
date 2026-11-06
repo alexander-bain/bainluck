@@ -2084,7 +2084,15 @@ def free_background_slots(
 #: also writes 141 against the same base of 140: whichever merges second
 #: re-runs the census (142), never adds one. The census RUN over the tree
 #: branched from `b65d0573bf` printed `explicit 101 implicit 40 total 141`.
-BACKGROUND_BEAT_COUNT = 141
+#: 🔴 RE-DERIVED at speed (2026-11-05, #12095, merged after #12108): 141 → 142,
+#: explicit 101 → 102, fall-through UNMOVED at 40. `snapshot-ranking-slate-daily`
+#: (`crontab(minute=15, hour=15)`) names `background` explicitly. Cost: one fire
+#: a night, inert (one env read) while `RANKING_SNAPSHOTS` is off; on, one
+#: anonymous Discover deck read (usually a cache hit), the futures scoring pass
+#: #142's 2:05 AM snapshot already runs, one primary-key market read and one
+#: insert. The census RUN over the tree merged with `80b7a1605c` printed
+#: `explicit 102 implicit 40 total 142`.
+BACKGROUND_BEAT_COUNT = 142
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

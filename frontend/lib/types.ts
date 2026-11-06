@@ -2384,6 +2384,12 @@ export interface FeedResponse {
     pinned_events: number;
     pinned_futures: number;
   };
+  /**
+   * #12095 — the deploy (git sha) that ranked this deck. Sent only while the
+   * server's `RANKING_SNAPSHOTS` switch is on; Discover events carry it with
+   * the `edition` as their slate id.
+   */
+  ranker_version?: string;
 }
 
 // Related events on futures detail pages

@@ -2871,6 +2871,28 @@ def snapshot_discover_candidate_pool(
     return _tracked_run("discover_candidate_snapshot", _snapshot())
 
 
+@celery_app.task(bind=True, name="app.tasks.snapshot_ranking_slate")
+def snapshot_ranking_slate(self):
+    """#12095: one nightly Discover slate for the ranking eval harness.
+
+    Inert unless ``RANKING_SNAPSHOTS`` is on (``app/utils/ranking_slate_capture.py``).
+    """
+    from app.utils.ranking_eval import ranking_snapshots_enabled
+
+    # Off means off: no session, no run record (and no counter that reads a
+    # disabled job as a run).
+    if not ranking_snapshots_enabled():
+        return {"status": "disabled"}
+    from app.services.database import async_session_maker
+    from app.utils.ranking_slate_capture import snapshot_ranking_slate as _snapshot_slate
+
+    async def _snapshot():
+        async with async_session_maker() as db:
+            return await _snapshot_slate(db)
+
+    return _tracked_run("ranking_slate_snapshot", _snapshot())
+
+
 @celery_app.task(bind=True, name="app.tasks.probability_publication_coverage")
 def probability_publication_coverage(self):
     """#12108 PR 1: is the served blend being recorded (coverage at T-1h and
@@ -8236,6 +8258,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.snapshot_discover_candidate_pool",
         "schedule": crontab(minute=5, hour=10),
         "kwargs": {"limit": 300, "retention_days": 30},
+        "options": {"queue": "background"},
+    },
+    # #12095 (Decide 37-B): the served Discover slate for the ranking eval
+    # harness. 15:15 UTC = 7:15 AM PST (8:15 AM PDT): the opening ten Alex sees
+    # in the morning, not a 4 AM deck. Inert unless RANKING_SNAPSHOTS is on.
+    "snapshot-ranking-slate-daily": {
+        "task": "app.tasks.snapshot_ranking_slate",
+        "schedule": crontab(minute=15, hour=15),
         "options": {"queue": "background"},
     },
     # #12108 PR 1: the served-blend recording gauge (coverage + growth) in task
