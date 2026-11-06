@@ -405,6 +405,161 @@ async def test_awards_category_roundup_refusal_reasons_and_tolerance_boundary():
     assert res_boundary.rows[0]["secondary_rendered_percent"] == 40
 
 
+@pytest.mark.parametrize(
+    ("case_name", "pool", "expected_reason"),
+    [
+        ("empty_pool", [], ("awards_category", "empty_pool")),
+        (
+            "missing_winner_field",
+            [
+                {
+                    "id": 901,
+                    "name": "Will One Battle After Another be nominated for Best Motion Picture - Drama?",
+                    "status": "open",
+                    "source": "kalshi",
+                    "category": "entertainment",
+                    "outcomes": [
+                        {"id": 9011, "name": "Yes", "probability": 0.88},
+                        {"id": 9012, "name": "No", "probability": 0.12},
+                    ],
+                }
+            ],
+            ("awards_category", "missing_winner_field"),
+        ),
+        (
+            "ambiguous_winner_field",
+            [
+                {
+                    "id": 900,
+                    "name": "Golden Globes: Best Motion Picture - Drama Winner",
+                    "status": "open",
+                    "source": "kalshi",
+                    "category": "entertainment",
+                    "mutually_exclusive": True,
+                    "outcomes": [
+                        {"id": 9001, "name": "One Battle After Another", "probability": 0.42},
+                        {"id": 9002, "name": "Sinners", "probability": 0.31},
+                        {"id": 9003, "name": "Hamnet", "probability": 0.27},
+                    ],
+                },
+                {
+                    "id": 999,
+                    "name": "Golden Globes: Best Picture Drama Winner",
+                    "status": "open",
+                    "source": "kalshi",
+                    "category": "entertainment",
+                    "mutually_exclusive": True,
+                    "outcomes": [
+                        {"id": 9991, "name": "One Battle After Another", "probability": 0.42},
+                        {"id": 9992, "name": "Sinners", "probability": 0.31},
+                        {"id": 9993, "name": "Hamnet", "probability": 0.27},
+                    ],
+                },
+            ],
+            ("awards_category", "ambiguous_winner_field"),
+        ),
+        (
+            "graded_winner_field",
+            [
+                {
+                    "id": 900,
+                    "name": "Golden Globes: Best Motion Picture - Drama Winner",
+                    "status": "open",
+                    "source": "kalshi",
+                    "category": "entertainment",
+                    "mutually_exclusive": True,
+                    "outcomes": [
+                        {
+                            "id": 9001,
+                            "name": "One Battle After Another",
+                            "probability": 1.0,
+                            "is_winner": True,
+                            "resolution_source": "venue_settlement",
+                        },
+                        {"id": 9002, "name": "Sinners", "probability": 0.0},
+                        {"id": 9003, "name": "Hamnet", "probability": 0.0},
+                    ],
+                }
+            ],
+            ("awards_category", "graded_winner_field:900"),
+        ),
+        (
+            "unpriced_winner_outcome",
+            [
+                {
+                    "id": 900,
+                    "name": "Golden Globes: Best Motion Picture - Drama Winner",
+                    "status": "open",
+                    "source": "kalshi",
+                    "category": "entertainment",
+                    "mutually_exclusive": True,
+                    "outcomes": [
+                        {"id": 9001, "name": "One Battle After Another", "probability": None},
+                        {"id": 9002, "name": "Sinners", "probability": 0.31},
+                        {"id": 9003, "name": "Hamnet", "probability": 0.27},
+                    ],
+                }
+            ],
+            ("awards_category", "unpriced_winner_outcome:900"),
+        ),
+        (
+            "invalid_winner_probability",
+            [
+                {
+                    "id": 900,
+                    "name": "Golden Globes: Best Motion Picture - Drama Winner",
+                    "status": "open",
+                    "source": "kalshi",
+                    "category": "entertainment",
+                    "mutually_exclusive": True,
+                    "outcomes": [
+                        {"id": 9001, "name": "One Battle After Another", "probability": 1.25},
+                        {"id": 9002, "name": "Sinners", "probability": 0.31},
+                        {"id": 9003, "name": "Hamnet", "probability": 0.27},
+                    ],
+                }
+            ],
+            ("awards_category", "invalid_winner_probability:900"),
+        ),
+        (
+            "winner_field_guard_failed",
+            [
+                {
+                    "id": 900,
+                    "name": "Golden Globes: Best Motion Picture - Drama Winner",
+                    "status": "open",
+                    "source": "kalshi",
+                    "category": "entertainment",
+                    "mutually_exclusive": True,
+                    "outcomes": [
+                        {"id": 9001, "name": "One Battle After Another", "probability": 0.70},
+                        {"id": 9002, "name": "Sinners", "probability": 0.60},
+                        {"id": 9003, "name": "Hamnet", "probability": 0.50},
+                    ],
+                }
+            ],
+            ("awards_category", "winner_field_guard_failed:900"),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_awards_category_roundup_parametrized_refusal_reasons(
+    case_name: str,
+    pool: list[dict],
+    expected_reason: tuple[str, str],
+):
+    res = await golden_globes_best_picture(pool)
+    assert isinstance(res, RoundupRefusal), f"Expected refusal for {case_name}"
+    assert res.reasons == (expected_reason,)
+
+
+@pytest.mark.asyncio
+async def test_register_closest_empty_pool_refusal():
+    res = await closest_races([])
+    assert isinstance(res, RoundupRefusal)
+    assert res.reasons == (("register_closest", "empty_pool"),)
+
+
 @pytest.mark.asyncio
 async def test_register_closest_additional_refusal_reasons():
     # 1. Reverse settled_in_register_still_priced: twin settled while primary still priced open

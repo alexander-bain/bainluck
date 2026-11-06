@@ -305,6 +305,8 @@ def select_awards_category_roundup(
 
     if not winner_markets:
         return RoundupRefusal((("awards_category", "missing_winner_field"),))
+    if len(winner_markets) > 1:
+        return RoundupRefusal((("awards_category", "ambiguous_winner_field"),))
 
     winner_market = winner_markets[0]
     w_mid = int(winner_market["id"])
