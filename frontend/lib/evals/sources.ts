@@ -8,7 +8,7 @@
  * as the plan on #11951 says.
  */
 
-export type EvalsSectionId = "timeline" | "forward-record" | "gaps";
+export type EvalsSectionId = "timeline" | "forward-record" | "test-library" | "tests-for-tests" | "gaps";
 
 const REPO = "https://github.com/alexander-bain/bainluck";
 
@@ -69,6 +69,55 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
     usedBy: ["timeline"],
   },
   {
+    id: "scoreboard-record",
+    label: "The test library's scoreboard record",
+    date: "2026-11-03",
+    href: `${REPO}/blob/82b61ab815/backend/scripts/evals/scoreboard_record.json`,
+    usedBy: ["test-library"],
+  },
+  {
+    id: "golden-baseline",
+    label: "The golden set's recorded count",
+    date: "2026-11-03",
+    href: `${REPO}/blob/54470c89fd/backend/tests/fixtures/matching_golden_baseline.json`,
+    usedBy: ["test-library"],
+  },
+  {
+    id: "bite-audit",
+    label: "The bite audit's test",
+    date: "2026-11-03",
+    href: `${REPO}/blob/54470c89fd/backend/tests/evals/test_eval_bite_rate_audit.py`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-study",
+    label: "Reviewer study receipt",
+    date: "2026-11-05",
+    href: `${REPO}/pull/11951#issuecomment-6673378524`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-pilot",
+    label: "Reviewer pilot, before its first review",
+    date: "2026-11-05",
+    href: `${REPO}/pull/11951#issuecomment-6674832482`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-full-study",
+    label: "Reviewer study, the full study's first result",
+    date: "2026-11-05",
+    href: `${REPO}/pull/11951#issuecomment-6679966474`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
+    id: "reviewer-dropped",
+    label: "Why one planted bug was left out",
+    date: "2026-11-05",
+    href: `${REPO}/pull/11951#issuecomment-6673535640`,
+    usedBy: ["tests-for-tests"],
+  },
+  {
     id: "evals-story",
     label: "Evals story, the gaps section",
     date: "2026-11-03",
@@ -87,4 +136,11 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
 /** The sources the sections on the page actually read, in list order. */
 export function sourcesFor(sections: readonly EvalsSectionId[]): EvalsSource[] {
   return EVALS_SOURCES.filter((s) => s.usedBy.some((id) => sections.includes(id)));
+}
+
+/** One source's link, by id, for a figure or a chip. Throws on an unknown id, so a typo fails the build's tests. */
+export function sourceLink(id: string): { label: string; href: string } {
+  const source = EVALS_SOURCES.find((s) => s.id === id);
+  if (!source) throw new Error(`no evals source "${id}"`);
+  return { label: source.label, href: source.href };
 }
