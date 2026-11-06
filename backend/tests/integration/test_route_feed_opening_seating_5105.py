@@ -109,6 +109,7 @@ def _harness(monkeypatch):
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _rc._reset_shared_client_for_tests()
+    feed_module._reset_opening_offender_log_for_tests()
     # Collections are planted explicitly where a test needs them.
     feed_collections = import_module("app.utils.feed_collections")
     monkeypatch.setattr(feed_collections, "feed_collections_enabled", lambda **_: False)
@@ -510,11 +511,12 @@ async def test_an_unsupported_deck_is_a_truthful_refusal_with_nothing_kept(
     client, monkeypatch, seated
 ):
     fake = _install(monkeypatch, _DictRedis())
-    # A live game whose own start is in the future: conflicting typed fields,
-    # unexempt, in the candidate opening.
+    # #12041 (Ruling 23-A): a single offender among valid cards is held back and
+    # the remaining cards are served; ``unavailable`` / ``opening_unsupported``
+    # is returned when holding back leaves no cards at all to show.
     conflicted = live(9)
     conflicted["data"]["commence_time"] = (T0 + timedelta(hours=2)).isoformat()
-    _plant(monkeypatch, [conflicted] + [fut(i) for i in range(12)])
+    _plant(monkeypatch, [conflicted])
 
     _, body = await _get(client, offset=0)
     await _drain()
@@ -664,7 +666,7 @@ async def test_an_unsupported_current_base_is_refused_not_served_flat(
     client, monkeypatch, seated
 ):
     unknown = {"type": "mystery", "data": {"id": 1}}
-    base = {"items": [unknown, fut(2)], "total": 2, FEED_PAGE_BASE_BUILT_AT_FIELD: 1.0}
+    base = {"items": [unknown], "total": 1, FEED_PAGE_BASE_BUILT_AT_FIELD: 1.0}
     fake = _install(monkeypatch, _DictRedis({SEATED_BASE_KEY: json.dumps(base)}))
 
     resp, body = await _get(client, offset=0)
