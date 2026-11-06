@@ -51,7 +51,7 @@ firebase-admin>=6.3.0
 PyJWT>=2.8.0
 
 # Google Sheets API (ground truth enrichment)
-google-api-python-client>=2.100.0
+google-api-python-client>=2.201.0
 
 # GA4 Data API (admin analytics)
 google-analytics-data>=0.18.0
