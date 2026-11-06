@@ -547,4 +547,248 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     expect(disagreementHtml).not.toContain("✓ Won");
     expect(disagreementHtml).not.toContain("✗ Lost");
   });
+
+  it("omits extra-innings card before and during the game when no outcome has a pregame number, and keeps it after the final", () => {
+    const noPregameOther = [
+      {
+        market_name: "MIL at LAD: Extra Innings",
+        outcome_name: "Yes",
+        probability: null,
+        pregame_mark: null,
+        observed_at: "2026-10-19T23:50:00Z",
+        source: "kalshi",
+        is_winner: false,
+        resolution_source: "kalshi",
+      },
+      {
+        market_name: "MIL at LAD: Extra Innings",
+        outcome_name: "No",
+        probability: null,
+        pregame_mark: null,
+        observed_at: "2026-10-19T23:50:00Z",
+        source: "kalshi",
+        is_winner: true,
+        resolution_source: "kalshi",
+      },
+    ];
+
+    expect(
+      buildMlbExtraInningsCard({
+        other: noPregameOther,
+        status: "upcoming",
+        commenceTime: "2026-10-20T00:08:00Z",
+        nowMs: Date.parse("2026-10-19T23:55:00Z"),
+      }),
+    ).toBeNull();
+
+    expect(
+      buildMlbExtraInningsCard({
+        other: noPregameOther,
+        status: "live",
+        commenceTime: "2026-10-20T00:08:00Z",
+        nowMs: Date.parse("2026-10-20T01:30:00Z"),
+      }),
+    ).toBeNull();
+
+    const settledCard = buildMlbExtraInningsCard({
+      other: noPregameOther,
+      status: "completed",
+      commenceTime: "2026-10-20T00:08:00Z",
+      nowMs: NOW_MS,
+    });
+    expect(settledCard).not.toBeNull();
+    expect(settledCard?.outcomes.map((o) => o.venueResult)).toEqual(["lost", "won"]);
+  });
+
+  it("after the final, MLB run-totals ladder reads only admitted pregame_reading and never falls back to comparison.baseline (#11125 contract)", () => {
+    const gameQuestionMatrix = {
+      contract: MATRIX_CONTRACT,
+      questions: [6.5, 7.5, 8.5, 9.5].map((line, idx) => ({
+        question_key: `q:runs:${line}`,
+        kind: "count_threshold",
+        label: `Total Runs Over/Under ${line}`,
+        market_name: `Total Runs O/U ${line}`,
+        typing: { state: "typed" },
+        quantity: { key: "runs" },
+        subject: { side: "game" },
+        period: { key: "full_game" },
+        predicate: { relation: "ge", line },
+        options: [
+          {
+            option_key: `o:runs:${line}`,
+            label: `Over ${line} runs`,
+            side: "over",
+            contributor_outcome_ids: idx === 3 ? [203, 204] : [200 + idx],
+            published: { value_state: "result", source: "kalshi", observed_at: "2026-10-20T03:00:00Z" },
+            comparison: {
+              state: "comparable",
+              baseline: {
+                basis: "pregame_pin",
+                probability: 0.72 - idx * 0.14,
+                observed_at: "2026-10-19T23:50:00Z",
+              },
+            },
+            pregame_reading:
+              idx === 3
+                ? { state: "unavailable", reason: "multi_contributor" }
+                : {
+                    state: "available",
+                    reason: null,
+                    basis: "pregame_pin",
+                    probability: 0.7 - idx * 0.14,
+                    observed_at: "2026-10-19T23:50:00Z",
+                    outcome_id: 200 + idx,
+                  },
+            result: { state: "won" },
+          },
+        ],
+      })),
+    };
+
+    const totalsCard = buildMlbRunTotalsCard({
+      gameQuestionMatrix,
+      status: "completed",
+      commenceTime: "2026-10-20T00:08:00Z",
+      homeScore: 4,
+      awayScore: 6,
+      homeShort: "Dodgers",
+      awayShort: "Brewers",
+      nowMs: NOW_MS,
+    });
+
+    expect(totalsCard).not.toBeNull();
+    const firstLine = totalsCard?.points.find((p) => p.x === 6.5);
+    expect(firstLine?.chance).toBeCloseTo(0.7, 5);
+    expect(firstLine?.detail.baseline).toBeCloseTo(0.7, 5);
+
+    const multiContribLine = totalsCard?.points.find((p) => p.x === 9.5);
+    expect(multiContribLine?.chance).toBeNull();
+    expect(multiContribLine?.detail.baseline).toBeNull();
+  });
+
+  it("buildMlbSeriesCard picks pregame chance by phase (before -> recent quoted, during -> baseline, after -> reading) and hides the pregame subline when !anyPregame", () => {
+    const seriesMatrix = {
+      contract: MATRIX_CONTRACT,
+      display_scope: "series",
+      questions: [
+        {
+          question_key: "q:series:winner",
+          kind: "binary_winner",
+          label: "NLCS Winner",
+          market_name: "NLCS Series Winner",
+          typing: { state: "typed" },
+          options: [
+            {
+              option_key: "o:series:lad",
+              label: "Los Angeles Dodgers",
+              side: "home",
+              contributor_outcome_ids: [301],
+              published: {
+                value_state: "quoted",
+                value: 0.71,
+                source: "kalshi",
+                observed_at: "2026-10-19T23:50:00Z",
+              },
+              comparison: {
+                state: "comparable",
+                baseline: {
+                  basis: "pregame_pin",
+                  probability: 0.64,
+                  observed_at: "2026-10-19T23:50:00Z",
+                },
+              },
+              pregame_reading: {
+                state: "available",
+                reason: null,
+                basis: "pregame_pin",
+                probability: 0.61,
+                observed_at: "2026-10-19T23:50:00Z",
+                outcome_id: 301,
+              },
+              result: { state: "open" },
+            },
+            {
+              option_key: "o:series:mil",
+              label: "Milwaukee Brewers",
+              side: "away",
+              contributor_outcome_ids: [302, 303],
+              published: {
+                value_state: "quoted",
+                value: 0.29,
+                source: "kalshi",
+                observed_at: "2026-10-19T23:50:00Z",
+              },
+              comparison: {
+                state: "comparable",
+                baseline: {
+                  basis: "pregame_pin",
+                  probability: 0.36,
+                  observed_at: "2026-10-19T23:50:00Z",
+                },
+              },
+              pregame_reading: {
+                state: "unavailable",
+                reason: "multi_contributor",
+              },
+              result: { state: "open" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const beforeCard = buildMlbSeriesCard(seriesMatrix, {
+      status: "upcoming",
+      commenceTime: "2026-10-20T00:08:00Z",
+      nowMs: Date.parse("2026-10-19T23:55:00Z"),
+    });
+    expect(beforeCard?.questions[0]?.options.map((o) => o.pregame)).toEqual([0.71, 0.29]);
+
+    const duringCard = buildMlbSeriesCard(seriesMatrix, {
+      status: "live",
+      commenceTime: "2026-10-20T00:08:00Z",
+      nowMs: Date.parse("2026-10-20T01:30:00Z"),
+    });
+    expect(duringCard?.questions[0]?.options.map((o) => o.pregame)).toEqual([0.64, 0.36]);
+
+    const afterCard = buildMlbSeriesCard(seriesMatrix, {
+      status: "completed",
+      commenceTime: "2026-10-20T00:08:00Z",
+      nowMs: NOW_MS,
+    });
+    expect(afterCard?.questions[0]?.options.map((o) => o.pregame)).toEqual([0.61, null]);
+
+    // When neither option has an admitted pregame_reading after the final, MlbSeriesCardView omits the pregame subline
+    const unpinnedMatrix = {
+      ...seriesMatrix,
+      questions: [
+        {
+          ...seriesMatrix.questions[0]!,
+          options: seriesMatrix.questions[0]!.options.map((o) => ({
+            ...o,
+            contributor_outcome_ids: [301, 302],
+            pregame_reading: { state: "unavailable", reason: "multi_contributor" },
+          })),
+        },
+      ],
+    };
+    const unpinnedAfterCard = buildMlbSeriesCard(unpinnedMatrix, {
+      status: "completed",
+      commenceTime: "2026-10-20T00:08:00Z",
+      nowMs: NOW_MS,
+    });
+    expect(unpinnedAfterCard?.questions[0]?.options.map((o) => o.pregame)).toEqual([null, null]);
+
+    const unpinnedHtml = renderToStaticMarkup(
+      <EventCardView
+        card={unpinnedAfterCard!}
+        teams={TEAMS}
+        selection={{}}
+        onSelect={() => {}}
+        atlasMode
+        onDetails={() => {}}
+      />,
+    );
+    expect(unpinnedHtml).not.toContain("Chance before this game");
+  });
 });
