@@ -1160,6 +1160,19 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
+                    if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                        EventAtlasChartHeaderView11666(
+                            selection: selection,
+                            dataPoints: dataPoints,
+                            checkpoints: checkpoints,
+                            history: history,
+                            status: status,
+                            sides: axis.sides,
+                            includesOpening: drawnRange == .all,
+                            homeName: homeTeamName ?? homeShort,
+                            primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: history.winProbSources ?? [:])
+                        )
+                    }
                     // #9517 — no readout row here at rest: the hero above says it.
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
@@ -2419,6 +2432,20 @@ struct OddsChartView: View {
                                           sportKey: sportKey, floatingCard: floatingCard)
                     .readingPhases(readoutContext(dataPoints: dataPoints, checkpoints: checkpoints,
                                                   pageGaveCard: pageGaveCard))
+                if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                    EventAtlasChartOverlay11666(
+                        selection: selection,
+                        proxy: proxy,
+                        plotFrame: plotFrame,
+                        dataPoints: dataPoints,
+                        checkpoints: checkpoints,
+                        history: vm.history,
+                        status: status,
+                        sides: axis.sides,
+                        includesOpening: drawnRange == .all,
+                        primaryColor: colorForSource(Self.primarySource(in: dataPoints), sources: sources)
+                    )
+                }
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the
