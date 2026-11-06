@@ -9,8 +9,8 @@
  *      saved pregame chance to reach each count and official final when typed.
  *   3. Run totals (`ladder`, `unit: "runs"`): full-game run lines from the
  *      served question matrix (`10238.v1`, `quantity.key === "runs"`), with
- *      each line's pregame chance, venue result, and actual total runs.
- *   4. Extra innings (`mlb-extra-innings`): the venue's extra-innings market
+ *      each line's pregame chance, settled result, and actual total runs.
+ *   4. Extra innings (`mlb-extra-innings`): the extra-innings market
  *      for this game when served in `other`.
  *   5. The series (`mlb-series`): separate associated series markets from
  *      `relatedFutures.series_question_matrix` (`10238.v1`, `display_scope === "series"`).
@@ -18,6 +18,7 @@
  * Every number is one the existing payload already serves, named for what it is.
  */
 
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import { isFinishedStatus } from "./eventState";
 import { decodeQuestionMatrix, MIN_LADDER_LINES, type LadderCard, type LadderPhase, type LadderPoint, type MatrixOption } from "./nbaEventCards";
 import {
@@ -58,16 +59,20 @@ export function mlbVenueResultLabel(result: MlbVenueResult): string {
 }
 
 /**
- * Resolves a settled/open status from a row's winner grade and game phase.
- * Settled rows always resolve to `"won"` or `"lost"`.
+ * Resolves a row's settled/open status through the single settled-state rule
+ * (`outcomeRowVerdict`, #4788) so ungraded or retracted rows never invent a result.
  */
 export function resolveMlbRowVenueResult(
   isWinner: boolean | null | undefined,
-  _resolutionSource?: string | null | undefined,
+  resolutionSource?: string | null | undefined,
   phase: LadderPhase = "after",
 ): MlbVenueResult {
-  if (isWinner === true) return "won";
-  if (isWinner === false) return "lost";
+  const verdict = outcomeRowVerdict(
+    { is_winner: isWinner, resolution_source: resolutionSource },
+    phase === "after",
+  );
+  if (verdict === "won") return "won";
+  if (verdict === "lost") return "lost";
   return phase === "after" ? "pending" : "open";
 }
 
@@ -662,66 +667,77 @@ export function buildMlbExtraInningsCard(opts: {
   if (rows.length === 0) return null;
   const phase = phaseOf(opts.status, opts.commenceTime, opts.nowMs);
 
-  // Blend equivalent outcome rows across venues into one probability per outcome (Standing Ruling 1).
+  // Print only a served number: prefer a server-blended row if `other` carries one,
+  // otherwise select one served source so each outcome (`Yes` / `No`) shows one
+  // untouched served pregame number (never client-averaged). During or after the
+  // game, read `pregame_mark` only; never mislabel a current/closing `probability` as pregame.
+  const rowPregameChance = (row: (typeof rows)[number]): number | null =>
+    phase === "before"
+      ? isRecentQuote(row.observed_at, opts.nowMs)
+        ? openChance(row.probability)
+        : null
+      : openChance(row.pregame_mark);
+
+  const chosenSource =
+    rows.find((r) => r.source === "blended" || r.source === "blend")?.source ??
+    rows.find((r) => rowPregameChance(r) !== null)?.source ??
+    rows[0]?.source ??
+    null;
+
   const byLabel = new Map<
     string,
     {
       label: string;
-      chances: number[];
-      sources: Set<string>;
-      latestObservedAt: string | null;
-      latestObservedMs: number;
-      winners: boolean[];
+      primaryRow: (typeof rows)[number];
+      verdicts: Set<"won" | "lost">;
       marketName: string;
     }
   >();
 
   for (const row of rows) {
     const label = canonicalExtraInningsLabel(row.outcome_name);
-    const chance =
-      phase === "before"
-        ? isRecentQuote(row.observed_at, opts.nowMs)
-          ? openChance(row.probability)
-          : null
-        : openChance(row.pregame_mark ?? row.probability);
-    const group = byLabel.get(label) ?? {
-      label,
-      chances: [],
-      sources: new Set<string>(),
-      latestObservedAt: null,
-      latestObservedMs: -Infinity,
-      winners: [],
-      marketName: "Extra Innings",
-    };
-    if (chance !== null) group.chances.push(chance);
-    if (row.source) group.sources.add(row.source);
-    const obsMs = parseMs(row.observed_at);
-    if (obsMs !== null && obsMs > group.latestObservedMs) {
-      group.latestObservedMs = obsMs;
-      group.latestObservedAt = row.observed_at ?? null;
-    } else if (group.latestObservedAt === null && row.observed_at) {
-      group.latestObservedAt = row.observed_at;
+    const existing = byLabel.get(label);
+    const verdict = outcomeRowVerdict(
+      { is_winner: row.is_winner, resolution_source: row.resolution_source },
+      phase === "after",
+    );
+    if (!existing) {
+      const verdicts = new Set<"won" | "lost">();
+      if (verdict) verdicts.add(verdict);
+      byLabel.set(label, {
+        label,
+        primaryRow: row,
+        verdicts,
+        marketName: "Extra Innings",
+      });
+    } else {
+      if (verdict) existing.verdicts.add(verdict);
+      if (existing.primaryRow.source !== chosenSource && row.source === chosenSource) {
+        existing.primaryRow = row;
+      }
     }
-    if (typeof row.is_winner === "boolean") {
-      group.winners.push(row.is_winner);
-    }
-    byLabel.set(label, group);
   }
 
   const outcomes: MlbExtraInningsOutcome[] = [...byLabel.values()].map((group) => {
-    const pregameChance =
-      group.chances.length > 0
-        ? group.chances.reduce((sum, c) => sum + c, 0) / group.chances.length
-        : null;
-    const isWinner =
-      group.winners.includes(true) ? true : group.winners.includes(false) ? false : null;
+    const pregameChance = rowPregameChance(group.primaryRow);
+    // When venues disagree (`won` and `lost` both present), print `pending`, never a result.
+    let venueResult: MlbVenueResult;
+    if (group.verdicts.has("won") && group.verdicts.has("lost")) {
+      venueResult = "pending";
+    } else if (group.verdicts.has("won")) {
+      venueResult = "won";
+    } else if (group.verdicts.has("lost")) {
+      venueResult = "lost";
+    } else {
+      venueResult = phase === "after" ? "pending" : "open";
+    }
     return {
       id: `mlb-extra:${group.label.toLowerCase()}`,
       label: group.label,
-      sourceCount: Math.max(1, group.sources.size),
+      sourceCount: 1,
       pregameChance,
-      observedAt: group.latestObservedAt,
-      venueResult: resolveMlbRowVenueResult(isWinner, null, phase),
+      observedAt: group.primaryRow.observed_at ?? null,
+      venueResult,
       marketName: group.marketName,
     };
   });
@@ -772,8 +788,10 @@ export function buildMlbSeriesCard(seriesQuestionMatrix: unknown): MlbSeriesCard
   for (const q of decoded) {
     if (!q.typed || q.options.length === 0) continue;
     const options: MlbSeriesOption[] = q.options.map((o) => {
-      const pregame = openChance(o.reading ?? o.baseline ?? o.quoted);
-      const observedAt = o.readingObservedAt ?? o.baselineObservedAt ?? o.observedAt;
+      // Take only `baseline` (`comparison.baseline`, pregame_pin) for "Chance before this game";
+      // never mislabel a live `quoted` value as pregame.
+      const pregame = openChance(o.baseline);
+      const observedAt = o.baselineObservedAt;
       const result: MlbVenueResult =
         o.result === true ? "won" : o.result === false ? "lost" : o.valueState === "quoted" ? "open" : "pending";
       return {

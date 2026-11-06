@@ -396,7 +396,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     expect(seriesHtml).not.toContain("Venue result");
   });
 
-  it("blends multi-source extra-innings rows into one outcome per side (Yes / No) and never shows venue names or 'Not confirmed'", () => {
+  it("keeps one served row per extra-innings outcome without client averaging, never mislabels closing probability as pregame, and prints pending when venues disagree", () => {
     const extraCard = buildMlbExtraInningsCard({
       other: [
         {
@@ -406,7 +406,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:45:00Z",
           source: "kalshi",
           is_winner: false,
-          resolution_source: "espn_box",
+          resolution_source: "kalshi",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -415,7 +415,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:55:00Z",
           source: "polymarket",
           is_winner: false,
-          resolution_source: "box_score",
+          resolution_source: "polymarket",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -424,7 +424,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:45:00Z",
           source: "kalshi",
           is_winner: true,
-          resolution_source: "espn_box",
+          resolution_source: "kalshi",
         },
         {
           market_name: "MIL at LAD: Extra Innings",
@@ -433,7 +433,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
           observed_at: "2026-10-19T23:55:00Z",
           source: "polymarket",
           is_winner: true,
-          resolution_source: "box_score",
+          resolution_source: "polymarket",
         },
       ],
       status: "completed",
@@ -443,20 +443,21 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
 
     expect(extraCard).not.toBeNull();
     expect(extraCard?.outcomes).toHaveLength(2);
+    // Uses the single served source (0.10 and 0.90), never client-averaged (0.12 and 0.88)
     expect(extraCard?.outcomes[0]).toMatchObject({
       label: "Yes",
-      sourceCount: 2,
+      sourceCount: 1,
+      pregameChance: 0.1,
       venueResult: "lost",
-      observedAt: "2026-10-19T23:55:00Z",
+      observedAt: "2026-10-19T23:45:00Z",
     });
-    expect(extraCard?.outcomes[0].pregameChance).toBeCloseTo(0.12, 5);
     expect(extraCard?.outcomes[1]).toMatchObject({
       label: "No",
-      sourceCount: 2,
+      sourceCount: 1,
+      pregameChance: 0.9,
       venueResult: "won",
-      observedAt: "2026-10-19T23:55:00Z",
+      observedAt: "2026-10-19T23:45:00Z",
     });
-    expect(extraCard?.outcomes[1].pregameChance).toBeCloseTo(0.88, 5);
 
     const html = renderToStaticMarkup(
       <EventCardView
@@ -468,8 +469,9 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
         onDetails={() => {}}
       />,
     );
-    expect(html).toContain("12% pregame");
-    expect(html).toContain("88% pregame");
+    expect(html).toContain("10% pregame");
+    expect(html).toContain("90% pregame");
+    expect(html).not.toContain("12% pregame");
     expect(html).toContain("✗ Lost");
     expect(html).toContain("✓ Won");
     expect(html).not.toContain("kalshi");
@@ -477,18 +479,69 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     expect(html).not.toContain("Venue");
     expect(html).not.toContain("Not confirmed");
 
-    const sheet = buildStoryCardDetailsSheetProps({
-      card: extraCard!,
-      rowId: extraCard!.outcomes[0].id,
-      teams: TEAMS,
+    // During/after game without pregame_mark + venue disagreement + resolution_source === null
+    const disagreementCard = buildMlbExtraInningsCard({
+      other: [
+        {
+          market_name: "MIL at LAD: Extra Innings",
+          outcome_name: "Yes",
+          probability: 0.02, // closing/current price must NOT be printed as pregame
+          pregame_mark: null,
+          observed_at: "2026-10-20T03:00:00Z",
+          source: "kalshi",
+          is_winner: true,
+          resolution_source: "kalshi",
+        },
+        {
+          market_name: "MIL at LAD: Extra Innings",
+          outcome_name: "Yes",
+          probability: 0.03,
+          pregame_mark: null,
+          observed_at: "2026-10-20T03:00:00Z",
+          source: "polymarket",
+          is_winner: false,
+          resolution_source: "polymarket",
+        },
+        {
+          market_name: "MIL at LAD: Extra Innings",
+          outcome_name: "No",
+          probability: 0.98,
+          pregame_mark: null,
+          observed_at: "2026-10-20T03:00:00Z",
+          source: "kalshi",
+          is_winner: false,
+          resolution_source: null, // outcomeRowVerdict refuses null resolution_source
+        },
+      ],
+      status: "completed",
+      commenceTime: "2026-10-20T00:08:00Z",
+      nowMs: NOW_MS,
     });
-    expect(sheet).toMatchObject({
-      subjectName: "Yes",
-      isSettled: true,
-      settledResult: "lost",
-      source: "blended",
-      sourceCount: 2,
-      rulesText: "Result: Lost",
+
+    expect(disagreementCard?.outcomes[0]).toMatchObject({
+      label: "Yes",
+      pregameChance: null,
+      venueResult: "pending",
     });
+    expect(disagreementCard?.outcomes[1]).toMatchObject({
+      label: "No",
+      pregameChance: null,
+      venueResult: "pending",
+    });
+
+    const disagreementHtml = renderToStaticMarkup(
+      <EventCardView
+        card={disagreementCard!}
+        teams={TEAMS}
+        selection={{}}
+        onSelect={() => {}}
+        atlasMode
+        onDetails={() => {}}
+      />,
+    );
+    expect(disagreementHtml).toContain("Pregame chance unavailable for this market");
+    expect(disagreementHtml).toContain("Pending");
+    expect(disagreementHtml).not.toContain("✓ Won");
+    expect(disagreementHtml).not.toContain("✗ Lost");
   });
 });
