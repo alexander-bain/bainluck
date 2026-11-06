@@ -48,6 +48,11 @@ import {
   type MlbHomeRunCard,
   type MlbSeriesCard,
 } from "@/lib/mlbEventCards";
+import {
+  nhlScoringHeadline,
+  nhlScoringReason,
+  type NhlScoringCard,
+} from "@/lib/nhlEventCards";
 
 /** Selected original row per milestone card, keyed by card id. */
 export type CardSelection = Record<string, string>;
@@ -1227,53 +1232,222 @@ export function MlbSeriesCardView({
           })}
         </div>
       )}
-      {activeQuestion && (
-        <div className="grid grid-cols-2 gap-2">
-          {activeQuestion.options.map((opt) => {
-            const isSelected = opt.optionKey === selectedKey;
-            return (
-              <button
-                key={opt.optionKey}
-                type="button"
-                onClick={() => {
-                  onSelect(card.id, opt.optionKey);
-                  onDetails?.(opt.optionKey);
-                }}
-                className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left ${
-                  isSelected
-                    ? "border-text-primary bg-surface-elevated"
-                    : "border-surface-border bg-surface-card hover:bg-surface-elevated"
-                }`}
-              >
-                <span className="text-xs font-bold text-text-primary line-clamp-2">{opt.label}</span>
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-text-secondary">Chance before this game</span>
-                  <span
-                    className="text-sm font-bold tabular-nums"
-                    style={{ color: opt.pregame !== null ? accent : undefined }}
-                  >
-                    {opt.pregame !== null ? formatProbability(opt.pregame) : "Unavailable"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 text-[11px] text-text-secondary">
-                  {opt.result === "won" && (
-                    <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+      {activeQuestion && (() => {
+        const anyPregame = activeQuestion.options.some((o) => o.pregame !== null);
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            {activeQuestion.options.map((opt) => {
+              const isSelected = opt.optionKey === selectedKey;
+              return (
+                <button
+                  key={opt.optionKey}
+                  type="button"
+                  onClick={() => {
+                    onSelect(card.id, opt.optionKey);
+                    onDetails?.(opt.optionKey);
+                  }}
+                  className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left ${
+                    isSelected
+                      ? "border-text-primary bg-surface-elevated"
+                      : "border-surface-border bg-surface-card hover:bg-surface-elevated"
+                  }`}
+                >
+                  <span className="text-xs font-bold text-text-primary line-clamp-2">{opt.label}</span>
+                  {anyPregame && (
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-text-secondary">Chance before this game</span>
+                      <span
+                        className="text-sm font-bold tabular-nums"
+                        style={{ color: opt.pregame !== null ? accent : undefined }}
+                      >
+                        {opt.pregame !== null ? formatProbability(opt.pregame) : "Unavailable"}
+                      </span>
+                    </div>
                   )}
-                  {opt.result === "lost" && (
-                    <span className="font-semibold text-text-secondary">{ATLAS_STATE_COPY.lostWithCross}</span>
-                  )}
-                  {opt.result !== "won" && opt.result !== "lost" && (
-                    <span>{mlbVenueResultLabel(opt.result)}</span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+                  <div className="flex items-center gap-1 text-[11px] text-text-secondary">
+                    {opt.result === "won" && (
+                      <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+                    )}
+                    {opt.result === "lost" && (
+                      <span className="font-semibold text-text-secondary">{ATLAS_STATE_COPY.lostWithCross}</span>
+                    )}
+                    {opt.result !== "won" && opt.result !== "lost" && (
+                      <span>{mlbVenueResultLabel(opt.result)}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
       <p className="text-[11px] text-text-secondary">
         {optionCount} series {optionCount === 1 ? "outcome" : "outcomes"} · all in the Series section
       </p>
+    </div>
+  );
+}
+
+// ─── NHL story card views (#11974 Step E6b) ────────────────────────────────
+
+export function NhlScoringCardView({
+  card,
+  teams,
+  onDetails,
+}: {
+  card: NhlScoringCard;
+  teams: CardTeams;
+  onDetails?: (rowId: string) => void;
+}) {
+  const [boxRef, box] = usePlotBox();
+  const W = box.width;
+  const font = box.font;
+  const left = 10;
+  const right = 14;
+  const plotW = Math.max(120, W - left - right);
+  const x = (v: number) => left + (Math.min(Math.max(v, 0), card.scaleCeiling) / card.scaleCeiling) * plotW;
+  const step = card.scaleCeiling <= 0.4 ? 0.1 : 0.2;
+  const ticks: number[] = [];
+  for (let t = 0; t <= card.scaleCeiling + 1e-9; t += step) {
+    ticks.push(Number(t.toFixed(2)));
+  }
+  const firstEntry = card.entries[0];
+
+  return (
+    <div className="flex flex-col gap-2.5" data-card-kind="nhl-scoring" data-testid="nhl-scoring-card">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">
+          Player goals · 1+ goal chance
+        </p>
+        {onDetails && firstEntry && (
+          <button
+            type="button"
+            onClick={() => onDetails(firstEntry.id)}
+            aria-label="Details for Goalscorers"
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+      <h3 className="text-lg font-bold text-text-primary leading-snug">{nhlScoringHeadline(card)}</h3>
+      <p className="text-xs text-text-secondary">{nhlScoringReason(card)}</p>
+      <div
+        data-testid="atlas-story-card-mark-key"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary"
+      >
+        <span className="inline-flex items-center gap-1">
+          <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-secondary bg-surface-card" />
+          <span>Pregame chance</span>
+        </span>
+        {card.phase === "after" && (
+          <span className="inline-flex items-center gap-1">
+            <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+            <span>/</span>
+            <span className="font-semibold text-text-secondary">Final goals</span>
+          </span>
+        )}
+      </div>
+      <div ref={boxRef} className="flex flex-col gap-2 w-full max-w-[720px]">
+        {card.entries.map((entry, idx) => {
+          const isLast = idx === card.entries.length - 1;
+          const rawColor =
+            entry.side === "home" ? teams.homeColor : entry.side === "away" ? teams.awayColor : null;
+          const ink = inkColor(rawColor);
+          const txt = textColor(rawColor);
+          const svgH = isLast ? 42 : 24;
+          const cy = 12;
+          const scored = entry.actualGoals !== null && entry.actualGoals >= 1;
+          const finalText =
+            entry.actualGoals !== null
+              ? `${entry.actualGoals} ${entry.actualGoals === 1 ? "goal" : "goals"} · Final`
+              : card.phase === "after"
+                ? "Final unavailable"
+                : "Pregame";
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => onDetails?.(entry.id)}
+              className="flex flex-col gap-1 rounded-md p-1.5 -mx-1.5 text-left hover:bg-surface-elevated"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="text-sm font-semibold truncate" style={{ color: txt }}>
+                    {entry.player}
+                  </span>
+                  <span className="text-xs font-semibold tabular-nums" style={{ color: txt }}>
+                    {entry.pregameChance !== null
+                      ? `${formatProbability(entry.pregameChance)} pregame`
+                      : "Pregame unavailable"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {scored && (
+                    <span className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent-live">
+                      {ATLAS_STATE_COPY.wonWithCheck}
+                    </span>
+                  )}
+                  {!scored && entry.actualGoals === 0 && (
+                    <span className="inline-flex items-center rounded bg-surface-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
+                      {ATLAS_STATE_COPY.lostWithCross}
+                    </span>
+                  )}
+                  <span className="text-xs font-bold tabular-nums text-text-primary">{finalText}</span>
+                </div>
+              </div>
+              <svg viewBox={`0 0 ${W} ${svgH}`} width={W} height={svgH} className="block max-w-full" aria-hidden="true">
+                {ticks.map((t) => (
+                  <line
+                    key={t}
+                    x1={x(t)}
+                    x2={x(t)}
+                    y1={2}
+                    y2={22}
+                    stroke="rgba(0,0,0,0.08)"
+                  />
+                ))}
+                {entry.pregameChance !== null && (
+                  <>
+                    <line
+                      x1={x(0)}
+                      x2={x(entry.pregameChance)}
+                      y1={cy}
+                      y2={cy}
+                      stroke={ink}
+                      strokeOpacity={0.35}
+                      strokeWidth={3}
+                    />
+                    <circle
+                      cx={x(entry.pregameChance)}
+                      cy={cy}
+                      r={5.5}
+                      fill="#FFFFFF"
+                      stroke={ink}
+                      strokeWidth={2}
+                      data-mark="pregame"
+                    />
+                  </>
+                )}
+                {isLast &&
+                  ticks.map((t) => (
+                    <text
+                      key={t}
+                      x={x(t)}
+                      y={24 + font * 1.25}
+                      fontSize={font}
+                      textAnchor="middle"
+                      fill="#4B5563"
+                    >
+                      {t === 0 ? "0%" : t === 1 ? "100%" : formatProbability(t)}
+                    </text>
+                  ))}
+              </svg>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1289,6 +1463,34 @@ export function buildStoryCardDetailsSheetProps(opts: {
   teams: CardTeams;
 }): Omit<AtlasDetailsSheetProps, "open" | "onClose"> | null {
   const { card, rowId, row, lead, rows, teams } = opts;
+  if (card?.kind === "nhl-scoring") {
+    const entry = card.entries.find((e) => e.id === rowId || e.rowId === rowId) ?? card.entries[0] ?? null;
+    if (!entry) return null;
+    const isSettled = entry.hit !== null || entry.actualGoals !== null;
+    const settledResult =
+      entry.hit === true || (entry.actualGoals !== null && entry.actualGoals >= 1)
+        ? "won"
+        : entry.hit === false || entry.actualGoals === 0
+          ? "lost"
+          : null;
+    const rulesLines: string[] = ["Line: 1+ goals"];
+    if (entry.actualGoals !== null) {
+      rulesLines.push(`Final goals: ${entry.actualGoals}`);
+    }
+    return {
+      subjectName: entry.player,
+      marketTitle: entry.marketTitle,
+      isSettled,
+      settledResult,
+      openingProbability: entry.pregameChance,
+      openingObservedAt: entry.observedAt,
+      lastObservedAt: entry.observedAt,
+      source: entry.source,
+      sourceCount: entry.sourceCount,
+      rulesText: rulesLines.join("\n"),
+    };
+  }
+
   if (card?.kind === "mlb-home-runs") {
     const entry = card.entries.find((e) => e.id === rowId) ?? card.entries[0] ?? null;
     if (!entry) return null;
@@ -1512,6 +1714,9 @@ export function EventCardView({
   expanded?: boolean;
   atlasMode?: boolean;
 }) {
+  if (card.kind === "nhl-scoring") {
+    return <NhlScoringCardView card={card} teams={teams} onDetails={onDetails} />;
+  }
   if (card.kind === "mlb-home-runs") {
     return <MlbHomeRunCardView card={card} teams={teams} onDetails={onDetails} />;
   }
