@@ -13,7 +13,7 @@ import RESULTS from "@/lib/evals/data/reviewer-results-2026-11-06.json";
 import RECEIPTS from "@/lib/evals/data/reviewer-results-2026-11-06.receipts.json";
 import { loadReviewerResults, resultsProblem, reviewerTally } from "@/lib/evals/reviewerResults";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
-import { reviewBlocks } from "@/lib/evals/topScreen";
+import { caseMarks } from "@/lib/evals/topScreen";
 
 const STUDY = loadReviewerStudy();
 
@@ -75,14 +75,27 @@ describe("the tally and the blocks", () => {
     expect(tally.mistakes.right + tally.mistakes.wrong).toBe(tally.mistakes.reviewed);
   });
 
-  it("draws one block per planned review, recorded outcomes first and the rest not yet", () => {
+  it("marks one bug per planted mistake and one decoy per harmless change, by the tries recorded so far", () => {
     const results = loadReviewerResults(STUDY)!;
-    const tally = reviewerTally(results, STUDY!);
-    const mistakes = reviewBlocks(results, STUDY!, "defect");
-    expect(mistakes.length).toBe(tally.mistakes.planned);
-    expect(mistakes.filter((b) => b === "caught").length).toBe(tally.mistakes.right);
-    expect(mistakes.filter((b) => b === "not_yet").length).toBe(tally.mistakes.planned - tally.mistakes.reviewed);
-    expect(reviewBlocks(results, STUDY!, "control").every((b) => b === "not_yet")).toBe(true);
+    const bugs = caseMarks(results, STUDY!, "defect");
+    const decoys = caseMarks(results, STUDY!, "control");
+    expect(bugs.length).toBe(STUDY!.cases.filter((c) => c.kind === "defect").length);
+    expect(decoys.length).toBe(STUDY!.cases.filter((c) => c.kind === "control").length);
+    const tried = new Set(results.results.map((r) => r.case));
+    STUDY!.cases
+      .filter((c) => c.kind === "defect")
+      .forEach((c, i) => expect(bugs[i] === "not_yet").toBe(!tried.has(c.id)));
+    expect(decoys.every((m) => m === "not_yet")).toBe(true);
+  });
+
+  it("a mistake caught on one try and missed on another is marked wrong, never right", () => {
+    const raw = clone();
+    raw.results = [
+      { case: "r01", pass: 1, outcome: "caught", at: "2026-11-06T08:00:00Z", receipt: { label: "x", href: "https://example.test/a" } },
+      { case: "r01", pass: 2, outcome: "missed", at: "2026-11-06T09:00:00Z", receipt: { label: "y", href: "https://example.test/b" } },
+    ];
+    const marks = caseMarks(loadReviewerResults(STUDY, raw)!, STUDY!, "defect");
+    expect(marks[STUDY!.cases.findIndex((c) => c.id === "r01")]).toBe("wrong");
   });
 
   it("a missed mistake and a false alarm count as wrong calls", () => {

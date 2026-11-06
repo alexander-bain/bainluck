@@ -69,13 +69,41 @@ export function truthReading(view: ForwardRecordView): TruthReading {
   return view.proof.errorPp <= view.categories.barPp ? "close" : "far";
 }
 
-/** One block per planned review of one kind of case: its outcome when recorded, else not yet. */
-export type ReviewBlock = ReviewOutcome | "not_yet";
+/**
+ * The worked example under the probability picture: the group whose stated
+ * probability is nearest to the typical "likely" call, among groups big enough
+ * to draw solid. Its two numbers are the live payload's, so "when we said X, it
+ * happened Y of the time" is read, never written. Null when no group qualifies.
+ */
+export const EXAMPLE_TARGET_PCT = 70;
 
-export function reviewBlocks(results: ReviewerResults, study: ReviewerStudy, kind: "defect" | "control"): ReviewBlock[] {
-  const passes = results.planned / study.cases.length;
-  const cases = study.cases.filter((c) => c.kind === kind).map((c) => c.id);
-  const recorded = results.results.filter((r) => cases.includes(r.case)).map((r) => r.outcome);
-  const planned = cases.length * passes;
-  return [...recorded, ...Array<ReviewBlock>(Math.max(0, planned - recorded.length)).fill("not_yet")];
+export function truthExample(dots: TruthDot[]): TruthDot | null {
+  const solid = dots.filter((d) => !d.thin);
+  if (solid.length === 0) return null;
+  return solid.reduce((best, d) =>
+    Math.abs(d.said - EXAMPLE_TARGET_PCT) < Math.abs(best.said - EXAMPLE_TARGET_PCT) ? d : best
+  );
+}
+
+/** A whole percent for a reader: 72.4 → "72%". */
+export function wholePercent(pct: number): string {
+  return `${Math.round(pct)}%`;
+}
+
+/**
+ * One mark per case of one kind for the reviewer picture: right when every try
+ * recorded so far was the right call, wrong when any was not, not yet when no
+ * try is in.
+ */
+export type CaseMark = "right" | "wrong" | "not_yet";
+
+export function caseMarks(results: ReviewerResults, study: ReviewerStudy, kind: "defect" | "control"): CaseMark[] {
+  const right: ReviewOutcome = kind === "defect" ? "caught" : "passed";
+  return study.cases
+    .filter((c) => c.kind === kind)
+    .map((c) => {
+      const tries = results.results.filter((r) => r.case === c.id);
+      if (tries.length === 0) return "not_yet";
+      return tries.every((r) => r.outcome === right) ? "right" : "wrong";
+    });
 }

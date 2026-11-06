@@ -1,9 +1,9 @@
 "use client";
 
+import { AlarmSmoke, Bug, CircleHelp, FileCheck } from "lucide-react";
 import type { ReactNode } from "react";
 
 import Figure, { Exhibit } from "@/components/evals/Figure";
-import ResultChip from "@/components/evals/ResultChip";
 import TruthChip from "@/components/evals/TruthChip";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
 import { EVALS_PAGE_TITLE, TOP_COPY as COPY } from "@/lib/evals/copy";
@@ -12,12 +12,14 @@ import { reviewerTally, type ReviewerResults } from "@/lib/evals/reviewerResults
 import type { ReviewerStudy } from "@/lib/evals/reviewerStudy";
 import {
   TRUTH_PLOT,
+  caseMarks,
   plotX,
   plotY,
-  reviewBlocks,
   truthDots,
+  truthExample,
   truthReading,
-  type ReviewBlock,
+  wholePercent,
+  type CaseMark,
 } from "@/lib/evals/topScreen";
 import type { FigureTruth } from "@/lib/evals/truth";
 import { watcherHealth, type WatcherList } from "@/lib/evals/watchers";
@@ -79,6 +81,7 @@ function TruthCard({ state }: { state: ForwardRecordState }) {
   const { view, truth } = ready;
   const dots = truthDots(curve.data, CHART_THIN_FLOOR);
   const reading = truthReading(view);
+  const example = truthExample(dots);
   const { width, height, left, bottom } = TRUTH_PLOT;
   return (
     <Card
@@ -135,6 +138,16 @@ function TruthCard({ state }: { state: ForwardRecordState }) {
             strokeWidth={9}
             strokeLinecap="round"
           />
+          {example && (
+            <circle
+              data-truth-example=""
+              cx={example.cx}
+              cy={example.cy}
+              r={8}
+              className="fill-none stroke-text-primary"
+              strokeWidth={1.5}
+            />
+          )}
           {dots.map((d) => (
             <circle
               key={`${d.said}-${d.happened}`}
@@ -157,75 +170,74 @@ function TruthCard({ state }: { state: ForwardRecordState }) {
         </svg>
       </Exhibit>
       <p className="text-caption text-text-primary" data-truth-reading={reading}>
-        {reading === "close" ? COPY.truthClose : reading === "far" ? COPY.truthFar : COPY.truthPlain}
+        {example ? (
+          <>
+            {COPY.truthExampleBefore}{" "}
+            <Figure truth={truth} value={String(example.said)} className="font-semibold">
+              {wholePercent(example.said)}
+            </Figure>
+            {COPY.truthExampleMiddle}{" "}
+            <Figure truth={truth} value={String(example.happened)} className="font-semibold">
+              {wholePercent(example.happened)}
+            </Figure>{" "}
+            {reading === "close" ? COPY.truthExampleClose : reading === "far" ? COPY.truthExampleFar : COPY.truthExamplePlain}
+          </>
+        ) : (
+          COPY.truthPlain
+        )}
       </p>
     </Card>
   );
 }
 
-const BLOCK_TONE: Record<ReviewBlock, string> = {
-  caught: "bg-accent-brand",
-  passed: "bg-accent-brand",
-  missed: "bg-accent-danger",
-  flagged: "bg-accent-danger",
-  not_yet: "bg-surface-elevated",
+const MARK_TONE: Record<CaseMark, string> = {
+  right: "text-accent-brand",
+  wrong: "text-accent-danger",
+  not_yet: "text-text-muted",
 };
 
-function BlockRow({ blocks, kind }: { blocks: ReviewBlock[]; kind: string }) {
-  return (
-    <div className="flex gap-[2px]" aria-hidden="true" data-review-blocks={kind}>
-      {blocks.map((b, i) => (
-        <span key={i} data-review-block={b} className={`h-3 flex-1 rounded-sm ${BLOCK_TONE[b]}`} />
-      ))}
-    </div>
-  );
-}
-
-/** "Does our AI reviewer catch planted mistakes?" — one block per planned review, filled as results come in. */
+/** "Does our AI reviewer spot mistakes?" — one bug per hidden mistake, coloured by what the reviewer did with it. */
 function ReviewerCard({ results, study }: { results: ReviewerResults; study: ReviewerStudy }) {
   const tally = reviewerTally(results, study);
   const truth: FigureTruth = { kind: "last_run", asOf: results.asOf, source: results.receipt };
-  const n = (value: number) => (
-    <Figure truth={truth} value={String(value)}>
+  const caseTruth: FigureTruth = { kind: "last_run", asOf: study.asOf, source: study.receipt };
+  const n = (value: number, t: FigureTruth = truth, className = "") => (
+    <Figure truth={t} value={String(value)} className={className}>
       {String(value)}
     </Figure>
   );
-  const done = tally.mistakes.reviewed + tally.harmless.reviewed;
-  const row = (kind: "mistakes" | "harmless") => {
-    const t = tally[kind];
-    return (
-      <div className="space-y-0.5" data-review-kind={kind}>
-        <p className="flex flex-wrap items-baseline justify-between gap-x-2 text-caption">
-          <span className="text-text-primary">{kind === "mistakes" ? COPY.reviewerMistakes : COPY.reviewerHarmless}</span>
-          <span className="text-text-secondary">
-            {t.reviewed > 0 ? (
-              <>
-                {n(kind === "mistakes" ? t.right : t.wrong)}{" "}
-                {kind === "mistakes" ? COPY.reviewerCaughtAfter : COPY.reviewerAlarmsAfter} {n(t.reviewed)}{" "}
-                {COPY.reviewerSoFar}
-              </>
-            ) : (
-              <>
-                <ResultChip result="unknown" /> {COPY.reviewerNoneYet}
-              </>
-            )}
-          </span>
-        </p>
-        <BlockRow blocks={reviewBlocks(results, study, kind === "mistakes" ? "defect" : "control")} kind={kind} />
-      </div>
-    );
-  };
+  const bugs = caseMarks(results, study, "defect");
+  const decoys = caseMarks(results, study, "control");
   return (
     <Card id="reviewer" title={COPY.reviewerTitle} scope={truth.kind} footer={<TruthChip truth={truth} showClock />}>
+      <p className="text-caption text-text-secondary" data-review-kind="mistakes">
+        {tally.mistakes.reviewed > 0 ? (
+          <>
+            {COPY.reviewerCaughtBefore} <span className="text-title-3 text-text-primary">{n(tally.mistakes.right)}</span>{" "}
+            {COPY.reviewerCaughtMiddle} <span className="text-title-3 text-text-primary">{n(tally.mistakes.reviewed)}</span>{" "}
+            {COPY.reviewerCaughtAfter}
+          </>
+        ) : (
+          COPY.reviewerNoneChecked
+        )}
+      </p>
       <Exhibit truth={truth} label={COPY.reviewerChartLabel}>
-        <div className="space-y-1.5">
-          {row("mistakes")}
-          {row("harmless")}
+        <div className="flex items-center gap-x-2.5" aria-hidden="true">
+          <span className="flex gap-0.5" data-review-marks="mistakes">
+            {bugs.map((m, i) => (
+              <Bug key={i} data-review-mark={m} className={`h-5 w-5 shrink-0 ${MARK_TONE[m]}`} strokeWidth={2.25} />
+            ))}
+          </span>
+          <span className="flex items-center gap-0.5" data-review-marks="harmless">
+            {decoys.map((m, i) => (
+              <FileCheck key={i} data-review-mark={m} className={`h-[18px] w-[18px] shrink-0 ${MARK_TONE[m]}`} strokeWidth={2} />
+            ))}
+          </span>
         </div>
       </Exhibit>
-      <p className="text-caption text-text-primary">
-        {COPY.reviewerSentence}
-        {done < results.planned && <> {COPY.reviewerUnderWay}</>}
+      <p className="text-caption text-text-primary" data-review-kind="harmless">
+        {COPY.reviewerHidBefore} {n(bugs.length, caseTruth)} {COPY.reviewerHidMiddle} {n(decoys.length, caseTruth)}{" "}
+        {COPY.reviewerHidAfter}
       </p>
     </Card>
   );
@@ -234,10 +246,10 @@ function ReviewerCard({ results, study }: { results: ReviewerResults; study: Rev
 type Dot = "problems" | "fixed" | "stopped" | "unknown";
 
 const DOT_CLASS: Record<Dot, string> = {
-  problems: "bg-accent-danger border-accent-danger",
-  fixed: "bg-accent-brand border-accent-brand",
-  stopped: "bg-surface-elevated border-text-muted",
-  unknown: "bg-surface-card border-dashed border-text-muted",
+  problems: "text-accent-danger",
+  fixed: "text-accent-brand",
+  stopped: "text-text-secondary",
+  unknown: "text-text-muted",
 };
 
 const DOT_WORDS: Record<Dot, string> = {
@@ -269,9 +281,13 @@ function WatchersCard({ list }: { list: WatcherList }) {
       </p>
       <Exhibit truth={truth} label={COPY.watchersChartLabel}>
         <div className="flex gap-1" aria-hidden="true">
-          {dots.map((d) => (
-            <span key={d.id} data-watcher-dot={d.dot} className={`h-6 w-6 shrink-0 rounded-full border-2 ${DOT_CLASS[d.dot]}`} />
-          ))}
+          {dots.map((d) =>
+            d.dot === "unknown" ? (
+              <CircleHelp key={d.id} data-watcher-dot={d.dot} className={`h-6 w-6 shrink-0 ${DOT_CLASS[d.dot]}`} strokeWidth={2} />
+            ) : (
+              <AlarmSmoke key={d.id} data-watcher-dot={d.dot} className={`h-6 w-6 shrink-0 ${DOT_CLASS[d.dot]}`} strokeWidth={2.25} />
+            )
+          )}
         </div>
       </Exhibit>
       <p className="text-caption text-text-primary">

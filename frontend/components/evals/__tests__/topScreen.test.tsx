@@ -40,7 +40,8 @@ import { forwardRecordView, type ForwardRecordView } from "@/lib/evals/forwardRe
 import { loadReviewerResults, reviewerTally } from "@/lib/evals/reviewerResults";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
-import { truthReading } from "@/lib/evals/topScreen";
+import { truthDots, truthExample, truthReading, wholePercent } from "@/lib/evals/topScreen";
+import { CHART_THIN_FLOOR } from "@/lib/evals/forwardRecord";
 import { loadWatchers, watcherHealth } from "@/lib/evals/watchers";
 
 const fetchCalibrationMock = fetchCalibration as jest.Mock;
@@ -222,26 +223,42 @@ describe("each picture is drawn from its record", () => {
     expect(card?.querySelector("[data-evals-figure]")).toBeNull();
   });
 
-  it("the AI reviewer: one block per planned review, the counts from the two records, UNKNOWN while no harmless change is in", async () => {
+  it("the AI reviewer: one bug per hidden mistake and one page per decoy, counts from the two records, every decoy grey while none is in", async () => {
     const page = await mountPage();
     const study = loadReviewerStudy()!;
     const results = loadReviewerResults(study)!;
     const tally = reviewerTally(results, study);
     const card = page.querySelector('[data-evals-top-card="reviewer"]');
-    const mistakes = card?.querySelectorAll('[data-review-blocks="mistakes"] [data-review-block]');
-    const harmless = card?.querySelectorAll('[data-review-blocks="harmless"] [data-review-block]');
-    expect(mistakes?.length).toBe(tally.mistakes.planned);
-    expect(harmless?.length).toBe(tally.harmless.planned);
+    const bugs = card?.querySelectorAll('[data-review-marks="mistakes"] [data-review-mark]');
+    const decoys = card?.querySelectorAll('[data-review-marks="harmless"] [data-review-mark]');
+    expect(bugs?.length).toBe(study.cases.filter((c) => c.kind === "defect").length);
+    expect(decoys?.length).toBe(study.cases.filter((c) => c.kind === "control").length);
+    const caughtCases = new Set(results.results.filter((r) => r.outcome === "caught").map((r) => r.case)).size;
+    expect(card?.querySelectorAll('[data-review-marks="mistakes"] [data-review-mark="right"]').length).toBe(caughtCases);
     const values = Array.from(card?.querySelectorAll('[data-review-kind="mistakes"] [data-evals-figure]') ?? []).map((f) =>
       f.getAttribute("data-value")
     );
     expect(values).toEqual(
       tally.mistakes.reviewed > 0 ? [String(tally.mistakes.right), String(tally.mistakes.reviewed)] : []
     );
+    // No decoy is checked yet, so every decoy is grey and the card claims no false-alarm rate.
     if (tally.harmless.reviewed === 0) {
-      expect(card?.querySelector('[data-review-kind="harmless"] [data-result="unknown"]')).not.toBeNull();
+      expect(card?.querySelectorAll('[data-review-marks="harmless"] [data-review-mark="not_yet"]').length).toBe(decoys?.length);
+      expect(card?.textContent).not.toMatch(/false alarm/i);
     }
     expect(card?.querySelector('[data-truth-chip][data-truth="last_run"]')?.getAttribute("data-as-of")).toBe(results.asOf);
+  });
+
+  it("probabilities: the worked example is the solid group nearest to a typical likely call, its two numbers read from the curve", async () => {
+    const page = await mountPage();
+    const view = forwardRecordView(calibrationFixture());
+    const example = truthExample(truthDots(view.curve!.data, CHART_THIN_FLOOR));
+    expect(example).not.toBeNull();
+    const card = page.querySelector('[data-evals-top-card="truth"]');
+    const figures = Array.from(card?.querySelectorAll("[data-truth-reading] [data-evals-figure]") ?? []);
+    expect(figures.map((f) => f.textContent)).toEqual([wholePercent(example!.said), wholePercent(example!.happened)]);
+    expect(figures.map((f) => f.getAttribute("data-value"))).toEqual([String(example!.said), String(example!.happened)]);
+    expect(card?.querySelector("[data-truth-example]")).not.toBeNull();
   });
 
   it("the checks: one circle per check, and the count of working ones from the list", async () => {
