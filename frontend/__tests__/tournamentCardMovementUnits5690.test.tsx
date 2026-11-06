@@ -63,6 +63,15 @@ import type { GolfTournament, GolfLeaderboardPlayer } from "../lib/types";
 const decode = (s: string) =>
   s.replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
 
+function stripMarkup(html: string): string {
+  let previous: string;
+  do {
+    previous = html;
+    html = html.replace(/<[^>]*>/g, "");
+  } while (html !== previous);
+  return html;
+}
+
 function tournament(name: string, movement_24h: number, probability: number): GolfTournament {
   return {
     key: "amgen_irish_open",
@@ -252,7 +261,7 @@ describe("#11995 — live cards consume the server's complete winner allocation"
       ...lbPlayer(name, 100 / 3, null), rendered_percent: i === 0 ? 34 : 33,
     }));
     const html = renderToStaticMarkup(<TournamentCard tournament={tournament("Alice Smith", 0, 1 / 3)} leaderboard={players} />);
-    const visible = html.replace(/<[^>]*>/g, "");
+    const visible = stripMarkup(html);
     const printed = [...visible.matchAll(/(\d+)%/g)].map(match => Number(match[1]));
     expect(printed).toEqual([34, 33, 33]);
     expect(printed.reduce((sum, value) => sum + value, 0)).toBe(100);
@@ -263,7 +272,7 @@ describe("#11995 — live cards consume the server's complete winner allocation"
     (probability, rendered, expected) => {
       const player = { ...lbPlayer("Alice Smith", probability as number, null), rendered_percent: rendered as number };
       const html = renderToStaticMarkup(<TournamentCard tournament={tournament("Alice Smith", 0, (probability as number) / 100)} leaderboard={[player]} />);
-      expect(html.replace(/<[^>]*>/g, "")).toContain(expected as string);
+      expect(stripMarkup(html)).toContain(expected as string);
       expect(html).not.toContain(">100%<");
       expect(html).not.toContain(">0%<");
     },

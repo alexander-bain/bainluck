@@ -61,6 +61,15 @@ function text(el: React.ReactElement): string {
     .replace(/&amp;/g, "&");
 }
 
+function stripMarkup(html: string): string {
+  let previous: string;
+  do {
+    previous = html;
+    html = html.replace(/<[^>]*>/g, "");
+  } while (html !== previous);
+  return html;
+}
+
 const golfer = (over: Partial<GolfGolfer> = {}): GolfGolfer => ({
   name: "K.J. Choi",
   probability: 0.003,
@@ -103,7 +112,7 @@ describe("UX-P161 — the golf field row honours the probability floor", () => {
         tournamentKey="masters" />)}
       <GolfOverflowRows outcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />
     </>);
-    const visible = html.replace(/<[^>]*>/g, "");
+    const visible = stripMarkup(html);
     expect([...visible.matchAll(/(\d+)%/g)].reduce((sum, match) => sum + Number(match[1]), 0)).toBe(100);
     const overflow = text(<GolfOverflowRows outcomes={[{ name: "Field", probability: 0.2, rendered_percent: 20 }]} />);
     expect(overflow).toContain("Field");
