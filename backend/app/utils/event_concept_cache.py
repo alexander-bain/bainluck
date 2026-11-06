@@ -873,10 +873,10 @@ def release_refresh_lock(rc, keys: ConceptCacheKeys, token: str | None) -> bool:
     on its own TTL: the cost is one delayed refresh (<= REFRESH_LOCK_TTL), whereas
     deleting on a failed check is the stampede this function exists to prevent.
     """
-    if rc is None or not token:
+    if rc is None:
         return False
     try:
-        return bool(rc.eval(_RELEASE_IF_OWNER_LUA, 1, keys.refresh_lock, token))
+        return bool(rc.delete(keys.refresh_lock))
     except Exception:
         logger.warning(
             "event-concept cache: could not release %s; leaving it to expire",
