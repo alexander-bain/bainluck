@@ -19,7 +19,7 @@
     "lead_rule": "nearest_open_deadline",
     "min_numbered_members": 3,
     "card_rows": 3,
-    "title_ilike": "Will % announce a %residential run before %",
+    "title_ilike": "Will % announce a presidential run before %",
     "twins": "none",
     "normalize": false,
     "relation": "exact",

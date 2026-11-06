@@ -388,6 +388,7 @@ def select_field_leaders(
 
     candidates: list[_CoherentFieldMember] = []
     seen_subjects: set[str] = set()
+    dropped_reasons: list[tuple[str, str]] = []
 
     for m in raw_list:
         mid = int(m["id"])
@@ -399,6 +400,33 @@ def select_field_leaders(
         if not subject:
             continue
 
+        # Check resolution_date / window filter first so out-of-window markets are skipped cleanly
+        # without failing per-member checks (gotcha #42: one bad item must never wipe a scoring pass).
+        res_dt = _parse_dt(m.get("resolution_date"))
+        if domain == "weather_daily_highs":
+            if res_dt is None:
+                dropped_reasons.append(("field_leaders", f"missing_resolution_date:{mid}"))
+                continue
+            city_tz = _resolve_city_tz(m, subject)
+            tomorrow_local = effective_now.astimezone(city_tz).date() + timedelta(days=1)
+            stored_local_date = res_dt.astimezone(city_tz).date()
+            title_date = _extract_title_date(str(m.get("name") or ""), tomorrow_local.year)
+            if title_date is not None and title_date != stored_local_date:
+                dropped_reasons.append(("field_leaders", f"title_date_mismatch:{mid}"))
+                continue
+            if stored_local_date != tomorrow_local:
+                continue
+        elif domain == "box_office_opening_weekend":
+            if res_dt is not None:
+                res_utc = res_dt.astimezone(timezone.utc)
+                if res_utc <= effective_now or res_utc > effective_now + timedelta(days=6):
+                    continue
+        elif domain == "economic_releases_week":
+            if res_dt is not None:
+                res_utc = res_dt.astimezone(timezone.utc)
+                if res_utc <= effective_now or res_utc > effective_now + timedelta(days=7):
+                    continue
+
         # Check release time for economic releases.
         release_raw = (
             m.get("release_at")
@@ -409,46 +437,32 @@ def select_field_leaders(
         release_dt = _parse_dt(release_raw)
         if require_release_time or domain == "economic_releases_week":
             if release_dt is None:
-                return RoundupRefusal((("field_leaders", f"missing_release_time:{mid}"),))
+                dropped_reasons.append(("field_leaders", f"missing_release_time:{mid}"))
+                continue
             release_utc = release_dt.astimezone(timezone.utc)
             if release_utc <= effective_now:
-                return RoundupRefusal((("field_leaders", f"release_time_passed:{mid}"),))
+                dropped_reasons.append(("field_leaders", f"release_time_passed:{mid}"))
+                continue
             if release_utc > effective_now + timedelta(days=7):
                 continue
         else:
             release_utc = release_dt.astimezone(timezone.utc) if release_dt is not None else None
 
-        # Check resolution_date and title date agreement for weather daily highs.
-        res_dt = _parse_dt(m.get("resolution_date"))
-        if domain == "weather_daily_highs":
-            if res_dt is None:
-                return RoundupRefusal((("field_leaders", f"missing_resolution_date:{mid}"),))
-            city_tz = _resolve_city_tz(m, subject)
-            tomorrow_local = effective_now.astimezone(city_tz).date() + timedelta(days=1)
-            stored_local_date = res_dt.astimezone(city_tz).date()
-            title_date = _extract_title_date(str(m.get("name") or ""), tomorrow_local.year)
-            if title_date is not None and title_date != stored_local_date:
-                return RoundupRefusal((("field_leaders", f"title_date_mismatch:{mid}"),))
-            if stored_local_date != tomorrow_local:
-                continue
-        elif domain == "box_office_opening_weekend":
-            if res_dt is not None:
-                res_utc = res_dt.astimezone(timezone.utc)
-                if res_utc <= effective_now or res_utc > effective_now + timedelta(days=6):
-                    continue
-
         outcomes = m.get("outcomes")
         if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
             outcomes = m.get("top_outcomes")
         if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)) or len(outcomes) < 2:
-            return RoundupRefusal((("field_leaders", f"missing_outcomes:{mid}"),))
+            dropped_reasons.append(("field_leaders", f"missing_outcomes:{mid}"))
+            continue
 
         outcome_mappings = [o for o in outcomes if isinstance(o, Mapping)]
         if _is_cumulative_threshold_ladder(outcome_mappings):
-            return RoundupRefusal((("field_leaders", f"cumulative_ladder_not_allowed:{mid}"),))
+            dropped_reasons.append(("field_leaders", f"cumulative_ladder_not_allowed:{mid}"))
+            continue
 
         if m.get("mutually_exclusive") is False:
-            return RoundupRefusal((("field_leaders", f"guard_failed:{mid}"),))
+            dropped_reasons.append(("field_leaders", f"guard_failed:{mid}"))
+            continue
 
         blocked = (
             set(withheld_by_market.get(mid, set()))
@@ -462,9 +476,11 @@ def select_field_leaders(
             or m.get("price_observed_at")
             or m.get("updated_at")
         )
+        bucket_error: Optional[str] = None
         for idx, o in enumerate(outcome_mappings):
             if leg_is_graded(o.get("is_winner"), o.get("resolution_source")):
-                return RoundupRefusal((("field_leaders", f"graded_outcome:{mid}"),))
+                bucket_error = f"graded_outcome:{mid}"
+                break
             oid_raw = o.get("id")
             oid = (
                 int(oid_raw)
@@ -472,7 +488,8 @@ def select_field_leaders(
                 else mid * 100 + idx + 1
             )
             if oid in blocked:
-                return RoundupRefusal((("field_leaders", f"withheld_price:{mid}"),))
+                bucket_error = f"withheld_price:{mid}"
+                break
             label = str(o.get("name") or o.get("label") or "").strip()
             if not label:
                 continue
@@ -482,18 +499,26 @@ def select_field_leaders(
                 else o.get("current_probability")
             )
             if p_raw is None or isinstance(p_raw, bool):
-                return RoundupRefusal((("field_leaders", f"unpriced_bucket:{mid}"),))
+                bucket_error = f"unpriced_bucket:{mid}"
+                break
             try:
                 p_val = float(p_raw)
             except (TypeError, ValueError):
-                return RoundupRefusal((("field_leaders", f"unpriced_bucket:{mid}"),))
+                bucket_error = f"unpriced_bucket:{mid}"
+                break
             if not math.isfinite(p_val) or p_val < 0.0 or p_val > 1.0:
-                return RoundupRefusal((("field_leaders", f"invalid_probability:{mid}"),))
+                bucket_error = f"invalid_probability:{mid}"
+                break
             obs = _iso_utc(o.get("observed_at") or o.get("last_updated")) or market_obs
             raw_buckets.append((oid, label, p_val, obs))
 
+        if bucket_error is not None:
+            dropped_reasons.append(("field_leaders", bucket_error))
+            continue
+
         if len(raw_buckets) < 2:
-            return RoundupRefusal((("field_leaders", f"too_few_buckets:{mid}"),))
+            dropped_reasons.append(("field_leaders", f"too_few_buckets:{mid}"))
+            continue
 
         outcome_dicts: list[dict[str, Any]] = [
             {
@@ -512,7 +537,8 @@ def select_field_leaders(
                 question=str(m.get("name") or ""),
             )
             if divisor is None:
-                return RoundupRefusal((("field_leaders", f"guard_failed:{mid}"),))
+                dropped_reasons.append(("field_leaders", f"guard_failed:{mid}"))
+                continue
             normalize_display_probs(
                 outcome_dicts,
                 mutually_exclusive=True,
@@ -544,16 +570,19 @@ def select_field_leaders(
         # Freshness check (6h cadence).
         obs_dt = _parse_dt(leader.observed_at)
         if obs_dt is None:
-            return RoundupRefusal((("field_leaders", f"missing_observation_time:{mid}"),))
+            dropped_reasons.append(("field_leaders", f"missing_observation_time:{mid}"))
+            continue
         age_hours = (effective_now - obs_dt.astimezone(timezone.utc)).total_seconds() / 3600.0
         if age_hours > max_age_hours:
-            return RoundupRefusal((("field_leaders", f"stale_observation:{mid}"),))
+            dropped_reasons.append(("field_leaders", f"stale_observation:{mid}"))
+            continue
 
         # Top two ranges within 1 point -> drop that row (not a whole-card refusal unless < min_members remain).
         if (
             abs(leader.rendered_percent - runner_up.rendered_percent) <= min_top_two_gap_points
             or abs(leader.probability - runner_up.probability) <= (min_top_two_gap_points / 100.0) + 1e-9
         ):
+            dropped_reasons.append(("field_leaders", f"top_two_within_gap:{mid}"))
             continue
 
         release_key = str(
@@ -585,7 +614,9 @@ def select_field_leaders(
         )
 
     if len(candidates) < min_members:
-        return RoundupRefusal((("field_leaders", "too_few_coherent_members"),))
+        return RoundupRefusal(
+            tuple(dropped_reasons) + (("field_leaders", "too_few_coherent_members"),)
+        )
 
     if order == "least_likely_leader":
         selected = sorted(
@@ -780,6 +811,7 @@ async def _load_field_leaders_from_db(
             "mutually_exclusive": getattr(m, "mutually_exclusive", True),
             "resolution_date": getattr(m, "resolution_date", None),
             "updated_at": getattr(m, "updated_at", None),
+            "prices_updated_at": getattr(m, "prices_updated_at", None),
             "market_metadata": getattr(m, "market_metadata", None),
             "outcomes": outcomes_list,
         }

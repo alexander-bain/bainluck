@@ -387,3 +387,212 @@ async def test_who_announces_before_2027_groups_capitalized_and_lowercase_presid
     assert "Pete Buttigieg" in labels
     assert len(res.rows) == 3
     assert len(res.members) == 4
+
+
+@pytest.mark.asyncio
+async def test_field_leaders_all_per_member_refusal_reasons_recorded():
+    # 1. release_time_passed
+    past_release = [
+        {
+            "id": 601,
+            "name": "Core CPI MoM in October 2026",
+            "status": "open",
+            "source": "kalshi",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "release_at": "2026-11-05T13:30:00Z",  # before NOW_UTC (18:00Z)
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 6011, "name": "0.2%", "probability": 0.60},
+                {"id": 6012, "name": "0.3%", "probability": 0.40},
+            ],
+        }
+    ]
+    res_past = await this_weeks_economic_data(past_release, now=NOW_UTC)
+    assert isinstance(res_past, RoundupRefusal)
+    assert ("field_leaders", "release_time_passed:601") in res_past.reasons
+
+    # 2. missing_resolution_date on weather_daily_highs
+    no_res_date = [
+        {
+            **_city_market(602, "New York", [("52°–53°", 0.60), ("54°–55°", 0.40)]),
+            "resolution_date": None,
+        }
+    ]
+    res_no_date = await tomorrows_highs(no_res_date, now=NOW_UTC)
+    assert isinstance(res_no_date, RoundupRefusal)
+    assert ("field_leaders", "missing_resolution_date:602") in res_no_date.reasons
+
+    # 3. graded_outcome
+    graded_city = [
+        {
+            **_city_market(603, "New York", [("52°–53°", 0.60), ("54°–55°", 0.40)]),
+            "outcomes": [
+                {
+                    "id": 6031,
+                    "name": "52°–53°",
+                    "probability": 1.0,
+                    "is_winner": True,
+                    "resolution_source": "venue_settlement",
+                    "observed_at": "2026-11-05T17:30:00Z",
+                },
+                {
+                    "id": 6032,
+                    "name": "54°–55°",
+                    "probability": 0.0,
+                    "observed_at": "2026-11-05T17:30:00Z",
+                },
+            ],
+        }
+    ]
+    res_graded = await tomorrows_highs(graded_city, now=NOW_UTC)
+    assert isinstance(res_graded, RoundupRefusal)
+    assert ("field_leaders", "graded_outcome:603") in res_graded.reasons
+
+    # 4. withheld_price
+    withheld_city = _city_market(604, "New York", [("52°–53°", 0.60), ("54°–55°", 0.40)])
+    res_withheld = select_field_leaders(
+        [withheld_city],
+        domain="weather_daily_highs",
+        now=NOW_UTC,
+        withheld_by_market={604: {60401}},
+    )
+    assert isinstance(res_withheld, RoundupRefusal)
+    assert ("field_leaders", "withheld_price:604") in res_withheld.reasons
+
+    # 5. invalid_probability (out of [0, 1])
+    invalid_prob_city = [
+        {
+            **_city_market(605, "New York", [("52°–53°", 0.60), ("54°–55°", 0.40)]),
+            "outcomes": [
+                {"id": 6051, "name": "52°–53°", "probability": 1.25, "observed_at": "2026-11-05T17:30:00Z"},
+                {"id": 6052, "name": "54°–55°", "probability": 0.40, "observed_at": "2026-11-05T17:30:00Z"},
+            ],
+        }
+    ]
+    res_inv = await tomorrows_highs(invalid_prob_city, now=NOW_UTC)
+    assert isinstance(res_inv, RoundupRefusal)
+    assert ("field_leaders", "invalid_probability:605") in res_inv.reasons
+
+    # 6. guard_failed (mutually_exclusive=False and sum > 160%)
+    non_exclusive_city = [
+        _city_market(
+            606,
+            "New York",
+            [("52°–53°", 0.60), ("54°–55°", 0.40)],
+            mutually_exclusive=False,
+        ),
+        _city_market(
+            607,
+            "Chicago",
+            [("44°–45°", 0.90), ("46°–47°", 0.85)],  # sum = 1.75 > 1.60 ceiling
+        ),
+    ]
+    res_guard = await tomorrows_highs(non_exclusive_city, now=NOW_UTC)
+    assert isinstance(res_guard, RoundupRefusal)
+    assert ("field_leaders", "guard_failed:606") in res_guard.reasons
+    assert ("field_leaders", "guard_failed:607") in res_guard.reasons
+
+
+@pytest.mark.asyncio
+async def test_field_leaders_mixed_pool_survives_bad_items_per_gotcha_42():
+    # Weather mixed pool: 3 valid tomorrow cities + 1 stale city + 1 undated city
+    weather_mixed = [
+        _city_market(101, "New York", [("52°–53°", 0.25), ("54°–55°", 0.34), ("56°–57°", 0.41)]),
+        _city_market(102, "Chicago", [("44°–45°", 0.38), ("46°–47°", 0.32), ("48°–49°", 0.30)]),
+        _city_market(103, "Miami", [("80°–81°", 0.48), ("82°–83°", 0.32), ("84°–85°", 0.20)]),
+        _city_market(
+            104,
+            "Seattle",
+            [("50°–51°", 0.60), ("52°–53°", 0.40)],
+            obs_iso="2026-11-05T01:00:00Z",  # stale (>6h old)
+        ),
+        {
+            **_city_market(105, "Denver", [("48°–49°", 0.60), ("50°–51°", 0.40)]),
+            "resolution_date": None,  # missing resolution_date
+        },
+    ]
+    res_weather = await tomorrows_highs(weather_mixed, now=NOW_UTC)
+    assert isinstance(res_weather, RoundupMembers)
+    assert [r["label"] for r in res_weather.rows] == [
+        "Miami · 80°–81°",
+        "New York · 56°–57°",
+        "Chicago · 44°–45°",
+    ]
+
+    # Economics mixed pool: 3 valid upcoming releases + 1 undated market + 1 out-of-window market
+    econ_mixed = [
+        {
+            "id": 701,
+            "name": "U.S. Unemployment Rate in October 2026",
+            "status": "open",
+            "source": "kalshi",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "release_at": "2026-11-06T13:30:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 7011, "name": "4.1%", "probability": 0.54},
+                {"id": 7012, "name": "4.2%", "probability": 0.46},
+            ],
+        },
+        {
+            "id": 702,
+            "name": "Core CPI MoM in October 2026",
+            "status": "open",
+            "source": "kalshi",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "release_at": "2026-11-10T13:30:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 7021, "name": "0.2%", "probability": 0.58},
+                {"id": 7022, "name": "0.3%", "probability": 0.42},
+            ],
+        },
+        {
+            "id": 703,
+            "name": "Initial Jobless Claims this week",
+            "status": "open",
+            "source": "kalshi",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "release_at": "2026-11-07T13:30:00Z",
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 7031, "name": "210k–220k", "probability": 0.62},
+                {"id": 7032, "name": "220k–230k", "probability": 0.38},
+            ],
+        },
+        {
+            "id": 704,
+            "name": "Undated GDP market in Q4 2026",
+            "status": "open",
+            "source": "kalshi",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 7041, "name": "2.0%–2.5%", "probability": 0.60},
+                {"id": 7042, "name": "2.5%–3.0%", "probability": 0.40},
+            ],
+        },
+        {
+            "id": 705,
+            "name": "December FOMC rate decision",
+            "status": "open",
+            "source": "kalshi",
+            "category": "economics",
+            "mutually_exclusive": True,
+            "resolution_date": "2026-12-18T19:00:00Z",  # > 7 days out
+            "prices_updated_at": "2026-11-05T17:00:00Z",
+            "outcomes": [
+                {"id": 7051, "name": "Hold", "probability": 0.65},
+                {"id": 7052, "name": "Cut 25 bps", "probability": 0.35},
+            ],
+        },
+    ]
+    res_econ = await this_weeks_economic_data(econ_mixed, now=NOW_UTC)
+    assert isinstance(res_econ, RoundupMembers)
+    assert len(res_econ.rows) == 3
+
