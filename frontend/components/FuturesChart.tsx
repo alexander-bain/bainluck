@@ -57,7 +57,6 @@ const GREEN_COLORS = SERIES_COLORS_GREEN;
 const FULL_CHART_WIDTH = 800;
 const MINI_CHART_WIDTH = 400;
 const FULL_PADDING = { top: 20, right: 20, bottom: 40, left: 50 };
-const ATLAS_FULL_PADDING = { top: 20, right: 148, bottom: 40, left: 50 };
 const MINI_PADDING = { top: 4, right: 4, bottom: 4, left: 4 };
 
 export interface AtlasEndLabelEntry {
@@ -467,12 +466,11 @@ export function FuturesChart({
     // page can hydrate before resolution is known, and a chart that anchored
     // while it still believed itself live must re-anchor when it learns.
     // #9867: and "behind" is wherever its lines moved — see `anchorScrollLeft`.
-    const activePadding = atlas ? ATLAS_FULL_PADDING : FULL_PADDING;
     const movement = settled
       ? seriesMovementMarks(plottedOutcomes, {
           width: FULL_CHART_WIDTH,
-          left: activePadding.left,
-          right: activePadding.right,
+          left: FULL_PADDING.left,
+          right: FULL_PADDING.right,
         })
       : undefined;
     el.scrollLeft = anchorScrollLeft(el, { settled, movement });
@@ -481,7 +479,7 @@ export function FuturesChart({
     // still has plot behind it.
     window.addEventListener("resize", syncEdgeOverflow);
     return () => window.removeEventListener("resize", syncEdgeOverflow);
-  }, [atlas, mini, plottedOutcomes, settled, syncEdgeOverflow]);
+  }, [mini, plottedOutcomes, settled, syncEdgeOverflow]);
 
   // #683: a full read that served nothing to draw and says it held some back
   // falls through to the too-little-to-draw state below, which says so. A
@@ -570,7 +568,7 @@ export function FuturesChart({
 
   const chartWidth = mini ? MINI_CHART_WIDTH : FULL_CHART_WIDTH;
   const effectiveHeight = height ?? (mini ? 80 : 200);
-  const padding = mini ? MINI_PADDING : atlas ? ATLAS_FULL_PADDING : FULL_PADDING;
+  const padding = mini ? MINI_PADDING : FULL_PADDING;
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = effectiveHeight - padding.top - padding.bottom;
 
@@ -697,10 +695,14 @@ export function FuturesChart({
         highlightedOutcomeId !== outcome.outcome_id;
       const opacity = isDimmed ? 0.35 : outcome.eliminated ? 0.45 : 1;
 
+      const anchorY = resultSpec
+        ? Math.max(padding.top + 8, pointY - 12)
+        : pointY;
+
       atlasEndLabelEntries.push({
         outcomeId: outcome.outcome_id,
         text,
-        y: pointY,
+        y: anchorY,
         pointX,
         color: colorFor(outcome, idx),
         opacity,
@@ -1217,9 +1219,12 @@ export function FuturesChart({
               <g data-testid="atlas-chart-end-labels">
                 {placedAtlasEndLabels.map((item) => {
                   const plotRight = chartWidth - padding.right;
-                  const labelX = plotRight + 10;
-                  const leaderStartX = Math.min(plotRight, item.pointX + 5);
-                  const leaderPath = `M ${leaderStartX} ${item.y} L ${labelX - 6} ${item.labelY} L ${labelX - 2} ${item.labelY}`;
+                  const labelX = Math.max(
+                    padding.left + 12,
+                    Math.min(plotRight - 10, item.pointX - 10),
+                  );
+                  const leaderEndX = Math.max(labelX + 4, item.pointX - 4);
+                  const leaderPath = `M ${item.pointX} ${item.y} L ${leaderEndX} ${item.labelY} L ${labelX + 3} ${item.labelY}`;
                   return (
                     <g
                       key={`end-label-${item.outcomeId}`}
@@ -1238,8 +1243,12 @@ export function FuturesChart({
                       <text
                         x={labelX}
                         y={item.labelY + 3.5}
-                        textAnchor="start"
+                        textAnchor="end"
                         fill={item.color}
+                        stroke="#FFFFFF"
+                        strokeWidth={3.5}
+                        strokeLinejoin="round"
+                        style={{ paintOrder: "stroke" }}
                         className="text-[10px] font-semibold tabular-nums"
                       >
                         {item.text}
