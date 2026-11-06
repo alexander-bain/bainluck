@@ -2075,7 +2075,15 @@ def free_background_slots(
 #: indexed MLB window read; ESPN boards (11 reads, no quota) only when the
 #: window holds an unanchored, unscored row. The census RUN over the tree
 #: branched from `8c641f6f48` printed `explicit 100 implicit 40 total 140`.
-BACKGROUND_BEAT_COUNT = 140
+#: 🔴 RE-DERIVED at speed (2026-11-05, #12095): 140 → 141, explicit 100 → 101,
+#: fall-through UNMOVED at 40. `snapshot-ranking-slate-daily`
+#: (`crontab(minute=15, hour=12)`) names `background` explicitly. Cost: one fire
+#: a night, inert (one env read) while `RANKING_SNAPSHOTS` is off; on, one
+#: anonymous Discover deck read (usually a cache hit), the futures scoring pass
+#: #142's 2:05 AM snapshot already runs, one primary-key market read and one
+#: insert. The census RUN over the tree branched from `6879c9e973` printed
+#: `explicit 101 implicit 40 total 141`.
+BACKGROUND_BEAT_COUNT = 141
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
