@@ -406,7 +406,9 @@ struct EventAtlasDetailsSheet11666: View {
                 }
             }
             .navigationTitle("Market details")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
