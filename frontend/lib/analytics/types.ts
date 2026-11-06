@@ -75,7 +75,8 @@ export interface PageViewParams {
     | 'competition_hub'
     | 'sports'
     | 'scorecard'
-    | 'bug_reports';
+    | 'bug_reports'
+    | 'admin_grade';
   page_path: string;
   page_title: string;
   /** For event_detail pages */
@@ -271,7 +272,8 @@ export interface ScrollDepthParams {
     | 'competition_hub'
     | 'sports'
     | 'scorecard'
-    | 'bug_reports';
+    | 'bug_reports'
+    | 'admin_grade';
   depth_percent: 25 | 50 | 75 | 90 | 100;
   /** Page path for context */
   page_path: string;
@@ -305,7 +307,8 @@ export interface TimeOnPageParams {
     | 'competition_hub'
     | 'sports'
     | 'scorecard'
-    | 'bug_reports';
+    | 'bug_reports'
+    | 'admin_grade';
   seconds: number;
   page_path: string;
   event_id?: number;
