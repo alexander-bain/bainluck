@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -26,6 +28,7 @@ import {
 } from "@/lib/event/ekgHeartbeat";
 import {
   EVENT_HEADLINE_PHASE_LABELS,
+  resolveAtlasHeadlineObservedAt,
   resolveEventHeadlineBaseline,
   resolveEventHeadlinePhase,
 } from "@/lib/event/eventHeadlinePhase";
@@ -58,9 +61,9 @@ describe("Event-page Atlas Step E5 — live path (EKG, previews, tenths) & 390 p
     expect(html).toContain(">.7<");
   });
 
-  it("overlays one-stream blend previews onto the atlas headline and chart line while preserving Current win chance via priceAgeClock", () => {
+  it("overlays one-stream blend previews onto the atlas headline and chart line while preserving Current win chance via resolveAtlasHeadlineObservedAt", () => {
     const nowMs = Date.parse("2026-11-06T05:00:00Z");
-    const committedAt = "2026-11-06T04:40:00Z"; // 20m old committed write
+    const committedAt = "2026-11-06T04:15:00Z"; // 45m old committed write (> 30m stale threshold)
     const confirmedAt = "2026-11-06T04:59:55Z"; // 5s old live stream confirmation
     const previewAt = "2026-11-06T04:59:58Z"; // 2s old one-stream preview
 
@@ -75,21 +78,51 @@ describe("Event-page Atlas Step E5 — live path (EKG, previews, tenths) & 390 p
       blend_fold_revision: { "15342685": 12 },
     };
 
-    // Even before a new preview arrives, a steady price confirmed by the live
-    // stream 5s ago keeps the atlas headline phase "current" via priceAgeClock.
-    const confirmedClock = priceAgeClock(committedAt, confirmedAt);
-    expect(confirmedClock).toBe(confirmedAt);
+    // Without stream confirmation, a 45m-old DB write would age into "last_recorded".
     expect(
       resolveEventHeadlinePhase({
         status: "live",
         commenceTime: "2026-11-06T03:00:00Z",
         isOpeningLine: false,
         hasReading: true,
-        observedAt: confirmedClock,
+        observedAt: committedAt,
+        deliveryInterrupted: false,
+        nowMs,
+      }),
+    ).toBe("last_recorded");
+
+    // With resolveAtlasHeadlineObservedAt, a steady price confirmed by the live
+    // stream 5s ago advances the clock ahead of 45m-old acceptedPriceClock,
+    // freshestSourceStamp, and currentOddsCapturedAt so the phase stays "current".
+    const atlasObservedAt = resolveAtlasHeadlineObservedAt({
+      acceptedPriceClock: committedAt,
+      confirmedAtShown: confirmedAt,
+      freshestSourceStamp: committedAt,
+      currentOddsCapturedAt: committedAt,
+    });
+    expect(atlasObservedAt).toBe(confirmedAt);
+    expect(
+      resolveEventHeadlinePhase({
+        status: "live",
+        commenceTime: "2026-11-06T03:00:00Z",
+        isOpeningLine: false,
+        hasReading: true,
+        observedAt: atlasObservedAt,
         deliveryInterrupted: false,
         nowMs,
       }),
     ).toBe("current");
+
+    // When no price clock is adopted, resolveAtlasHeadlineObservedAt falls back
+    // to freshestSourceStamp and then currentOddsCapturedAt.
+    expect(
+      resolveAtlasHeadlineObservedAt({
+        acceptedPriceClock: null,
+        confirmedAtShown: confirmedAt,
+        freshestSourceStamp: "2026-11-06T04:50:00Z",
+        currentOddsCapturedAt: committedAt,
+      }),
+    ).toBe("2026-11-06T04:50:00Z");
 
     // Now a one-stream preview frame arrives:
     const frame: BlendPreviewFrame = {
@@ -291,5 +324,16 @@ describe("Event-page Atlas Step E5 — live path (EKG, previews, tenths) & 390 p
       </svg>,
     );
     expect(settledKeyHtml).toContain(ATLAS_STATE_COPY.wonWithCheck);
+  });
+
+  it("wires resolveAtlasHeadlineObservedAt and data-atlas-mode in app/events/[id]/page.tsx", () => {
+    const pageSrc = readFileSync(
+      join(__dirname, "..", "app", "events", "[id]", "page.tsx"),
+      "utf8",
+    );
+    expect(pageSrc).toContain(
+      "const atlasObservedAt = resolveAtlasHeadlineObservedAt({",
+    );
+    expect(pageSrc).toContain('data-atlas-mode={atlasOptIn ? "true" : undefined}');
   });
 });
