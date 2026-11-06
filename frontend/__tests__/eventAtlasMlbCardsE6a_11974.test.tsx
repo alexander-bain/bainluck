@@ -396,7 +396,7 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
     expect(seriesHtml).not.toContain("Venue result");
   });
 
-  it("keeps one served row per extra-innings outcome without client averaging, never mislabels closing probability as pregame, and prints pending when venues disagree", () => {
+  it("withholds unblended pregame percentage when multiple sources price extra innings (neither client-averaging nor picking one source), never mislabels closing probability as pregame, and prints pending when venues disagree", () => {
     const extraCard = buildMlbExtraInningsCard({
       other: [
         {
@@ -443,20 +443,19 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
 
     expect(extraCard).not.toBeNull();
     expect(extraCard?.outcomes).toHaveLength(2);
-    // Uses the single served source (0.10 and 0.90), never client-averaged (0.12 and 0.88)
+    // When multiple unblended sources price the outcome, pregameChance is null:
+    // neither client-averaged (0.12 / 0.88) nor order-dependent single-source (0.10 / 0.90).
     expect(extraCard?.outcomes[0]).toMatchObject({
       label: "Yes",
-      sourceCount: 1,
-      pregameChance: 0.1,
+      sourceCount: 2,
+      pregameChance: null,
       venueResult: "lost",
-      observedAt: "2026-10-19T23:45:00Z",
     });
     expect(extraCard?.outcomes[1]).toMatchObject({
       label: "No",
-      sourceCount: 1,
-      pregameChance: 0.9,
+      sourceCount: 2,
+      pregameChance: null,
       venueResult: "won",
-      observedAt: "2026-10-19T23:45:00Z",
     });
 
     const html = renderToStaticMarkup(
@@ -469,9 +468,13 @@ describe("#11974 Step E6a — MLB story cards behind ?atlas=1", () => {
         onDetails={() => {}}
       />,
     );
-    expect(html).toContain("10% pregame");
-    expect(html).toContain("90% pregame");
+    expect(html).not.toContain("10% pregame");
+    expect(html).not.toContain("14% pregame");
     expect(html).not.toContain("12% pregame");
+    expect(html).not.toContain("90% pregame");
+    expect(html).not.toContain("86% pregame");
+    expect(html).not.toContain("88% pregame");
+    expect(html).toContain("Pregame chance unavailable for this market");
     expect(html).toContain("✗ Lost");
     expect(html).toContain("✓ Won");
     expect(html).not.toContain("kalshi");
