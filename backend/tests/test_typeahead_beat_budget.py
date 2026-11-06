@@ -714,8 +714,11 @@ def test_the_warmer_now_owns_most_of_one_background_slot():
     # consumes MORE THAN HALF of a two-slot pool, which is what makes ordinary
     # co-tenant bursts (the :00/:15/:30/:45 backfill clusters) able to push it
     # into a multi-minute wait.
-    assert free_background_slots() < 1.1
-    assert BACKGROUND_WORKER_CONCURRENCY == 2
+    # #12042 (Decide 45-A, Nov 5): the pool is ONE child now, so the finding
+    # above is pinned at the two-child pool it was measured on.
+    assert free_background_slots(concurrency=2) < 1.1
+    assert BACKGROUND_WORKER_CONCURRENCY == 1
+    assert free_background_slots() < 0.1
     assert now > 0.5, (
         "the warmer holds more than half of one slot; below that the co-tenancy "
         "argument weakens and the tail needs another explanation"
@@ -1277,12 +1280,17 @@ def test_the_demand_model_says_oversubscribed_and_the_census_says_90_percent():
         background_utilisation,
     )
 
+    # #12042 (Decide 45-A, Nov 5): pinned at the two-child pool the census was
+    # taken on; the one-child pool doubles every rho (asserted below).
     lo = background_utilisation(
-        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
+        concurrency=2, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
     )
     hi = background_utilisation(
-        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
+        concurrency=2, demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H
     )
+    assert background_utilisation(
+        demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_MEAN_S_PER_H
+    ) == pytest.approx(2 * lo)
 
     assert lo >= 1.0, f"mean-estimator rho fell below 1.0 ({lo:.2f}) — re-grade"
     assert hi >= 1.0, f"p95-estimator rho fell below 1.0 ({hi:.2f}) — re-grade"
@@ -1294,6 +1302,7 @@ def test_the_demand_model_says_oversubscribed_and_the_census_says_90_percent():
     # WARMER but does not repair `background` — a distinction the remedy table
     # has to carry, because two of the four levers only do the former.
     ex = background_utilisation(
+        concurrency=2,
         demand_s_per_h=BACKGROUND_DEMAND_EX_WARMER_P95_S_PER_H,
         include_warmer=False,
     )
