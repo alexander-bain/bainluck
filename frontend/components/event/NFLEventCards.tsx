@@ -2127,7 +2127,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       lastProbability: !isSettled ? focusOpt.liveProbability : null,
       lastObservedAt: focusOpt.observedAt,
       source: focusOpt.source,
-      sourceCount: 1,
+      sourceCount: focusOpt.sourceCount,
       rulesText: `${step.label}: ${step.home.playerName} vs ${step.away.playerName}`,
     };
   }
@@ -2156,7 +2156,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       lastProbability: !isSettled ? outcome.liveProbability : null,
       lastObservedAt: outcome.observedAt,
       source: outcome.source,
-      sourceCount: 1,
+      sourceCount: outcome.sourceCount,
       rulesText: `Exact match score in sets (${outcome.scoreLabel}). Games handicaps and games totals stay in a separate unit-specific group.`,
     };
   }

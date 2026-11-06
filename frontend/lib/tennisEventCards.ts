@@ -101,6 +101,7 @@ export interface TennisSetPlayerOutcome {
   observedAt: string | null;
   pregameObservedAt: string | null;
   source: string | null;
+  sourceCount: number;
   marketId: number | string | null;
   outcomeId: number | string | null;
 }
@@ -145,6 +146,7 @@ export interface TennisExactScoreOutcome {
   observedAt: string | null;
   pregameObservedAt: string | null;
   source: string | null;
+  sourceCount: number;
   marketName: string;
   marketId: number | string | null;
   outcomeId: number | string | null;
@@ -469,6 +471,7 @@ function extractRawOptionProbabilities(
   observedAt: string | null;
   pregameObservedAt: string | null;
   source: string | null;
+  sourceCount: number;
   marketId: number | string | null;
   outcomeId: number | string | null;
 } {
@@ -570,6 +573,7 @@ function extractRawOptionProbabilities(
   }
 
   const source = multiSourceEvidenceUnblended ? null : rawSource;
+  const sourceCount = Math.max(1, evidenceList.length);
 
   const marketIds = Array.isArray(rawOpt.market_ids) ? rawOpt.market_ids : [];
   const marketId =
@@ -604,6 +608,7 @@ function extractRawOptionProbabilities(
     observedAt,
     pregameObservedAt,
     source,
+    sourceCount,
     marketId,
     outcomeId,
   };
@@ -630,6 +635,7 @@ function resolveCandidateSetOutcome(
     pregameProbability: multiUnblended ? null : chosen.pregameProbability,
     liveProbability: multiUnblended ? null : chosen.liveProbability,
     source: multiUnblended ? null : chosen.source,
+    sourceCount: Math.max(chosen.sourceCount, candidates.length),
     result: combinedResult,
   };
 }
@@ -688,6 +694,7 @@ function buildTennisSetsCard(
         observedAt: probs.observedAt,
         pregameObservedAt: probs.pregameObservedAt,
         source: probs.source,
+        sourceCount: probs.sourceCount,
         marketId: probs.marketId,
         outcomeId: probs.outcomeId,
       };
@@ -899,6 +906,7 @@ function buildTennisExactScoreCard(
       observedAt: probs.observedAt,
       pregameObservedAt: probs.pregameObservedAt,
       source: probs.source,
+      sourceCount: probs.sourceCount,
       marketName: matchedMarketName,
       marketId: probs.marketId,
       outcomeId: probs.outcomeId,
@@ -927,6 +935,7 @@ function buildTennisExactScoreCard(
       pregameProbability: multiUnblended ? null : chosen.pregameProbability,
       liveProbability: multiUnblended ? null : chosen.liveProbability,
       source: multiUnblended ? null : chosen.source,
+      sourceCount: Math.max(chosen.sourceCount, candidates.length),
       result: combinedResult,
     });
   }
