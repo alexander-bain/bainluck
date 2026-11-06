@@ -1,13 +1,110 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import type { ChamberControl } from "@/lib/api";
+import useSWR from "swr";
+import { fetchFuturesHistory, type ChamberControl } from "@/lib/api";
+import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
-import { TwoSidedHistoryTimeline } from "@/components/event/TwoSidedTimeline";
+import { isSettlementPoint } from "@/lib/chartSettlementPoints";
+import type { FuturesOutcomeHistory } from "@/lib/types";
+import { FuturesChart } from "@/components/FuturesChart";
 import { SourceBadge } from "./atoms";
 import s from "@/app/politics/politics.module.css";
 
 type Control = ChamberControl & { source?: string; winner?: string };
+
+const RANGES: { label: string; hours: number }[] = [
+  { label: "24h", hours: 24 },
+  { label: "7d", hours: 168 },
+  { label: "All", hours: 8760 },
+];
+
+function ChamberHistoryTimeline({
+  marketId,
+  defaultHours = 8760,
+  height = 180,
+}: {
+  marketId: number;
+  defaultHours?: number;
+  height?: number;
+}) {
+  const [hours, setHours] = useState(defaultHours);
+  const { data, error, mutate } = useSWR(
+    marketId ? ["event-twosided", marketId, hours] : null,
+    () =>
+      fetchFuturesHistory(
+        marketId,
+        hours,
+        undefined,
+        4,
+        undefined,
+        historyRangeOption(hours === 8760 ? "all" : null),
+      ),
+    { revalidateOnFocus: false },
+  );
+
+  const outcomes: FuturesOutcomeHistory[] = Array.isArray(data?.outcomes) ? data.outcomes : [];
+  const hasHistory = outcomes.some(
+    (o) =>
+      Array.isArray(o.history) &&
+      o.history.filter((p) => p.probability != null && !isSettlementPoint(p)).length >= 2,
+  );
+  const historyWithheld = servedPartialHistory(data);
+
+  if (error && !hasHistory && !historyWithheld) {
+    return (
+      <div
+        className="mt-3 flex items-center justify-between gap-2 text-xs text-text-muted"
+        role="status"
+        data-testid="two-sided-history-timeline-error"
+      >
+        <span>Update interrupted</span>
+        <button
+          type="button"
+          onClick={() => void mutate()}
+          className="text-accent-brand hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!hasHistory && !historyWithheld) return null;
+
+  return (
+    <div className="mt-5" data-testid="two-sided-history-timeline" data-hours={hours}>
+      <div className="flex justify-end mb-2">
+        <div className="flex rounded-full bg-surface-elevated p-0.5">
+          {RANGES.map((r) => (
+            <button
+              key={r.hours}
+              type="button"
+              aria-pressed={hours === r.hours}
+              onClick={() => setHours(r.hours)}
+              className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                hours === r.hours
+                  ? "bg-surface-card text-text-primary shadow-card font-semibold"
+                  : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <FuturesChart
+        historyData={outcomes}
+        fixedYAxis
+        showAxes
+        showLegend={false}
+        height={height}
+        historyWithheld={historyWithheld}
+      />
+    </div>
+  );
+}
 
 export default function PartyControlRow({
   senate,
@@ -58,8 +155,8 @@ function ChamberControlCard({
             <div aria-hidden className="flex h-1.5 overflow-hidden rounded-full bg-surface-elevated"><span style={{ width: `${probs.dem}%`, backgroundColor: "var(--party-democratic)" }} /><span style={{ width: `${probs.gop}%`, backgroundColor: "var(--party-republican)" }} /></div>
           </>}
         </Link>
-        {!probs.winner && probs.market_id > 0 && (
-          <TwoSidedHistoryTimeline
+        {probs.market_id > 0 && (
+          <ChamberHistoryTimeline
             marketId={probs.market_id}
             defaultHours={8760}
             height={180}
