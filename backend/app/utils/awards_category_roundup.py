@@ -95,6 +95,66 @@ def _fold_subject(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip(" \"'“”‘’?.!")).casefold()
 
 
+_CONFLICTING_AWARD_CATEGORY_TOKENS = (
+    "best director",
+    "best actor",
+    "best actress",
+    "best supporting",
+    "best screenplay",
+    "best original score",
+    "best original song",
+    "best animated",
+    "musical or comedy",
+    "television",
+    "limited series",
+)
+
+
+def _category_matches(
+    text: str,
+    *,
+    ceremony: str,
+    category_name: str,
+    category_aliases: Sequence[str] = (),
+) -> bool:
+    folded = _fold_subject(text)
+    if not folded:
+        return False
+    cat_folded = _fold_subject(category_name)
+    for token in _CONFLICTING_AWARD_CATEGORY_TOKENS:
+        if token in folded and token not in cat_folded:
+            return False
+    candidates = [cat_folded] + [
+        _fold_subject(alias) for alias in category_aliases if _fold_subject(alias)
+    ]
+    if "motion picture" in cat_folded or "best picture" in cat_folded:
+        candidates.extend(["best motion picture", "best picture"])
+    return any(cand and cand in folded for cand in candidates)
+
+
+def _winner_market_matches_rule(
+    name: str,
+    *,
+    ceremony: str,
+    category_name: str,
+    category_aliases: Sequence[str] = (),
+) -> bool:
+    folded = _fold_subject(name)
+    if not folded:
+        return False
+    ceremony_folded = _fold_subject(ceremony)
+    if ceremony_folded:
+        ceremony_stem = ceremony_folded.rstrip("s")
+        if ceremony_stem and ceremony_stem not in folded:
+            return False
+    return _category_matches(
+        name,
+        ceremony=ceremony,
+        category_name=category_name,
+        category_aliases=category_aliases,
+    )
+
+
 @dataclass(frozen=True)
 class _PairedNominee:
     subject: str
@@ -113,6 +173,9 @@ def select_awards_category_roundup(
     *,
     ceremony: str = "Golden Globes",
     category_name: str = "Best Motion Picture - Drama",
+    category_aliases: Sequence[str] = (),
+    winner_market_ids: Sequence[int] = (),
+    nomination_market_ids: Sequence[int] = (),
     min_paired_nominees: int = 3,
     card_rows: int = 3,
     require_guard_11995: bool = True,
@@ -141,6 +204,17 @@ def select_awards_category_roundup(
     if not raw_list:
         return RoundupRefusal((("awards_category", "empty_pool"),))
 
+    winner_id_set = {
+        int(x)
+        for x in winner_market_ids
+        if isinstance(x, int) and not isinstance(x, bool) and int(x) > 0
+    }
+    nomination_id_set = {
+        int(x)
+        for x in nomination_market_ids
+        if isinstance(x, int) and not isinstance(x, bool) and int(x) > 0
+    }
+
     winner_markets: list[Mapping[str, Any]] = []
     nomination_by_subject: dict[str, tuple[int, float, Optional[str], Mapping[str, Any]]] = {}
 
@@ -155,7 +229,28 @@ def select_awards_category_roundup(
 
         # Check if this is a per-film nomination binary ("Will <film> be nominated for ...?")
         m_nom = _NOMINATION_BINARY_RE.match(name)
-        if m_nom is not None or m.get("awards_role") == "nomination":
+        is_explicit_nom = mid in nomination_id_set or m.get("awards_role") == "nomination"
+        if m_nom is not None or is_explicit_nom:
+            if nomination_id_set and mid not in nomination_id_set:
+                continue
+            captured_cat = (
+                str(m.get("category_name") or "").strip()
+                or (m_nom.group("category").strip() if m_nom is not None else "")
+            )
+            if not is_explicit_nom and not _category_matches(
+                captured_cat,
+                ceremony=ceremony,
+                category_name=category_name,
+                category_aliases=category_aliases,
+            ):
+                continue
+            if is_explicit_nom and captured_cat and not _category_matches(
+                captured_cat,
+                ceremony=ceremony,
+                category_name=category_name,
+                category_aliases=category_aliases,
+            ):
+                continue
             subj = (
                 str(m.get("subject") or "").strip()
                 or (m_nom.group("subject").strip() if m_nom is not None else "")
@@ -196,6 +291,16 @@ def select_awards_category_roundup(
 
         # Otherwise check if this is the category winner field market
         if len(outcomes) >= 3 and m.get("mutually_exclusive") is not False:
+            if winner_id_set:
+                if mid not in winner_id_set:
+                    continue
+            elif m.get("awards_role") != "winner" and not _winner_market_matches_rule(
+                name,
+                ceremony=ceremony,
+                category_name=category_name,
+                category_aliases=category_aliases,
+            ):
+                continue
             winner_markets.append(m)
 
     if not winner_markets:
@@ -408,6 +513,72 @@ def select_awards_category_roundup(
     )
 
 
+async def _load_awards_markets_from_db(
+    db: Any, rule: Mapping[str, Any]
+) -> dict[int, dict[str, Any]]:
+    from sqlalchemy import or_, select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import FuturesMarket
+
+    ceremony = str(rule.get("ceremony") or "Golden Globes").strip()
+    category_name = str(
+        rule.get("category_name") or "Best Motion Picture - Drama"
+    ).strip()
+    raw_winner_ids = rule.get("winner_market_ids") or ()
+    raw_nom_ids = rule.get("nomination_market_ids") or ()
+    explicit_ids = [
+        int(x)
+        for x in (*raw_winner_ids, *raw_nom_ids)
+        if isinstance(x, int) and not isinstance(x, bool) and int(x) > 0
+    ]
+
+    clauses = [
+        FuturesMarket.name.ilike(f"%{ceremony}%"),
+        FuturesMarket.name.ilike(f"%{category_name}%"),
+        FuturesMarket.name.ilike("Will % be nominated for %"),
+    ]
+    if explicit_ids:
+        clauses.append(FuturesMarket.id.in_(explicit_ids))
+
+    stmt = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(
+            FuturesMarket.status == "open",
+            FuturesMarket.llm_sport_category == "entertainment",
+            or_(*clauses),
+        )
+        .limit(200)
+    )
+    res = await db.execute(stmt)
+    rows = res.scalars().all()
+    out: dict[int, dict[str, Any]] = {}
+    for fm in rows:
+        mid = int(fm.id)
+        out[mid] = {
+            "id": mid,
+            "name": fm.name,
+            "status": fm.status,
+            "source": fm.source,
+            "resolution_date": fm.resolution_date,
+            "updated_at": fm.updated_at,
+            "mutually_exclusive": True,
+            "outcomes": [
+                {
+                    "id": o.id,
+                    "name": o.name,
+                    "probability": o.current_probability,
+                    "is_winner": o.is_winner,
+                    "resolution_source": o.resolution_source,
+                    "last_updated": o.last_updated,
+                }
+                for o in (fm.outcomes or [])
+            ],
+        }
+    return out
+
+
 async def produce_awards_category_roundup(
     db: Any,
     definition: Mapping[str, Any],
@@ -430,13 +601,45 @@ async def produce_awards_category_roundup(
             and isinstance(m.get("id"), int)
             and not isinstance(m.get("id"), bool)
         }
+    elif hasattr(db, "execute"):
+        by_id = await _load_awards_markets_from_db(db, rule)
     else:
         by_id = {}
+
+    raw_aliases = rule.get("category_aliases")
+    category_aliases = (
+        tuple(str(a) for a in raw_aliases if isinstance(a, str) and a.strip())
+        if isinstance(raw_aliases, (list, tuple))
+        else ()
+    )
+    raw_winner_ids = rule.get("winner_market_ids")
+    winner_market_ids = (
+        tuple(
+            int(x)
+            for x in raw_winner_ids
+            if isinstance(x, int) and not isinstance(x, bool) and int(x) > 0
+        )
+        if isinstance(raw_winner_ids, (list, tuple))
+        else ()
+    )
+    raw_nom_ids = rule.get("nomination_market_ids")
+    nomination_market_ids = (
+        tuple(
+            int(x)
+            for x in raw_nom_ids
+            if isinstance(x, int) and not isinstance(x, bool) and int(x) > 0
+        )
+        if isinstance(raw_nom_ids, (list, tuple))
+        else ()
+    )
 
     return select_awards_category_roundup(
         by_id,
         ceremony=str(rule.get("ceremony") or "Golden Globes"),
         category_name=str(rule.get("category_name") or "Best Motion Picture - Drama"),
+        category_aliases=category_aliases,
+        winner_market_ids=winner_market_ids,
+        nomination_market_ids=nomination_market_ids,
         min_paired_nominees=int(rule.get("min_paired_nominees", 3)),
         card_rows=int(rule.get("card_rows", 3)),
         require_guard_11995=bool(rule.get("require_guard_11995", True)),

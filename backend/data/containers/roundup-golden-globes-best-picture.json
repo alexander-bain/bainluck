@@ -12,6 +12,14 @@
     "producer": "awards_category_roundup",
     "ceremony": "Golden Globes",
     "category_name": "Best Motion Picture - Drama",
+    "category_aliases": [
+      "Best Motion Picture - Drama",
+      "Best Motion Picture — Drama",
+      "Best Picture",
+      "Best Drama Motion Picture"
+    ],
+    "winner_market_ids": [],
+    "nomination_market_ids": [],
     "min_paired_nominees": 3,
     "card_rows": 3,
     "require_guard_11995": true,

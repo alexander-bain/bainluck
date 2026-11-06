@@ -864,12 +864,12 @@ def _register_builtin_producers() -> None:
     import app.utils.awards_category_roundup as _awards_cat
     import app.utils.register_closest as _register_closest
 
-    for _extra_p in (
-        getattr(_register_closest, "CLOSEST_RACES_PRODUCER", None),
-        getattr(_awards_cat, "GOLDEN_GLOBES_BEST_PICTURE_PRODUCER", None),
-    ):
-        if _extra_p is not None:
-            register_roundup_producer(_extra_p)
+    # Register directly when already initialized; when imported mid-initialization,
+    # each module's bottom-of-file register_roundup_producer call completes registration.
+    if hasattr(_register_closest, "CLOSEST_RACES_PRODUCER"):
+        register_roundup_producer(_register_closest.CLOSEST_RACES_PRODUCER)
+    if hasattr(_awards_cat, "GOLDEN_GLOBES_BEST_PICTURE_PRODUCER"):
+        register_roundup_producer(_awards_cat.GOLDEN_GLOBES_BEST_PICTURE_PRODUCER)
 
     cfp_producer = getattr(_field_band, "CFP_PICTURE_PRODUCER", None)
     if cfp_producer is not None:

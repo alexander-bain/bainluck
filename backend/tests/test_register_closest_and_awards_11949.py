@@ -455,3 +455,219 @@ async def test_register_closest_additional_refusal_reasons():
     assert isinstance(res_guard, RoundupRefusal)
     assert ("register_closest", "guard_failed:109082") in res_guard.reasons
 
+
+@pytest.mark.asyncio
+async def test_awards_category_roundup_loads_from_async_db_session_and_rejects_wrong_category():
+    from types import SimpleNamespace
+
+    # 1. Wrong-category winner field (Best Director) and wrong-category nomination binary
+    #    must not be selected or paired with Best Motion Picture - Drama.
+    wrong_category_pool = [
+        {
+            "id": 899,
+            "name": "Golden Globes: Best Director Winner",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 8991, "name": "One Battle After Another", "probability": 0.50},
+                {"id": 8992, "name": "Sinners", "probability": 0.30},
+                {"id": 8993, "name": "Hamnet", "probability": 0.20},
+            ],
+        },
+        {
+            "id": 900,
+            "name": "Golden Globes: Best Motion Picture - Drama Winner",
+            "status": "open",
+            "source": "kalshi",
+            "category": "entertainment",
+            "mutually_exclusive": True,
+            "outcomes": [
+                {"id": 9001, "name": "One Battle After Another", "probability": 0.42},
+                {"id": 9002, "name": "Sinners", "probability": 0.31},
+                {"id": 9003, "name": "Hamnet", "probability": 0.27},
+            ],
+        },
+        {
+            "id": 901,
+            "name": "Will One Battle After Another be nominated for Best Director?",
+            "status": "open",
+            "source": "kalshi",
+            "outcomes": [
+                {"id": 9011, "name": "Yes", "probability": 0.95},
+                {"id": 9012, "name": "No", "probability": 0.05},
+            ],
+        },
+        {
+            "id": 902,
+            "name": "Will Sinners be nominated for Best Motion Picture - Drama?",
+            "status": "open",
+            "source": "kalshi",
+            "outcomes": [
+                {"id": 9021, "name": "Yes", "probability": 0.79},
+                {"id": 9022, "name": "No", "probability": 0.21},
+            ],
+        },
+        {
+            "id": 903,
+            "name": "Will Hamnet be nominated for Best Motion Picture - Drama?",
+            "status": "open",
+            "source": "kalshi",
+            "outcomes": [
+                {"id": 9031, "name": "Yes", "probability": 0.74},
+                {"id": 9032, "name": "No", "probability": 0.26},
+            ],
+        },
+    ]
+    res_wrong_cat = await golden_globes_best_picture(wrong_category_pool)
+    assert isinstance(res_wrong_cat, RoundupRefusal)
+    # 901 was rejected because its category is Best Director, leaving only 2 paired nominees (< 3)
+    assert ("awards_category", "too_few_paired_nominees") in res_wrong_cat.reasons
+
+    # 2. Session-like fake with async execute() loads ORM-like FuturesMarket objects and pairs cleanly
+    orm_rows = [
+        SimpleNamespace(
+            id=900,
+            name="Golden Globes: Best Motion Picture - Drama Winner",
+            status="open",
+            source="kalshi",
+            resolution_date=None,
+            updated_at="2026-11-05T17:00:00Z",
+            outcomes=[
+                SimpleNamespace(
+                    id=9001,
+                    name="One Battle After Another",
+                    current_probability=0.42,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+                SimpleNamespace(
+                    id=9002,
+                    name="Sinners",
+                    current_probability=0.31,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+                SimpleNamespace(
+                    id=9003,
+                    name="Hamnet",
+                    current_probability=0.27,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+            ],
+        ),
+        SimpleNamespace(
+            id=901,
+            name="Will One Battle After Another be nominated for Best Motion Picture - Drama?",
+            status="open",
+            source="kalshi",
+            resolution_date=None,
+            updated_at="2026-11-05T17:00:00Z",
+            outcomes=[
+                SimpleNamespace(
+                    id=9011,
+                    name="Yes",
+                    current_probability=0.84,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+                SimpleNamespace(
+                    id=9012,
+                    name="No",
+                    current_probability=0.16,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+            ],
+        ),
+        SimpleNamespace(
+            id=902,
+            name="Will Sinners be nominated for Best Motion Picture - Drama?",
+            status="open",
+            source="kalshi",
+            resolution_date=None,
+            updated_at="2026-11-05T17:00:00Z",
+            outcomes=[
+                SimpleNamespace(
+                    id=9021,
+                    name="Yes",
+                    current_probability=0.79,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+                SimpleNamespace(
+                    id=9022,
+                    name="No",
+                    current_probability=0.21,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+            ],
+        ),
+        SimpleNamespace(
+            id=903,
+            name="Will Hamnet be nominated for Best Motion Picture - Drama?",
+            status="open",
+            source="kalshi",
+            resolution_date=None,
+            updated_at="2026-11-05T17:00:00Z",
+            outcomes=[
+                SimpleNamespace(
+                    id=9031,
+                    name="Yes",
+                    current_probability=0.74,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+                SimpleNamespace(
+                    id=9032,
+                    name="No",
+                    current_probability=0.26,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated="2026-11-05T17:00:00Z",
+                ),
+            ],
+        ),
+    ]
+
+    class _FakeScalars:
+        def all(self):
+            return orm_rows
+
+    class _FakeResult:
+        def scalars(self):
+            return _FakeScalars()
+
+    class _FakeAsyncSession:
+        def __init__(self):
+            self.executed_statements = []
+
+        async def execute(self, stmt):
+            self.executed_statements.append(stmt)
+            return _FakeResult()
+
+    fake_session = _FakeAsyncSession()
+    res_db = await golden_globes_best_picture(fake_session)
+    assert len(fake_session.executed_statements) == 1
+    assert isinstance(res_db, RoundupMembers)
+    assert len(res_db.rows) == 3
+    assert [r["label"] for r in res_db.rows] == [
+        "One Battle After Another",
+        "Sinners",
+        "Hamnet",
+    ]
+    assert [r["rendered_percent"] for r in res_db.rows] == [42, 31, 27]
+    assert [r["secondary_rendered_percent"] for r in res_db.rows] == [84, 79, 74]
+
+
