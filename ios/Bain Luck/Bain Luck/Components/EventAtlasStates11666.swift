@@ -1,0 +1,140 @@
+import SwiftUI
+
+/// #11666 (Step E4) — Shared event-page Atlas state vocabulary and helpers on iOS,
+/// matching the shipped web E4 contract (#11974 / PR #12143) behind
+/// `ReleaseSurfaces.isEventPageAtlasEnabled()`.
+///
+/// Key guarantees:
+/// 1. Shared state wording matches `ATLAS_STATE_COPY`:
+///    - `"Loading"`, `"Update interrupted"`, `"Postponed"`, `"Void"`,
+///      `"No recent probability"`, `"No price yet"`, `"✓ Won"`, `"✗ Lost"`, `"Pending"`.
+/// 2. In `AllMarketsCatalogView9483`, a stale live outcome (`absence == .stale`)
+///    prints `"No recent probability"` (`EventAtlasStates11666.noRecentPrice`)
+///    when Atlas is enabled, while closed periods (`"Period finished"`) and
+///    non-stale unavailable rows (`"Probability unavailable"`) keep their
+///    non-stale strings.
+/// 3. In `SpecialEventMarketsView`, settled outcome verdicts print `"✓ Won"` and
+///    `"✗ Lost"` when Atlas is enabled, and multi-venue disagreement resolves to
+///    `"Pending"`.
+/// 4. In `EventDetailView`, loading, hero stoppage (`"Postponed"` / `"Canceled"`),
+///    voided (`"Void"`), and missing probability (`"No recent probability"` once
+///    started vs `"No price yet"` pregame) render the shared Atlas state copy
+///    when `ReleaseSurfaces.isEventPageAtlasEnabled()` is true.
+nonisolated enum EventAtlasStates11666 {
+
+    static let loading = "Loading"
+    static let updateInterrupted = "Update interrupted"
+    static let postponed = "Postponed"
+    static let voided = "Void"
+    static let noRecentPrice = "No recent probability"
+    static let noPriceYet = "No price yet"
+    static let won = "Won"
+    static let lost = "Lost"
+    static let wonWithCheck = "✓ Won"
+    static let lostWithCross = "✗ Lost"
+    static let pending = "Pending"
+    static let resultUnavailable = "Result unavailable"
+    static let independentChancesLabel = "Independent chances · do not add to 100"
+
+    /// Maps `LiveUpdateStatus` to the shared Atlas connection status label.
+    static func connectionStatusLabel(
+        for status: LiveUpdateStatus,
+        atlasEnabled: Bool = ReleaseSurfaces.isEventPageAtlasEnabled()
+    ) -> String? {
+        switch status {
+        case .hidden:
+            return nil
+        case .awaitingUpdate:
+            return atlasEnabled ? loading : status.title
+        case .interrupted:
+            return atlasEnabled ? updateInterrupted : status.title
+        case .live, .autoRefresh:
+            return status.title
+        }
+    }
+
+    /// Resolves the hero state label when an event is stopped, voided, or has no
+    /// printable probability under `ReleaseSurfaces.isEventPageAtlasEnabled()`.
+    static func heroStateLabel(
+        status: String?,
+        commenceTime: Date?,
+        authorityPeriod: String?,
+        venueSettled: Bool?,
+        venueClosedNoWinner: Bool?,
+        hasCurrentOdds: Bool,
+        now: Date = Date()
+    ) -> String? {
+        if EventState.isFinished(status) {
+            return nil
+        }
+        if EventState.showsVenueSettledVerdict(
+            status,
+            venueSettled: venueSettled,
+            commenceTime: commenceTime,
+            now: now
+        ) {
+            return nil
+        }
+        if EventState.showsVenueClosedNoWinner(
+            status,
+            venueSettled: venueSettled,
+            venueClosedNoWinner: venueClosedNoWinner,
+            commenceTime: commenceTime,
+            now: now
+        ) {
+            return voided
+        }
+        if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now) {
+            let stoppage = EventState.suspendedLabel(authorityPeriod: authorityPeriod)
+            return stoppage == EventState.suspendedLabel ? nil : stoppage
+        }
+        guard !hasCurrentOdds else { return nil }
+        let started = status == "live" || EventState.hasStarted(commenceTime: commenceTime, now: now)
+        return started ? noRecentPrice : noPriceYet
+    }
+
+    /// Formats a single `OutcomeVerdict` in the shared Atlas vocabulary (`"✓ Won"` / `"✗ Lost"`).
+    static func verdictLabel(
+        _ verdict: OutcomeVerdict,
+        atlasEnabled: Bool = ReleaseSurfaces.isEventPageAtlasEnabled()
+    ) -> String {
+        guard atlasEnabled else { return verdict.label }
+        switch verdict {
+        case .won:
+            return wonWithCheck
+        case .lost:
+            return lostWithCross
+        }
+    }
+
+    /// Resolves a row's settlement display across one or more authoritative venue verdicts.
+    /// When multiple venues disagree on the same outcome (e.g. `.won` and `.lost`),
+    /// returns `"Pending"` (`EventAtlasStates11666.pending`).
+    static func verdictDisplay(
+        verdicts: [OutcomeVerdict],
+        atlasEnabled: Bool = ReleaseSurfaces.isEventPageAtlasEnabled()
+    ) -> String? {
+        guard let first = verdicts.first else { return nil }
+        let allAgree = verdicts.allSatisfy { $0 == first }
+        guard allAgree else { return pending }
+        return verdictLabel(first, atlasEnabled: atlasEnabled)
+    }
+}
+
+/// Renders the shared Atlas hero state label (`Postponed`, `Void`, `No recent probability`,
+/// or `No price yet`) on `EventDetailView` when `ReleaseSurfaces.isEventPageAtlasEnabled()` is true.
+struct EventAtlasHeroStateLabelView11666: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .accessibilityIdentifier(
+                label == EventAtlasStates11666.noRecentPrice
+                    ? "atlas-no-recent-probability"
+                    : "event-atlas-state-label-11666"
+            )
+    }
+}

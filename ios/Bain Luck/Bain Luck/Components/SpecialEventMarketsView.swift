@@ -518,7 +518,7 @@ struct SpecialEventMarketsView: View {
             }
             switch rowTreatment {
             case .verdict(let v):
-                Text(v.label)
+                (!ReleaseSurfaces.isEventPageAtlasEnabled() ? Text(v.label) : Text(EventAtlasStates11666.verdictLabel(v)))
                     .font(.system(size: 11, weight: v == .won ? .bold : .regular, design: .monospaced))
                     .foregroundStyle(v == .won ? DS.emerald : Color.secondary)
             case .noPrice:

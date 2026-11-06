@@ -455,7 +455,12 @@ struct EventDetailView: View {
     @ViewBuilder
     private var contentView: some View {
         if vm.loading {
-            ProgressView()
+            if ReleaseSurfaces.isEventPageAtlasEnabled() {
+                ProgressView(EventAtlasStates11666.loading)
+                    .accessibilityIdentifier("event-atlas-loading-11666")
+            } else {
+                ProgressView()
+            }
         } else if let error = vm.error, vm.event == nil {
             ContentUnavailableView(
                 "Error",
@@ -1881,6 +1886,16 @@ struct EventDetailView: View {
                             // that says nothing false.
                             EmptyView()
                         }
+                    } else if ReleaseSurfaces.isEventPageAtlasEnabled(),
+                              let stateLabel = EventAtlasStates11666.heroStateLabel(
+                                  status: event.status,
+                                  commenceTime: event.commenceTime?.asDate,
+                                  authorityPeriod: event.espn?.period,
+                                  venueSettled: event.venueSettled,
+                                  venueClosedNoWinner: event.venueClosedNoWinner,
+                                  hasCurrentOdds: event.currentOdds != nil
+                              ) {
+                        EventAtlasHeroStateLabelView11666(label: stateLabel)
                     } else if let odds = event.currentOdds,
                               // #9470 — an `opening` hero prints the server's
                               // pair and is named as an opening line.
@@ -2086,10 +2101,22 @@ struct EventDetailView: View {
                         // is gone: it was a thumbnail of the full chart one card
                         // below, which since #8320 starts on the first screen.
                     } else {
-                        Text("vs")
-                            .font(.title2)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.secondary)
+                        if ReleaseSurfaces.isEventPageAtlasEnabled(),
+                           let stateLabel = EventAtlasStates11666.heroStateLabel(
+                               status: event.status,
+                               commenceTime: event.commenceTime?.asDate,
+                               authorityPeriod: event.espn?.period,
+                               venueSettled: event.venueSettled,
+                               venueClosedNoWinner: event.venueClosedNoWinner,
+                               hasCurrentOdds: false
+                           ) {
+                            EventAtlasHeroStateLabelView11666(label: stateLabel)
+                        } else {
+                            Text("vs")
+                                .font(.title2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.secondary)
+                        }
                         if priceStreamingEligible { probabilityDetails(confidenceTier: nil) }
                     }
                     // Projected final score.
