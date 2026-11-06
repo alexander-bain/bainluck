@@ -43,6 +43,54 @@ export const HERO_COPY = {
     "AI agents write most of the code and most of the tests on this site, and other AI agents and Alex, who builds Bain Luck, check their work. That is why the tests matter. Every number here is marked LIVE, LAST RUN with its date, or PLANNED, and links to where it came from; a list we keep by hand is marked LAST REVIEWED with its date.",
 } as const;
 
+/**
+ * The top screen (Alex, Nov 6): one plain answer and three pictures, before any
+ * detail. Two readers: a smart friend with no AI or engineering background who
+ * asks "so how do you know your numbers are any good?", and an interviewer at an
+ * AI company. Nothing here may need the glossary: `topScreen.test.tsx` fails on
+ * a jargon word anywhere outside a "Show the details" fold.
+ */
+export const TOP_COPY = {
+  // Decide 43-J1 (Alex, Nov 5): say plainly that AI agents write most of the code.
+  answer:
+    "AI agents write most of this site's code, so we don't take its numbers on trust.",
+  truthTitle: "Do our probabilities come true?",
+  truthSaid: "What we said",
+  truthHappened: "How often it happened",
+  truthExampleBefore: "When we said",
+  truthExampleMiddle: ", it happened",
+  truthExampleClose: "of the time: our dots sit close to the line.",
+  truthExampleFar: "of the time: our dots sit off the line.",
+  truthExamplePlain: "of the time. On the line means it happened exactly as often as we said.",
+  truthPlain: "Each dot is a group of past markets; on the line means it happened exactly as often as we said.",
+  truthLoading: "Reading the live record",
+  truthUnavailable: "Unavailable right now",
+  truthPointsAfter: "points off on average",
+  truthChartLabel:
+    "How often things happened against the probability we gave them, one dot per group of past markets, on a grey line where the two are equal.",
+  reviewerTitle: "Does our AI reviewer spot mistakes?",
+  reviewerCaughtBefore: "Caught",
+  reviewerCaughtMiddle: "of the",
+  reviewerCaughtAfter: "it has checked so far",
+  reviewerNoneChecked: "It has not checked any yet",
+  reviewerHidBefore: "We hid",
+  reviewerHidMiddle: "mistakes in real code changes, plus",
+  reviewerHidAfter: "harmless decoys, to see what it flags; grey ones are not checked yet.",
+  reviewerChartLabel:
+    "One bug per hidden mistake, green when it was caught, red when it was missed, grey when not checked yet; one page per harmless decoy.",
+  watchersTitle: "Are our automatic checks working?",
+  watchersOf: "of",
+  watchersWorkingAfter: "working",
+  watchersSentenceStart: "Each alarm is an automatic check on the live site",
+  watchersProblems: "red found problems, now on our work list",
+  watchersFixed: "green found its problem fixed",
+  watchersStopped: "grey found problems it could not report",
+  watchersUnknown: "? has no public record",
+  watchersChartLabel: "One alarm per automatic check, marked by what its newest run found.",
+  fold: "Show the details",
+  foldHint: "every test, and where each number comes from",
+} as const;
+
 /** The hero's tiles: each jumps to its section and carries its own label. */
 export const HERO_TILE_COPY = {
   forwardTitle: "Forward record",

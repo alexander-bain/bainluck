@@ -72,6 +72,13 @@ export type Truth =
   | { kind: "reviewed"; asOf: string; source?: SourceLink }
   | { kind: "planned"; waitingOn: string; ref?: RepoRef };
 
+/**
+ * What a `Figure` may carry: a measured figure, or a count read off a list we
+ * keep by hand (LAST REVIEWED with its date). A counted figure needs its source
+ * like any other, so here `source` is required.
+ */
+export type FigureTruth = MeasuredTruth | { kind: "reviewed"; asOf: string; source: SourceLink };
+
 export type TruthKind = Truth["kind"];
 
 export const TRUTH_KINDS: readonly TruthKind[] = ["live", "last_run", "reviewed", "planned"];
