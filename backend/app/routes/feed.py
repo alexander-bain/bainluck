@@ -6283,6 +6283,35 @@ async def get_feed(
         if _capture is not None:
             _capture.record_chain_exit(feed_items, _chain_meta)
 
+        # #12091 (Decide 32-A): movement orders the concept cards. Dark unless
+        # DISCOVER_CONCEPT_MOVEMENT is on; Discover deck only. A permutation of
+        # the theme-bundle seats on the full deck, before collections, round-ups
+        # and the opening seating — which keeps the bundles' relative order.
+        from app.utils.concept_movement import (
+            apply_concept_movement,
+            concept_movement_enabled,
+        )
+
+        if concept_movement_enabled() and _feed_is_discover_deck(
+            mode=mode,
+            sport=sport,
+            category=category,
+            tags=tags,
+            my_teams_only=my_teams_only,
+            include_events=include_events,
+            include_futures=include_futures,
+        ):
+            _before_concepts = feed_items
+            feed_items = await apply_concept_movement(
+                db,
+                feed_items,
+                now=now,
+                budget_s=min(1.0, _feed_budget_remaining_s()),
+            )
+            if _capture is not None and feed_items is not _before_concepts:
+                # The offline replay does not run this stage.
+                _capture.abandon("concept_movement")
+
         if exclude_reviewed:
             reviewed_filter = {
                 "enabled": True,
@@ -7525,6 +7554,29 @@ def _feed_opening_seating_policy(
     return bool(
         _DISCOVER_OPENING_SEATING_SERVED
         and (mode or "discover").lower() == "discover"
+        and sport is None
+        and category is None
+        and tags is None
+        and not my_teams_only
+        and include_events
+        and include_futures
+    )
+
+
+def _feed_is_discover_deck(
+    *,
+    mode: Optional[str],
+    sport: Optional[str],
+    category: Optional[str],
+    tags: Optional[str],
+    my_teams_only: bool,
+    include_events: bool,
+    include_futures: bool,
+) -> bool:
+    """The Discover deck itself (#12091) — the request shape
+    ``_feed_opening_seating_policy`` seats, without its served switch."""
+    return bool(
+        (mode or "discover").lower() == "discover"
         and sport is None
         and category is None
         and tags is None
