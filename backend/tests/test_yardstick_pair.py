@@ -24,7 +24,6 @@ from app.utils.yardstick_pair import (
     FOR_SCALE_SNOW_IN_DC_PRODUCER,
     FOR_SCALE_SNOW_IN_DC_SLUG,
     FOR_SCALE_US_RECESSION_2026_DEFINITION,
-    FOR_SCALE_US_RECESSION_2026_PRODUCER,
     FOR_SCALE_US_RECESSION_2026_SLUG,
     MAX_YARDSTICK_PERCENT,
     MIN_YARDSTICK_PERCENT,
@@ -39,6 +38,23 @@ from app.utils.yardstick_pair import (
 NOW_NOV_4 = datetime(2026, 11, 4, 21, 0, 0, tzinfo=timezone.utc)
 OBS_FRESH = "2026-11-04T20:15:00Z"
 OBS_STALE = "2026-11-01T12:00:00Z"
+
+
+@pytest.fixture
+def fixed_producer_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the specimen's clock when a registered producer supplies no clock."""
+    from app.utils import yardstick_pair
+
+    shipped_produce = yardstick_pair.produce_yardstick_pair
+
+    async def produce_at_fixture_time(db: Any, **kwargs: Any) -> Any:
+        if kwargs.get("now") is None:
+            kwargs["now"] = NOW_NOV_4
+        return await shipped_produce(db, **kwargs)
+
+    monkeypatch.setattr(
+        yardstick_pair, "produce_yardstick_pair", produce_at_fixture_time
+    )
 
 
 def _make_binary_market(
@@ -243,6 +259,7 @@ class TestYardstickPairSelection:
         ]
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("fixed_producer_clock")
     async def test_recomputes_sentence_on_every_serve_and_never_caches_text(
         self,
     ) -> None:
@@ -665,6 +682,7 @@ class TestYardstickPairRefusals:
         assert ("pair", "no_qualifying_target") in res.reasons
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("fixed_producer_clock")
     async def test_registered_in_roundup_producers_and_folds_covered_feed_cards(
         self,
     ) -> None:
