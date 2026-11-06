@@ -2,31 +2,85 @@ name: Tier-B review
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, ready_for_review]
+  # Native completion event frees the reviewer runner while CI is queued.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 permissions:
   contents: read
   actions: read
-  checks: read
+  checks: write
   pull-requests: write
   issues: read
   id-token: write
 concurrency:
-  group: tier-b-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: tier-b-review-${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
 jobs:
   review:
-    if: contains(github.event.pull_request.labels.*.name, 'tier-b') && github.event.pull_request.draft == false
+    if: >-
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'tier-b') &&
+       github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 40
     steps:
-      - name: Wait for green CI at this head
-        id: ci
+      - name: Resolve the current eligible PR
+        id: select
         uses: actions/github-script@v8
         with:
           script: |
             const repo = context.repo;
-            const number = context.payload.pull_request.number;
-            const head = context.payload.pull_request.head.sha;
-            const deadline = Date.now() + 30 * 60 * 1000;
+            const fullName = `${repo.owner}/${repo.repo}`;
+            let number, head;
+            if (context.eventName === 'workflow_run') {
+              const run = context.payload.workflow_run;
+              if (context.payload.action !== 'completed' || run?.name !== 'CI' ||
+                  run.path !== '.github/workflows/ci.yml' || run.event !== 'pull_request' ||
+                  run.status !== 'completed' || run.conclusion !== 'success' ||
+                  run.head_repository?.full_name !== fullName) return;
+              head = run.head_sha;
+              const associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,
+                {...repo, commit_sha: head, per_page: 100});
+              const current = associated.filter(pr => pr.state === 'open' &&
+                pr.head.sha === head && pr.head.repo?.full_name === fullName);
+              if (current.length !== 1) return;
+              number = current[0].number;
+            } else if (context.eventName === 'pull_request') {
+              number = context.payload.pull_request.number;
+              head = context.payload.pull_request.head.sha;
+            } else return;
+            const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
+            if (pr.state !== 'open' || pr.draft || pr.head.sha !== head ||
+                pr.head.repo?.full_name !== fullName ||
+                !pr.labels.some(label => label.name === 'tier-b')) return;
+            // No second paid review when ready/labeled and CI completion overlap.
+            const reviews = await github.paginate(github.rest.pulls.listReviews,
+              {...repo, pull_number: number, per_page: 100});
+            if (reviews.some(review => review.user?.login === 'claude[bot]' &&
+                review.commit_id === head &&
+                ['APPROVED', 'CHANGES_REQUESTED'].includes(review.state))) return;
+            core.setOutput('number', String(number));
+            core.setOutput('head', head);
+            core.setOutput('branch', pr.head.ref);
+      - name: Wait for green CI at this head
+        id: ci
+        if: steps.select.outputs.number != ''
+        env:
+          REVIEW_PR: ${{ steps.select.outputs.number }}
+          REVIEW_HEAD: ${{ steps.select.outputs.head }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const repo = context.repo;
+            const number = Number(process.env.REVIEW_PR);
+            const head = process.env.REVIEW_HEAD;
+            const deadline = Date.now() + 5 * 60 * 1000;
             while (Date.now() < deadline) {
               const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
               if (pr.state !== 'open' || pr.draft || pr.head.sha !== head ||
@@ -115,14 +169,20 @@ jobs:
                 core.notice(`Required CI is green at ${head}.`);
                 return;
               }
-              core.info(`Waiting for CI at ${head}; reviewer has not started.`);
+              if (context.eventName !== 'workflow_run') {
+                core.notice('CI is pending; its completion event will start review without holding this runner.');
+                return;
+              }
+              core.info(`Waiting for trailing checks at ${head}; reviewer has not started.`);
               await new Promise(resolve => setTimeout(resolve, 60000));
             }
-            core.setFailed(`Timed out after 30 minutes waiting for green CI at ${head}; no review.`);
+            core.setFailed(`Timed out after 5 minutes waiting for trailing green checks at ${head}; no review.`);
       - uses: actions/checkout@v6
         if: steps.ci.outputs.ready == 'true'
         with:
           fetch-depth: 0
+          ref: ${{ steps.select.outputs.head }}
+          persist-credentials: false
       - uses: actions/setup-python@v7
         if: steps.ci.outputs.ready == 'true'
         with:
@@ -135,10 +195,33 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           show_full_output: true
           prompt: |
-            Review pull request #${{ github.event.pull_request.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
-            Required CI was verified green at head ${{ github.event.pull_request.head.sha }} before this review. Inspect the current required checks if needed; optional failures are evidence to assess, not an automatic refusal. The Tier-B approval check waits for your verdict and is excluded from this pre-review gate.
+            Review pull request #${{ steps.select.outputs.number }} in ${{ github.repository }} as the independent Tier-B reviewer.
+            Required CI was verified green at head ${{ steps.select.outputs.head }} before this review. Inspect the current required checks if needed; optional failures are evidence to assess, not an automatic refusal. The Tier-B approval check waits for your verdict and is excluded from this pre-review gate.
             Run tests directly, without a pipe: cd backend && python3 -m pytest <files> -q. Use Read/Grep for files. Shell commands may also use an absolute backend path; python/python3 pytest are allowed separately from cd.
             Follow docs/release-loop/tier-b-review-brief.md exactly; it is the whole brief. End with exactly one review: approve or request changes.
           claude_args: >-
             --model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(cd:*),Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(gh run view:*),Bash(echo:*),Bash(tail:*)" --max-turns 60
-            ${{ startsWith(github.event.pull_request.head.ref, 'codex/eval-reviewer-') && '--max-budget-usd 0.40' || '' }}
+            ${{ startsWith(steps.select.outputs.branch, 'codex/eval-reviewer-') && '--max-budget-usd 0.40' || '' }}
+      # workflow_run has no PR association of its own. Use the same installed
+      # evaluator, pinned to the trusted workflow commit, for this selected PR.
+      - name: Load the trusted approval evaluator
+        id: policy
+        if: always() && github.event_name == 'workflow_run' && steps.ci.outputs.ready == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: _tier_b_policy
+          sparse-checkout: tools/release/tier_b.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Publish the current-head approval verdict
+        if: always() && steps.policy.conclusion == 'success'
+        uses: actions/github-script@v8
+        env:
+          REVIEW_PR: ${{ steps.select.outputs.number }}
+        with:
+          script: |
+            await require('./_tier_b_policy/tools/release/tier_b.cjs').evaluate(github, {
+              ...context, repo: context.repo, eventName: 'pull_request',
+              payload: {pull_request: {number: Number(process.env.REVIEW_PR)}}
+            });

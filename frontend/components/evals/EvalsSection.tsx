@@ -21,7 +21,8 @@ export default function EvalsSection({
 }: {
   id: string;
   title: string;
-  lead: string;
+  /** Words, or words with figures in them (a figure inside the lead sits under the section's own label). */
+  lead: ReactNode;
   detail?: string;
   truth?: Truth;
   children: ReactNode;

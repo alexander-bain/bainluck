@@ -1,0 +1,229 @@
+{
+  "about": "The sources' own words behind watchers-2026-11-06.json. Test-only: lib/evals/__tests__/watchers.test.ts reads this, the page never does. Schedule lines are copied verbatim from backend/app/tasks/__init__.py at 80b7a1605c. Each verdict's posts are the watcher's own posts on GitHub: the first line of each, verbatim, with GitHub's time for it; 'earlier' and 'fix' quote the comments they name.",
+  "schedules": {
+    "data-quality-watchdog": {
+      "quote": "\"schedule\": crontab(minute=45, hour=\"*/2\"),  # Every 2 hours at :45",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "matching-reconciliation": {
+      "quote": "\"schedule\": crontab(minute=\"12,27,42,57\"),",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "anchor-schedule-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=40, hour=6),  # Daily 06:40 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "flow-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=10, hour=7),  # Daily 07:10 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "grid-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=25, hour=7),  # Daily 07:25 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "grid-register-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=32, hour=7),  # Daily 07:32 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "tournament-register-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=36, hour=7),  # Daily 07:36 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "horizon-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=40, hour=7),  # Daily 07:40 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "settled-concept-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=45, hour=7),  # Daily 07:45 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "typeahead-index-sentinel": {
+      "quote": "\"schedule\": crontab(hour=7, minute=50),",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "board-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=55, hour=7),  # Daily 07:55 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    },
+    "schedule-sentinel-daily": {
+      "quote": "\"schedule\": crontab(minute=0, hour=8),  # Daily 08:00 UTC",
+      "from": "https://github.com/alexander-bain/bainluck/blob/80b7a1605c/backend/app/tasks/__init__.py"
+    }
+  },
+  "verdicts": {
+    "data-quality-watchdog": {
+      "run": {
+        "quote": "Watchdog re-observed **kalshi_winner_coverage** at 2026-11-06T12:47:47+00:00 — value `97.3`, threshold `99.0` (gte), severity P1 (fingerprint `3e16f3bfeca7`).",
+        "from": "https://github.com/alexander-bain/bainluck/issues/4057#issuecomment-6685169500",
+        "posted_at": "2026-11-06T12:47:48Z",
+        "kind": "reported"
+      }
+    },
+    "matching-reconciliation": {
+      "run": {
+        "quote": "Still RED: 1 adjudicated pairs regressed, 2 negative pairs attached to an event no outside provider corroborates (2 idless), and 22 attached to a provider-anchored event nobody has adjudicated them onto, of 709 pairs (0 sit on one of the 5 adjudicated-accepted fixtures that did not exist at capture — baseline stale, not a regression; 24 recovered, 0 markets no longer exist) (fingerprint `e6ec282d2e28`).",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12144#issuecomment-6686664159",
+        "posted_at": "2026-11-06T14:03:23Z",
+        "kind": "reported"
+      },
+      "post2": {
+        "quote": "Still RED: 3 near-term event/source pair(s) have an open linked market with a stored price but no win-prob snapshot for that event and source — a priced source the curve writer has not drawn (fingerprint `c1da0eff8f8a`).",
+        "from": "https://github.com/alexander-bain/bainluck/issues/10523#issuecomment-6686664958",
+        "posted_at": "2026-11-06T14:03:25Z",
+        "kind": "reported"
+      },
+      "post3": {
+        "quote": "Still RED: 200 receipt(s) disagree with the database about where their market sits, and 134 were caught by the write-time guard as link_not_durable — either way the matcher is losing links a sibling market's failure rolled back (fingerprint `6ca84e786d1d`).",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12145#issuecomment-6686665865",
+        "posted_at": "2026-11-06T14:03:27Z",
+        "kind": "reported"
+      },
+      "earlier": {
+        "quote": "**Cause found: #2728 holds exactly 2,500 comments, GitHub's per-issue cap**, so every comment answers 403.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/11958#issuecomment-6674619473"
+      }
+    },
+    "anchor-schedule-sentinel-daily": {
+      "run": {
+        "quote": "Still drifting as of 2026-11-06T06:40:49.429337+00:00 — `plan_only: examined=512/512 pages=6 drift=4 placeholders_applied=0 · agrees=433 authority_moves_us=4 teams_disagree=6 no_answer=69 refused_completed=0 refused_settled=0 refused_outranked=0`",
+        "from": "https://github.com/alexander-bain/bainluck/issues/2978#issuecomment-6678966061",
+        "posted_at": "2026-11-06T06:44:52Z",
+        "kind": "reported"
+      }
+    },
+    "flow-sentinel-daily": {
+      "run": {
+        "quote": "Flow Sentinel re-observed this failure: **1 failing, 5 checked** (fingerprint `10bf3ba1fe1b`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12071#issuecomment-6679506737",
+        "posted_at": "2026-11-06T07:19:52Z",
+        "kind": "reported"
+      },
+      "post2": {
+        "quote": "Flow Sentinel re-observed this failure: **9 failing, 2000 checked** (fingerprint `6a31e44ac345`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12072#issuecomment-6679507192",
+        "posted_at": "2026-11-06T07:19:54Z",
+        "kind": "reported"
+      },
+      "post3": {
+        "quote": "Flow Sentinel re-observed this failure: **1 failing, 2 checked** (fingerprint `bbbe68ed999f`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/1511#issuecomment-6679507609",
+        "posted_at": "2026-11-06T07:19:55Z",
+        "kind": "reported"
+      },
+      "post4": {
+        "quote": "Flow Sentinel re-checked GREEN — `espn_id_linkage_drift` now passes (31 checked, 0 failing; fingerprint `32d4d6a9dd94`). Auto-closing; a future recurrence opens a fresh episode.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12073#issuecomment-6679508069",
+        "posted_at": "2026-11-06T07:19:57Z",
+        "kind": "closed"
+      },
+      "earlier": {
+        "quote": "the Flow Sentinel's ordinary scheduled run on Nov 4 at 11:10 PM PT filed **#12071, #12072, #12073** and commented on **#1511**",
+        "from": "https://github.com/alexander-bain/bainluck/issues/11960#issuecomment-6674619173"
+      }
+    },
+    "grid-sentinel-daily": {
+      "run": {
+        "quote": "Grid Sentinel re-checked GREEN — the MLB grid has 0 real defects (fingerprint `655b9f1d5e2a`). Auto-closing; a future recurrence opens a fresh episode.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12074#issuecomment-6679867488",
+        "posted_at": "2026-11-06T07:42:15Z",
+        "kind": "closed"
+      },
+      "earlier": {
+        "quote": "the Grid Sentinel's ordinary scheduled run on Nov 4 at 11:37 PM PT filed **#12074** (`[Grid Sentinel] MLB grid has 1 real defect(s)`, created 07:37:07Z Nov 5)",
+        "from": "https://github.com/alexander-bain/bainluck/issues/11959#issuecomment-6674618887"
+      }
+    },
+    "tournament-register-sentinel-daily": {
+      "run": {
+        "quote": "Sentinel re-observed this failure (fingerprint `b8db9f7579cb4896`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/4231#issuecomment-6680051792",
+        "posted_at": "2026-11-06T07:53:52Z",
+        "kind": "reported"
+      }
+    },
+    "horizon-sentinel-daily": {
+      "run": {
+        "quote": "[Horizon] F1 Season Finale 2026 (Abu Dhabi GP) — T-30 candidate",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12135",
+        "posted_at": "2026-11-06T07:54:07Z",
+        "kind": "reported"
+      },
+      "post2": {
+        "quote": "[Horizon] Calendar runs out for mlb-all-star-game",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12136",
+        "posted_at": "2026-11-06T07:54:08Z",
+        "kind": "reported"
+      },
+      "post3": {
+        "quote": "[Horizon] Calendar runs out for the-open-championship",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12137",
+        "posted_at": "2026-11-06T07:54:09Z",
+        "kind": "reported"
+      },
+      "post4": {
+        "quote": "[Horizon] Calendar runs out for nfl-kickoff-game",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12138",
+        "posted_at": "2026-11-06T07:54:10Z",
+        "kind": "reported"
+      },
+      "post5": {
+        "quote": "[Horizon] Calendar runs out for us-open-tennis",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12139",
+        "posted_at": "2026-11-06T07:54:11Z",
+        "kind": "reported"
+      },
+      "post6": {
+        "quote": "[Horizon] Calendar runs out for vuelta-a-espana",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12140",
+        "posted_at": "2026-11-06T07:54:12Z",
+        "kind": "reported"
+      },
+      "post7": {
+        "quote": "[Horizon] Calendar runs out for emmy-awards",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12141",
+        "posted_at": "2026-11-06T07:54:13Z",
+        "kind": "reported"
+      },
+      "post8": {
+        "quote": "[Horizon] Calendar runs out for abu-dhabi-grand-prix",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12142",
+        "posted_at": "2026-11-06T07:54:14Z",
+        "kind": "reported"
+      }
+    },
+    "board-sentinel-daily": {
+      "run": {
+        "quote": "Board Sentinel re-observed 402 board-hygiene defect(s) (fingerprint `4571dcf6fd3e`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/1449#issuecomment-6680233836",
+        "posted_at": "2026-11-06T08:05:09Z",
+        "kind": "reported"
+      }
+    },
+    "schedule-sentinel-daily": {
+      "run": {
+        "quote": "Schedule Sentinel re-observed 1 real defect(s) on the NCAAF schedule over 2026-11-05..2026-11-07 (fingerprint `d183720e8e7b`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/10783#issuecomment-6680257276",
+        "posted_at": "2026-11-06T08:06:35Z",
+        "kind": "reported"
+      },
+      "post2": {
+        "quote": "Schedule Sentinel re-observed 1 real defect(s) on the EPL schedule over 2026-11-05..2026-11-07 (fingerprint `f0c0a0533ae5`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/10782#issuecomment-6680257018",
+        "posted_at": "2026-11-06T08:06:35Z",
+        "kind": "reported"
+      },
+      "post3": {
+        "quote": "Schedule Sentinel re-observed 36 real defect(s) on the NCAAB schedule over 2026-11-05..2026-11-07 (fingerprint `4cffe73322e6`). Still open.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12083#issuecomment-6680257544",
+        "posted_at": "2026-11-06T08:06:36Z",
+        "kind": "reported"
+      },
+      "post4": {
+        "quote": "Schedule Sentinel re-checked GREEN — the UCL schedule reconciles against its authority with 0 real defects over 2026-11-05..2026-11-07 (fingerprint `2fc686d59fc7`). Auto-closing; a future recurrence opens a fresh episode.",
+        "from": "https://github.com/alexander-bain/bainluck/issues/12082#issuecomment-6680257856",
+        "posted_at": "2026-11-06T08:06:37Z",
+        "kind": "closed"
+      }
+    }
+  }
+}

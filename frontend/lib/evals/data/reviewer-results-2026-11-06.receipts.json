@@ -1,0 +1,21 @@
+{
+  "_note": "Test-only. Builder B's posts on #11951, quoted word for word from the start of each comment. The tests hold reviewer-results-2026-11-06.json to these quotes.",
+  "plan": {
+    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6687948343",
+    "posted_at": "2026-11-06T15:03:12Z",
+    "quote": "Builder B — **Nov 6, 7:03 AM PST. Draft publication COMPLETE:** #12155–#12197 cover the43 exact authorized new refs; with #12132/#12150 all45 planned evaluations have a PR and frozen SHA."
+  },
+  "count": {
+    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6692550759",
+    "posted_at": "2026-11-06T18:39:53Z",
+    "quote": "Builder B — Nov 6, 10:38 AM PST. **Full reviewer experiment remains incomplete: 1/45 recorded; five candidates are now admitted in the first resumed wave.**",
+    "controls_quote": "all 15 control reviews are still UNKNOWN, so false-alarm rate is UNKNOWN."
+  },
+  "results": [
+    {
+      "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474",
+      "posted_at": "2026-11-06T07:48:27Z",
+      "quote": "Builder B — **Nov 5 11:48 PM PST. Full-set r02/pass1: CAUGHT, real exact-head CHANGES_REQUESTED.**"
+    }
+  ]
+}

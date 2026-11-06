@@ -43,6 +43,54 @@ export const HERO_COPY = {
     "AI agents write most of the code and most of the tests on this site, and other AI agents and Alex, who builds Bain Luck, check their work. That is why the tests matter. Every number here is marked LIVE, LAST RUN with its date, or PLANNED, and links to where it came from; a list we keep by hand is marked LAST REVIEWED with its date.",
 } as const;
 
+/**
+ * The top screen (Alex, Nov 6): one plain answer and three pictures, before any
+ * detail. Two readers: a smart friend with no AI or engineering background who
+ * asks "so how do you know your numbers are any good?", and an interviewer at an
+ * AI company. Nothing here may need the glossary: `topScreen.test.tsx` fails on
+ * a jargon word anywhere outside a "Show the details" fold.
+ */
+export const TOP_COPY = {
+  // Decide 43-J1 (Alex, Nov 5): say plainly that AI agents write most of the code.
+  answer:
+    "AI agents write most of this site's code, so we don't take its numbers on trust.",
+  truthTitle: "Do our probabilities come true?",
+  truthSaid: "What we said",
+  truthHappened: "How often it happened",
+  truthExampleBefore: "When we said",
+  truthExampleMiddle: ", it happened",
+  truthExampleClose: "of the time: our dots sit close to the line.",
+  truthExampleFar: "of the time: our dots sit off the line.",
+  truthExamplePlain: "of the time. On the line means it happened exactly as often as we said.",
+  truthPlain: "Each dot is a group of past markets; on the line means it happened exactly as often as we said.",
+  truthLoading: "Reading the live record",
+  truthUnavailable: "Unavailable right now",
+  truthPointsAfter: "points off on average",
+  truthChartLabel:
+    "How often things happened against the probability we gave them, one dot per group of past markets, on a grey line where the two are equal.",
+  reviewerTitle: "Does our AI reviewer spot mistakes?",
+  reviewerCaughtBefore: "Caught",
+  reviewerCaughtMiddle: "of the",
+  reviewerCaughtAfter: "it has checked so far",
+  reviewerNoneChecked: "It has not checked any yet",
+  reviewerHidBefore: "We hid",
+  reviewerHidMiddle: "mistakes in real code changes, plus",
+  reviewerHidAfter: "harmless decoys, to see what it flags; grey ones are not checked yet.",
+  reviewerChartLabel:
+    "One bug per hidden mistake, green when it was caught, red when it was missed, grey when not checked yet; one page per harmless decoy.",
+  watchersTitle: "Are our automatic checks working?",
+  watchersOf: "of",
+  watchersWorkingAfter: "working",
+  watchersSentenceStart: "Each alarm is an automatic check on the live site",
+  watchersProblems: "red found problems, now on our work list",
+  watchersFixed: "green found its problem fixed",
+  watchersStopped: "grey found problems it could not report",
+  watchersUnknown: "? has no public record",
+  watchersChartLabel: "One alarm per automatic check, marked by what its newest run found.",
+  fold: "Show the details",
+  foldHint: "every test, and where each number comes from",
+} as const;
+
 /** The hero's tiles: each jumps to its section and carries its own label. */
 export const HERO_TILE_COPY = {
   forwardTitle: "Forward record",
@@ -50,10 +98,54 @@ export const HERO_TILE_COPY = {
   forwardOutcomesAfter: "traded outcomes",
   unavailable: "Unavailable right now",
   loading: "Reading the live record",
+  examTitle: "AI exam",
+  examFoundBefore: "Found",
+  examOf: "of",
+  examFoundAfter: "twins it had never seen, but wrongly combined",
+  examTo: "to",
+  examCombinedAfter: "held-out pairs.",
   testsTitle: "Tests for the tests",
   testsOf: "of",
   testsCaughtAfter: "planted changes caught;",
   testsRealAfter: "built on the site's own code",
+} as const;
+
+export const EXAM_COPY = {
+  title: "The twin exam and its gates",
+  leadBefore: "Before the AI judge may file matches on its own, it has to pass every gate. Most are scored on pairs it has never seen. It passed",
+  leadMiddle: "and failed",
+  leadAfter: ", so a person still checks its work.",
+  detail:
+    "The bars were set before the run, in a ruling: a license for each kind of pair, plus gates every license shares. No wrong combining on held-out pairs, the same label in every pass, word-for-word quotes and no cut-off replies.",
+  noLicense: "No license was granted, so a person still checks the judge's work.",
+  passedPrefix: "Passed:",
+  failedPrefix: "Failed:",
+  gateHeading: "Gate",
+  passHeadings: ["First pass", "Second pass", "Third pass"],
+  acrossPasses: "Across all three passes",
+  heldOutScope: "Held-out pairs",
+  allScope: "Every reply",
+  barBefore: "The bar for each gate was set before the run, in",
+  barLink: "the ruling that set them",
+  licensesTitle: "Licenses, by kind of pair",
+  licensesNote: "HELD met its own numbers but waits on the shared gates and other checks; NOT ELIGIBLE has too few held-out examples to judge.",
+} as const;
+
+export const CONFUSION_COPY = {
+  title: "Where the judge gets confused",
+  lead: "It is very good at spotting twins and bad at saying when it cannot tell.",
+  detail:
+    "For each kind of pair: how many of them it found, and how often it was right when it used that label, each with its likely range, which holds the true rate nineteen times in twenty. Rare kinds get wide ranges, and the page draws them.",
+  views: { test: "Held-out", dev: "Development", all: "All pairs" },
+  passes: ["First pass", "Second pass", "Third pass"],
+  viewLabel: "Which pairs",
+  passLabel: "Which pass",
+  found: "Found",
+  right: "Right when it said so",
+  none: "—",
+  noneMeans: "It never used this label, so there is nothing to grade.",
+  heldOutNote: "Held-out pairs stay sealed: only these counts are published, never the pairs.",
+  lock: "Held-out",
 } as const;
 
 export const TIMELINE_COPY = {
@@ -148,6 +240,39 @@ export const TESTS_FOR_TESTS_COPY = {
   caught: "caught it",
   passedIt: "passed it",
   reviewer: "AI reviewer",
+} as const;
+
+export const WATCHERS_COPY = {
+  title: "Checks that run on their own",
+  lead:
+    "Some checks run by themselves, like smoke detectors. Each one looks for one kind of problem on the live site and files it on our work list when it finds one.",
+  detail:
+    "An audit found a third state between working and stopped: a check that finds problems but cannot file them. We call that running red, reporting stopped, and show it wherever the record says so.",
+  timesNote: "Times are Pacific, worked out in your browser from the schedule's UTC times.",
+  dayGroup: "Through the day",
+  nightGroup: "Every night",
+  every: "Every",
+  minutes: "minutes",
+  hours: "hours",
+  everyDayAt: "Every day at",
+  utc: "UTC",
+  lastResult: "Last result",
+  stateRedReporting: "Running red, reporting",
+  stateRedStopped: "Running red, reporting stopped",
+  stateClosedFixed: "Closed as fixed",
+  runBefore: "Its last run on record, at",
+  filedAfter: "found problems and reported them on our work list:",
+  stoppedAfter: "found problems but could not file them. The stopped reporting is tracked in",
+  closedOneAfter: "re-checked the problem it had reported, found it fixed, and closed it:",
+  closedManyAfter: "re-checked the problems it had reported, found them fixed, and closed them:",
+  alsoClosedBefore: "It also found",
+  alsoClosedOneAfter: "fixed, and closed it.",
+  alsoClosedManyAfter: "fixed, and closed them.",
+  earlierBefore: "Its reporting had been stopped before that run:",
+  fixBefore: "A fix for its reporting has merged since:",
+  unknown: "No public record of its last result.",
+  alerts: "See every open alert",
+  code: "The check's code",
 } as const;
 
 export const GAPS_COPY = {
@@ -258,6 +383,24 @@ export const TERMS: readonly { term: string; meaning: string }[] = [
     term: "Golden set",
     meaning:
       "A fixed set of real markets, each with the event it belongs to or with none, that we run through the real matcher to check it.",
+  },
+  {
+    term: "Twin",
+    meaning: "Two markets from different sources that are the same market, so their probabilities can be combined.",
+  },
+  {
+    term: "Likely range",
+    meaning:
+      "Where the true rate probably sits, given how few examples there were: a range wide enough to hold it in nineteen exams out of twenty.",
+  },
+  {
+    term: "Sentinel",
+    meaning:
+      "A check that runs on a schedule against the live site and files an issue on our work list when it finds a problem.",
+  },
+  {
+    term: "Running red, reporting stopped",
+    meaning: "A check that keeps finding problems but cannot file them, so nobody sees them until someone looks.",
   },
   {
     term: "Planted bug",

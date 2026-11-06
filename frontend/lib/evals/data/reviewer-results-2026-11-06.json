@@ -1,0 +1,25 @@
+{
+  "schema": "evals-reviewer-results/1",
+  "as_of": "2026-11-06T18:39:53Z",
+  "receipt": {
+    "label": "The study's latest count",
+    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6692550759"
+  },
+  "planned": 45,
+  "plan_receipt": {
+    "label": "The study's plan",
+    "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6687948343"
+  },
+  "results": [
+    {
+      "case": "r02",
+      "pass": 1,
+      "outcome": "caught",
+      "at": "2026-11-06T07:48:27Z",
+      "receipt": {
+        "label": "Planted mistake r02, first try: caught",
+        "href": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474"
+      }
+    }
+  ]
+}
