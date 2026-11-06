@@ -211,8 +211,8 @@ def test_the_proposed_60s_w_move_is_still_refused_on_the_newest_measurement():
     assert on_defaults.period_at_worst_s == on_ring.period_at_worst_s == 120.0
     assert on_defaults.is_shippable is False
 
-    # The live beat must remain nowhere near it.
-    assert float(celery_app.conf.beat_schedule["warm-typeahead"]["schedule"]) == 10.0
+    # The live beat must remain nowhere near it. (W-1, 2026-11-06: 10 -> 15 s.)
+    assert float(celery_app.conf.beat_schedule["warm-typeahead"]["schedule"]) == 15.0
 
 
 def test_todays_10s_beat_is_MARGINAL_at_the_honest_wall_max():
@@ -242,11 +242,16 @@ def test_todays_10s_beat_is_MARGINAL_at_the_honest_wall_max():
         RING_WALL_MIN_S,
     )
 
+    # W-1 (2026-11-06): the beat is 15 s, so P(15) = 15 * ceil(40.991 / 15) = 45 s
+    # at the median and 15 * ceil(66.365 / 15) = 75 s at the worst. Those walls
+    # are the 40-term pass's; the 8-term pass's walls are UNKNOWN until the
+    # post-deploy ring reads them, so this verdict is graded on the last
+    # measurement, and it does not move.
     ruled = grade_beat_interval(CURRENT_BEAT_INTERVAL_S)
     assert ruled.verdict == BeatVerdict.MARGINAL
     assert ruled.is_shippable is False
-    assert ruled.period_at_median_s == 50.0
-    assert ruled.period_at_worst_s == 70.0
+    assert ruled.period_at_median_s == 45.0
+    assert ruled.period_at_worst_s == 75.0
     assert ruled.crosses_cliff_on_worst is True
 
     # The ring read that used to be the pessimistic arm now agrees with the
@@ -258,7 +263,7 @@ def test_todays_10s_beat_is_MARGINAL_at_the_honest_wall_max():
         wall_min_s=RING_WALL_MIN_S,
     )
     assert on_ring.verdict == ruled.verdict == BeatVerdict.MARGINAL
-    assert on_ring.period_at_worst_s == 70.0
+    assert on_ring.period_at_worst_s == 75.0
 
 
 def test_the_arithmetically_fitting_22s_is_still_refused_as_marginal():
@@ -462,6 +467,7 @@ def test_the_expires_derivation_returns_the_structural_cap():
         derive_message_expiry_s,
     )
 
+    # W-1 (2026-11-06): 8 x 15 s — the same 120 s window as 12 x 10 s.
     assert derive_message_expiry_s() == MAX_LIVE_MESSAGES * CURRENT_BEAT_INTERVAL_S == 120.0
 
     # It does not move when the wall measurement moves — which is the property.
@@ -544,15 +550,16 @@ def test_the_expires_derivation_refuses_a_bound_that_cannot_do_its_job():
     * below one entry lifetime, a queued fire can only ever arrive after the head
       it was scheduled to refresh has already expired.
 
-    **What this would have to see to go red:** `MAX_LIVE_MESSAGES` cut to 6 while
-    the ring's worst wall stands at 61.282 s (60 < 66.282), or the beat slowed
-    without the cap following it — i.e. someone "tidying" the broker's message
-    count without reading the wall.
+    **What this would have to see to go red:** `MAX_LIVE_MESSAGES` cut to 4 while
+    the ring's worst wall stands at 61.282 s (4 x 15 = 60 < 66.282; W-1 moved the
+    beat 10 -> 15 s, so this was 6 x 10), or the beat slowed without the cap
+    following it — i.e. someone "tidying" the broker's message count without
+    reading the wall.
     """
     from app.utils.typeahead_beat_budget import derive_message_expiry_s
 
     with pytest.raises(ValueError, match="worst pass wall"):
-        derive_message_expiry_s(max_live=6, worst_wall_s=61.282)
+        derive_message_expiry_s(max_live=4, worst_wall_s=61.282)
 
     # The entry-life floor is reachable on its own, with the wall floor cleared.
     with pytest.raises(ValueError, match="entry lifetime"):
@@ -1228,9 +1235,11 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # tree branched from b65d0573bf printed explicit 101 implicit 40 total 141.
     # #12095: `snapshot-ranking-slate-daily` names background; census on the
     # tree merged with 80b7a1605c printed explicit 102 implicit 40 total 142.
-    assert explicit == 102, f"explicitly-routed background beats moved: {explicit}"
+    # W-1: `warm-typeahead-gold-set` names background; census on the tree
+    # branched from 3c72a05363 printed explicit 103 implicit 40 total 143.
+    assert explicit == 103, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 40, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 142
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 143
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

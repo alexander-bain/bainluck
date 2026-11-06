@@ -171,8 +171,10 @@ RESPONSE_CACHE_TTL_S = 65
 MIN_PASS_PERIOD_S = 30
 
 #: The beat interval in force today. Mirrored from the `warm-typeahead` entry in
-#: `tasks/__init__.py` (`"schedule": 10.0`).
-CURRENT_BEAT_INTERVAL_S = 10.0
+#: `tasks/__init__.py` (`"schedule": 15.0`). W-1 (2026-11-06): 10 -> 15 s, which
+#: keeps the real-pass gap at or under 45 s on the 30 s floor; a 30 s beat on a
+#: 30 s floor would skip to 60 s whenever a pass started late.
+CURRENT_BEAT_INTERVAL_S = 15.0
 
 # ---------------------------------------------------------------------------
 # The measured pass wall. PROVENANCE, not folklore.
@@ -506,7 +508,10 @@ LOCK_TTL_S = 45
 #: rather than an open one. Same constant, same job, as
 #: `search_head_warmer.MAX_LIVE_MESSAGES`; the two beats differ in period so the
 #: seconds differ (12 x 10 s here, 9 x 20 s there).
-MAX_LIVE_MESSAGES = 12
+#:
+#: W-1 (2026-11-06): 12 -> 8 with the beat 10 -> 15 s, so the window a queued fire
+#: may wait stays the 120 s it was (8 x 15 s) and the broker holds fewer of them.
+MAX_LIVE_MESSAGES = 8
 
 
 def derive_message_expiry_s(
@@ -2092,7 +2097,16 @@ def free_background_slots(
 #: #142's 2:05 AM snapshot already runs, one primary-key market read and one
 #: insert. The census RUN over the tree merged with `80b7a1605c` printed
 #: `explicit 102 implicit 40 total 142`.
-BACKGROUND_BEAT_COUNT = 142
+#: 🔴 RE-DERIVED at speed (2026-11-06, W-1): 142 → 143, explicit 102 → 103,
+#: fall-through UNMOVED at 40. `warm-typeahead-gold-set`
+#: (`crontab(hour=7, minute=5)`) names `background` explicitly. Cost: one fire a
+#: day, one typeahead pass over the Flow Sentinel's 32 gold-set terms (~the
+#: old 40-term pass, ~20 s) — against W-1 taking the every-15 s pass from 40
+#: terms to 8. ⚠️ #12216 writes 141 (explicit 101) against the same base of 142:
+#: whichever merges second re-runs the census (142), never adds one. The census
+#: RUN over the tree branched from `3c72a05363` printed
+#: `explicit 103 implicit 40 total 143`.
+BACKGROUND_BEAT_COUNT = 143
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

@@ -6962,6 +6962,31 @@ def warm_typeahead(self, head_size: int = None):
     return _tracked_run("warm_typeahead", _warm_typeahead(head_size=size))
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=100,
+    time_limit=115,
+    max_retries=8,
+    name="app.tasks.warm_typeahead_gold_set",
+)
+def warm_typeahead_gold_set(self):
+    """W-1 (2026-11-06): warm the Flow Sentinel's gold-set terms at 07:05 UTC.
+
+    The regular pass keeps 8 terms resident; the 07:10 sentinel searches 32. This
+    runs `_warm_typeahead` once over those terms. It shares the regular pass's run
+    lock and 30 s floor, so a fire that lands on a running or just-finished pass is
+    retried every 15 s (at most 8 times, two minutes) instead of being dropped.
+    """
+    from app.tasks.typeahead_warmer import _warm_typeahead, flow_sentinel_gold_terms
+
+    summary = _tracked_run(
+        "warm_typeahead_gold_set", _warm_typeahead(queries=flow_sentinel_gold_terms())
+    )
+    if isinstance(summary, dict) and summary.get("terminal") == "skipped":
+        raise self.retry(countdown=15)
+    return summary
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
 def warm_search_head(self, head_size: int = None):
     """Keep the head of the `/search` distribution inside its response cache.
@@ -8498,7 +8523,22 @@ celery_app.conf.beat_schedule = {
         # from the duration histogram — that is what it is for.
         #
         # Registered prediction and grading rows: `lat-p062-warmer-graded.md` §3.
-        "schedule": 10.0,
+        #
+        # W-1 (worker audit 2026-11-06 B-1; Alex 53: A): every 15 s (was 10 s),
+        # a residency pass of 8 terms (was 40), the 30 s floor kept. The 15 s
+        # beat keeps the real-pass gap <= 45 s, inside the "survives 45s" bound
+        # above. Revert = this number, `DEFAULT_HEAD_SIZE` and
+        # `typeahead_beat_budget.CURRENT_BEAT_INTERVAL_S`.
+        "schedule": 15.0,
+        "options": {"queue": "background"},
+    },
+    "warm-typeahead-gold-set": {
+        "task": "app.tasks.warm_typeahead_gold_set",
+        # W-1 (2026-11-06): once a day, five minutes before the 07:10 UTC Flow
+        # Sentinel, warm the sentinel's 32 gold-set terms through the typeahead
+        # route. With the residency pass down to 8 terms, this keeps the pages the
+        # sentinel's searches read resident at the one moment it reads them.
+        "schedule": crontab(hour=7, minute=5),
         "options": {"queue": "background"},
     },
     "rebuild-typeahead-index": {
@@ -8574,7 +8614,13 @@ celery_app.conf.beat_schedule = {
         # family and a user-latency warmer does not belong behind a 25-minute
         # calibration pass. Same queue as `warm-typeahead`, and the contention
         # that creates is declared for Integrator review rather than discovered.
-        "schedule": 20.0,
+        #
+        # W-1 (worker audit 2026-11-06 B-2; Alex 53: A): beat 20 -> 60 s, floor
+        # 45 -> 300 s, refresh-ahead 150 -> 410 s, warmer entries live 600 s
+        # (`SEARCH_HEAD_WARMER_TTL_SECONDS`; readers keep 180 s). The head now
+        # costs `background` one pass per 5 minutes, and a reader's head answer
+        # is up to ~10 minutes old instead of ~3. Revert = these four numbers.
+        "schedule": 60.0,
         "options": {"queue": "background"},
     },
     "warm-container-hubs": {
@@ -10175,7 +10221,11 @@ _EXPIRING_WARMER_BEATS = {
     # ⚠️ **This does not close #3539.** It makes the effective pass period the
     # ~60 s the cadence arithmetic assumes instead of the ~576 s it is today.
     # #3539 is that 60 s still not being sound against a 60 s TTL.
-    "warm-search-head": 180,
+    #
+    # W-1 (2026-11-06): 180 -> 600, re-derived by `derive_message_expiry_s` at
+    # the warmer's new 600 s entry life and 60 s beat — 10 messages alive at
+    # most, inside `MAX_LIVE_MESSAGES` 16.
+    "warm-search-head": 600,
 }
 
 for _warmer_beat, _expires_s in _EXPIRING_WARMER_BEATS.items():
