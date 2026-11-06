@@ -53,6 +53,12 @@ import {
   nhlScoringReason,
   type NhlScoringCard,
 } from "@/lib/nhlEventCards";
+import {
+  soccerThreeWayHeadline,
+  soccerThreeWayReason,
+  type SoccerExactScoreCard,
+  type SoccerThreeWayCard,
+} from "@/lib/soccerEventCards";
 
 /** Selected original row per milestone card, keyed by card id. */
 export type CardSelection = Record<string, string>;
@@ -1452,6 +1458,357 @@ export function NhlScoringCardView({
   );
 }
 
+// ─── Soccer story cards (#11974 Step E6c) ──────────────────────────────────
+
+export function SoccerThreeWayCardView({
+  card,
+  teams,
+  onDetails,
+}: {
+  card: SoccerThreeWayCard;
+  teams: CardTeams;
+  onDetails?: (rowId: string) => void;
+}) {
+  const headline = soccerThreeWayHeadline(card);
+  const reason = soccerThreeWayReason(card);
+  const homeTxt = teamTextColor(teams.homeColor) ?? "var(--text-primary)";
+  const awayTxt = teamTextColor(teams.awayColor) ?? "var(--text-primary)";
+  const drawTxt = "var(--accent-brand)";
+  const W = 310;
+  const padL = 10;
+  const padR = 14;
+  const x = (p: number) => padL + Math.max(0, Math.min(1, p)) * (W - padL - padR);
+  const ticks = [0, 0.5, 1];
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="soccer-three-way-card">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+            Three-way match outcome · 90 minutes
+          </span>
+          <h4 className="text-lg font-bold text-text-primary leading-snug">{headline}</h4>
+          <span className="text-xs text-text-secondary">{reason}</span>
+        </div>
+        {onDetails && (
+          <button
+            type="button"
+            onClick={() => onDetails(card.legs[0]?.role ?? "home")}
+            aria-label={`Details for ${headline}`}
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-text-secondary">
+        <span className="inline-flex items-center gap-1">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <circle cx="5" cy="5" r="3.5" fill="var(--surface-card)" stroke="var(--text-secondary-strong)" strokeWidth="1.75" />
+          </svg>
+          Pregame chance
+        </span>
+        {card.phase === "during" && (
+          <span className="inline-flex items-center gap-1">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <circle cx="5" cy="5" r="3.75" fill="var(--text-primary)" />
+            </svg>
+            Recorded live
+          </span>
+        )}
+        {card.phase === "after" && (
+          <span>
+            <span className="text-accent-live font-semibold">{ATLAS_STATE_COPY.wonWithCheck}</span>
+            {" / "}
+            <span className="text-text-muted font-semibold">{ATLAS_STATE_COPY.lostWithCross}</span>
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2.5">
+        {card.legs.map((leg, idx) => {
+          const isLast = idx === card.legs.length - 1;
+          const svgH = isLast ? 40 : 24;
+          const cy = 12;
+          const color =
+            leg.role === "home" ? homeTxt : leg.role === "away" ? awayTxt : drawTxt;
+          const activeChance =
+            card.phase === "after"
+              ? leg.pregameChance
+              : (leg.quotedChance ?? leg.pregameChance);
+          const pregameMark = leg.pregameChance;
+          const liveMark = card.phase === "during" ? leg.quotedChance : null;
+
+          return (
+            <button
+              key={leg.role}
+              type="button"
+              onClick={() => onDetails?.(leg.role)}
+              className="flex flex-col gap-1 rounded-md p-1.5 -mx-1.5 text-left hover:bg-surface-elevated"
+              data-testid={`soccer-three-way-leg-${leg.role}`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-sm font-semibold truncate" style={{ color }}>
+                  {leg.label}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {card.phase === "after" && leg.result === "won" && (
+                    <span className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent-live">
+                      {ATLAS_STATE_COPY.wonWithCheck}
+                    </span>
+                  )}
+                  {card.phase === "after" && leg.result === "lost" && (
+                    <span className="inline-flex items-center rounded bg-surface-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                      {ATLAS_STATE_COPY.lostWithCross}
+                    </span>
+                  )}
+                  <span className="text-xs font-bold tabular-nums text-text-primary">
+                    {activeChance !== null
+                      ? card.phase === "after"
+                        ? `${formatProbability(activeChance)} pregame`
+                        : formatProbability(activeChance)
+                      : ATLAS_STATE_COPY.noRecentPrice}
+                  </span>
+                </div>
+              </div>
+              <svg viewBox={`0 0 ${W} ${svgH}`} width={W} height={svgH} className="block max-w-full" aria-hidden="true">
+                {ticks.map((t) => (
+                  <line
+                    key={t}
+                    x1={x(t)}
+                    x2={x(t)}
+                    y1={2}
+                    y2={22}
+                    stroke="var(--surface-border)"
+                  />
+                ))}
+                {activeChance !== null && (
+                  <line
+                    x1={x(0)}
+                    x2={x(activeChance)}
+                    y1={cy}
+                    y2={cy}
+                    stroke={color}
+                    strokeOpacity={0.35}
+                    strokeWidth={3.5}
+                  />
+                )}
+                {pregameMark !== null && (
+                  <circle
+                    cx={x(pregameMark)}
+                    cy={cy}
+                    r={5}
+                    fill="var(--surface-card)"
+                    stroke={color}
+                    strokeWidth={2}
+                    data-mark="pregame"
+                  />
+                )}
+                {liveMark !== null && (
+                  <circle
+                    cx={x(liveMark)}
+                    cy={cy}
+                    r={5}
+                    fill={color}
+                    stroke="var(--surface-card)"
+                    strokeWidth={1.25}
+                    data-mark="live"
+                  />
+                )}
+                {isLast &&
+                  ticks.map((t) => (
+                    <text
+                      key={t}
+                      x={x(t)}
+                      y={24 + 10 * 1.25}
+                      fontSize={10}
+                      textAnchor="middle"
+                      fill="var(--text-secondary-strong)"
+                    >
+                      {t === 0 ? "0%" : t === 1 ? "100%" : formatProbability(t)}
+                    </text>
+                  ))}
+              </svg>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function SoccerExactScoreCardView({
+  card,
+  selection,
+  onSelect,
+  onDetails,
+}: {
+  card: SoccerExactScoreCard;
+  selection: CardSelection;
+  onSelect: (cardId: string, rowId: string) => void;
+  onDetails?: (rowId: string) => void;
+}) {
+  const selectedKey = selection[card.id] ?? card.defaultSelectedKey;
+  const cellsByKey = new Map(card.cells.map((c) => [c.key, c]));
+  const selectedCell =
+    cellsByKey.get(selectedKey) ??
+    cellsByKey.get(card.defaultSelectedKey) ??
+    card.cells[0] ??
+    null;
+  const coords = Array.from({ length: card.maxGoals + 1 }, (_, i) => i);
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="soccer-exact-score-card">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+            Exact score · recorded quotes
+          </span>
+          <h4 className="text-lg font-bold text-text-primary leading-snug">
+            The exact-score landscape
+          </h4>
+          <span className="text-xs text-text-secondary">
+            {card.homeShort} goals across · {card.awayShort} goals down · all supplied cells retained
+          </span>
+        </div>
+        {onDetails && selectedCell && (
+          <button
+            type="button"
+            onClick={() => onDetails(selectedCell.key)}
+            aria-label={`Details for Exact score ${selectedCell.outcomeLabel}`}
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+
+      <div
+        className="grid gap-1 items-center"
+        style={{
+          gridTemplateColumns: `36px repeat(${coords.length}, minmax(0, 1fr))`,
+        }}
+        role="group"
+        aria-label="Exact-score probability heatmap"
+      >
+        <div className="text-[9px] font-semibold uppercase leading-tight text-text-muted">
+          {card.awayShort.slice(0, 3).toUpperCase()}↓
+          <br />
+          {card.homeShort.slice(0, 3).toUpperCase()}→
+        </div>
+        {coords.map((xGoal) => (
+          <div
+            key={`col-${xGoal}`}
+            className="text-center text-[11px] font-bold tabular-nums text-text-secondary"
+          >
+            {xGoal}
+          </div>
+        ))}
+        {coords.map((yGoal) => (
+          <div key={`row-${yGoal}`} className="contents">
+            <div className="text-center text-[11px] font-bold tabular-nums text-text-secondary">
+              {yGoal}
+            </div>
+            {coords.map((xGoal) => {
+              const key = `${xGoal}-${yGoal}`;
+              const cell = cellsByKey.get(key);
+              const isSelected = selectedCell?.key === key;
+              const isWon = cell?.result === "won";
+              const ratio =
+                cell && cell.chance !== null && card.maxChance > 0
+                  ? Math.min(1, Math.max(0.08, cell.chance / card.maxChance))
+                  : isWon
+                    ? 0.85
+                    : 0;
+              const pctText =
+                cell && cell.chance !== null
+                  ? formatProbability(cell.chance)
+                  : isWon
+                    ? "✓"
+                    : cell
+                      ? "·"
+                      : "—";
+
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  disabled={!cell}
+                  aria-pressed={isSelected}
+                  aria-label={
+                    cell
+                      ? `${card.homeShort} ${xGoal} – ${yGoal} ${card.awayShort}: ${
+                          cell.chance !== null ? formatProbability(cell.chance) : cell.result ?? "quoted"
+                        }`
+                      : `${xGoal}–${yGoal}: not listed`
+                  }
+                  onClick={() => cell && onSelect(card.id, cell.key)}
+                  data-testid={`soccer-score-cell-${key}`}
+                  className={`min-h-[38px] rounded-md text-[11px] font-semibold tabular-nums transition-colors flex items-center justify-center ${
+                    !cell
+                      ? "bg-surface-elevated/40 text-text-muted/50 cursor-default"
+                      : isSelected
+                        ? "ring-2 ring-text-primary font-bold"
+                        : " border border-surface-border/70"
+                  }`}
+                  style={
+                    cell
+                      ? {
+                          backgroundColor: `color-mix(in srgb, var(--accent-brand) ${(8 + ratio * 68).toFixed(0)}%, var(--surface-card))`,
+                          color: ratio > 0.55 ? "var(--surface-card)" : "var(--text-primary)",
+                        }
+                      : undefined
+                  }
+                >
+                  {pctText}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {selectedCell && (
+        <button
+          type="button"
+          onClick={() => onDetails?.(selectedCell.key)}
+          data-testid="soccer-exact-score-readout"
+          className="flex items-center justify-between gap-2 rounded-lg border border-surface-border bg-surface-elevated/60 px-3 py-2 text-left hover:bg-surface-elevated"
+        >
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-xs font-bold text-text-primary truncate">
+              {card.homeShort} {selectedCell.homeGoals} – {selectedCell.awayGoals} {card.awayShort}
+            </span>
+            <span className="text-[11px] text-text-secondary truncate">
+              {selectedCell.outcomeLabel} · tap for contract details
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {selectedCell.result === "won" && (
+              <span className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent-live">
+                {ATLAS_STATE_COPY.wonWithCheck}
+              </span>
+            )}
+            {selectedCell.result === "lost" && (
+              <span className="inline-flex items-center rounded bg-surface-card px-1.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                {ATLAS_STATE_COPY.lostWithCross}
+              </span>
+            )}
+            {selectedCell.chance !== null && (
+              <span className="text-sm font-bold tabular-nums text-text-primary">
+                {formatProbability(selectedCell.chance)}
+              </span>
+            )}
+          </div>
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Shared Atlas details-sheet adapter (#11974 Step E3) ───────────────────
 
 export function buildStoryCardDetailsSheetProps(opts: {
@@ -1463,6 +1820,53 @@ export function buildStoryCardDetailsSheetProps(opts: {
   teams: CardTeams;
 }): Omit<AtlasDetailsSheetProps, "open" | "onClose"> | null {
   const { card, rowId, row, lead, rows, teams } = opts;
+  if (card?.kind === "soccer-three-way") {
+    const leg = card.legs.find((l) => l.role === rowId) ?? card.legs[0] ?? null;
+    if (!leg) return null;
+    const isSettled = leg.result === "won" || leg.result === "lost";
+    const settledResult = leg.result;
+    const rulesLines = ["90-minute three-way match outcome (Home / Draw / Away)"];
+    if (card.quotedSum !== null) {
+      rulesLines.push(`Recorded three-way sum: ${(Math.round(card.quotedSum * 1000) / 10).toFixed(1)}% (unnormalized)`);
+    }
+    return {
+      subjectName: leg.label,
+      marketTitle: card.marketTitle,
+      isSettled,
+      settledResult,
+      openingProbability: leg.pregameChance,
+      openingObservedAt: leg.pregameObservedAt ?? leg.observedAt,
+      lastProbability: !isSettled ? leg.quotedChance : null,
+      lastObservedAt: leg.observedAt,
+      source: leg.source,
+      sourceCount: card.sourceCount,
+      rulesText: rulesLines.join("\n"),
+    };
+  }
+
+  if (card?.kind === "soccer-exact-score") {
+    const cell =
+      card.cells.find((c) => c.key === rowId) ??
+      card.cells.find((c) => c.key === card.defaultSelectedKey) ??
+      card.cells[0] ??
+      null;
+    if (!cell) return null;
+    const isSettled = cell.result === "won" || cell.result === "lost";
+    return {
+      subjectName: `${card.homeShort} ${cell.homeGoals} – ${cell.awayGoals} ${card.awayShort}`,
+      marketTitle: cell.marketTitle,
+      isSettled,
+      settledResult: cell.result,
+      openingProbability: cell.pregameChance ?? (card.phase === "before" ? cell.chance : null),
+      openingObservedAt: cell.observedAt,
+      lastProbability: !isSettled && card.phase === "during" ? cell.chance : null,
+      lastObservedAt: cell.observedAt,
+      source: cell.source,
+      sourceCount: card.sourceCount,
+      rulesText: `Exact 90-minute score: ${cell.outcomeLabel} · Unlisted score cells are not inferred as 0%`,
+    };
+  }
+
   if (card?.kind === "nhl-scoring") {
     const entry = card.entries.find((e) => e.id === rowId || e.rowId === rowId) ?? card.entries[0] ?? null;
     if (!entry) return null;
@@ -1714,6 +2118,19 @@ export function EventCardView({
   expanded?: boolean;
   atlasMode?: boolean;
 }) {
+  if (card.kind === "soccer-three-way") {
+    return <SoccerThreeWayCardView card={card} teams={teams} onDetails={onDetails} />;
+  }
+  if (card.kind === "soccer-exact-score") {
+    return (
+      <SoccerExactScoreCardView
+        card={card}
+        selection={selection}
+        onSelect={onSelect}
+        onDetails={onDetails}
+      />
+    );
+  }
   if (card.kind === "nhl-scoring") {
     return <NhlScoringCardView card={card} teams={teams} onDetails={onDetails} />;
   }
