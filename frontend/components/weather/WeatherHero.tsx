@@ -83,10 +83,9 @@ export default function WeatherHero() {
           <div className="flex items-center gap-2 mb-5">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold tracking-wide bg-emerald-50 text-emerald-700">
               <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
               </span>
-              Weather markets · Live
+              Weather markets
             </span>
           </div>
 
@@ -95,13 +94,13 @@ export default function WeatherHero() {
             className="text-text-primary mb-3 text-3xl md:text-4xl lg:text-[52px]"
             style={{ fontWeight: 600, letterSpacing: "-0.028em", lineHeight: 1.08 }}
           >
-            What are the{" "}
-            <span className="text-accent-brand">odds</span> it rains tomorrow?
+            What is the{" "}
+            <span className="text-accent-brand">chance</span> it rains tomorrow?
           </h1>
 
           {/* Subtitle */}
           <p className="text-text-secondary text-lg max-w-md mb-6">
-            Weather markets translated into plain probabilities. Rain, temperature, hurricanes, climate &mdash; updated live.
+            Weather markets translated into plain probabilities. Rain, temperature, hurricanes, climate.
           </p>
 
           {/* Dots */}

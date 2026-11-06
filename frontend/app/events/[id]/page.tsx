@@ -6,8 +6,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { useGameMarketsStream } from "@/hooks/useGameMarketsStream";
-import { fetchEvent, fetchEventHistory, fetchEventPublications, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
-import type { EventDetailResponse, EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
+import { fetchEvent, fetchEventHistory, fetchEventPublications, fetchRelatedFutures, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
+import type { EventDetailResponse, EventTournamentResponse, RelatedFuturesResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import {
   EVENT_SLOW_LOAD_NOTICE_MS,
@@ -197,6 +197,7 @@ import {
 } from "@/lib/nflEventCardDeck";
 import { projectedTeamStrokes } from "@/lib/teamLineStrokes";
 import { decodeQuestionMatrix, marginLadderCard, totalLadderCard } from "@/lib/nbaEventCards";
+import { buildMlbEventCards, mlbCardsApply } from "@/lib/mlbEventCards";
 import { NFLEventCardDeck, type CardSelection } from "@/components/event/NFLEventCards";
 const EventCardReader = dynamic(() => import("@/components/event/EventCardReader"), { ssr: false });
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -250,9 +251,10 @@ import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
 import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
-import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import { ATLAS_STATE_COPY, resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
 import {
   EVENT_HEADLINE_PHASE_LABELS,
+  resolveAtlasHeadlineObservedAt,
   resolveEventHeadlineBaseline,
   resolveEventHeadlinePhase,
 } from "@/lib/event/eventHeadlinePhase";
@@ -1670,13 +1672,48 @@ export default function EventPage({ params }: EventPageProps) {
         : [],
     [nflCardsOn, gameMarkets, event, nflCardClock],
   );
+  const { data: mlbRelatedFutures } = useSWR<RelatedFuturesResponse>(
+    mlbCardsApply(event?.sport, atlasOptIn) ? ["related-futures", eventId] : null,
+    () => fetchRelatedFutures(eventId),
+    { revalidateOnFocus: false, dedupingInterval: 300000 },
+  );
+  const mlbCards = useMemo(() => {
+    if (!mlbCardsApply(event?.sport, atlasOptIn) || !gameMarkets || !event || gameMarkets.event_id !== event.id) {
+      return [];
+    }
+    const shorts = teamShortNames(
+      { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
+      { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+      event.sport,
+    );
+    return buildMlbEventCards({
+      sportKey: event.sport,
+      atlasMode: atlasOptIn,
+      status: event.status,
+      commenceTime: event.commence_time,
+      homeTeam: event.home_team,
+      awayTeam: event.away_team,
+      homeShort: shorts.home,
+      awayShort: shorts.away,
+      homeScore: gameMarkets.home_score ?? event.home_score,
+      awayScore: gameMarkets.away_score ?? event.away_score,
+      gameMarkets: gameMarkets as Parameters<typeof buildMlbEventCards>[0]["gameMarkets"],
+      relatedFutures:
+        mlbRelatedFutures && mlbRelatedFutures.event_id === event.id
+          ? (mlbRelatedFutures as Parameters<typeof buildMlbEventCards>[0]["relatedFutures"])
+          : null,
+      nowMs: nflCardClock,
+    });
+  }, [atlasOptIn, event, gameMarkets, mlbRelatedFutures, nflCardClock]);
   const nflCards = useMemo(
     () =>
       (nflCardsOn
         ? nflEventCards(event?.sport, nflFinishCard, nflMilestoneCards)
-        : nbaEventCards(event?.sport, nflFinishCard, nbaLadders)
+        : mlbCards.length > 0
+          ? mlbCards
+          : nbaEventCards(event?.sport, nflFinishCard, nbaLadders)
       ).map((card) => cardAt(card, nflCardClock)),
-    [nflCardsOn, event?.sport, nflFinishCard, nflMilestoneCards, nbaLadders, nflCardClock],
+    [nflCardsOn, event?.sport, nflFinishCard, nflMilestoneCards, mlbCards, nbaLadders, nflCardClock],
   );
   const nflCardRows = useMemo(
     () => (gameMarkets ? rowsForCards(nflCards, gameMarkets.player_props) : {}),
@@ -2043,7 +2080,9 @@ export default function EventPage({ params }: EventPageProps) {
     const loadingView = eventLoadingView(pastSlowLoadMark);
     return (
       <div className="py-12 flex flex-col items-center gap-4">
-        <LoadingSpinner text={loadingView.text} />
+        <LoadingSpinner
+          text={atlasOptIn && !pastSlowLoadMark ? ATLAS_STATE_COPY.loading : loadingView.text}
+        />
         {loadingView.offersRetry && (
           <button
             type="button"
@@ -2515,6 +2554,7 @@ export default function EventPage({ params }: EventPageProps) {
       // #10090 decision J = A. A stream double that predates the field reports
       // `undefined`: unconfirmed.
       priceConfirmed: Boolean(acceptedPriceClock) && typeof confirmedAtShown === "string",
+      atlasMode: atlasOptIn,
     },
     Date.now(),
   );
@@ -2576,13 +2616,17 @@ export default function EventPage({ params }: EventPageProps) {
   // The header keeps its age badge only where no chart card carries the status.
   const headerCarriesAge = showsAge && suppressWinProbabilityCard;
 
-  // #11974 Step E1 — game headline phase ("Current win chance" vs
+  // #11974 Step E1/E5 — game headline phase ("Current win chance" vs
   // "Last recorded win chance") and pregame baseline beside it during play.
-  const atlasObservedAt =
-    acceptedPriceClock ??
-    freshestSourceStamp ??
-    event.current_odds?.captured_at ??
-    null;
+  // On a held live page, `resolveAtlasHeadlineObservedAt` uses `priceAgeClock`
+  // so steady prices confirmed by the SSE stream or admitted previews keep the
+  // clock fresh.
+  const atlasObservedAt = resolveAtlasHeadlineObservedAt({
+    acceptedPriceClock,
+    confirmedAtShown,
+    freshestSourceStamp,
+    currentOddsCapturedAt: event.current_odds?.captured_at,
+  });
   const atlasHeadlinePhase = atlasOptIn
     ? resolveEventHeadlinePhase({
         status: event.status,
@@ -2610,6 +2654,10 @@ export default function EventPage({ params }: EventPageProps) {
           sport: event.sport,
           homeShort: heroShortNames.home,
         })
+      : null;
+  const atlasSettledWinnerSide: "home" | "away" | null =
+    isFinished && !venueVoided && stoppageLabel === null
+      ? (settledOutcome?.winnerSide ?? null)
       : null;
 
   // L2-112 Item 4: the Score Differential card must hide when there is no
@@ -2957,7 +3005,10 @@ export default function EventPage({ params }: EventPageProps) {
           route's. A hero that throws must not also cost the reader the chart,
           the props and the script. */}
       <SectionErrorBoundary label="The score and probability" resetKey={event}>
-      <div className="rounded-card shadow-card overflow-hidden bg-surface-card">
+      <div
+        className="rounded-card shadow-card overflow-hidden bg-surface-card"
+        data-atlas-mode={atlasOptIn ? "true" : undefined}
+      >
         {/* Top meta row: phase + broadcast + date/time */}
         <div className="px-4 sm:px-5 py-2 flex items-center justify-between border-b border-surface-border/30">
           <div className="flex items-center gap-2">
@@ -3029,15 +3080,17 @@ export default function EventPage({ params }: EventPageProps) {
                     stays on the `title`, which has room for it. */}
                 {/* #2786 — HOME-AWAY, matching this page's own hero, which
                     stacks the home score above the away score. */}
-                {venueSettledSentence ??
-                  suspendedSummary(
-                    event?.away_score,
-                    event?.home_score,
-                    "home-away",
-                    // #8810 — "Postponed" when ESPN said so. Null on every
-                    // other row, which keeps the sentence it had.
-                    stoppageLabel,
-                  )}
+                {atlasOptIn && venueVoided
+                  ? ATLAS_STATE_COPY.voided
+                  : venueSettledSentence ??
+                    suspendedSummary(
+                      event?.away_score,
+                      event?.home_score,
+                      "home-away",
+                      // #8810 — "Postponed" when ESPN said so. Null on every
+                      // other row, which keeps the sentence it had.
+                      stoppageLabel,
+                    )}
               </span>
             ) : (
               <span className="flex items-center gap-1.5">
@@ -3317,6 +3370,9 @@ export default function EventPage({ params }: EventPageProps) {
                 // is playing. The slot goes empty, as it does for #6438.
                 stopped={stoppageLabel !== null}
                 tenths={tenthsOptIn}
+                atlasMode={atlasOptIn}
+                voided={venueVoided}
+                stoppageLabel={stoppageLabel}
               />
               {atlasOptIn && atlasHeadlinePhase && (
                 <div
@@ -3871,6 +3927,8 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
               tenths={tenthsOptIn}
+              atlasMode={atlasOptIn}
+              settledWinnerSide={atlasSettledWinnerSide}
               /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
               pairedAwayLine={storyCardsOn}
               onActivePointChange={setActiveChartPoint}
@@ -4006,6 +4064,8 @@ export default function EventPage({ params }: EventPageProps) {
             onOpen={setNflOpenCard}
             openerRef={registerNflCardOpener}
             headingRef={nflDeckHeadingRef}
+            atlasMode={atlasOptIn}
+            rows={nflCardRows}
           />
         </SectionErrorBoundary>
       )}
@@ -4105,7 +4165,7 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {gameMarkets && !venueVoided && <SectionErrorBoundary label="Team scoring and period lines" resetKey={gameMarkets}>
-        <GameLineBrowser data={gameMarkets} status={event.status} />
+        <GameLineBrowser data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />
       </SectionErrorBoundary>}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
@@ -4292,7 +4352,7 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && !venueVoided && (
         <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
           <div id={ALL_MARKETS_ANCHOR_ID} className="scroll-mt-20 empty:hidden">
-            <QuestionCatalog data={gameMarkets} status={event.status} />
+            <QuestionCatalog data={gameMarkets} status={event.status} atlasMode={atlasOptIn} />
           </div>
         </SectionErrorBoundary>
       )}
@@ -4522,6 +4582,8 @@ export default function EventPage({ params }: EventPageProps) {
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
               tenths={tenthsOptIn}
+              atlasMode={atlasOptIn}
+              settledWinnerSide={atlasSettledWinnerSide}
               pairedAwayLine={storyCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the
                  expanded chart fell back to its own default window: a reader on "All"
@@ -4548,6 +4610,7 @@ export default function EventPage({ params }: EventPageProps) {
           selection={nflCardSelection}
           onSelect={selectNflCardRow}
           onClose={closeNflReader}
+          atlasMode={atlasOptIn}
         />
       )}
     </div>

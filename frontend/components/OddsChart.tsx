@@ -101,6 +101,14 @@ import {
   type SupportObservation,
   type UnsupportedInterval,
 } from "@/lib/chartObservationSupport";
+import {
+  AtlasChartMarkKey,
+  AtlasResultWordMark,
+  AtlasSelectedReadingReadout,
+  AtlasSeriesReadingMarks,
+  type AtlasChartReadingPoint,
+  type AtlasSelectedReading,
+} from "@/components/atlas/AtlasChartMarks";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 // Colors come from the one source-color registry (@/lib/sourceColors) — the
@@ -529,6 +537,18 @@ interface OddsChartProps {
    * Absent means today's label.
    */
   tenths?: boolean;
+  /**
+   * #11974 Step E2 — renders the shared Atlas mark grammar (`AtlasChartMarkKey`,
+   * `AtlasSeriesReadingMarks`, `AtlasResultWordMark`, `AtlasSelectedReadingReadout`)
+   * behind `?atlas=1`. Absent or false keeps the default chart markup unchanged.
+   */
+  atlasMode?: boolean;
+  /**
+   * #11974 Step E2 — on a finished game, which side won ("home" or "away"), so
+   * the chart ends with a result word (`✓ Won` or `✗ Lost`) beside the last
+   * recorded reading instead of a synthetic 100% spike.
+   */
+  settledWinnerSide?: "home" | "away" | null;
 }
 
 type TimeRange = "all" | "live";
@@ -741,6 +761,7 @@ export function ChartRowMarks({
   shape,
   rowStartMs,
   layerClassName,
+  afterMarks,
   ...state
 }: ChartRenderState & {
   rows: ChartRowMark[];
@@ -751,6 +772,7 @@ export function ChartRowMarks({
    * `Customized` spreads the chart's own props onto this element.
    */
   layerClassName?: string;
+  afterMarks?: (state: ChartRenderState) => React.ReactNode;
   shape: (props: {
     cx: number;
     cy: number;
@@ -811,6 +833,7 @@ export function ChartRowMarks({
         </defs>
       )}
       {marks}
+      {afterMarks?.(state)}
     </g>
   );
 }
@@ -840,6 +863,182 @@ function SnappedCheckpointCursor({ x, offset }: { x: number; offset?: ChartRende
       strokeWidth={1}
       pointerEvents="none"
     />
+  );
+}
+
+interface AtlasObservationRow {
+  index: number;
+  delta: number;
+  prob: number;
+  timestamp: string;
+  atMs?: number;
+}
+
+interface AtlasSelectionBus {
+  selected: AtlasSelectedReading | null;
+  timeRange: string;
+  listeners: Set<() => void>;
+  select: (reading: AtlasSelectedReading | null) => void;
+}
+
+const ATLAS_SELECTION_BUS = new WeakMap<object, AtlasSelectionBus>();
+
+function getAtlasSelectionBus(hostKey: object, timeRange: string): AtlasSelectionBus {
+  let bus = ATLAS_SELECTION_BUS.get(hostKey);
+  if (!bus) {
+    const listeners = new Set<() => void>();
+    bus = {
+      selected: null,
+      timeRange,
+      listeners,
+      select(reading: AtlasSelectedReading | null) {
+        bus!.selected = reading;
+        listeners.forEach((fn) => fn());
+      },
+    };
+    ATLAS_SELECTION_BUS.set(hostKey, bus);
+  } else if (bus.timeRange !== timeRange) {
+    bus.timeRange = timeRange;
+    bus.selected = null;
+  }
+  return bus;
+}
+
+function useAtlasSelectionBus(bus: AtlasSelectionBus): [AtlasSelectedReading | null, (r: AtlasSelectedReading | null) => void] {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const onUpdate = () => setTick((t) => t + 1);
+    bus.listeners.add(onUpdate);
+    return () => {
+      bus.listeners.delete(onUpdate);
+    };
+  }, [bus]);
+  return [bus.selected, bus.select];
+}
+
+function AtlasOddsChartHeader({
+  bus,
+  settled,
+  showOpening,
+}: {
+  bus: AtlasSelectionBus;
+  settled: boolean;
+  showOpening: boolean;
+}) {
+  const [selectedReading, setSelectedReading] = useAtlasSelectionBus(bus);
+  return (
+    <div className="space-y-2 shrink-0" data-testid="event-atlas-chart-header">
+      <AtlasChartMarkKey
+        settled={settled}
+        showOpening={showOpening}
+        openingLabel="Pregame"
+      />
+      <AtlasSelectedReadingReadout
+        reading={
+          selectedReading && !showOpening && selectedReading.isOpening
+            ? { ...selectedReading, isOpening: false }
+            : selectedReading
+        }
+        onClear={() => setSelectedReading(null)}
+      />
+    </div>
+  );
+}
+
+/**
+ * #11974 Step E2 — renders the shared Atlas mark grammar (`AtlasSeriesReadingMarks`
+ * and `AtlasResultWordMark`) inside `<ComposedChart>` via Recharts `<Customized>`,
+ * reusing Builder D's `AtlasChartMarks` components without modifying them.
+ */
+function AtlasOddsChartMarksLayer({
+  bus,
+  observationRows,
+  rowStartMs,
+  outcomeName,
+  color,
+  includesOpening,
+  settledResult,
+  currentCallout,
+  ...state
+}: ChartRenderState & {
+  bus: AtlasSelectionBus;
+  observationRows: AtlasObservationRow[];
+  rowStartMs: ReadonlyArray<number>;
+  outcomeName: string;
+  color: string;
+  includesOpening: boolean;
+  settledResult: "won" | "lost" | null;
+  currentCallout: { rowIndex: number; delta: number; atMs?: number } | null;
+}) {
+  const [selectedReading, setSelectedReading] = useAtlasSelectionBus(bus);
+  const yAxis = Object.values(state.yAxisMap ?? {})[0];
+  const scale = yAxis?.scale;
+  if (!yAxis || typeof scale !== "function") return null;
+  const plotLeft = state.offset?.left ?? 44;
+  const plotRight = plotLeft + (state.offset?.width ?? 320);
+  let rowXs: Array<number | null> | null = null;
+  const points: AtlasChartReadingPoint[] = [];
+  for (const row of observationRows) {
+    let cx: number | null;
+    if (row.atMs !== undefined) {
+      rowXs ??= chartRowXs(state, rowStartMs.length);
+      cx = timeToChartX(row.atMs, rowStartMs, rowXs);
+    } else {
+      cx = chartRowX(state, row.index);
+    }
+    const cy = scale(row.delta);
+    if (cx === null || !Number.isFinite(cy)) continue;
+    points.push({
+      t: Date.parse(row.timestamp) || row.index,
+      x: cx,
+      y: cy,
+      prob: row.prob,
+      timestamp: row.timestamp,
+    });
+  }
+  let resultCoord: { x: number; y: number } | null = null;
+  const plotTop = yAxis.y ?? 10;
+  const plotBottom = plotTop + (yAxis.height ?? 220);
+  if (settledResult && currentCallout) {
+    let cx: number | null;
+    if (currentCallout.atMs !== undefined) {
+      rowXs ??= chartRowXs(state, rowStartMs.length);
+      cx = timeToChartX(currentCallout.atMs, rowStartMs, rowXs);
+    } else {
+      cx = chartRowX(state, currentCallout.rowIndex);
+    }
+    const cy = scale(currentCallout.delta);
+    if (cx !== null && Number.isFinite(cy)) {
+      const clampedY = Math.max(plotTop + 12, Math.min(plotBottom - 10, cy));
+      resultCoord = { x: cx - 42, y: clampedY };
+    }
+  } else if (settledResult && points.length > 0) {
+    const last = points[points.length - 1];
+    const clampedY = Math.max(plotTop + 12, Math.min(plotBottom - 10, last.y));
+    resultCoord = { x: last.x - 42, y: clampedY };
+  }
+  return (
+    <g className="recharts-layer atlas-odds-chart-marks">
+      <AtlasSeriesReadingMarks
+        outcomeId={1}
+        outcomeName={outcomeName}
+        points={points}
+        color={color}
+        includesOpening={includesOpening}
+        selectedReading={selectedReading}
+        onSelectReading={setSelectedReading}
+      />
+      {settledResult && resultCoord && (
+        <AtlasResultWordMark
+          outcomeId={1}
+          result={settledResult}
+          x={resultCoord.x}
+          y={resultCoord.y}
+          plotLeft={plotLeft}
+          plotRight={plotRight}
+        />
+      )}
+    </g>
   );
 }
 
@@ -1047,6 +1246,8 @@ export default function OddsChart({
   defaultSourcesExpanded = false,
   publications,
   tenths = false,
+  atlasMode = false,
+  settledWinnerSide,
 }: OddsChartProps) {
   // #3419: the axis is categorical on this label, so it must be spelled the
   // same way the parent spelled its ticks. Absent a parent domain the window is
@@ -2642,6 +2843,99 @@ export default function OddsChart({
     return null;
   }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs, awayWithheld, tenthsLabel]);
 
+  // #11974 Step E2 — settled result word ("won" / "lost") and real reading rows
+  // for the shared Atlas mark layer when `atlasMode` is enabled. Deliberately
+  // uses no extra hooks in `OddsChart` so `useId()` order inside `<ChartRowMarks>`
+  // stays byte-identical to `master` when `atlasMode` is off (#10090).
+  const atlasSettledResult: "won" | "lost" | null = (() => {
+    if (!atlasMode) return null;
+    const endDelta =
+      currentCallout?.delta ??
+      (chartData.length > 0 ? primaryValueAt(chartData[chartData.length - 1]) : null) ??
+      50;
+    const endSide: "home" | "away" = !awayWithheld && endDelta < 50 ? "away" : "home";
+    if (settledWinnerSide === "home" || settledWinnerSide === "away") {
+      return settledWinnerSide === endSide ? "won" : "lost";
+    }
+    if (settledWinnerSide === null) return null;
+    if (!isClosed || !scoreHistory || scoreHistory.length === 0) return null;
+    const last = scoreHistory[scoreHistory.length - 1];
+    if (
+      last.home_score == null ||
+      last.away_score == null ||
+      last.home_score === last.away_score
+    ) {
+      return null;
+    }
+    const winnerSide: "home" | "away" =
+      last.home_score > last.away_score ? "home" : "away";
+    return winnerSide === endSide ? "won" : "lost";
+  })();
+
+  const atlasIncludesOpening = timeRange === "all";
+  const atlasSelectionBus = atlasMode ? getAtlasSelectionBus(chartRef, timeRange) : null;
+
+  const atlasObservationRows: AtlasObservationRow[] = (() => {
+    if (!atlasMode || chartData.length === 0) return [];
+    const exactByMinute = new Map<string, string>();
+    const rawPoints: ReadonlyArray<{
+      timestamp: string;
+      home_probability: number | null;
+      live_edge?: boolean;
+    }> =
+      primarySeriesKey === "bainLuckDelta"
+        ? filteredAggregateLine
+        : primarySeriesKey === "homeDelta"
+          ? filteredHistory
+          : primarySeriesKey === "espnDelta"
+            ? filteredEspnHistory
+            : (() => {
+                const src = nonBettingSources.find((s) => s.dataKey === primarySeriesKey);
+                return src ? (filteredWinProbHistory[src.key] ?? []) : [];
+              })();
+    for (const p of rawPoints) {
+      if (
+        p.home_probability === null ||
+        !Number.isFinite(p.home_probability) ||
+        p.live_edge === true
+      ) {
+        continue;
+      }
+      if (!Number.isFinite(Date.parse(p.timestamp))) continue;
+      exactByMinute.set(toMinuteKey(p.timestamp), p.timestamp);
+    }
+    const rows: AtlasObservationRow[] = [];
+    let prevDelta: number | null = null;
+    for (let i = 0; i < chartData.length; i++) {
+      const delta = primaryValueAt(chartData[i]);
+      if (delta === null) continue;
+      const exactTs = exactByMinute.get(chartData[i].timestamp);
+      const isChangeOrFirst = prevDelta === null || delta !== prevDelta;
+      prevDelta = delta;
+      if (exactTs !== undefined || (exactByMinute.size === 0 && isChangeOrFirst)) {
+        rows.push({
+          index: i,
+          delta,
+          prob: chartAxisToHomeProb(delta),
+          timestamp: exactTs ?? chartData[i].bainLuckAt ?? chartData[i].timestamp,
+        });
+      }
+    }
+    if (primarySeriesKey === "bainLuckDelta" && drawableCheckpoints.length > 0) {
+      for (const cp of drawableCheckpoints) {
+        rows.push({
+          index: cp.rowIndex,
+          delta: homeProbToChartAxis(cp.p),
+          prob: cp.p,
+          timestamp: cp.t,
+          atMs: cp.tMs,
+        });
+      }
+      rows.sort((a, b) => (Date.parse(a.timestamp) || a.index) - (Date.parse(b.timestamp) || b.index));
+    }
+    return rows;
+  })();
+
   // #8392 — the axis gutter gives each team name the room the other does not
   // need. A hook, so it sits above the empty-chart return below; the raw names
   // are its re-measure key (the printed short names are derived from them).
@@ -3331,6 +3625,15 @@ export default function OddsChart({
             Odds flipped ({crossingCount})
           </button>
         )}
+        {atlasMode && atlasSelectionBus && (
+          <div className="w-full pt-1">
+            <AtlasOddsChartHeader
+              bus={atlasSelectionBus}
+              settled={atlasSettledResult !== null}
+              showOpening={atlasIncludesOpening}
+            />
+          </div>
+        )}
       </div>
 
       {/* Probability Chart with vertical team labels */}
@@ -3894,6 +4197,23 @@ export default function OddsChart({
               <Customized component={<ChartRowMarks
                 rows={[{ index: currentCallout.rowIndex, y: currentCallout.delta, payload: chartData[currentCallout.rowIndex], atMs: currentCallout.atMs }]}
                 rowStartMs={rowStartMs}
+                afterMarks={
+                  atlasMode && atlasSelectionBus && (atlasObservationRows.length > 0 || atlasSettledResult !== null)
+                    ? (renderState) => (
+                        <AtlasOddsChartMarksLayer
+                          {...renderState}
+                          bus={atlasSelectionBus}
+                          observationRows={atlasObservationRows}
+                          rowStartMs={rowStartMs}
+                          outcomeName={homeTeam}
+                          color={primaryLineColor}
+                          includesOpening={atlasIncludesOpening}
+                          settledResult={atlasSettledResult}
+                          currentCallout={currentCallout}
+                        />
+                      )
+                    : undefined
+                }
                 shape={(props: {
                   cx?: number;
                   cy?: number;

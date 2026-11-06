@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CollectionWeekNavigation } from "./CollectionWeekNavigation";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import PartyControlRow from "@/components/politics/PartyControlRow";
+import { MidtermsAtlasChamberControl, MidtermsAtlasMemberCard } from "./MidtermsAtlasSection";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 import type { FeedFuturesData } from "@/lib/types";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
@@ -15,6 +17,7 @@ import {
 const storageKey = (slug: string) => `collection-reading:${slug}`;
 
 export default function CollectionHub({ slug }: { slug: string }) {
+  const atlasEnabled = useAtlasPageOptIn();
   const [hub, setHub] = useState<Hub | null>(() => acceptedCollection(slug));
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
@@ -224,15 +227,29 @@ export default function CollectionHub({ slug }: { slug: string }) {
         {/* #11040: one plain sentence saying how this section's markets settle. */}
         {section.note && <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>}
       </div>}
-      {section.layout === "party" && control(108620) && control(108621) ? <PartyControlRow senate={control(108620)} house={control(108621)} stacked /> : <div className={midterms && section.cls === "senate_races" ? "divide-y divide-surface-border overflow-hidden rounded-card border border-surface-border bg-surface-card" : midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
-        {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
-          {card(member, midterms ? section.layout ?? "auto" : undefined)}
-          {/* #5342: a short list of the game's attached markets, each to its own page. */}
-          {relatedLinks(member)}
-          {/* #10146: a game's questions open deliberately on its own page, never as hundreds of contracts inline. */}
-          {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
-        </div>)}
-      </div>}
+      {section.layout === "party" && control(108620) && control(108621) ? (
+        midterms && atlasEnabled ? (
+          <MidtermsAtlasChamberControl senate={control(108620)} house={control(108621)} />
+        ) : (
+          <PartyControlRow senate={control(108620)} house={control(108621)} stacked />
+        )
+      ) : (
+        <div className={midterms && atlasEnabled ? "grid grid-cols-1 md:grid-cols-2 gap-4 items-start" : midterms && section.cls === "senate_races" ? "divide-y divide-surface-border overflow-hidden rounded-card border border-surface-border bg-surface-card" : midterms ? "grid grid-cols-1 gap-3 items-start" : "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start"}>
+          {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
+            {midterms && atlasEnabled && member.item.type === "futures" ? (
+              <div id={collectionMemberDomId(member.key)} data-collection-member={member.key}>
+                <MidtermsAtlasMemberCard member={member} sectionTitle={section.title} />
+              </div>
+            ) : (
+              card(member, midterms ? section.layout ?? "auto" : undefined)
+            )}
+            {/* #5342: a short list of the game's attached markets, each to its own page. */}
+            {relatedLinks(member)}
+            {/* #10146: a game's questions open deliberately on its own page, never as hundreds of contracts inline. */}
+            {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
+          </div>)}
+        </div>
+      )}
     </section>;
     })}
     {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>
