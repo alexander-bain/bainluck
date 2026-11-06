@@ -1350,7 +1350,6 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
                 update(FuturesMarket)
                 .where(
                     FuturesMarket.status == "open",
-                    FuturesMarket.source != "kalshi",
                     FuturesMarket.resolution_date.isnot(None),
                     FuturesMarket.resolution_date < now,
                     ~exists().where(
