@@ -18,7 +18,19 @@ function parseLeadingNumber(label: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function orderPairsNumerically(pairs: [number, string][]): [number, string][] {
+function toProb01(prob: number | null | undefined): number | null {
+  return typeof prob === "number" && Number.isFinite(prob) ? prob / 100 : null;
+}
+
+function toRenderedPct(prob: number | null | undefined): number | null {
+  return typeof prob === "number" && Number.isFinite(prob)
+    ? Math.round(prob)
+    : null;
+}
+
+function orderPairsNumerically(
+  pairs: [number | null | undefined, string][]
+): [number | null | undefined, string][] {
   const withIdx = pairs.map((item, idx) => ({
     item,
     idx,
@@ -39,7 +51,7 @@ function orderPairsNumerically(pairs: [number, string][]): [number, string][] {
 }
 
 function pairsToOutcomes(
-  pairs: [number, string][] | undefined,
+  pairs: [number | null | undefined, string][] | undefined,
   orderNumeric = true
 ): AtlasCategoryOutcome[] {
   if (!Array.isArray(pairs)) return [];
@@ -47,8 +59,8 @@ function pairsToOutcomes(
   return ordered.map(([prob, label], idx) => ({
     id: `${label}-${idx}`,
     label,
-    probability: prob / 100,
-    renderedPercent: Math.round(prob),
+    probability: toProb01(prob),
+    renderedPercent: toRenderedPct(prob),
   }));
 }
 
@@ -173,8 +185,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: m.market_id ?? i,
                       label: m.leader ?? m.q,
-                      probability: (m.prob ?? 0) / 100,
-                      renderedPercent: Math.round(m.prob ?? 0),
+                      probability: toProb01(m.prob),
+                      renderedPercent: toRenderedPct(m.prob),
                     }}
                   />
                 ))}
@@ -243,8 +255,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: m.market_id ?? i,
                       label: m.leader ?? m.q,
-                      probability: (m.prob ?? 0) / 100,
-                      renderedPercent: Math.round(m.prob ?? 0),
+                      probability: toProb01(m.prob),
+                      renderedPercent: toRenderedPct(m.prob),
                     }}
                   />
                 ))}
@@ -277,8 +289,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                 outcome={{
                   id: m.market_id ?? i,
                   label: m.leader ?? m.q,
-                  probability: (m.prob ?? 0) / 100,
-                  renderedPercent: Math.round(m.prob ?? 0),
+                  probability: toProb01(m.prob),
+                  renderedPercent: toRenderedPct(m.prob),
                 }}
               />
             ))}
@@ -300,7 +312,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
 
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr] gap-4 items-start">
             <div className="space-y-2.5">
-              {t.recession.main_q && t.recession.main_prob != null && (
+              {t.recession.main_q && (
                 <BinaryRow
                   meta={{
                     kicker: "HEADLINE MACRO",
@@ -309,8 +321,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                   outcome={{
                     id: "recession-main",
                     label: t.recession.main_q,
-                    probability: t.recession.main_prob / 100,
-                    renderedPercent: Math.round(t.recession.main_prob),
+                    probability: toProb01(t.recession.main_prob),
+                    renderedPercent: toRenderedPct(t.recession.main_prob),
                   }}
                 />
               )}
@@ -325,8 +337,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                   outcome={{
                     id: m.market_id ?? i,
                     label: m.leader ?? m.q,
-                    probability: (m.prob ?? 0) / 100,
-                    renderedPercent: Math.round(m.prob ?? 0),
+                    probability: toProb01(m.prob),
+                    renderedPercent: toRenderedPct(m.prob),
                   }}
                 />
               ))}
@@ -375,8 +387,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: `idx-${i}`,
                       label: idx.sym,
-                      probability: (idx.prob ?? 0) / 100,
-                      renderedPercent: Math.round(idx.prob ?? 0),
+                      probability: toProb01(idx.prob),
+                      renderedPercent: toRenderedPct(idx.prob),
                     }}
                   />
                 ))}
@@ -394,8 +406,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: `stock-${i}`,
                       label: s.sym,
-                      probability: (s.prob ?? 0) / 100,
-                      renderedPercent: Math.round(s.prob ?? 0),
+                      probability: toProb01(s.prob),
+                      renderedPercent: toRenderedPct(s.prob),
                     }}
                   />
                 ))}
@@ -414,8 +426,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: m.market_id ?? i,
                       label: m.leader ?? m.q,
-                      probability: (m.prob ?? 0) / 100,
-                      renderedPercent: Math.round(m.prob ?? 0),
+                      probability: toProb01(m.prob),
+                      renderedPercent: toRenderedPct(m.prob),
                     }}
                   />
                 ))}
@@ -463,8 +475,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                       outcome={{
                         id: o.market_id ?? i,
                         label: o.leader ?? title,
-                        probability: (o.prob ?? 0) / 100,
-                        renderedPercent: Math.round(o.prob ?? 0),
+                        probability: toProb01(o.prob),
+                        renderedPercent: toRenderedPct(o.prob),
                       }}
                     />
                   );
@@ -511,8 +523,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: m.market_id ?? i,
                       label: m.leader ?? m.q,
-                      probability: (m.prob ?? 0) / 100,
-                      renderedPercent: Math.round(m.prob ?? 0),
+                      probability: toProb01(m.prob),
+                      renderedPercent: toRenderedPct(m.prob),
                     }}
                   />
                 ))}
@@ -549,8 +561,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: m.market_id ?? i,
                       label: m.leader ?? m.q,
-                      probability: (m.prob ?? 0) / 100,
-                      renderedPercent: Math.round(m.prob ?? 0),
+                      probability: toProb01(m.prob),
+                      renderedPercent: toRenderedPct(m.prob),
                     }}
                   />
                 ))}
@@ -583,8 +595,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                 outcome={{
                   id: m.market_id ?? i,
                   label: m.leader ?? m.q,
-                  probability: (m.prob ?? 0) / 100,
-                  renderedPercent: Math.round(m.prob ?? 0),
+                  probability: toProb01(m.prob),
+                  renderedPercent: toRenderedPct(m.prob),
                 }}
               />
             ))}
@@ -618,8 +630,8 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     outcome={{
                       id: m.market_id ?? i,
                       label: m.leader ?? m.q,
-                      probability: (m.prob ?? 0) / 100,
-                      renderedPercent: Math.round(m.prob ?? 0),
+                      probability: toProb01(m.prob),
+                      renderedPercent: toRenderedPct(m.prob),
                     }}
                   />
                 ))}

@@ -13,7 +13,7 @@ import { fetchEconomics } from "@/lib/api";
 import { heatmapMinWidth, ratePathHeading } from "@/lib/fedRatePath";
 import type { EconData, EconDistribution } from "@/lib/api";
 import EconomicsAtlasView from "@/components/economics/EconomicsAtlasView";
-import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 
 // ---------------------------------------------------------------------------
 // Fed Heatmap Section
@@ -174,9 +174,7 @@ export default function EconomicsPage() {
   useScrollDepth({ pageType: "economics" });
   useEngagementTime({ pageType: "economics" });
 
-  const atlasQuery =
-    typeof window !== "undefined" ? window.location.search : undefined;
-  const atlasEnabled = resolveAtlasOptIn(atlasQuery);
+  const atlasEnabled = useAtlasPageOptIn();
 
   const { data, error } = useSWR("economics-data", fetchEconomics, { refreshInterval: 60000 });
 

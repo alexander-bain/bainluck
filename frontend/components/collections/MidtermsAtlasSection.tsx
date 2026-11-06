@@ -47,6 +47,12 @@ function inferParty(
   return null;
 }
 
+function isPartyOutcomeName(label: string): boolean {
+  return /^(republican(?:s| party)?|democrat(?:s|ic(?: party)?)?|gop)$/i.test(
+    (label || "").trim()
+  );
+}
+
 export function MidtermsAtlasChamberControl({
   senate,
   house,
@@ -56,10 +62,21 @@ export function MidtermsAtlasChamberControl({
 }) {
   const renderChamber = (label: string, ctrl: ControlInfo) => {
     if (!ctrl) return null;
-    const gopWon = ctrl.winner === "Republicans" || ctrl.gop >= 99.5;
-    const demWon = ctrl.winner === "Democrats" || ctrl.dem >= 99.5;
+    const winnerParty = ctrl.winner ? inferParty(ctrl.winner) : null;
     const settledWinner =
-      ctrl.winner ?? (gopWon ? "Republicans" : demWon ? "Democrats" : null);
+      winnerParty === "R"
+        ? "Republicans"
+        : winnerParty === "D"
+          ? "Democrats"
+          : ctrl.winner ?? null;
+    const gopWon =
+      Boolean(settledWinner) &&
+      (winnerParty === "R" || settledWinner === "Republicans");
+    const demWon =
+      Boolean(settledWinner) &&
+      (winnerParty === "D" || settledWinner === "Democrats");
+    const hasGop = typeof ctrl.gop === "number" && Number.isFinite(ctrl.gop);
+    const hasDem = typeof ctrl.dem === "number" && Number.isFinite(ctrl.dem);
 
     return (
       <RaceCard
@@ -76,29 +93,21 @@ export function MidtermsAtlasChamberControl({
             id: `${label}-rep`,
             label: "Republicans",
             party: "R",
-            probability: ctrl.gop / 100,
-            renderedPercent: Math.round(ctrl.gop),
+            probability: hasGop ? ctrl.gop / 100 : null,
+            renderedPercent: hasGop ? Math.round(ctrl.gop) : null,
             isSettled: Boolean(settledWinner),
-            isWinner: settledWinner ? settledWinner === "Republicans" : null,
-            settledResult: settledWinner
-              ? settledWinner === "Republicans"
-                ? "won"
-                : "lost"
-              : null,
+            isWinner: settledWinner ? gopWon : null,
+            settledResult: settledWinner ? (gopWon ? "won" : "lost") : null,
           },
           {
             id: `${label}-dem`,
             label: "Democrats",
             party: "D",
-            probability: ctrl.dem / 100,
-            renderedPercent: Math.round(ctrl.dem),
+            probability: hasDem ? ctrl.dem / 100 : null,
+            renderedPercent: hasDem ? Math.round(ctrl.dem) : null,
             isSettled: Boolean(settledWinner),
-            isWinner: settledWinner ? settledWinner === "Democrats" : null,
-            settledResult: settledWinner
-              ? settledWinner === "Democrats"
-                ? "won"
-                : "lost"
-              : null,
+            isWinner: settledWinner ? demWon : null,
+            settledResult: settledWinner ? (demWon ? "won" : "lost") : null,
           },
         ]}
       />
@@ -131,10 +140,7 @@ export function MidtermsAtlasMemberCard({
   const settledWinner =
     data.settled_winner ??
     topOutcomes.find(
-      (o) =>
-        (o as { result?: string | null }).result === "yes" ||
-        ((data.status === "settled" || data.status === "resolved") &&
-          (o.probability ?? 0) >= 0.995)
+      (o) => (o as { result?: string | null }).result === "yes"
     )?.name ??
     null;
 
@@ -154,19 +160,27 @@ export function MidtermsAtlasMemberCard({
     : topOutcomes;
 
   const winnerNorm = (settledWinner || "").trim().toLowerCase();
+  const winnerParty = settledWinner ? inferParty(settledWinner) : null;
   const outcomes: AtlasCategoryOutcome[] = ordered.map((o, idx) => {
+    const outParty = inferParty(o.name, (o as { party?: string | null }).party);
     const won =
-      Boolean(winnerNorm) && o.name.trim().toLowerCase() === winnerNorm;
+      Boolean(winnerNorm) &&
+      (o.name.trim().toLowerCase() === winnerNorm ||
+        (isPartyOutcomeName(o.name) &&
+          winnerParty !== null &&
+          outParty === winnerParty));
     const lost = Boolean(winnerNorm) && !won;
+    const hasProb =
+      typeof o.probability === "number" && Number.isFinite(o.probability);
     return {
       id: `${member.key}-${idx}`,
       label: o.name,
-      party: inferParty(o.name, (o as { party?: string | null }).party),
+      party: outParty,
       imageUrl: (o as { image_url?: string | null }).image_url ?? null,
-      probability: o.probability,
+      probability: hasProb ? o.probability : null,
       renderedPercent:
         (o as { rendered_percent?: number | null }).rendered_percent ??
-        Math.round((o.probability ?? 0) * 100),
+        (hasProb ? Math.round(o.probability! * 100) : null),
       openingProbability:
         (o as { opening_probability?: number | null }).opening_probability ??
         null,

@@ -18,6 +18,7 @@ jest.mock("@/components/atlas/AtlasDetailsSheet", () => {
 });
 
 import PoliticsAtlasView from "@/components/politics/PoliticsAtlasView";
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import {
   MidtermsAtlasChamberControl,
   MidtermsAtlasMemberCard,
@@ -168,6 +169,7 @@ describe("#11949 Category Atlas Views (Orders 8–11)", () => {
     );
     expect(html).not.toMatch(/>Kalshi<|>Polymarket<|>Merged</);
     expect(html).not.toMatch(/questions/i);
+    expect(html).not.toContain("Live probabilities");
   });
 
   it("MidtermsAtlasChamberControl and MidtermsAtlasMemberCard render settled ✓ Won and ascending ladders", () => {
@@ -392,5 +394,117 @@ describe("#11949 Category Atlas Views (Orders 8–11)", () => {
     expect(html.indexOf(">$90M–$110M<")).toBeLessThan(
       html.indexOf(">$120M–$140M<")
     );
+    expect(html).not.toContain("Live probabilities");
+  });
+
+  it("TRUTH guards: never infers settlement from 99.5%+ price, matches #12123 'Republican Party'/'Democratic Party' winners, and prints 'No recent price' (never 0%) when prob is null", () => {
+    // 1. 99.8% / 100% without a graded winner stays open (never ✓ Won)
+    const ungradedHighPriceHtml = renderToStaticMarkup(
+      React.createElement(
+        "div",
+        null,
+        React.createElement(MidtermsAtlasChamberControl, {
+          senate: { market_id: 107867, gop: 99.8, dem: 0.2 },
+          house: null,
+        }),
+        React.createElement(MidtermsAtlasMemberCard, {
+          sectionTitle: "Senate races",
+          member: {
+            key: "market:109999",
+            id: 109999,
+            destination: "/futures/109999",
+            item: {
+              type: "futures",
+              score: 1,
+              data: {
+                id: 109999,
+                name: "Ungraded resolved race",
+                status: "resolved",
+                settled_winner: null,
+                top_outcomes: [
+                  { id: 1, name: "Candidate A", probability: 0.999, result: null },
+                  { id: 2, name: "Candidate B", probability: 0.001, result: null },
+                ],
+              },
+            },
+          } as any,
+        })
+      )
+    );
+    expect(ungradedHighPriceHtml).toContain("CHAMBER CONTROL · open");
+    expect(ungradedHighPriceHtml).not.toContain("✓ Won");
+
+    // 2. #12123 server strings 'Republican Party' and 'Democratic Party' match chamber contenders
+    const partyStringsHtml = renderToStaticMarkup(
+      React.createElement(MidtermsAtlasChamberControl, {
+        senate: {
+          market_id: 107867,
+          gop: 100,
+          dem: 0,
+          winner: "Republican Party",
+        },
+        house: {
+          market_id: 107869,
+          gop: 0,
+          dem: 100,
+          winner: "Democratic Party",
+        },
+      })
+    );
+    expect(partyStringsHtml).toContain("CHAMBER CONTROL · settled");
+    expect(partyStringsHtml).toContain("Republicans");
+    expect(partyStringsHtml).toContain("Democrats");
+    expect(partyStringsHtml).toContain("✓ Won");
+
+    // 3. Missing price (prob: null / probability: null) prints 'No recent price', never '0%'
+    const unpricedEconHtml = renderToStaticMarkup(
+      React.createElement(
+        "div",
+        null,
+        React.createElement(EconomicsAtlasView, {
+          data: {
+            total_markets: 1,
+            updated_at: "2026-11-05T18:00:00Z",
+            themes: {
+              jobs: {
+                count: 1,
+                markets: [
+                  {
+                    market_id: 777,
+                    q: "Unemployment rate above 4.5%?",
+                    leader: "Yes",
+                    prob: null,
+                    src: "kalshi",
+                  },
+                ],
+              },
+            },
+          } as any,
+        }),
+        React.createElement(MidtermsAtlasMemberCard, {
+          sectionTitle: "Senate races",
+          member: {
+            key: "market:109888",
+            id: 109888,
+            destination: "/futures/109888",
+            item: {
+              type: "futures",
+              score: 1,
+              data: {
+                id: 109888,
+                name: "Unpriced Senate race",
+                status: "open",
+                top_outcomes: [
+                  { id: 1, name: "Candidate X", probability: null },
+                  { id: 2, name: "Candidate Y", probability: null },
+                ],
+              },
+            },
+          } as any,
+        })
+      )
+    );
+    expect(unpricedEconHtml).toContain(ATLAS_STATE_COPY.noRecentPrice);
+    expect(unpricedEconHtml).not.toContain(">0%<");
   });
 });

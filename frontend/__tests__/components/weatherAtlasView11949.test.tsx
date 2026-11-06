@@ -54,6 +54,17 @@ jest.mock("swr", () => ({
               prob: 42,
               probability: 0.42,
               src: "kalshi",
+              status: "closed",
+              result: null,
+            },
+            {
+              city: "Seattle",
+              period: "Oct 2026",
+              prob: 100,
+              probability: 1.0,
+              src: "kalshi",
+              status: "settled",
+              result: null,
             },
           ],
         },
@@ -160,8 +171,13 @@ describe("/weather?atlas=1 (#11949 Order 11)", () => {
     // Monthly rain settled row shows ✓ Won instead of 100%
     expect(html).toContain("Austin (Nov 2026)");
     expect(html).toContain("✓ Won");
+    // 'closed' without a result stays unsettled and prints its live probability
     expect(html).toContain("New York (Nov 2026)");
     expect(html).toContain("42%");
+    // 'settled' without a result prints 'Result unavailable' (never 100% or blank)
+    expect(html).toContain("Seattle (Oct 2026)");
+    expect(html).toContain("Result unavailable");
+    expect(html).not.toContain(">100%<");
     // Temperature BucketDistribution
     expect(html).toContain("data-testid=\"atlas-bucket-distribution\"");
     expect(html).toContain("New York daily high");

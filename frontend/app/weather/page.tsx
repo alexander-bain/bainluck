@@ -10,16 +10,14 @@ import ClimateDashboard from "@/components/weather/ClimateDashboard";
 import WildCards from "@/components/weather/WildCards";
 import { SectionHeader } from "@/components/weather/RainForecast";
 import WeatherAtlasView from "@/components/weather/WeatherAtlasView";
-import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 
 export default function WeatherPage() {
   usePageTracking({ pageType: "weather", pageTitle: "Weather Probabilities" });
   useScrollDepth({ pageType: "weather" });
   useEngagementTime({ pageType: "weather" });
 
-  const atlasQuery =
-    typeof window !== "undefined" ? window.location.search : undefined;
-  const atlasEnabled = resolveAtlasOptIn(atlasQuery);
+  const atlasEnabled = useAtlasPageOptIn();
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>

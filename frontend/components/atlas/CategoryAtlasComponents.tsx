@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { formatProbabilityPercent } from '@/lib/probabilityDisplay';
 import AtlasDetailsSheet from './AtlasDetailsSheet';
@@ -8,7 +8,20 @@ import {
   ATLAS_STATE_COPY,
   formatAtlasMarketHeading,
   formatAtlasTimestampPT,
+  resolveAtlasOptIn,
 } from './atlasStateCopy';
+
+export function useAtlasPageOptIn(): boolean {
+  const [search, setSearch] = useState<string | undefined>(() =>
+    typeof window !== 'undefined' ? window.location.search : undefined,
+  );
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setSearch(window.location.search);
+    }
+  }, []);
+  return resolveAtlasOptIn(search);
+}
 
 export interface AtlasCategoryOutcome {
   id?: number | string;
@@ -26,7 +39,7 @@ export interface AtlasCategoryOutcome {
   imageUrl?: string | null;
   isWinner?: boolean | null;
   isSettled?: boolean;
-  settledResult?: 'won' | 'lost' | 'void' | null;
+  settledResult?: 'won' | 'lost' | 'void' | 'unavailable' | null;
   notOffered?: boolean;
 }
 
@@ -404,8 +417,11 @@ export function FieldBoard({
           const pLetter = showPartyPills ? partyLetter(o.party) : null;
           const pClass = showPartyPills ? partyBadgeClass(o.party) : null;
           const won = o.isWinner === true || o.settledResult === 'won';
+          const unavailable = o.settledResult === 'unavailable';
           const lost =
-            !won && (isSettled || o.isWinner === false || o.settledResult === 'lost');
+            !won &&
+            !unavailable &&
+            (isSettled || o.isWinner === false || o.settledResult === 'lost');
 
           return (
             <div
@@ -429,6 +445,10 @@ export function FieldBoard({
                     <span className="text-xs font-normal text-text-muted">
                       {ATLAS_STATE_COPY.loading}
                     </span>
+                  ) : unavailable ? (
+                    <span className="font-sans text-xs font-normal text-text-secondary">
+                      {ATLAS_STATE_COPY.resultUnavailable}
+                    </span>
                   ) : won ? (
                     <span>{ATLAS_STATE_COPY.wonWithCheck}</span>
                   ) : lost ? (
@@ -443,7 +463,7 @@ export function FieldBoard({
                 </span>
               </div>
               <div className="relative h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
-                {!meta.loading && !won && !lost && p01 !== null && (
+                {!meta.loading && !won && !lost && !unavailable && p01 !== null && (
                   <div
                     className="h-full rounded-full bg-[var(--series-1,#2563eb)]"
                     style={{ width: `${Math.max(1, Math.min(100, p01 * 100))}%` }}
@@ -538,7 +558,9 @@ export function BinaryRow({
   const won = outcome.isWinner === true || outcome.settledResult === 'won';
   const lost = outcome.isWinner === false || outcome.settledResult === 'lost';
   const voided = outcome.settledResult === 'void';
-  const isSettled = won || lost || voided || outcome.isSettled === true;
+  const unavailable = outcome.settledResult === 'unavailable';
+  const isSettled =
+    won || lost || voided || unavailable || outcome.isSettled === true;
 
   return (
     <div
@@ -574,10 +596,18 @@ export function BinaryRow({
               </span>
             ) : voided ? (
               <span>{ATLAS_STATE_COPY.voided}</span>
+            ) : unavailable ? (
+              <span className="font-sans text-xs font-normal text-text-secondary">
+                {ATLAS_STATE_COPY.resultUnavailable}
+              </span>
             ) : won ? (
               <span>{ATLAS_STATE_COPY.wonWithCheck}</span>
             ) : lost ? (
               <span className="text-text-secondary">{ATLAS_STATE_COPY.lostWithCross}</span>
+            ) : isSettled ? (
+              <span className="font-sans text-xs font-normal text-text-secondary">
+                {ATLAS_STATE_COPY.resultUnavailable}
+              </span>
             ) : pctLabel !== null ? (
               pctLabel
             ) : (
@@ -699,6 +729,9 @@ export function ThresholdLadderCard({
           const pctLabel = formatOutcomePercent(r);
           const won = r.isWinner === true || r.settledResult === 'won';
           const lost = r.isWinner === false || r.settledResult === 'lost';
+          const unavailable =
+            r.settledResult === 'unavailable' ||
+            (r.isSettled === true && !won && !lost);
 
           return (
             <div
@@ -710,7 +743,7 @@ export function ThresholdLadderCard({
                 {r.label}
               </span>
               <div className="relative h-2 w-full rounded-full bg-surface-elevated">
-                {!meta.loading && !won && !lost && p01 !== null && (
+                {!meta.loading && !won && !lost && !unavailable && p01 !== null && (
                   <span
                     className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--series-1,#2563eb)]"
                     style={{ left: `${Math.max(3, Math.min(97, p01 * 100))}%` }}
@@ -723,6 +756,10 @@ export function ThresholdLadderCard({
                   <span className="font-sans font-normal text-text-muted">
                     {ATLAS_STATE_COPY.loading}
                   </span>
+                ) : unavailable ? (
+                  <span className="font-sans text-[11px] font-normal text-text-secondary">
+                    {ATLAS_STATE_COPY.resultUnavailable}
+                  </span>
                 ) : won ? (
                   <span>{ATLAS_STATE_COPY.wonWithCheck}</span>
                 ) : lost ? (
@@ -731,7 +768,7 @@ export function ThresholdLadderCard({
                   pctLabel
                 ) : (
                   <span className="font-sans text-[11px] font-normal text-text-muted">
-                    —
+                    {ATLAS_STATE_COPY.noRecentPrice}
                   </span>
                 )}
               </span>
@@ -1093,6 +1130,7 @@ export function BucketDistribution({
           const p01 = normalizeProb01(b.probability, b.renderedPercent);
           const pctLabel = formatOutcomePercent(b);
           const won = b.isWinner === true || b.settledResult === 'won';
+          const unavailable = b.settledResult === 'unavailable';
 
           return (
             <div
@@ -1104,7 +1142,7 @@ export function BucketDistribution({
                 {b.label}
               </span>
               <div className="h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
-                {!meta.loading && !b.notOffered && !guardFailed && p01 !== null && (
+                {!meta.loading && !b.notOffered && !unavailable && !guardFailed && p01 !== null && (
                   <div
                     className="h-full rounded-full bg-[var(--series-1,#2563eb)]"
                     style={{ width: `${Math.max(1, Math.min(100, p01 * 100))}%` }}
@@ -1120,12 +1158,20 @@ export function BucketDistribution({
                   <span className="font-sans font-normal text-text-muted">
                     not offered
                   </span>
+                ) : unavailable ? (
+                  <span className="font-sans text-[11px] font-normal text-text-secondary">
+                    {ATLAS_STATE_COPY.resultUnavailable}
+                  </span>
                 ) : won ? (
                   <span>✓</span>
                 ) : !guardFailed && pctLabel !== null ? (
                   pctLabel
-                ) : (
+                ) : guardFailed ? (
                   <span className="font-sans font-normal text-text-muted">—</span>
+                ) : (
+                  <span className="font-sans text-[11px] font-normal text-text-muted">
+                    {ATLAS_STATE_COPY.noRecentPrice}
+                  </span>
                 )}
               </span>
             </div>

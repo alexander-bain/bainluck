@@ -6,7 +6,7 @@ import { CollectionWeekNavigation } from "./CollectionWeekNavigation";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import PartyControlRow from "@/components/politics/PartyControlRow";
 import { MidtermsAtlasChamberControl, MidtermsAtlasMemberCard } from "./MidtermsAtlasSection";
-import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 import type { FeedFuturesData } from "@/lib/types";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
@@ -17,6 +17,7 @@ import {
 const storageKey = (slug: string) => `collection-reading:${slug}`;
 
 export default function CollectionHub({ slug }: { slug: string }) {
+  const atlasEnabled = useAtlasPageOptIn();
   const [hub, setHub] = useState<Hub | null>(() => acceptedCollection(slug));
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
@@ -220,9 +221,6 @@ export default function CollectionHub({ slug }: { slug: string }) {
     {shown?.sections.map((section) => {
       const lone = shown.sections.length === 1 && section.cls === "unclassified";
       const midterms = shown.slug === "midterms-2026";
-      const atlasEnabled = resolveAtlasOptIn(
-        typeof window !== "undefined" ? window.location.search : undefined
-      );
       return <section key={section.key} className="space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
       {!lone && <div className="space-y-1">
         <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>

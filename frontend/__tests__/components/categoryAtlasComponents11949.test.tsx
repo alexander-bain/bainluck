@@ -267,8 +267,18 @@ describe("CategoryAtlasComponents (#11949 Order 7)", () => {
             congressional: {
               count: 5,
               chamber_control: {
-                senate: { market_id: 108620, gop: 100, dem: 0 },
-                house: { market_id: 108621, gop: 0, dem: 100 },
+                senate: {
+                  market_id: 108620,
+                  gop: 100,
+                  dem: 0,
+                  winner: "Republican Party",
+                } as unknown as import("@/lib/api").ChamberControl,
+                house: {
+                  market_id: 108621,
+                  gop: 0,
+                  dem: 100,
+                  winner: "Democratic Party",
+                } as unknown as import("@/lib/api").ChamberControl,
               },
               senate_map: null,
               markets: [

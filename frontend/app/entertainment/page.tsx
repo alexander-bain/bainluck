@@ -24,7 +24,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import EntertainmentSkeleton from "@/components/skeletons/EntertainmentSkeleton";
 import EntertainmentAtlasView from "@/components/entertainment/EntertainmentAtlasView";
-import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 import s from "./entertainment.module.css";
 
 // ─────────────────────────────────────────────────────────
@@ -1603,9 +1603,7 @@ export default function EntertainmentPage() {
   useScrollDepth({ pageType: "entertainment" });
   useEngagementTime({ pageType: "entertainment" });
 
-  const atlasQuery =
-    typeof window !== "undefined" ? window.location.search : undefined;
-  const atlasEnabled = resolveAtlasOptIn(atlasQuery);
+  const atlasEnabled = useAtlasPageOptIn();
 
   const [filter, setFilter] = useState<FilterKey>("all");
   const { data, error } = useSWR("entertainment-data-v2", fetchEntertainment, {

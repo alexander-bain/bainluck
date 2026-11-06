@@ -26,7 +26,7 @@ import MarketCard from "@/components/politics/MarketCard";
 import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
 import { usePinnedCollection } from "@/hooks/usePinnedCollection";
 import PoliticsAtlasView from "@/components/politics/PoliticsAtlasView";
-import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import { useAtlasPageOptIn } from "@/components/atlas/CategoryAtlasComponents";
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -660,9 +660,7 @@ export default function PoliticsPage() {
     refreshInterval: 60000,
   });
 
-  const atlasQuery =
-    typeof window !== "undefined" ? window.location.search : undefined;
-  const atlasEnabled = resolveAtlasOptIn(atlasQuery);
+  const atlasEnabled = useAtlasPageOptIn();
 
   if (error || (data as { error?: string } | undefined)?.error === "timeout") {
     return (

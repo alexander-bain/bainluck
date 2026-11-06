@@ -51,7 +51,7 @@ type ExtendedEntMarketRow = EntMarketRow & {
 };
 
 function toOrderedOutcomes(
-  outcomes: { name: string; prob: number }[],
+  outcomes: { name: string; prob: number | null }[],
   orderNumeric: boolean,
   settledWinner?: string | null
 ): AtlasCategoryOutcome[] {
@@ -77,11 +77,12 @@ function toOrderedOutcomes(
     const won =
       Boolean(winnerNorm) && o.name.trim().toLowerCase() === winnerNorm;
     const lost = Boolean(winnerNorm) && !won;
+    const hasProb = typeof o.prob === "number" && Number.isFinite(o.prob);
     return {
       id: `${o.name}-${idx}`,
       label: o.name,
-      probability: o.prob / 100,
-      renderedPercent: Math.round(o.prob),
+      probability: hasProb ? o.prob! / 100 : null,
+      renderedPercent: hasProb ? Math.round(o.prob!) : null,
       isSettled: Boolean(winnerNorm),
       isWinner: won ? true : lost ? false : null,
       settledResult: won ? "won" : lost ? "lost" : null,
@@ -107,6 +108,7 @@ function renderEntMarketByShape(
   if (outcomes.length <= 1 || row.kind === "binary") {
     const lead = outcomes[0];
     const prob = lead ? lead.prob : row.prob;
+    const hasProb = typeof prob === "number" && Number.isFinite(prob);
     const won =
       Boolean(settledWinner) &&
       (settledWinner?.toLowerCase() === "yes" ||
@@ -120,8 +122,8 @@ function renderEntMarketByShape(
         outcome={{
           id: row.market_id,
           label: lead?.name && !/^(yes|no)$/i.test(lead.name) ? lead.name : row.q,
-          probability: prob / 100,
-          renderedPercent: Math.round(prob),
+          probability: hasProb ? prob / 100 : null,
+          renderedPercent: hasProb ? Math.round(prob) : null,
           isSettled: Boolean(settledWinner),
           isWinner: won ? true : lost ? false : null,
           settledResult: won ? "won" : lost ? "lost" : null,
@@ -173,12 +175,15 @@ function renderThresholdGroup(
     if (na !== null && nb !== null && na !== nb) return na - nb;
     return 0;
   });
-  const outcomes: AtlasCategoryOutcome[] = sorted.map((t, idx) => ({
-    id: t.market_id ?? `${t.label}-${idx}`,
-    label: t.label,
-    probability: t.prob / 100,
-    renderedPercent: Math.round(t.prob),
-  }));
+  const outcomes: AtlasCategoryOutcome[] = sorted.map((t, idx) => {
+    const hasProb = typeof t.prob === "number" && Number.isFinite(t.prob);
+    return {
+      id: t.market_id ?? `${t.label}-${idx}`,
+      label: t.label,
+      probability: hasProb ? t.prob / 100 : null,
+      renderedPercent: hasProb ? Math.round(t.prob) : null,
+    };
+  });
   const firstMarketId = sorted[0]?.market_id ?? null;
 
   if (shape === "buckets") {
@@ -235,7 +240,7 @@ export default function EntertainmentAtlasView({
           What the world thinks will happen in pop culture
         </h1>
         <p className="text-sm text-text-secondary max-w-2xl">
-          Live probabilities on charts, box office, reality TV, and cultural
+          Probabilities on charts, box office, reality TV, and cultural
           milestones — one calibrated reading per market.
         </p>
         {updatedPT && (

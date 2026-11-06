@@ -64,8 +64,14 @@ function inferPartyFromLabel(label: string): "R" | "D" | "I" | null {
   return null;
 }
 
+function isPartyOutcomeName(label: string): boolean {
+  return /^(republican(?:s| party)?|democrat(?:s|ic(?: party)?)?|gop)$/i.test(
+    (label || "").trim()
+  );
+}
+
 function toOrderedOutcomes(
-  outcomes: { name: string; prob: number; rendered_percent?: number | null }[],
+  outcomes: { name: string; prob: number | null; rendered_percent?: number | null }[],
   orderNumeric: boolean,
   settledWinner?: string | null
 ): AtlasCategoryOutcome[] {
@@ -87,16 +93,24 @@ function toOrderedOutcomes(
       : items;
 
   const winnerNorm = (settledWinner || "").trim().toLowerCase();
+  const winnerParty = settledWinner ? inferPartyFromLabel(settledWinner) : null;
   return sorted.map(({ o }, idx) => {
+    const outParty = inferPartyFromLabel(o.name);
     const won =
-      Boolean(winnerNorm) && o.name.trim().toLowerCase() === winnerNorm;
+      Boolean(winnerNorm) &&
+      (o.name.trim().toLowerCase() === winnerNorm ||
+        (isPartyOutcomeName(o.name) &&
+          winnerParty !== null &&
+          outParty === winnerParty));
     const lost = Boolean(winnerNorm) && !won;
+    const hasProb = typeof o.prob === "number" && Number.isFinite(o.prob);
     return {
       id: `${o.name}-${idx}`,
       label: o.name,
-      probability: o.prob / 100,
-      renderedPercent: o.rendered_percent ?? Math.round(o.prob),
-      party: inferPartyFromLabel(o.name),
+      probability: hasProb ? o.prob! / 100 : null,
+      renderedPercent:
+        o.rendered_percent ?? (hasProb ? Math.round(o.prob!) : null),
+      party: outParty,
       isSettled: Boolean(winnerNorm),
       isWinner: won ? true : lost ? false : null,
       settledResult: won ? "won" : lost ? "lost" : null,
@@ -109,40 +123,38 @@ function renderChamberRaceCard(
   ctrl: ExtendedChamberControl | null | undefined
 ) {
   if (!ctrl) return null;
-  const gopSettled = ctrl.winner === "Republicans" || ctrl.gop >= 99.5;
-  const demSettled = ctrl.winner === "Democrats" || ctrl.dem >= 99.5;
+  const winnerParty = ctrl.winner ? inferPartyFromLabel(ctrl.winner) : null;
   const settledWinner =
-    ctrl.winner ??
-    (gopSettled ? "Republicans" : demSettled ? "Democrats" : null);
+    winnerParty === "R"
+      ? "Republicans"
+      : winnerParty === "D"
+        ? "Democrats"
+        : ctrl.winner ?? null;
+  const gopWon = Boolean(settledWinner) && (winnerParty === "R" || settledWinner === "Republicans");
+  const demWon = Boolean(settledWinner) && (winnerParty === "D" || settledWinner === "Democrats");
+  const hasGop = typeof ctrl.gop === "number" && Number.isFinite(ctrl.gop);
+  const hasDem = typeof ctrl.dem === "number" && Number.isFinite(ctrl.dem);
 
   const contenders: AtlasCategoryOutcome[] = [
     {
       id: `${chamberName}-rep`,
       label: "Republicans",
       party: "R",
-      probability: ctrl.gop / 100,
-      renderedPercent: Math.round(ctrl.gop),
+      probability: hasGop ? ctrl.gop / 100 : null,
+      renderedPercent: hasGop ? Math.round(ctrl.gop) : null,
       isSettled: Boolean(settledWinner),
-      isWinner: settledWinner ? settledWinner === "Republicans" : null,
-      settledResult: settledWinner
-        ? settledWinner === "Republicans"
-          ? "won"
-          : "lost"
-        : null,
+      isWinner: settledWinner ? gopWon : null,
+      settledResult: settledWinner ? (gopWon ? "won" : "lost") : null,
     },
     {
       id: `${chamberName}-dem`,
       label: "Democrats",
       party: "D",
-      probability: ctrl.dem / 100,
-      renderedPercent: Math.round(ctrl.dem),
+      probability: hasDem ? ctrl.dem / 100 : null,
+      renderedPercent: hasDem ? Math.round(ctrl.dem) : null,
       isSettled: Boolean(settledWinner),
-      isWinner: settledWinner ? settledWinner === "Democrats" : null,
-      settledResult: settledWinner
-        ? settledWinner === "Democrats"
-          ? "won"
-          : "lost"
-        : null,
+      isWinner: settledWinner ? demWon : null,
+      settledResult: settledWinner ? (demWon ? "won" : "lost") : null,
     },
   ];
 
@@ -177,6 +189,7 @@ function renderPoliticsMarketByShape(
   if (outcomes.length <= 1) {
     const lead = outcomes[0];
     const prob = lead ? lead.prob : row.prob;
+    const hasProb = typeof prob === "number" && Number.isFinite(prob);
     const won =
       Boolean(settledWinner) &&
       (settledWinner?.toLowerCase() === "yes" ||
@@ -189,8 +202,9 @@ function renderPoliticsMarketByShape(
         outcome={{
           id: row.market_id,
           label: lead?.name && !/^(yes|no)$/i.test(lead.name) ? lead.name : row.q,
-          probability: prob / 100,
-          renderedPercent: lead?.rendered_percent ?? Math.round(prob),
+          probability: hasProb ? prob / 100 : null,
+          renderedPercent:
+            lead?.rendered_percent ?? (hasProb ? Math.round(prob) : null),
           isSettled: Boolean(settledWinner),
           isWinner: won ? true : lost ? false : null,
           settledResult: won ? "won" : lost ? "lost" : null,
@@ -255,22 +269,27 @@ export default function PoliticsAtlasView({ data }: { data: PoliticsData }) {
 
   const pres = t.presidential;
   const presCandidates = pres?.candidates ?? [];
-  const sortedPres = [...presCandidates].sort((a, b) => b.merged - a.merged);
-  const presOutcomes: AtlasCategoryOutcome[] = sortedPres.map((c, idx) => ({
-    id: `${c.name}-${idx}`,
-    label: c.name,
-    party: c.party || null,
-    probability: c.merged / 100,
-    renderedPercent: Math.round(c.merged),
-    openingProbability:
-      c.history && c.history.length > 0 ? c.history[0].p / 100 : null,
-    openingObservedAt:
-      c.history && c.history.length > 0 ? c.history[0].t : null,
-    observedAt:
-      c.history && c.history.length > 0
-        ? c.history[c.history.length - 1].t
-        : data.updated_at,
-  }));
+  const sortedPres = [...presCandidates].sort(
+    (a, b) => (b.merged ?? -1) - (a.merged ?? -1)
+  );
+  const presOutcomes: AtlasCategoryOutcome[] = sortedPres.map((c, idx) => {
+    const hasMerged = typeof c.merged === "number" && Number.isFinite(c.merged);
+    return {
+      id: `${c.name}-${idx}`,
+      label: c.name,
+      party: c.party || null,
+      probability: hasMerged ? c.merged / 100 : null,
+      renderedPercent: hasMerged ? Math.round(c.merged) : null,
+      openingProbability:
+        c.history && c.history.length > 0 ? c.history[0].p / 100 : null,
+      openingObservedAt:
+        c.history && c.history.length > 0 ? c.history[0].t : null,
+      observedAt:
+        c.history && c.history.length > 0
+          ? c.history[c.history.length - 1].t
+          : data.updated_at,
+    };
+  });
 
   const presJourneySeries: AtlasJourneySeries[] = sortedPres
     .slice(0, 4)
@@ -328,7 +347,7 @@ export default function PoliticsAtlasView({ data }: { data: PoliticsData }) {
           Politics
         </h1>
         <p className="text-sm text-text-secondary max-w-2xl">
-          Live probabilities for elections, chambers, legislation, and
+          Probabilities for elections, chambers, legislation, and
           international affairs — one calibrated reading per market.
         </p>
         {updatedPT && (

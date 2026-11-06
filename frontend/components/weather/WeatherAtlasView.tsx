@@ -42,16 +42,23 @@ type SettleableRow = {
 function toSettledFlags(row: SettleableRow): {
   isSettled: boolean;
   isWinner: boolean | null;
-  settledResult: "won" | "lost" | null;
+  settledResult: "won" | "lost" | "unavailable" | null;
 } {
   const won = row.result === "yes";
   const lost = row.result === "no";
   const settledStatus =
-    row.status === "settled" || row.status === "resolved" || row.status === "closed";
+    row.status === "settled" || row.status === "resolved";
+  const settledWithoutResult = !won && !lost && settledStatus;
   return {
     isSettled: won || lost || settledStatus,
     isWinner: won ? true : lost ? false : null,
-    settledResult: won ? "won" : lost ? "lost" : null,
+    settledResult: won
+      ? "won"
+      : lost
+        ? "lost"
+        : settledWithoutResult
+          ? "unavailable"
+          : null,
   };
 }
 
