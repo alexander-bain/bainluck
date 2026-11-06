@@ -111,7 +111,7 @@ describe("#8024 — the state that took the page down", () => {
 
   it("still renders the headline, so the reader gets a page and not a boundary", () => {
     const markup = render(undefined, new Error("Weather API error: 500"));
-    expect(visibleText(markup)).toContain("What are the odds it rains tomorrow?");
+    expect(visibleText(markup)).toContain("What is the chance it rains tomorrow?");
   });
 });
 

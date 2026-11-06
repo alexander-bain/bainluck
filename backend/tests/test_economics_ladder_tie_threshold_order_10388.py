@@ -239,3 +239,41 @@ class TestTiesTheGrammarCannotReadCompletelyKeepRankOrder:
         )
         assert row["kind"] == "brackets"
         assert _labels(row) == ["800-900B", "700-800B", "900B+"]
+
+    def test_non_monotonic_and_zero_priced_mortgage_tail_ordered_by_threshold_12093(self):
+        """#12093 (Defect 4): live 30-year mortgage ladder (63115873) has
+        non-monotonic tail quotes (Above 8.50% at 6.0% vs Above 8.00% at 5.5%)
+        and zero-priced rungs (Above 7.00%, Above 7.25% at 0.0%) stored at the
+        bottom by probability rank. All rungs must sit in threshold order."""
+        row = _served(
+            [
+                _outcome("Above 6.00%", 0.875, 1),
+                _outcome("Above 6.25%", 0.675, 2),
+                _outcome("Above 6.50%", 0.440, 3),
+                _outcome("Above 6.75%", 0.340, 4),
+                _outcome("Above 7.50%", 0.140, 5),
+                _outcome("Above 7.75%", 0.090, 6),
+                _outcome("Above 8.50%", 0.060, 7),
+                _outcome("Above 8.00%", 0.055, 8),
+                _outcome("Above 8.25%", 0.045, 9),
+                _outcome("Above 8.75%", 0.045, 10),
+                _outcome("Above 9.00%", 0.040, 11),
+                _outcome("Above 7.00%", 0.000, 12),
+                _outcome("Above 7.25%", 0.000, 13),
+            ],
+        )
+        assert _labels(row) == [
+            "Above 6.00%",
+            "Above 6.25%",
+            "Above 6.50%",
+            "Above 6.75%",
+            "Above 7.00%",
+            "Above 7.25%",
+            "Above 7.50%",
+            "Above 7.75%",
+            "Above 8.00%",
+            "Above 8.25%",
+            "Above 8.50%",
+            "Above 8.75%",
+            "Above 9.00%",
+        ]

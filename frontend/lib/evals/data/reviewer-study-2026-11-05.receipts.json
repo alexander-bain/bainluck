@@ -1,0 +1,32 @@
+{
+  "about": "The receipts' own words behind every row in reviewer-study-2026-11-05.json. Test-only: lib/evals/__tests__/reviewerStudy.test.ts reads this, the page never does. Each quote is copied verbatim from the receipt it names.",
+  "cases": {
+    "r01": { "quote": "| r01 | Field count double-counts remaining outcomes | yes (1 failing case(s)) | 17 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r02": { "quote": "| r02 | Opening/final-unresolved admitted as current blend | yes (2 failing case(s)) | 7 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r03": { "quote": "| r03 | Hydration failure silently shrinks the closest set | yes (1 failing case(s)) | 7 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r04": { "quote": "| r04 | Clock settles an ungraded Kalshi market | yes (1 failing case(s)) | 8 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r05": { "quote": "| r05 | Midterms preview changes prices or drops priced overflow | yes (3 failing case(s)) | 6 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r06": { "quote": "| r06 | Membership re-keys calibration banked work | yes (7 failing case(s)) | 16 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r07": { "quote": "| r07 | Desktop game unlock without scrolling | yes (1 failing case(s)) | 39 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r08": { "quote": "| r08 | Generic settlement source fabricates a prop verdict | yes (10 failing case(s)) | 294 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r09": { "quote": "| r09 | Untraded midpoint displays 50/50 | yes (4 failing case(s)) | 21 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "r10": { "quote": "| r10 | Non-owner deletes refresh lock | yes (2 failing case(s)) | 24 pass, exit 0 | NOT RUN |", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "c01": { "quote": "field-count private parameter rename (17 checks)", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "c02": { "quote": "hero local rename (7)", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "c03": { "quote": "hydration local rename (7)", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "c04": { "quote": "identical cards-seen expression factored (40)", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "c05": { "quote": "storing the same Lua result before boolean conversion (2)", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" }
+  },
+  "study": {
+    "controls_pass": { "quote": "All relevant control gates pass with original guards intact.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "controls_behavior": { "quote": "The five matched healthy controls are behavior-preserving current-source refactors", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "no_reviews": { "quote": "paid reviews 0, reviewer spend $0", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "local_catches": { "quote": "these are **local test catches, not hosted CI runs or reviewer catches**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "pilot_no_reviews": { "quote": "**0/3 real reviews**, behavioral catches **UNKNOWN**, not misses.", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6674832482" },
+    "snapshot_time": { "quote": "Builder B — **Nov 5, 4:36 PM PST. Reviewer evaluation preparation reconciled; paid reviews 0, reviewer spend $0.**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673378524" },
+    "full_study_first": { "quote": "Builder B — **Nov 5 11:48 PM PST. Full-set r02/pass1: CAUGHT, real exact-head CHANGES_REQUESTED.**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6679966474" },
+    "dropped": { "quote": "**Drop C246 from the seeded set**: the reviewer test runs on the other 10 defects + 5 controls", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673535640" },
+    "dropped_live": { "quote": "this is an **already-present escape on master**", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673535640" },
+    "dropped_issue": { "quote": "I filed the real bug as #12096", "from": "https://github.com/alexander-bain/bainluck/pull/11951#issuecomment-6673535640" }
+  }
+}

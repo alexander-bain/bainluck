@@ -1,5 +1,6 @@
 "use client";
 
+import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
 import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import type { GameMarketsResponse } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
@@ -11,9 +12,11 @@ import MarketBrowser from "./MarketBrowser";
 export default function GameLineBrowser({
   data,
   status,
+  atlasMode = false,
 }: {
   data: GameMarketsResponse;
   status?: string;
+  atlasMode?: boolean;
 }) {
   const groups = [
     // #10823: team_totals used to carry one flattened over_probability across
@@ -50,19 +53,23 @@ export default function GameLineBrowser({
       ) {
         return [];
       }
-      // During play a price last observed before the game moved on is not
-      // today's chance: print nothing rather than a pregame number.
-      const stale = live && sourceIsStale(row.observed_at, now);
       // over_probability is normalized to the OVER proposition even on a
       // source row named Under. Never attach it to that opposite outcome or
       // invent its complement. A direct outcome quote, when present, wins.
-      const probability = stale
-        ? null
-        : "probability" in row
+      const rawProbability =
+        "probability" in row
           ? row.probability
           : isOver(row.outcome_name)
             ? row.over_probability
             : null;
+      // During play a price last observed before the game moved on is not
+      // today's chance: print nothing rather than a pregame number.
+      const stale =
+        live &&
+        typeof rawProbability === "number" &&
+        Number.isFinite(rawProbability) &&
+        sourceIsStale(row.observed_at, now);
+      const probability = stale ? null : rawProbability;
       // #10590 — A SETTLED LINE PRINTS ITS RESULT, NOT ITS LEFTOVER QUOTE.
       // The verdict comes from the one settled-state rule (`outcomeRowVerdict`,
       // #4788), never from a 0%/100% price. A row priced on the OVER axis
@@ -103,7 +110,13 @@ export default function GameLineBrowser({
                         : "font-mono tabular-nums text-text-muted"
                     }
                   >
-                    {verdict === "won" ? "Won" : "Lost"}
+                    {atlasMode
+                      ? verdict === "won"
+                        ? ATLAS_STATE_COPY.wonWithCheck
+                        : ATLAS_STATE_COPY.lostWithCross
+                      : verdict === "won"
+                        ? "Won"
+                        : "Lost"}
                   </span>
                 )}
                 {verdict == null && probability != null && (
@@ -111,6 +124,14 @@ export default function GameLineBrowser({
                     {settled ? "Last quote " : ""}
                     {formatProbabilityPercent(probability)}
                   </strong>
+                )}
+                {verdict == null && probability == null && stale && atlasMode && !settled && (
+                  <span
+                    className="text-xs text-text-secondary whitespace-nowrap"
+                    data-testid="atlas-no-recent-probability"
+                  >
+                    {ATLAS_STATE_COPY.noRecentPrice}
+                  </span>
                 )}
               </div>
               <div className="text-xs text-text-secondary mt-1">
