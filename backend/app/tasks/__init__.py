@@ -2893,6 +2893,25 @@ def snapshot_ranking_slate(self):
     return _tracked_run("ranking_slate_snapshot", _snapshot())
 
 
+@celery_app.task(bind=True, name="app.tasks.probability_publication_coverage")
+def probability_publication_coverage(self):
+    """#12108 PR 1: is the served blend being recorded (coverage at T-1h and
+    the start, table size and growth)? Dark: nothing runs unless
+    ``PROBABILITY_PUBLICATION_RECORDING`` is on."""
+    from app.utils.probability_publication import recording_enabled
+
+    if not recording_enabled():
+        return {"status": "disabled"}
+    from app.services.database import async_session_maker
+    from app.utils.publication_coverage import publication_coverage
+
+    async def _gauge():
+        async with async_session_maker() as db:
+            return await publication_coverage(db)
+
+    return _tracked_run("probability_publication_coverage", _gauge())
+
+
 @celery_app.task(bind=True, name="app.tasks.import_external_curator_ground_truth")
 def import_external_curator_ground_truth(self):
     """Persist configured reviewed external-curator/social ground truth."""
@@ -8247,6 +8266,13 @@ celery_app.conf.beat_schedule = {
     "snapshot-ranking-slate-daily": {
         "task": "app.tasks.snapshot_ranking_slate",
         "schedule": crontab(minute=15, hour=15),
+        "options": {"queue": "background"},
+    },
+    # #12108 PR 1: the served-blend recording gauge (coverage + growth) in task
+    # metrics. Every 6 h at :37; inert unless PROBABILITY_PUBLICATION_RECORDING.
+    "probability-publication-coverage": {
+        "task": "app.tasks.probability_publication_coverage",
+        "schedule": crontab(minute=37, hour="*/6"),
         "options": {"queue": "background"},
     },
     "import-external-curator-ground-truth-daily": {
