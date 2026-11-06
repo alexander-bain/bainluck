@@ -957,7 +957,7 @@ export function MlbHomeRunCardView({
   const step = card.scaleCeiling <= 0.25 ? 0.05 : card.scaleCeiling <= 0.5 ? 0.1 : 0.25;
   const ticks: number[] = [];
   for (let t = 0; t <= card.scaleCeiling + 1e-9; t += step) {
-    ticks.push(Math.round(t * 100) / 100);
+    ticks.push(Number(t.toFixed(2)));
   }
   const firstEntry = card.entries[0];
 
@@ -1077,7 +1077,7 @@ export function MlbHomeRunCardView({
                       textAnchor="middle"
                       fill="#4B5563"
                     >
-                      {Math.round(t * 100)}%
+                      {t === 0 ? "0%" : t === 1 ? "100%" : formatProbability(t)}
                     </text>
                   ))}
               </svg>
