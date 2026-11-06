@@ -256,17 +256,19 @@ class TestOrderedEntertainmentBuckets12093:
     quantity/threshold order rather than probability rank."""
 
     def test_box_office_gross_buckets_ordered_by_dollar_range(self):
-        market = _make_market(
+        from app.routes.entertainment import _market_row
+
+        market = _spotify_market(
+            1,
             '"The Cat in the Hat" Opening Weekend Box Office',
             [
-                _make_outcome("14m-16m", 0.30, rank=1),
-                _make_outcome("12m-14m", 0.25, rank=2),
-                _make_outcome("16m-18m", 0.18, rank=3),
-                _make_outcome("18m-20m", 0.12, rank=4),
-                _make_outcome("<12m", 0.09, rank=5),
-                _make_outcome("20m+", 0.06, rank=6),
+                _outcome("14m-16m", 0.30),
+                _outcome("12m-14m", 0.25),
+                _outcome("16m-18m", 0.18),
+                _outcome("18m-20m", 0.12),
+                _outcome("<12m", 0.09),
+                _outcome("20m+", 0.06),
             ],
-            external_id="kxboxoffice-cat",
         )
         row = _market_row(market, max_outcomes=8)
         assert [o["name"] for o in row["top_outcomes"]] == [
@@ -279,15 +281,17 @@ class TestOrderedEntertainmentBuckets12093:
         ]
 
     def test_album_sales_thresholds_ordered_by_threshold(self):
-        market = _make_market(
+        from app.routes.entertainment import _market_row
+
+        market = _spotify_market(
+            2,
             "REBECCA: First Week Pure Album Sales",
             [
-                _make_outcome("Above 4K", 0.90, rank=1),
-                _make_outcome("Above 8K", 0.65, rank=2),
-                _make_outcome("Above 5K", 0.60, rank=3),
-                _make_outcome("Above 6K", 0.55, rank=4),
+                _outcome("Above 4K", 0.90),
+                _outcome("Above 8K", 0.65),
+                _outcome("Above 5K", 0.60),
+                _outcome("Above 6K", 0.55),
             ],
-            external_id="kxalbumsales-rebecca",
         )
         row = _market_row(market, max_outcomes=8)
         assert [o["name"] for o in row["top_outcomes"]] == [
@@ -298,14 +302,16 @@ class TestOrderedEntertainmentBuckets12093:
         ]
 
     def test_named_contenders_preserve_probability_order(self):
-        market = _make_market(
+        from app.routes.entertainment import _market_row
+
+        market = _spotify_market(
+            3,
             "Which movie has biggest opening weekend in 2026?",
             [
-                _make_outcome("Avengers: Doomsday", 0.52, rank=1),
-                _make_outcome("Spider-Man: Brand New Day", 0.28, rank=2),
-                _make_outcome("Toy Story 5", 0.20, rank=3),
+                _outcome("Avengers: Doomsday", 0.52),
+                _outcome("Spider-Man: Brand New Day", 0.28),
+                _outcome("Toy Story 5", 0.20),
             ],
-            external_id="kxboxoffice-2026",
         )
         row = _market_row(market, max_outcomes=8)
         assert [o["name"] for o in row["top_outcomes"]] == [
@@ -313,3 +319,60 @@ class TestOrderedEntertainmentBuckets12093:
             "Spider-Man: Brand New Day",
             "Toy Story 5",
         ]
+
+
+class TestBillboardThresholdGrouping12093:
+    """#12093 (Defect 6): `_group_threshold_markets` groups only genuine threshold
+    questions (matching `_THRESHOLD_NUM_RE`), leaving non-threshold song chart-week
+    markets in `ungrouped` so Billboard Watch renders `BillboardHeatmap` instead of
+    `"ALL I` headers in `RTHeatmap`."""
+
+    def test_non_threshold_quoted_song_markets_remain_ungrouped(self):
+        from app.routes.entertainment import _group_threshold_markets
+
+        rows = [
+            {
+                "q": '"All I Want for Christmas Is You" #1 on Billboard Hot 100 for week of Dec 20?',
+                "prob": 62.0,
+                "market_id": 101,
+                "image_url": None,
+            },
+            {
+                "q": '"All I Want for Christmas Is You" #1 on Billboard Hot 100 for week of Dec 27?',
+                "prob": 78.0,
+                "market_id": 102,
+                "image_url": None,
+            },
+        ]
+        groups, ungrouped = _group_threshold_markets(rows)
+        assert groups == []
+        assert [r["market_id"] for r in ungrouped] == [101, 102]
+
+    def test_threshold_markets_group_and_order_by_threshold_value(self):
+        from app.routes.entertainment import _group_threshold_markets
+
+        rows = [
+            {
+                "q": 'Will "Wicked: For Good" score at least 80 on Rotten Tomatoes?',
+                "prob": 72.0,
+                "market_id": 201,
+                "image_url": None,
+            },
+            {
+                "q": 'Will "Wicked: For Good" score at least 60 on Rotten Tomatoes?',
+                "prob": 91.0,
+                "market_id": 202,
+                "image_url": None,
+            },
+            {
+                "q": 'Will "Wicked: For Good" score at least 90 on Rotten Tomatoes?',
+                "prob": 34.0,
+                "market_id": 203,
+                "image_url": None,
+            },
+        ]
+        groups, ungrouped = _group_threshold_markets(rows)
+        assert ungrouped == []
+        assert len(groups) == 1
+        assert [t["label"] for t in groups[0]["thresholds"]] == ["≥60", "≥80", "≥90"]
+

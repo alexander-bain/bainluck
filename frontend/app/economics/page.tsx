@@ -174,7 +174,7 @@ export default function EconomicsPage() {
 
   const { data, error } = useSWR("economics-data", fetchEconomics, { refreshInterval: 60000 });
 
-  if (error) return (
+  if (error || (data as { error?: string } | undefined)?.error) return (
     <div className="max-w-7xl mx-auto">
       <ErrorState message="Failed to load economics data" onRetry={() => window.location.reload()} />
     </div>
@@ -195,8 +195,8 @@ export default function EconomicsPage() {
       <div className="px-4 md:px-6 pt-10 pb-8" style={{ maxWidth: 1440, margin: "0 auto" }}>
         <div className="flex items-center gap-3 mb-4">
           <span className="inline-flex items-center gap-2 text-xs font-medium px-3 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            Economics markets · Live
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+            Economics markets
           </span>
           <span className="font-mono text-xs text-text-muted">
             {data.total_markets.toLocaleString()} active markets
@@ -417,9 +417,6 @@ export default function EconomicsPage() {
                 <Card>
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase">Today&apos;s close</span>
-                    <span className="text-[10px] font-mono text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
-                      ● LIVE
-                    </span>
                   </div>
                   {t.markets.today.map((idx: any, i: number) => (
                     <div key={i} className="flex items-center justify-between py-2 border-t border-surface-secondary">

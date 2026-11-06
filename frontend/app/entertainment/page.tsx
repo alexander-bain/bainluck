@@ -190,11 +190,6 @@ function MetaRow({
   return (
     <div className={s.metaRow}>
       <EntSourceChip source={src} />
-      {volume != null && volume > 0 && (
-        <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums" }}>
-          Vol ${volume >= 1000 ? `${(volume / 1000).toFixed(0)}k` : volume}
-        </span>
-      )}
       {resolvesLine && <span>· {resolvesLine}</span>}
     </div>
   );
@@ -1611,7 +1606,7 @@ export default function EntertainmentPage() {
     refreshInterval: 60000,
   });
 
-  if (error) {
+  if (error || (data as { error?: string } | undefined)?.error) {
     return (
       <div className={s.page}>
         <ErrorState message="Failed to load entertainment data" onRetry={() => window.location.reload()} />
@@ -1636,10 +1631,10 @@ export default function EntertainmentPage() {
       <div className={s.pageHead}>
         <div className={s.eyebrow}>🎤 Entertainment & Culture</div>
         <h1 className={s.pageTitle}>
-          What the markets are betting on in pop culture
+          What the world expects in pop culture
         </h1>
         <p className={s.pageSub}>
-          Live probabilities on charts, box office, reality TV, and the
+          Probabilities on charts, box office, reality TV, and the
           moments breaking the internet.
         </p>
         <div className={s.pageMeta}>
@@ -1701,7 +1696,7 @@ export default function EntertainmentPage() {
         {/* Footer */}
         <div className={s.footer}>
           <span>
-            Probabilities update on a 30-second cadence. Bain Luck is a
+            Updated hourly from prediction markets. Bain Luck is a
             discovery platform — we never accept bets.
           </span>
           <span style={{ fontFamily: "var(--font-mono, monospace)" }}>

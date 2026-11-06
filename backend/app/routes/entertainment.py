@@ -583,13 +583,19 @@ def _extract_threshold_label(q: str) -> str:
     return q[:30]
 
 
+def _threshold_sort_key(row: dict) -> tuple[int, float]:
+    m = _THRESHOLD_NUM_RE.search(row.get("q") or "")
+    return (int(m.group(1)) if m else 0, -(row.get("prob") or 0.0))
+
+
 def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict]]:
     """Group markets that share an entity but differ by threshold."""
     by_entity: dict[str, list[dict]] = defaultdict(list)
     ungrouped = []
 
     for row in markets:
-        key = _normalize_group_key(row["q"])
+        q = row.get("q") or ""
+        key = _normalize_group_key(q) if _THRESHOLD_NUM_RE.search(q) else None
         if key:
             by_entity[key].append(row)
         else:
@@ -611,7 +617,7 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
                         "prob": r["prob"],
                         "market_id": r["market_id"],
                     }
-                    for r in sorted(rows, key=lambda r: -r["prob"])
+                    for r in sorted(rows, key=_threshold_sort_key)
                 ],
             })
         else:
