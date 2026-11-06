@@ -155,6 +155,11 @@ final class MemoizedPresentation<Value> {
     /// once. Used by tests to prove memoization, and available for telemetry.
     private(set) var buildCount = 0
 
+    /// The last resolved value, if any, so a caller can carry sitting-scoped
+    /// state (such as already-admitted card ids between pulls, #11984) into the
+    /// next rebuild without mutating `@State` during a view body pass.
+    var cachedValue: Value? { value }
+
     init() {}
 
     /// Explicit, and load-bearing: it is what makes the app archivable.

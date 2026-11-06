@@ -59,26 +59,36 @@ enum DiscoverFeedReconcile {
     ///   is legal. A nil painted edition counts as different — we painted a list
     ///   whose ordering we cannot vouch for, so we defer to the one we can.
     static func decision(
-        paintedCount: Int, paintedEdition: String?, incomingEdition: String?
+        paintedCount: Int,
+        paintedEdition: String?,
+        incomingEdition: String?,
+        mayReorder: Bool = true
     ) -> Decision {
         if paintedCount == 0 { return .repaint }
+        guard mayReorder else { return .reconcile }
         guard let incomingEdition else { return .reconcile }
         return paintedEdition == incomingEdition ? .reconcile : .repaint
     }
 
-    /// Update in place, append new, remove gone — preserving the painted order
-    /// exactly.
+    /// Update in place, append new, remove gone (or retain painted when
+    /// `preservePainted` is true, #11984 Ruling C) — preserving the painted
+    /// order exactly.
     ///
     /// The incoming copy of a card WINS on content (it carries the fresh prices
     /// and scores that the 2-minute poll moves) and LOSES on position: a card
-    /// already on screen keeps the slot the reader last saw it in. Cards the
-    /// server no longer sends are dropped; cards it has added arrive at the end,
-    /// in the server's own order.
+    /// already on screen keeps the slot the reader last saw it in. When
+    /// `preservePainted` is true, cards the server no longer sends (such as a
+    /// card that settled while the reader was looking at the deck) stay in their
+    /// painted slots until a pull-to-refresh; cards it has added arrive at the
+    /// end, in the server's own order.
     ///
     /// Generic over the element and its key so the whole contract is testable
     /// without constructing a `FeedItem` graph.
     static func merge<Item>(
-        painted: [Item], incoming: [Item], key: (Item) -> String
+        painted: [Item],
+        incoming: [Item],
+        preservePainted: Bool = false,
+        key: (Item) -> String
     ) -> [Item] {
         var incomingByKey: [String: Item] = [:]
         incomingByKey.reserveCapacity(incoming.count)
@@ -91,9 +101,13 @@ enum DiscoverFeedReconcile {
         kept.reserveCapacity(painted.count)
         for item in painted {
             let k = key(item)
-            guard let fresh = incomingByKey[k] else { continue }
-            merged.append(fresh)
-            kept.insert(k)
+            if let fresh = incomingByKey[k] {
+                merged.append(fresh)
+                kept.insert(k)
+            } else if preservePainted {
+                merged.append(item)
+                kept.insert(k)
+            }
         }
 
         // Genuinely new cards, in the server's order, after everything painted.

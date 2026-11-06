@@ -264,6 +264,7 @@ struct DiscoverView: View {
     @State private var guestFeedbackGate = DiscoverGuestFeedbackGate()
     @State private var resolutions: [Resolution] = []
     @State private var interactionProfile: DiscoverInteractionProfile?
+    @State private var orderingProfile: DiscoverInteractionProfile?
     @State private var seenImpressions: Set<String> = []
     @State private var navigationPath: NavigationPath
     @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
@@ -275,11 +276,15 @@ struct DiscoverView: View {
     // so mutating its contents is invisible to SwiftUI's invalidation. Rebuilds
     // the interleave+group pipeline only when `presentationSignature` changes.
     @State private var presentationCache = MemoizedPresentation<GroupedPresentation>()
-    // Monotonic stamps bumped by the two view-owned semantic inputs so the memo
+    // Monotonic stamps bumped by the view-owned semantic inputs so the memo
     // signature changes exactly when they do (the feed itself is tracked by
-    // `vm.itemsVersion`).
+    // `vm.itemsVersion`). #11984: `orderingProfileVersion` and `pullEpoch` move
+    // ONLY on initial load, auth change, or pull-to-refresh — never when a
+    // reader opens, expands, likes, or shares a card mid-session.
     @State private var dismissVersion = 0
     @State private var profileVersion = 0
+    @State private var orderingProfileVersion = 0
+    @State private var pullEpoch = 0
 
     /// How many times the reader's pull-to-refresh has actually run.
     ///
@@ -435,8 +440,12 @@ struct DiscoverView: View {
     /// ("settled means settled", L2-191): an all-stale input returns [] so the
     /// view falls to the graceful end state rather than resurrecting settled
     /// cards or minting a guess slot from them.
-    static func eligibleItems(_ items: [FeedItem], now: Date = Date()) -> [FeedItem] {
-        items.filter { !isStaleItem($0, now: now) }
+    static func eligibleItems(
+        _ items: [FeedItem],
+        now: Date = Date(),
+        retainingIds: Set<String> = []
+    ) -> [FeedItem] {
+        items.filter { retainingIds.contains(feedItemId($0)) || !isStaleItem($0, now: now) }
     }
 
     /// Recursively apply the same lifecycle stale gate to an API bundle's
@@ -446,8 +455,12 @@ struct DiscoverView: View {
     /// can still render as a live probability inside `NativeGroupCard`. Returns
     /// only eligible children; an all-stale bundle yields `[]` so `groupedItems`
     /// drops it entirely ("settled means settled", no restoration path).
-    static func eligibleBundleItems(_ bundle: FeedBundle, now: Date = Date()) -> [FeedItem] {
-        eligibleItems(bundle.items, now: now)
+    static func eligibleBundleItems(
+        _ bundle: FeedBundle,
+        now: Date = Date(),
+        retainingIds: Set<String> = []
+    ) -> [FeedItem] {
+        eligibleItems(bundle.items, now: now, retainingIds: retainingIds)
     }
 
     /// Recursively admit bundle children through the lifecycle stale gate BEFORE
@@ -460,13 +473,34 @@ struct DiscoverView: View {
     /// entirely here ("settled means settled" — no restoration path), so it can
     /// never suppress an adjacent card. Ordinary (non-bundle) items pass through
     /// untouched; their own stale gate runs later in `filteredItems`.
-    static func sanitizedFeedItems(_ items: [FeedItem], now: Date = Date()) -> [FeedItem] {
+    static func sanitizedFeedItems(
+        _ items: [FeedItem],
+        now: Date = Date(),
+        retainingIds: Set<String> = []
+    ) -> [FeedItem] {
         items.compactMap { item in
             guard item.type == "bundle", let bundle = item.bundle else { return item }
-            let eligibleChildren = eligibleItems(bundle.items, now: now)
+            let eligibleChildren = eligibleItems(bundle.items, now: now, retainingIds: retainingIds)
             if eligibleChildren.isEmpty { return nil }
             return item.withBundle(bundle.withItems(eligibleChildren))
         }
+    }
+
+    /// All item and bundle-child ids present in a filtered item list, so once a
+    /// card is admitted in the current sitting it stays in place with its
+    /// result even if it settles before the next pull-to-refresh (#11984 Ruling C).
+    static func admittedItemIds(in items: [FeedItem]) -> Set<String> {
+        var ids = Set<String>()
+        ids.reserveCapacity(items.count)
+        for item in items {
+            ids.insert(feedItemId(item))
+            if let bundle = item.bundle {
+                for child in bundle.items {
+                    ids.insert(feedItemId(child))
+                }
+            }
+        }
+        return ids
     }
 
     private func itemId(_ item: FeedItem) -> String { Self.feedItemId(item) }
@@ -528,7 +562,16 @@ struct DiscoverView: View {
         }
     }
 
-    private func applyLocalPersonalization(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+    /// Five-card window ranking after pinning the first three cards, reading a
+    /// frozen `DiscoverInteractionProfile` snapshot (#11984 Ruling A: opening,
+    /// liking, sharing, or expanding a card mid-session updates the stored
+    /// profile for the next pull-to-refresh, never the deck under the reader).
+    static func rankFiveCardWindows<Item>(
+        _ items: [Item],
+        profile: DiscoverInteractionProfile?,
+        score: (Item) -> Int,
+        category: (Item) -> String
+    ) -> [Item] {
         guard items.count > 6 else { return items }
 
         let pinnedLead = Array(items.prefix(3))
@@ -540,10 +583,8 @@ struct DiscoverView: View {
             let end = min(start + windowSize, rest.count)
             let window = Array(rest[start..<end])
             let ranked = window.enumerated().sorted { lhs, rhs in
-                let leftItem = primaryItem(lhs.element)
-                let rightItem = primaryItem(rhs.element)
-                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
-                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
+                let leftScore = Double(score(lhs.element)) + (profile?.adjustment(for: category(lhs.element)) ?? 0)
+                let rightScore = Double(score(rhs.element)) + (profile?.adjustment(for: category(rhs.element)) ?? 0)
                 if abs(leftScore - rightScore) > 0.001 { return leftScore > rightScore }
                 return lhs.offset < rhs.offset
             }.map(\.element)
@@ -551,6 +592,16 @@ struct DiscoverView: View {
         }
 
         return result
+    }
+
+    private func applyLocalPersonalization(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+        let profile = orderingProfile ?? interactionProfile
+        return Self.rankFiveCardWindows(
+            items,
+            profile: profile,
+            score: { primaryItem($0)?.score ?? 0 },
+            category: { primaryItem($0).map(itemCategory) ?? "other" }
+        )
     }
 
     private func recordInteraction(for item: FeedItem, action: NativeDiscoverAction, source: String = "card") {
@@ -715,7 +766,8 @@ struct DiscoverView: View {
         // eligible children and derives category from the first ELIGIBLE child.
         // All-ineligible bundles disappear here, before they can steer a
         // neighbor's cooldown/interleave slot.
-        let sanitized = Self.sanitizedFeedItems(vm.items)
+        let retained = retainedItemIdsForCurrentPull
+        let sanitized = Self.sanitizedFeedItems(vm.items, retainingIds: retained)
 
         // 1. Drop settled/FINAL rot (resolved futures, completed games, past
         // resolution dates) so a near-coin-flip season-series or a finished game
@@ -723,7 +775,9 @@ struct DiscoverView: View {
         // every card is stale, filteredItems empties and the view renders the
         // graceful end state (L2-191 Item 2) instead of resurrecting settled
         // cards or minting a guess slot from them.
-        let staleBase = Self.eligibleItems(sanitized)
+        // #11984 Ruling C: cards already admitted in the current sitting stay in
+        // place with their settled result until a pull-to-refresh.
+        let staleBase = Self.eligibleItems(sanitized, retainingIds: retained)
 
         // 2. Soft, decaying dismiss (#1221): filter dismissed ids, but if that
         // would shrink the feed below `feedFloor` while more cards exist,
@@ -757,11 +811,12 @@ struct DiscoverView: View {
         // under test is the COMPOSITION the app runs. Two stages that are each
         // green apart can still be wired in the wrong order, or one of them wired
         // out entirely, and no unit test of either one would notice.
+        let profile = orderingProfile ?? interactionProfile
         return Self.personalize(
             staleBase,
             dismissedAt: dismissedAt,
             now: Date().timeIntervalSince1970,
-            isCooled: { interactionProfile?.suppresses(category: itemCategory($0)) ?? false }
+            isCooled: { profile?.suppresses(category: itemCategory($0)) ?? false }
         )
     }
 
@@ -1457,12 +1512,17 @@ struct DiscoverView: View {
     ///     grouping is split by. It changes only beside an `items` reassign, but
     ///     naming it keeps a record change from ever reusing a flat memo.
     private var presentationSignature: String {
-        "\(vm.itemsVersion)|\(dismissVersion)|\(profileVersion)|\(Self.staleBucket())|\(vm.acceptedSeatedEdition ?? "")"
+        "\(vm.itemsVersion)|\(dismissVersion)|\(orderingProfileVersion)|\(pullEpoch)|\(vm.acceptedSeatedEdition ?? "")"
     }
 
-    /// Coarse staleness bucket (30s) — see `presentationSignature`.
-    private static func staleBucket() -> Int {
-        Int(Date().timeIntervalSince1970 / 30)
+    /// Cards already admitted in the current sitting since the last pull-to-refresh
+    /// (#11984 Ruling C). When a pull-to-refresh or account switch bumps
+    /// `pullEpoch`, this returns `[]` so the refreshed deck is evaluated fresh.
+    private var retainedItemIdsForCurrentPull: Set<String> {
+        guard let cached = presentationCache.cachedValue, cached.pullEpoch == pullEpoch else {
+            return []
+        }
+        return cached.admittedIds
     }
 
     /// The memoized grouped feed, plus (#5105) the index where its continuation
@@ -1473,10 +1533,13 @@ struct DiscoverView: View {
         let items: [DiscoverGroupedItem]
         /// Nil = no section to draw (legacy deck, or no continuation card survived).
         let continuationStart: Int?
+        let admittedIds: Set<String>
+        let pullEpoch: Int
     }
 
     private func buildGroupedItems() -> GroupedPresentation {
         let filtered = filteredItems
+        let admitted = retainedItemIdsForCurrentPull.union(Self.admittedItemIds(in: filtered))
         // #5105: every filter and fallback above stayed GLOBAL (dismiss floor,
         // cooldown sink, stale gate). With an accepted seated edition the
         // admitted cards are then split by the section the server served them
@@ -1496,11 +1559,18 @@ struct DiscoverView: View {
             let openingItems = interleaveGrouped(applyLocalPersonalization(Array(floored[..<boundary])))
             let continuationItems = interleaveGrouped(applyLocalPersonalization(Array(floored[boundary...])))
             return GroupedPresentation(
-                items: openingItems + continuationItems, continuationStart: openingItems.count)
+                items: openingItems + continuationItems,
+                continuationStart: openingItems.count,
+                admittedIds: admitted,
+                pullEpoch: pullEpoch
+            )
         }
         return GroupedPresentation(
             items: interleaveGrouped(applyLocalPersonalization(enforceGroupFloor(groupRelated(interleave(filtered))))),
-            continuationStart: nil)
+            continuationStart: nil,
+            admittedIds: admitted,
+            pullEpoch: pullEpoch
+        )
     }
 
     /// #5105: split an already-filtered list by served section, keeping order
@@ -1578,7 +1648,7 @@ struct DiscoverView: View {
                 // P1): drop settled/closed/past/extreme children before the card
                 // ever sees them, and drop the whole bundle if nothing eligible
                 // remains rather than rendering a stale comparison.
-                let eligibleChildren = Self.eligibleBundleItems(bundle)
+                let eligibleChildren = Self.eligibleBundleItems(bundle, retainingIds: retainedItemIdsForCurrentPull)
                 if eligibleChildren.isEmpty { continue }
                 result.append(.group(
                     title: bundle.title,
@@ -2250,7 +2320,9 @@ struct DiscoverView: View {
         }
         .onChange(of: feedbackAuthState, initial: true) { _, newState in
             if case .signedIn = newState {
-                interactionProfile = DiscoverInteractionProfile.load()
+                let loaded = DiscoverInteractionProfile.load()
+                interactionProfile = loaded
+                orderingProfile = loaded
                 dismissedAt = Self.loadDismissed()
                 showFeedbackSignIn = false
             } else {
@@ -2258,9 +2330,12 @@ struct DiscoverView: View {
                 // those reads until resolved sign-in, and give guests no local
                 // profile or inherited account dismissals (#9644).
                 interactionProfile = nil
+                orderingProfile = nil
                 dismissedAt = [:]
             }
             profileVersion &+= 1
+            orderingProfileVersion &+= 1
+            pullEpoch &+= 1
             dismissVersion &+= 1
         }
         .sheet(isPresented: $showChallenge) {
@@ -2493,6 +2568,9 @@ struct DiscoverView: View {
             // the issue. The confirmation for a reader moved by this scroll is the
             // top safe-area notice in `body`, which no scroll offset can hide.
             visibleCount = 20
+            orderingProfile = interactionProfile ?? DiscoverInteractionProfile.load()
+            orderingProfileVersion &+= 1
+            pullEpoch &+= 1
             if let proxy {
                 withAnimation { proxy.scrollTo(Self.feedTopAnchor, anchor: .top) }
             }

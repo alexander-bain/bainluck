@@ -846,7 +846,7 @@ final class DiscoverViewModel: ObservableObject {
     ///   set an error" is not "the feed was refreshed" (#7170).
     @discardableResult
     @MainActor
-    func load(isRecoveryAttempt: Bool = false) async -> DiscoverLoadOutcome {
+    func load(isRecoveryAttempt: Bool = false, mayReorder: Bool = true) async -> DiscoverLoadOutcome {
         // A caller-initiated load owns the feed from here: stop any recovery ladder
         // still counting down behind the error card. If this load also ends with
         // nothing to show, its own terminal schedules a fresh one.
@@ -1120,33 +1120,40 @@ final class DiscoverViewModel: ObservableObject {
                 // must run inside each section rather than across the boundary.
                 let seating = Self.acceptedSeating(
                     response, paintedEdition: staged.edition, enabled: openingEditionEnabled)
-                acceptedSeatedEdition = seating?.edition
-                acceptedSeatedStart = seating?.start
-                if let seating { acceptedSeatedLimit = seating.limit }
-                seatedSections = seating?.sections ?? [:]
+                if mayReorder || !hasPublishedNetworkFeed {
+                    acceptedSeatedEdition = seating?.edition
+                    acceptedSeatedStart = seating?.start
+                    if let seating { acceptedSeatedLimit = seating.limit }
+                    seatedSections = seating?.sections ?? [:]
+                } else if let seating {
+                    for (k, v) in seating.sections where seatedSections[k] == nil {
+                        seatedSections[k] = v
+                    }
+                }
                 awaitingEditionReplacement = false
-                // #4110: THE FIX. This used to be an unconditional
+                // #4110 / #11984: THE FIX. This used to be an unconditional
                 // `items = Self.interleave(renderable)`, which re-derived the
                 // whole order from a different input than the boot seed had — so
                 // a card the reader was mid-way through could move or vanish the
                 // moment the network answered. Now the server's own edition token
-                // decides whether a reorder is legal at all.
+                // and `mayReorder` decide whether a reorder is legal at all.
+                let allowReorder = mayReorder || !hasPublishedNetworkFeed
                 switch DiscoverFeedReconcile.decision(
                     paintedCount: items.count,
                     paintedEdition: paintedEdition,
-                    incomingEdition: staged.edition
+                    incomingEdition: staged.edition,
+                    mayReorder: allowReorder
                 ) {
                 case .repaint:
                     items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)
+                    paintedEdition = staged.edition
                 case .reconcile:
                     items = DiscoverPriceRefresh.retainingPrices(DiscoverFeedReconcile.merge(
-                        painted: items, incoming: renderable, key: Self.itemKey), accepted: &acceptedPriceCards, fences: &priceFences)
+                        painted: items, incoming: renderable, preservePainted: !allowReorder, key: Self.itemKey), accepted: &acceptedPriceCards, fences: &priceFences)
+                    if allowReorder {
+                        paintedEdition = staged.edition
+                    }
                 }
-                // Both reads come from `staged` so the token recorded as painted
-                // describes the list actually painted. Taking the decision from
-                // the staged edition and the record from the raw one would leave
-                // the NEXT refresh comparing against a token no list ever had.
-                paintedEdition = staged.edition
                 // First paint provenance: only stamp network when the cache seed
                 // did NOT already produce first paint this load — a background
                 // revalidation behind a served cache must not relabel the render
