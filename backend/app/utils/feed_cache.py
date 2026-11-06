@@ -23,6 +23,11 @@ FEED_PREWARM_SCOPE_KEY = "bainluck_feed_prewarm"
 # so the warmer publishes under the exact key the request path would read.
 FEED_PREWARM_KEY_SCOPE_KEY = "bainluck_feed_prewarm_key"
 
+# #12041: Scope slot the route writes the opening-seating withholding summary
+# back into during a pre-warm, so the warmer reports and escalates held-back
+# cards per shape without coupling the public response payload to internal state.
+FEED_PREWARM_OPENING_SCOPE_KEY = "bainluck_feed_prewarm_opening"
+
 # Response-cache TTLs by principal (see ``feed_response_cache_ttl``).
 FEED_RESPONSE_TTL_ANON_SECONDS = 60
 FEED_RESPONSE_TTL_IDENTIFIED_SECONDS = 5
