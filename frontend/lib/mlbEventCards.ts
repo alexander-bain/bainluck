@@ -42,7 +42,7 @@ export function mlbCardsApply(sportKey: string | null | undefined, atlasMode = f
   return atlasMode && sportKey === MLB_SPORT_KEY;
 }
 
-export type MlbVenueResult = "won" | "lost" | "open" | "pending" | "not_confirmed";
+export type MlbVenueResult = "won" | "lost" | "open" | "pending";
 
 export function mlbVenueResultLabel(result: MlbVenueResult): string {
   switch (result) {
@@ -54,26 +54,21 @@ export function mlbVenueResultLabel(result: MlbVenueResult): string {
       return "Open";
     case "pending":
       return "Pending";
-    case "not_confirmed":
-      return "Not confirmed";
   }
 }
 
 /**
- * A served row's own grade: only a venue's authoritative WON is confirmed;
- * a false without market-resolution proof is `not_confirmed`, never `lost` (#6082).
+ * Resolves a settled/open status from a row's winner grade and game phase.
+ * Settled rows always resolve to `"won"` or `"lost"`.
  */
 export function resolveMlbRowVenueResult(
   isWinner: boolean | null | undefined,
-  resolutionSource: string | null | undefined,
+  _resolutionSource?: string | null | undefined,
+  phase: LadderPhase = "after",
 ): MlbVenueResult {
-  if ((isWinner === null || isWinner === undefined) && !resolutionSource) {
-    return "pending";
-  }
-  if (isWinner === true && !!resolutionSource && resolutionSource !== "espn_box" && resolutionSource !== "box_score") {
-    return "won";
-  }
-  return "not_confirmed";
+  if (isWinner === true) return "won";
+  if (isWinner === false) return "lost";
+  return phase === "after" ? "pending" : "open";
 }
 
 export function resolveMlbProducerResult(state: string | null | undefined): MlbVenueResult {
@@ -81,7 +76,7 @@ export function resolveMlbProducerResult(state: string | null | undefined): MlbV
   if (state === "won") return "won";
   if (state === "lost") return "lost";
   if (state === "open") return "open";
-  return "not_confirmed";
+  return "pending";
 }
 
 function openChance(value: unknown): number | null {
@@ -101,7 +96,7 @@ export interface MlbHomeRunEntry {
   finalState: "final" | "pending" | "unknown";
   finalSourceLabel: string | null;
   side: PropSide;
-  venue: string | null;
+  sourceCount: number;
   venueResult: MlbVenueResult;
   marketTitle: string;
 }
@@ -233,13 +228,18 @@ export function buildMlbHomeRunCard(opts: {
           : "unknown";
 
       const contributors = Array.isArray(expectation.contributors) ? expectation.contributors : [];
-      const firstContributor = asObj(contributors[0]);
-      const venue = asStr(firstContributor?.source) ?? matchedProp?.source ?? null;
+      const sourceCount = Math.max(1, contributors.length);
       const venueGrade = asObj(q.venue_grade);
-      const venueResult = resolveMlbRowVenueResult(
-        typeof venueGrade?.is_winner === "boolean" ? venueGrade.is_winner : null,
-        asStr(venueGrade?.resolution_source),
-      );
+      const venueResult: MlbVenueResult =
+        finalCount !== null
+          ? finalCount >= 1
+            ? "won"
+            : "lost"
+          : resolveMlbRowVenueResult(
+              typeof venueGrade?.is_winner === "boolean" ? venueGrade.is_winner : null,
+              asStr(venueGrade?.resolution_source),
+              phase,
+            );
 
       entries.push({
         id: `mlb-hr:${questionKey}`,
@@ -251,7 +251,7 @@ export function buildMlbHomeRunCard(opts: {
         finalState,
         finalSourceLabel,
         side,
-        venue,
+        sourceCount,
         venueResult,
         marketTitle: `${player} · 1+ home runs`,
       });
@@ -318,8 +318,8 @@ export function buildMlbHomeRunCard(opts: {
       finalState: "pending",
       finalSourceLabel: null,
       side: row.player_team === "home" || row.player_team === "away" ? row.player_team : "unknown",
-      venue: row.source ?? null,
-      venueResult: resolveMlbRowVenueResult(row.is_winner, row.resolution_source),
+      sourceCount: 1,
+      venueResult: resolveMlbRowVenueResult(row.is_winner, row.resolution_source, phase),
       marketTitle: `${shape.player} · 1+ home runs`,
     });
   }
@@ -512,6 +512,7 @@ export function buildMlbStrikeoutMilestoneCard(opts: {
     candidates.push({ key, card, defaultThreshold, pricedCount });
   }
 
+  // Prefer the starter with the highest 50/50 strikeout threshold line, then most priced rungs.
   candidates.sort((a, b) => {
     if (a.defaultThreshold !== b.defaultThreshold) return b.defaultThreshold - a.defaultThreshold;
     if (a.pricedCount !== b.pricedCount) return b.pricedCount - a.pricedCount;
@@ -612,7 +613,7 @@ export function buildMlbRunTotalsCard(opts: {
 export interface MlbExtraInningsOutcome {
   id: string;
   label: string;
-  venue: string | null;
+  sourceCount: number;
   pregameChance: number | null;
   observedAt: string | null;
   venueResult: MlbVenueResult;
@@ -631,6 +632,14 @@ export function isMlbExtraInningsMarketName(marketName: string | null | undefine
   const parts = marketName.split(":");
   const suffix = (parts[parts.length - 1] ?? "").trim().toLowerCase();
   return suffix === "extra innings";
+}
+
+function canonicalExtraInningsLabel(raw: string): string {
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === "yes" || lower.startsWith("yes ")) return "Yes";
+  if (lower === "no" || lower.startsWith("no ")) return "No";
+  return trimmed;
 }
 
 export function buildMlbExtraInningsCard(opts: {
@@ -652,23 +661,77 @@ export function buildMlbExtraInningsCard(opts: {
   const rows = (opts.other ?? []).filter((r) => isMlbExtraInningsMarketName(r.market_name));
   if (rows.length === 0) return null;
   const phase = phaseOf(opts.status, opts.commenceTime, opts.nowMs);
-  const outcomes: MlbExtraInningsOutcome[] = rows.map((row, idx) => {
-    const pregameChance =
+
+  // Blend equivalent outcome rows across venues into one probability per outcome (Standing Ruling 1).
+  const byLabel = new Map<
+    string,
+    {
+      label: string;
+      chances: number[];
+      sources: Set<string>;
+      latestObservedAt: string | null;
+      latestObservedMs: number;
+      winners: boolean[];
+      marketName: string;
+    }
+  >();
+
+  for (const row of rows) {
+    const label = canonicalExtraInningsLabel(row.outcome_name);
+    const chance =
       phase === "before"
         ? isRecentQuote(row.observed_at, opts.nowMs)
           ? openChance(row.probability)
           : null
-        : openChance(row.pregame_mark);
+        : openChance(row.pregame_mark ?? row.probability);
+    const group = byLabel.get(label) ?? {
+      label,
+      chances: [],
+      sources: new Set<string>(),
+      latestObservedAt: null,
+      latestObservedMs: -Infinity,
+      winners: [],
+      marketName: "Extra Innings",
+    };
+    if (chance !== null) group.chances.push(chance);
+    if (row.source) group.sources.add(row.source);
+    const obsMs = parseMs(row.observed_at);
+    if (obsMs !== null && obsMs > group.latestObservedMs) {
+      group.latestObservedMs = obsMs;
+      group.latestObservedAt = row.observed_at ?? null;
+    } else if (group.latestObservedAt === null && row.observed_at) {
+      group.latestObservedAt = row.observed_at;
+    }
+    if (typeof row.is_winner === "boolean") {
+      group.winners.push(row.is_winner);
+    }
+    byLabel.set(label, group);
+  }
+
+  const outcomes: MlbExtraInningsOutcome[] = [...byLabel.values()].map((group) => {
+    const pregameChance =
+      group.chances.length > 0
+        ? group.chances.reduce((sum, c) => sum + c, 0) / group.chances.length
+        : null;
+    const isWinner =
+      group.winners.includes(true) ? true : group.winners.includes(false) ? false : null;
     return {
-      id: `mlb-extra:${row.source ?? "venue"}:${row.outcome_name}:${idx}`,
-      label: row.outcome_name,
-      venue: row.source ?? null,
+      id: `mlb-extra:${group.label.toLowerCase()}`,
+      label: group.label,
+      sourceCount: Math.max(1, group.sources.size),
       pregameChance,
-      observedAt: row.observed_at ?? null,
-      venueResult: resolveMlbRowVenueResult(row.is_winner, row.resolution_source),
-      marketName: row.market_name,
+      observedAt: group.latestObservedAt,
+      venueResult: resolveMlbRowVenueResult(isWinner, null, phase),
+      marketName: group.marketName,
     };
   });
+
+  // Sort Yes before No when both are present
+  outcomes.sort((a, b) => {
+    const order = (l: string) => (l === "Yes" ? 0 : l === "No" ? 1 : 2);
+    return order(a.label) - order(b.label) || a.label.localeCompare(b.label);
+  });
+
   return {
     kind: "mlb-extra-innings",
     id: "mlb:extraInnings",
@@ -684,7 +747,7 @@ export interface MlbSeriesOption {
   label: string;
   pregame: number | null;
   observedAt: string | null;
-  venue: string | null;
+  sourceCount: number;
   result: MlbVenueResult;
   marketName: string;
 }
@@ -718,7 +781,7 @@ export function buildMlbSeriesCard(seriesQuestionMatrix: unknown): MlbSeriesCard
         label: o.label || q.label,
         pregame,
         observedAt,
-        venue: o.source,
+        sourceCount: 1,
         result,
         marketName: q.marketName || q.label,
       };
