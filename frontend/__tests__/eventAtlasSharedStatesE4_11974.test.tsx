@@ -143,6 +143,21 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
     expect(postponedHtml).toContain(ATLAS_STATE_COPY.postponed);
     expect(postponedHtml).not.toContain("54");
 
+    const stoppedWithoutLabelHtml = renderToStaticMarkup(
+      <EventHeroProbabilityPair
+        homeProb={0.54}
+        awayProb={0.46}
+        homePct={54}
+        awayPct={46}
+        stopped
+        stoppageLabel={null}
+        atlasMode
+      />,
+    );
+    expect(stoppedWithoutLabelHtml).not.toContain('data-testid="event-atlas-state-label"');
+    expect(stoppedWithoutLabelHtml).not.toContain(ATLAS_STATE_COPY.postponed);
+    expect(stoppedWithoutLabelHtml).not.toContain("54");
+
     const voidHtml = renderToStaticMarkup(
       <EventHeroProbabilityPair
         homeProb={null}
