@@ -68,7 +68,7 @@ export function MidtermsAtlasChamberControl({
           marketId: ctrl.market_id,
           kicker: `CHAMBER CONTROL · ${settledWinner ? "settled" : "open"}`,
           marketTitle: `${label} Control`,
-          source: ctrl.source ?? "kalshi",
+          source: ctrl.source ?? null,
         }}
         settledWinner={settledWinner}
         contenders={[

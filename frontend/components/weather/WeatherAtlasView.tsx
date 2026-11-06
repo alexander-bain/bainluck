@@ -236,7 +236,7 @@ export default function WeatherAtlasView() {
               meta={{
                 marketTitle: rainCardHeading(dailyRain.length),
                 kicker: "DAILY RAIN",
-                source: "kalshi",
+                source: null,
               }}
               rungs={dailyRainRungs}
             />
@@ -263,7 +263,7 @@ export default function WeatherAtlasView() {
               meta={{
                 marketTitle: "Above 1 inch of rain",
                 kicker: "MONTHLY RAINFALL",
-                source: "kalshi",
+                source: null,
               }}
               rungs={monthlyRungs}
             />
@@ -336,9 +336,6 @@ export default function WeatherAtlasView() {
                     resolutionDate: selectedCity.iso ?? null,
                     source: selectedCity.src ?? selectedCity.srcs?.[0] ?? null,
                     sourceCount: selectedCity.srcs?.length ?? 1,
-                    sourceLabels: selectedCity.srcs?.map((s) =>
-                      s === "kalshi" ? "Kalshi" : "Polymarket"
-                    ),
                   }}
                   buckets={cityBuckets}
                   stationContextLabel={isoDayLabel(selectedCity.iso)}

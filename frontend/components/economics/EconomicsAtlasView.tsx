@@ -129,7 +129,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                   meta={{
                     kicker: `FOMC · ${m.date || m.mo || "Meeting"}`,
                     marketTitle: `${m.mo || m.date || "FOMC"} Fed funds rate`,
-                    source: "kalshi",
+                    source: m.src ?? null,
                   }}
                   buckets={pairsToOutcomes(m.dist, true)}
                 />
@@ -154,7 +154,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                 meta={{
                   kicker: "RATE CUTS",
                   marketTitle: "How many cuts in 2026?",
-                  source: "kalshi",
+                  source: null,
                 }}
                 buckets={pairsToOutcomes(t.fed.rate_cuts as [number, string][], true)}
               />
@@ -208,7 +208,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                       meta={{
                         kicker: "NEXT RELEASE",
                         marketTitle: cpi.q || cpi.mo || "Inflation release",
-                        source: cpi.src ?? "kalshi",
+                        source: cpi.src ?? null,
                       }}
                       releaseAt={releaseAt}
                       shape="buckets"
@@ -222,7 +222,7 @@ export default function EconomicsAtlasView({ data }: { data: EconData }) {
                     meta={{
                       kicker: cpi.is_next ? "NEXT RELEASE" : cpi.mo || "INFLATION",
                       marketTitle: cpi.q || cpi.mo || "Inflation release",
-                      source: cpi.src ?? "kalshi",
+                      source: cpi.src ?? null,
                     }}
                     buckets={outcomes}
                   />

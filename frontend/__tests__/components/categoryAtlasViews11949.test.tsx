@@ -1,5 +1,22 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
+jest.mock("@/components/atlas/AtlasDetailsSheet", () => {
+  const actual = jest.requireActual<
+    typeof import("@/components/atlas/AtlasDetailsSheet")
+  >("@/components/atlas/AtlasDetailsSheet");
+  return {
+    __esModule: true,
+    default: (props: import("@/components/atlas/AtlasDetailsSheet").AtlasDetailsSheetProps) => {
+      const forceOpen = Boolean(
+        (globalThis as { __FORCE_ATLAS_SHEET_OPEN__?: boolean })
+          .__FORCE_ATLAS_SHEET_OPEN__
+      );
+      return actual.default({ ...props, open: props.open || forceOpen });
+    },
+  };
+});
+
 import PoliticsAtlasView from "@/components/politics/PoliticsAtlasView";
 import {
   MidtermsAtlasChamberControl,
@@ -9,6 +26,65 @@ import EconomicsAtlasView from "@/components/economics/EconomicsAtlasView";
 import EntertainmentAtlasView from "@/components/entertainment/EntertainmentAtlasView";
 
 describe("#11949 Category Atlas Views (Orders 8–11)", () => {
+  afterEach(() => {
+    delete (globalThis as { __FORCE_ATLAS_SHEET_OPEN__?: boolean })
+      .__FORCE_ATLAS_SHEET_OPEN__;
+  });
+
+  it("Chamber control cards with no source field render 'Published source' (never 'Kalshi') and multi-source cards without venue labels render '2 sources'", () => {
+    (globalThis as { __FORCE_ATLAS_SHEET_OPEN__?: boolean }).__FORCE_ATLAS_SHEET_OPEN__ =
+      true;
+
+    const chamberHtml = renderToStaticMarkup(
+      React.createElement(MidtermsAtlasChamberControl, {
+        senate: { market_id: 107867, gop: 100, dem: 0, winner: "Republicans" },
+        house: { market_id: 107869, gop: 0, dem: 100, winner: "Democrats" },
+      })
+    );
+    expect(chamberHtml).toContain("data-testid=\"atlas-details-attribution\"");
+    expect(chamberHtml).toContain("Published source");
+    expect(chamberHtml).not.toContain("Kalshi");
+
+    const politicsChamberOnlyHtml = renderToStaticMarkup(
+      React.createElement(PoliticsAtlasView, {
+        data: {
+          total_markets: 2,
+          updated_at: "2026-11-05T18:00:00Z",
+          themes: {
+            presidential: {
+              count: 1,
+              headline_q: "Who wins the 2028 presidential election?",
+              has_dual_source: true,
+              kalshi_market_id: 101,
+              poly_market_id: 102,
+              candidates: [
+                { name: "JD Vance", party: "R" as const, kalshi: 31, poly: 29, merged: 30 },
+              ],
+              side_markets: [],
+            },
+            congressional: {
+              count: 2,
+              chamber_control: {
+                senate: {
+                  market_id: 107867,
+                  gop: 100,
+                  dem: 0,
+                  winner: "Republicans",
+                  status: "resolved",
+                },
+                house: null,
+              },
+              markets: [],
+            },
+          },
+        } as any,
+      })
+    );
+    expect(politicsChamberOnlyHtml).toContain("Published source");
+    expect(politicsChamberOnlyHtml).toContain("2 sources");
+    expect(politicsChamberOnlyHtml).not.toContain("Both Kalshi and Polymarket");
+    expect(politicsChamberOnlyHtml).not.toContain(">Kalshi<");
+  });
   it("PoliticsAtlasView renders settled ✓ Won chamber control, ascending threshold ladders, and retires venue toggles", () => {
     const data = {
       total_markets: 5,

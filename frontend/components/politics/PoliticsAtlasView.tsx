@@ -153,7 +153,7 @@ function renderChamberRaceCard(
         marketId: ctrl.market_id,
         kicker: `CHAMBER CONTROL · ${settledWinner ? "settled" : "open"}`,
         marketTitle: `${chamberName} Control`,
-        source: ctrl.source ?? "kalshi",
+        source: ctrl.source ?? null,
       }}
       contenders={contenders}
       settledWinner={settledWinner}
@@ -382,9 +382,6 @@ export default function PoliticsAtlasView({ data }: { data: PoliticsData }) {
                 pres?.headline_q || "Who wins the 2028 presidential election?",
               observedAt: data.updated_at,
               sourceCount: pres?.has_dual_source ? 2 : 1,
-              sourceLabels: pres?.has_dual_source
-                ? ["Kalshi", "Polymarket"]
-                : ["Kalshi"],
             }}
             outcomes={presOutcomes}
             journeySeries={presJourneySeries}
