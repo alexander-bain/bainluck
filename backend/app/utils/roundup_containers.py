@@ -119,6 +119,32 @@ class RoundupRefusal:
         object.__setattr__(self, "reasons", tuple(reasons))
 
 
+def _definition_window(
+    rule: Mapping[str, Any],
+) -> tuple[Optional[float], Optional[float]]:
+    """Calendar trigger shared by a kind's card and container (#11935, 65-A).
+
+    Dates are reviewed definition parameters, never inferred from venue close
+    dates. Windows include their start and exclude their end.
+    """
+    bounds = []
+    for key in ("valid_from", "valid_until"):
+        raw = rule.get(key)
+        if raw is None:
+            bounds.append(None)
+            continue
+        if not isinstance(raw, str):
+            raise ValueError(f"{key} must be an ISO timestamp with a timezone")
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if value.utcoffset() is None:
+            raise ValueError(f"{key} must include a timezone")
+        bounds.append(value.timestamp())
+    start, end = bounds
+    if start is not None and end is not None and start >= end:
+        raise ValueError("valid_from must precede valid_until")
+    return start, end
+
+
 @dataclass(frozen=True)
 class RoundupProducer:
     """Definition of a computed round-up card and its throwaway container."""
@@ -138,6 +164,8 @@ class RoundupProducer:
     story_key: Optional[str] = None
     score: float = 0.0
     enabled: Optional[Callable[[], bool]] = None
+    valid_from: Optional[float] = None
+    valid_until: Optional[float] = None
 
     def __init__(
         self,
@@ -192,6 +220,9 @@ class RoundupProducer:
         )
         object.__setattr__(self, "score", float(score))
         object.__setattr__(self, "enabled", enabled)
+        start, end = _definition_window(rule or {})
+        object.__setattr__(self, "valid_from", start)
+        object.__setattr__(self, "valid_until", end)
 
 
 def roundup_container_id(slug: str) -> int:
@@ -431,10 +462,15 @@ async def evaluate_roundup_producer(
 
     is_fixture_seq = isinstance(db, (list, tuple))
     ts = time.time() if now is None else float(now)
+    # Check before either cache. An old card's warm payload must not outlive
+    # its definition at the instant the dated successor takes over (65-A).
+    if (producer.valid_from is not None and ts < producer.valid_from) or (
+        producer.valid_until is not None and ts >= producer.valid_until
+    ):
+        return None, None
     rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
     no_cache = (
-        rule_cfg.get("cache") == "none"
-        or rule_cfg.get("producer") == "yardstick_pair"
+        rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair"
     )
     use_cache = not is_fixture_seq and not no_cache and container_read_cache_enabled()
     cache_key = (
