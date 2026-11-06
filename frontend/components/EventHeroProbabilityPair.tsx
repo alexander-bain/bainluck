@@ -448,12 +448,12 @@ export default function EventHeroProbabilityPair({
         data-stopped="true"
         {...headlineDisplayAttributes(null)}
       >
-        {atlasMode && (
+        {atlasMode && stoppageLabel !== null && (
           <span
             data-testid="event-atlas-state-label"
             className="text-lg font-semibold text-text-muted leading-none"
           >
-            {stoppageLabel ?? ATLAS_STATE_COPY.postponed}
+            {stoppageLabel === "Postponed" ? ATLAS_STATE_COPY.postponed : stoppageLabel}
           </span>
         )}
       </div>
