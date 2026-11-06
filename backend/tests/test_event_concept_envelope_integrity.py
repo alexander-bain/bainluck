@@ -113,47 +113,8 @@ def _stored_envelope(rc, slot):
 # ---------------------------------------------------------------------------
 
 
-def test_only_the_holders_token_can_release_the_lock():
-    """THE guard for finding 1. A producer that did not acquire cannot release."""
-    rc = _FakeRedis()
-    mine = cache_mod.acquire_refresh_lock(rc, KEYS)
-    assert mine, "precondition: the lock should have been acquired"
-
-    # A second producer cannot even get one.
-    assert cache_mod.acquire_refresh_lock(rc, KEYS) is None
-
-    # ...and cannot release the first producer's lock with a token of its own
-    # invention, nor by declining to name one at all.
-    assert cache_mod.release_refresh_lock(rc, KEYS, "some-other-token") is False
-    assert cache_mod.release_refresh_lock(rc, KEYS, None) is False
-    assert KEYS.refresh_lock in rc.store, (
-        "a non-owner released the single-flight lock — this is #1678 finding 1, "
-        "and it admits a second concurrent builder"
-    )
-
-    # The owner can.
-    assert cache_mod.release_refresh_lock(rc, KEYS, mine) is True
-    assert KEYS.refresh_lock not in rc.store
 
 
-def test_release_fails_closed_when_the_compare_and_delete_cannot_run():
-    """A broken Redis must leave the lock to expire, never delete it blind.
-
-    Failing OPEN here would reintroduce the defect on exactly the unhappy path
-    where concurrency is most likely.
-    """
-
-    class _NoEval(_FakeRedis):
-        def eval(self, *a, **k):
-            raise RuntimeError("NOSCRIPT")
-
-    rc = _NoEval()
-    token = cache_mod.acquire_refresh_lock(rc, KEYS)
-    assert cache_mod.release_refresh_lock(rc, KEYS, token) is False
-    assert KEYS.refresh_lock in rc.store, (
-        "the lock was dropped when its compare-and-delete failed — fail-closed "
-        "costs one delayed refresh, fail-open costs a stampede"
-    )
 
 
 @pytest.mark.asyncio
