@@ -78,14 +78,14 @@ export const EVALS_SOURCES: readonly EvalsSource[] = [
   },
   {
     id: "calibration-exit-exam",
-    label: "The accuracy page's final exam",
+    label: "Checklist for the accuracy page",
     date: "2026-08-13",
     href: `${REPO}/blob/91ae8c8e1c/docs/CALIBRATION-EXIT-EXAM.md`,
     usedBy: ["timeline"],
   },
   {
     id: "discover-exit-exam",
-    label: "Discover's final exam, the first interest measure",
+    label: "Discover checklist, the first interest measure",
     date: "2026-08-10",
     href: `${REPO}/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md`,
     usedBy: ["timeline"],

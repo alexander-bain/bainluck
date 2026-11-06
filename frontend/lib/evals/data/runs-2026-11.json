@@ -20,21 +20,21 @@
       },
       "cost": null,
       "receipt": {
-        "label": "Discover's final exam, the first interest measure",
+        "label": "Discover checklist, the first interest measure",
         "href": "https://github.com/alexander-bain/bainluck/blob/3ae6db4fed/docs/DISCOVER-EXIT-EXAM.md"
       }
     },
     {
       "id": "calibration-exit-exam",
       "date": "2026-08-13",
-      "title": "The accuracy page's final exam",
+      "title": "Checklist for the accuracy page",
       "by": "by_hand",
       "result": "fail",
-      "note": "Alex's checklist for the accuracy page. An item turns green only with linked proof, and the exam has not passed.",
+      "note": "Alex's checklist for the accuracy page. An item turns green only with linked proof, and the checklist has not passed.",
       "figures": {},
       "cost": null,
       "receipt": {
-        "label": "The accuracy page's final exam, its scoreboard",
+        "label": "Checklist for the accuracy page, its scoreboard",
         "href": "https://github.com/alexander-bain/bainluck/blob/91ae8c8e1c/docs/CALIBRATION-EXIT-EXAM.md"
       }
     },

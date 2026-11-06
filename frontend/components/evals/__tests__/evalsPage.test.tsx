@@ -169,7 +169,9 @@ describe("/evals S1 renders the shell", () => {
     const sections = Array.from(page.querySelectorAll("[data-evals-section]")).map((s) =>
       s.getAttribute("data-evals-section")
     );
+    // The gaps close the story; every other section sits in the full record below them.
     expect(sections).toEqual([
+      "gaps",
       "forward-record",
       "exam",
       "confusion",
@@ -177,7 +179,6 @@ describe("/evals S1 renders the shell", () => {
       "tests-for-tests",
       "test-library",
       "watchers",
-      "gaps",
       "how-to-read",
       "sources",
     ]);
@@ -283,6 +284,16 @@ describe("the truth rules hold on the rendered page", () => {
       )
     );
     expect(scan.figuresOutsideScope).toEqual(["24 of 25"]);
+  });
+
+  it("NEGATIVE CONTROL: digits in a worked example are skipped, and the same digits outside one are caught", () => {
+    const el = document.createElement("div");
+    el.innerHTML =
+      '<figure data-evals-example=""><figcaption>For example</figcaption><p>−150 means 60%</p></figure>' +
+      "<p>−150 means 60%</p>";
+    expect(scanEvalsDom(el).bareNumbers).toHaveLength(2);
+    el.querySelectorAll("p")[1].remove();
+    expect(scanEvalsDom(el).bareNumbers).toEqual([]);
   });
 
   it("NEGATIVE CONTROL: the scanner sees a figure inside a PLANNED item in markup", () => {
@@ -409,9 +420,9 @@ describe("S2: the twin exam and its gates", () => {
     expect(devTwin?.getAttribute("data-n")).toBe(String(EXAM_RAW.per_pass["3"].dev.per_relation.twin.recall.n));
   });
 
-  it("the matching topic's picture reads FAIL, under LAST RUN, with the never-seen figures from the record", async () => {
+  it("the matching chapter's picture reads FAIL, under LAST RUN, with the never-seen figures from the record", async () => {
     const page = await mountPage();
-    const picture = page.querySelector('[data-evals-topic="matching"] [data-topic-picture]');
+    const picture = page.querySelector('[data-evals-chapter="matching"] [data-chapter-picture="exam"]');
     expect(picture?.closest("details")).toBeNull();
     expect(picture?.getAttribute("data-truth-scope")).toBe("last_run");
     expect(picture?.querySelector('[data-result="fail"]')?.textContent).toBe("FAIL");
@@ -704,9 +715,9 @@ describe("S4: the tests for the tests", () => {
     expect(link?.getAttribute("href")).toBe(`https://github.com/alexander-bain/bainluck/issues/${study?.dropped?.issue}`);
   });
 
-  it("the tests topic's picture shows the meter's caught count, LAST RUN, and its limit in words while none runs the site's own code", async () => {
+  it("the code chapter's picture shows the meter's caught count, LAST RUN, and its limit in words while none runs the site's own code", async () => {
     const page = await mountPage();
-    const picture = page.querySelector('[data-evals-topic="tests"] [data-topic-picture]');
+    const picture = page.querySelector('[data-evals-chapter="code"] [data-chapter-picture="breakages"]');
     expect(picture?.closest("details")).toBeNull();
     expect(picture?.getAttribute("data-truth-scope")).toBe("last_run");
     // The picture itself is an exhibit under the same label; the numbers are the figures inside it.

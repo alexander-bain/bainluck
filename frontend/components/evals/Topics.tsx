@@ -2,12 +2,13 @@
 
 import type { ReactNode } from "react";
 
-import Figure, { Exhibit } from "@/components/evals/Figure";
+import Figure, { Example, Exhibit } from "@/components/evals/Figure";
 import ResultChip from "@/components/evals/ResultChip";
 import TruthChip from "@/components/evals/TruthChip";
 import { DOT_CLASS, ReviewerMarks, WatcherAlarms, type Dot } from "@/components/evals/TopScreen";
 import type { ForwardRecordState } from "@/components/evals/useForwardRecord";
-import { TOPIC_COPY, TOP_COPY } from "@/lib/evals/copy";
+import { STORY_COPY, TOPIC_COPY, TOP_COPY } from "@/lib/evals/copy";
+import { EXAMPLE_AMERICAN_ODDS, EXAMPLE_CONTRACT_CENTS, americanOddsText, americanToPercent } from "@/lib/evals/example";
 import { barPointsText } from "@/lib/evals/forwardRecord";
 import { reviewerTally, type ReviewerResults } from "@/lib/evals/reviewerResults";
 import type { ReviewerStudy } from "@/lib/evals/reviewerStudy";
@@ -17,51 +18,73 @@ import { acrossPasses, examTruth, type TwinExam } from "@/lib/evals/twinExam";
 import { watcherHealth, type WatcherList } from "@/lib/evals/watchers";
 
 /**
- * THE TOPICS BELOW THE TOP SCREEN (Alex, Nov 6): what this is and why it
- * matters, in plain words; a picture; then a "Show the details" fold holding
- * everything the page carried before, unchanged. Nothing outside the fold may
- * need the glossary (`topScreen.test.tsx`), and every number in a picture is a
- * labelled, linked figure.
+ * THE STORY BELOW THE TOP SCREEN (Alex, Nov 6, 2:04 PM: "tell our ENTIRE story
+ * to an interested party in approachable language"). One chapter per step of
+ * the stack: a title, a few plain sentences, and at most a picture. No word
+ * that needs the glossary appears in a chapter (`topScreen.test.tsx`); the
+ * records behind every number sit in one fold at the bottom of the page.
  */
-export function Topic({
+export function Chapter({
   id,
   title,
-  why,
-  picture,
+  paragraphs,
   children,
 }: {
   id: string;
   title: string;
-  why: ReactNode;
-  picture?: ReactNode;
-  /** The details: the sections as they stood, under the fold. */
+  paragraphs: readonly string[];
+  /** The chapter's picture, if it has one. */
   children?: ReactNode;
 }) {
   return (
-    <section id={`topic-${id}`} data-evals-topic={id} aria-labelledby={`topic-${id}-title`} className="space-y-3 scroll-mt-4">
-      <h2 id={`topic-${id}-title`} className="text-title-3 text-text-primary">
+    <section id={`chapter-${id}`} data-evals-chapter={id} aria-labelledby={`chapter-${id}-title`} className="space-y-3 scroll-mt-4">
+      <h2 id={`chapter-${id}-title`} className="text-title-3 text-text-primary">
         {title}
       </h2>
-      <p className="text-body text-text-primary">{why}</p>
-      {picture}
-      {children && (
-        <details data-evals-fold={id} className="group">
-          <summary className="cursor-pointer list-none text-caption text-accent-brand [&::-webkit-details-marker]:hidden">
-            <span aria-hidden="true" className="mr-1 inline-block transition-transform group-open:rotate-90">
-              ›
-            </span>
-            {TOP_COPY.fold}
-          </summary>
-          <div className="mt-3 space-y-6">{children}</div>
-        </details>
-      )}
+      {paragraphs.map((text, i) => (
+        <p key={i} className="text-body text-text-primary">
+          {text}
+        </p>
+      ))}
+      {children}
     </section>
   );
 }
 
-function PictureCard({ scope, children, footer }: { scope: FigureTruth["kind"]; children: ReactNode; footer: ReactNode }) {
+/** One view written two ways, and the one probability we show for both. Illustrative: see `lib/evals/example.ts`. */
+export function OddsExample() {
+  const C = STORY_COPY;
+  const chance = americanToPercent(EXAMPLE_AMERICAN_ODDS);
+  const odds = americanOddsText(EXAMPLE_AMERICAN_ODDS);
+  const label = `${C.exampleAriaBefore} ${odds} ${C.exampleAriaMiddle} ${EXAMPLE_CONTRACT_CENTS} ${C.exampleAriaCents} ${C.exampleAriaAfter} ${chance}%.`;
+  const source = (who: string, what: string) => (
+    <div className="rounded-lg border border-surface-border bg-surface-elevated px-3 py-2">
+      <p className="text-micro text-text-secondary">{who}</p>
+      <p className="text-title-3 text-text-primary">{what}</p>
+    </div>
+  );
   return (
-    <div data-truth-scope={scope} data-topic-picture="" className="bg-surface-card rounded-xl border border-surface-border p-4 space-y-3">
+    <div className="bg-surface-card rounded-xl border border-surface-border p-4" data-chapter-picture="example">
+      <Example caption={C.exampleLabel} label={label}>
+        <div className="flex items-center gap-3" aria-hidden="true">
+          <div className="grid flex-1 gap-2">
+            {source(C.exampleBetting, odds)}
+            {source(C.exampleMarket, `${EXAMPLE_CONTRACT_CENTS}¢`)}
+          </div>
+          <span className="text-title-3 text-text-secondary">→</span>
+          <div className="rounded-lg bg-accent-brand/15 px-4 py-3 text-center">
+            <p className="text-micro text-text-secondary">{C.exampleUs}</p>
+            <p className="text-title-1 font-semibold text-accent-brand">{chance}%</p>
+          </div>
+        </div>
+      </Example>
+    </div>
+  );
+}
+
+function PictureCard({ name, scope, children, footer }: { name: string; scope: FigureTruth["kind"]; children: ReactNode; footer: ReactNode }) {
+  return (
+    <div data-truth-scope={scope} data-chapter-picture={name} className="bg-surface-card rounded-xl border border-surface-border p-4 space-y-3">
       {children}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-text-secondary">{footer}</div>
     </div>
@@ -80,7 +103,7 @@ export function KindsPicture({ state }: { state: ForwardRecordState }) {
     </Figure>
   );
   return (
-    <PictureCard scope={truth.kind} footer={<TruthChip truth={truth} />}>
+    <PictureCard name="kinds" scope={truth.kind} footer={<TruthChip truth={truth} />}>
       <p className="text-caption text-text-secondary">{C.kindsBefore}</p>
       <Exhibit truth={truth} label={C.kindsLabel}>
         <div className="flex flex-wrap gap-1.5" aria-hidden="true" data-kinds-at-bar={atBar} data-kinds-total={total}>
@@ -128,7 +151,7 @@ export function ExamPicture({ exam }: { exam: TwinExam }) {
     </div>
   );
   return (
-    <PictureCard scope={truth.kind} footer={<TruthChip truth={truth} />}>
+    <PictureCard name="exam" scope={truth.kind} footer={<TruthChip truth={truth} />}>
       <div className="flex items-center gap-2">
         <ResultChip result={exam.result} />
         <span className="text-body text-text-primary">{exam.result === "pass" ? C.passed : C.failed}</span>
@@ -165,7 +188,7 @@ export function BreakagesPicture({ board }: { board: Scoreboard }) {
     </Figure>
   );
   return (
-    <PictureCard scope={truth.kind} footer={<TruthChip truth={truth} />}>
+    <PictureCard name="breakages" scope={truth.kind} footer={<TruthChip truth={truth} />}>
       <p className="text-body text-text-primary">
         {C.caughtBefore} {n(caught, "text-title-3")} {C.caughtOf} {n(total)} {C.caughtAfter}
       </p>
@@ -213,7 +236,7 @@ export function ChecksPicture({ list }: { list: WatcherList }) {
   };
   const order: Dot[] = ["problems", "fixed", "stopped", "unknown"];
   return (
-    <PictureCard scope={truth.kind} footer={<TruthChip truth={truth} />}>
+    <PictureCard name="checks" scope={truth.kind} footer={<TruthChip truth={truth} />}>
       <p className="text-body text-text-primary">
         {n(health.working, "text-title-3")} {C.of} {n(health.total)} {C.workingAfter}
       </p>
@@ -245,7 +268,7 @@ export function ReviewerPicture({ results, study }: { results: ReviewerResults; 
     </Figure>
   );
   return (
-    <PictureCard scope={truth.kind} footer={<TruthChip truth={truth} showClock />}>
+    <PictureCard name="reviewer" scope={truth.kind} footer={<TruthChip truth={truth} showClock />}>
       <p className="text-body text-text-primary" data-review-kind="mistakes">
         {tally.mistakes.reviewed > 0 ? (
           <>

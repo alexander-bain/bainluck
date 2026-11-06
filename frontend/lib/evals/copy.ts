@@ -35,14 +35,6 @@ export const EVALS_SHARE_TITLE = "How we test — Bain Luck";
 export const EVALS_DESCRIPTION =
   "How Bain Luck tests the probabilities it shows, where each result comes from, and what we have not tested yet.";
 
-export const HERO_COPY = {
-  lead:
-    "Every probability on this site has to pass tests. Some tests run by themselves every few hours, some are done by people, and some are exams for the site's AI helpers.",
-  // Decide 43-J1 (Alex, Nov 5): say plainly that AI agents write most of the code.
-  detail:
-    "AI agents write most of the code and most of the tests on this site, and other AI agents and Alex, who builds Bain Luck, check their work. That is why the tests matter. Every number here is marked LIVE, LAST RUN with its date, or PLANNED, and links to where it came from; a list we keep by hand is marked LAST REVIEWED with its date.",
-} as const;
-
 /**
  * The top screen (Alex, Nov 6): one plain answer and three pictures, before any
  * detail. Two readers: a smart friend with no AI or engineering background who
@@ -91,15 +83,79 @@ export const TOP_COPY = {
 } as const;
 
 /**
- * The topics below the top screen (Alex, Nov 6): each opens with what it is
- * and why it matters, in words a reader with no AI background can follow, then
- * a picture, then a "Show the details" fold with everything the page carried
- * before. Like the top screen, nothing here may need the glossary.
+ * The story below the top screen (Alex, Nov 6, 2:04 PM: "tell our ENTIRE story
+ * to an interested party in approachable language"). The whole stack, one
+ * chapter per step: a few plain sentences each, and at most a picture. No word
+ * that needs the glossary and none of our internal names (`topScreen.test.tsx`).
+ * The records behind every number sit in one fold at the bottom.
+ *
+ * The combining chapter states the weighting in `backend/app/utils/aggregation.py`:
+ * betting 3.0, ESPN 1.5, our model 1.0, prediction markets 0.8 before a game;
+ * in live play the two real-time markets carry betting's weight (Alex, Oct 31,
+ * #10090 D); recency decay and a per-source share cap on top. Change the words
+ * if those change.
  */
+export const STORY_COPY = {
+  sources: {
+    title: "Where the numbers come from",
+    paragraphs: [
+      "Bain Luck doesn't make up its own odds. It reads them from betting sites and prediction markets, where people back their views with real money, and from a few sports forecasters.",
+      "Every site writes its view its own way, so we turn each one into a plain probability that anyone can read.",
+    ],
+  },
+  matching: {
+    title: "Spotting the same thing on different sites",
+    paragraphs: [
+      "The same game shows up on many sites, under slightly different names and start times. Before we can put the numbers together, we have to be sure two listings are the same thing.",
+      "For games we match on the teams, the start time and each site's own ID. When we can't be sure, we keep the two listings apart rather than risk mixing up two different games.",
+      "Prediction markets are written as free text, so we tested an AI to pair them up, on examples it had never seen:",
+    ],
+  },
+  combining: {
+    title: "One number instead of many",
+    paragraphs: [
+      "When several sources cover the same outcome, we combine them into one probability: the one you see on each card.",
+      "Before a game, betting sites count most, then sports forecasters, then our own statistical model, then the prediction markets. During a game the prediction markets, which update fastest, count as much as the betting sites. A reading that has gone old counts for less, and no single source can decide the number on its own.",
+      "We grade every source against what really happened, below. We don't yet grade the combined number itself; it's on our list of what we haven't tested.",
+    ],
+  },
+  comingTrue: {
+    title: "Do our probabilities come true?",
+    paragraphs: [
+      "Every market ends: the team wins or it doesn't, the bill passes or it fails. We keep every finished market and check whether the things we gave a one-in-three chance happened about one time in three, and so on up the scale. The first picture at the top of this page is that check.",
+    ],
+  },
+  code: {
+    title: "Checking the code before it reaches you",
+    paragraphs: [
+      // Decide 43-J1 (Alex, Nov 5): say plainly that AI agents write most of the code.
+      "AI agents write most of this site's code, so nothing goes live on trust. A change has to pass automatic tests before it ships, most changes are also read by an AI reviewer, and other AI agents and Alex, who builds Bain Luck, check the work.",
+      "We also test the testers. A test only helps if it fails when something breaks, so we break things on purpose and check that a test notices. And we hide real mistakes from the site's past in code changes, to see whether the AI reviewer spots them.",
+    ],
+  },
+  liveChecks: {
+    title: "Watching the live site",
+    paragraphs: [
+      "Some checks run on their own around the clock, like smoke alarms. One makes sure every game on each league's official schedule is on the site, another that every big event has its page before it starts, another that the main things a reader does, like search, still work. Whatever they find goes straight onto our work list.",
+      "A check that goes quiet is as bad as no check, so we show what each one last reported, and count a check with no public record as unknown, not fine.",
+    ],
+  },
+  exampleLabel: "For example",
+  exampleBetting: "A betting site",
+  exampleMarket: "A prediction market",
+  exampleUs: "On Bain Luck",
+  exampleAriaBefore: "For example, odds of",
+  exampleAriaMiddle: "on a betting site and a share costing",
+  exampleAriaCents: "cents",
+  exampleAriaAfter: "on a prediction market both mean a chance of",
+  recordLead:
+    "Every number on this page says whether it is LIVE, from the LAST RUN of a test, or from a list we LAST REVIEWED by hand, and links to where it came from. Work we have not built yet says PLANNED and shows no number.",
+  recordSummary: "The full record: every test, every run and every source",
+} as const;
+
+/** The story's pictures: their sentences and labels. Like the story, nothing here may need the glossary. */
 export const TOPIC_COPY = {
   probabilities: {
-    title: "Do our probabilities come true?",
-    why: "Every probability on this site is a forecast. If a forecast says one in three, the thing should happen about one time in three. We check that against every finished market we have, and we show the result whether it is good or bad.",
     kindsBefore: "We check each kind of market on its own too: sports, politics, weather and the rest.",
     kindsOf: "of",
     kindsInsideBefore: "kinds come within",
@@ -107,29 +163,23 @@ export const TOPIC_COPY = {
     kindsLabel: "One square per kind of market: green when its probabilities come close to what happened, red when they do not.",
   },
   matching: {
-    title: "Can our AI tell when two sites list the same market?",
-    why: "The same market is often listed on more than one prediction site. When it is, we put their numbers together, so you see one probability instead of two. To find those matches we use an AI matcher, and before it may decide on its own it has to pass an exam on examples it has never seen.",
-    failed: "It failed, so a person still checks every match it suggests.",
+    failed: "It failed, so a person still checks every pair it suggests.",
     passed: "It passed, so it may decide on its own.",
     foundBefore: "Found",
     foundOf: "of the",
-    foundAfter: "real matches it had never seen",
-    wrongBefore: "Wrongly matched",
+    foundAfter: "real pairs it had never seen",
+    wrongBefore: "Wrongly paired",
     wrongTo: "to",
     wrongOf: "of the",
-    wrongAfter: "pairs in the exam",
-    label: "Two bars from the matcher's exam: the real matches it found, and the pairs it matched wrongly.",
+    wrongAfter: "it was shown",
+    label: "Two bars from the AI's test: the real pairs it found, and the pairs it got wrong.",
   },
   reviewer: {
-    title: "Does our AI reviewer catch mistakes?",
-    why: "Before a change to the site's code goes live, an AI reviewer reads it. To find out whether it really catches problems, we take real mistakes from the site's past, hide them in code changes again, and mix in harmless changes as decoys. A good reviewer flags every mistake and none of the decoys.",
     legendBefore:
       "Each bug is a hidden mistake and each page a harmless decoy. Green means it made the right call, red the wrong one, and grey means it has not looked yet. Every one gets",
     legendAfter: "tries.",
   },
   tests: {
-    title: "Do our own tests catch mistakes?",
-    why: "We also keep a library of small automatic tests that run every time the code changes. A test only helps if it fails when something breaks, so we break things on purpose and check that a test notices.",
     caughtBefore: "Caught",
     caughtOf: "of",
     caughtAfter: "breakages we planted on purpose",
@@ -140,8 +190,6 @@ export const TOPIC_COPY = {
     label: "One block per planted breakage, green when a test caught it.",
   },
   checks: {
-    title: "Are our automatic checks working?",
-    why: "Some checks run by themselves on a schedule, like smoke alarms. Each one looks for one kind of problem on the live site and puts what it finds on our work list. A check that stops reporting is as bad as no check, so we show what each one last reported.",
     of: "of",
     workingAfter: "checks are working: their latest run is on the record and they are still reporting",
     legend: {
@@ -150,14 +198,6 @@ export const TOPIC_COPY = {
       stopped: "found problems it could not report",
       unknown: "with no public record, so unknown",
     },
-  },
-  gaps: {
-    title: "What we have not tested yet",
-    why: "No set of tests covers everything. These are the gaps we know about, each linked to the work that would close it.",
-  },
-  more: {
-    title: "How to read this page",
-    why: "Every number says whether it is LIVE, from its LAST RUN, or from a list we LAST REVIEWED by hand, and links to where it came from.",
   },
 } as const;
 
