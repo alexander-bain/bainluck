@@ -7504,6 +7504,10 @@ celery_app.conf.beat_schedule = {
         # off-tournament) and generates only while The Open is LIVE — one OpenAI
         # call per run, at most. Background queue (runs the full golf aggregation).
         "task": "app.tasks.refresh_open_commentary",
+        # C-1 (2026-11-06) did NOT take B-7's July-only gate here: a month-gated
+        # crontab is counted by the settlement sweep's minute census as twenty
+        # fires an hour all year, and the run already exits on a cheap Redis
+        # read outside The Open. Stays an interval beat.
         "schedule": 180.0,
         "options": {"queue": "background"},
     },
@@ -7914,10 +7918,6 @@ celery_app.conf.beat_schedule = {
         # :15 keeps one of its old minutes, which the tennis-link offset census
         # (`test_tennis_link_beat_restart_starvation_3316`) counts as a reader.
         "schedule": crontab(minute=15),
-    },
-    "check-tier1-coverage": {
-        "task": "app.tasks.check_tier1_coverage",
-        "schedule": crontab(minute=30),  # Every hour at :30
     },
     "backfill-team-links": {
         "task": "app.tasks.backfill_team_links",

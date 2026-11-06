@@ -137,3 +137,56 @@ def test_the_bounds_fit_inside_the_watchdogs_soft_limit():
     soft = celery_app.tasks["app.tasks.run_data_quality_watchdog"].soft_time_limit
     worst = sum(c.get("timeout_ms", wd.WATCHDOG_CHECK_TIMEOUT_MS) for c in wd.CHECKS) / 1000
     assert worst < soft, (worst, soft)
+
+
+# --- B-7: finished tournaments stop being upkept --------------------------
+
+
+def test_the_us_open_upkeep_window_is_its_calendar_dates_plus_margins():
+    from datetime import datetime, timezone
+
+    from app.utils.majors_calendar import upkeep_window_open
+
+    def at(day):
+        return datetime.fromisoformat(f"{day}T12:00:00+00:00").astimezone(timezone.utc)
+
+    slug = "us-open-tennis-2026"  # 2026-08-24 .. 2026-09-13 in the calendar
+    assert not upkeep_window_open(slug, at("2026-08-16"))
+    assert upkeep_window_open(slug, at("2026-08-17"))  # 7 days ahead
+    assert upkeep_window_open(slug, at("2026-09-16"))  # 3 days after
+    assert not upkeep_window_open(slug, at("2026-09-17"))
+    assert not upkeep_window_open(slug, at("2026-11-06"))
+    # Fails open: a slug the calendar does not know keeps running.
+    assert upkeep_window_open("not-in-the-calendar", at("2026-11-06"))
+    assert upkeep_window_open(None, at("2026-11-06"))
+
+
+async def test_an_out_of_season_scheduled_run_refreshes_nothing(monkeypatch):
+    from app.tasks import tournament_price_refresh as rail
+
+    monkeypatch.setattr(rail, "in_season", lambda slug, now=None: False)
+    stats = await rail._refresh_registered_tournament_prices()
+    assert stats["terminal"] == "no_work"
+    # An explicit list is never gated.
+    seen = []
+    import app.utils.tournament_register as reg
+
+    monkeypatch.setattr(reg, "load_register", lambda t, s: seen.append((t, s)))
+    await rail._refresh_registered_tournament_prices([("us-open", "2026")])
+    assert seen == [("us-open", "2026")]
+
+
+async def test_the_matchup_linker_skips_out_of_season_tournaments(monkeypatch):
+    from app.tasks import tournament_matchup_linker as linker
+    from app.tasks import tournament_price_refresh as rail
+
+    monkeypatch.setattr(rail, "in_season", lambda slug, now=None: False)
+    stats = await linker._link_tournament_matchups()
+    assert stats["tournaments"] == 0
+
+
+def test_the_tier1_coverage_beat_is_retired_but_the_task_stays():
+    from app.tasks import celery_app
+
+    assert "check-tier1-coverage" not in celery_app.conf.beat_schedule
+    assert "app.tasks.check_tier1_coverage" in celery_app.tasks

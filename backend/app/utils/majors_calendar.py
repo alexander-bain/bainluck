@@ -259,3 +259,42 @@ def marquee_pin_state(
         return None
     state = calendar_window_state(entry, now, post_settlement_hours)
     return state if state in ("live", "whathit") else None
+
+
+#: C-1 / B-7 (worker audit 2026-11-06): how long before a tournament's start and
+#: after its end its scheduled upkeep (prices, results, match links, register
+#: sentinel) keeps running. The US Open ended 2026-09-13; on 2026-11-06 its
+#: upkeep was still firing 32 times an hour for `resolved 0` / `no_work`.
+UPKEEP_LEAD_DAYS = 7
+UPKEEP_TAIL_DAYS = 3
+
+
+def upkeep_window_open(
+    calendar_slug: str | None,
+    now: datetime,
+    *,
+    lead_days: int = UPKEEP_LEAD_DAYS,
+    tail_days: int = UPKEEP_TAIL_DAYS,
+    path: str | Path | None = None,
+) -> bool:
+    """Whether a tournament's SCHEDULED upkeep should run at ``now``. B-7.
+
+    True from ``lead_days`` before the calendar entry's start through
+    ``tail_days`` after its end day. Fails OPEN — an unknown slug, a missing
+    entry or unusable dates return True — so a calendar gap keeps today's
+    behaviour instead of silently stopping a live tournament's upkeep.
+    """
+    if not calendar_slug:
+        return True
+    entry = next((e for e in load_calendar(path) if e.get("slug") == calendar_slug), None)
+    if not entry:
+        return True
+    start_d = _as_utc_date(entry.get("start"))
+    end_d = _as_utc_date(entry.get("end"))
+    if start_d is None or end_d is None:
+        return True
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    opens = datetime.combine(start_d - timedelta(days=lead_days), time.min, tzinfo=timezone.utc)
+    closes = datetime.combine(end_d + timedelta(days=tail_days + 1), time.min, tzinfo=timezone.utc)
+    return opens <= now < closes

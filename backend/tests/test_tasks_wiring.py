@@ -323,7 +323,7 @@ class TestBeatScheduleCompleteness:
         "canonicalize-entities-daily",
         "precompute-interestingness",
         "check-aggregation-quality",
-        "check-tier1-coverage",
+        # "check-tier1-coverage" retired by C-1 / B-7 (2026-11-06): one log line, no reader.
         "daily-digest",
         "backfill-polymarket-price-history",
         "backfill-kalshi-price-history",

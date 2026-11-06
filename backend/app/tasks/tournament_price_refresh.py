@@ -209,6 +209,20 @@ DEFAULT_RESULT_TARGETS: list[tuple[str, str]] = [("us-open", "US Open")]
 RESULT_CALENDAR_SLUGS: dict[str, str] = {"us-open": "us-open-tennis-2026"}
 
 
+def in_season(slug: str, now: datetime | None = None) -> bool:
+    """C-1 / B-7: whether a hub's SCHEDULED upkeep runs now.
+
+    Reads `majors_calendar.upkeep_window_open` through `RESULT_CALENDAR_SLUGS`
+    (the one written-down hub -> calendar map). A slug with no entry fails open.
+    Only the scheduled default is gated; an explicit target list always runs.
+    """
+    from app.utils.majors_calendar import upkeep_window_open
+
+    return upkeep_window_open(
+        RESULT_CALENDAR_SLUGS.get(slug), now or datetime.now(timezone.utc)
+    )
+
+
 def settled_yes_probability(market: Any) -> float | None:
     """``1.0``/``0.0`` when the venue has SETTLED this book, else ``None``.
 
@@ -318,7 +332,10 @@ async def _refresh_registered_tournament_prices(
     # and must reach the `no_work` terminal below. Falling back to the default
     # on `[]` would turn a deliberate no-op into a full run, and — worse for
     # this file — make the terminal unreachable and its guard untestable.
-    targets = DEFAULT_PRICE_TARGETS if tournaments is None else tournaments
+    targets = (
+        [t for t in DEFAULT_PRICE_TARGETS if in_season(t[0])]
+        if tournaments is None else tournaments
+    )
     if not targets:
         return _refresh_terminal(
             {"tournaments": 0, "conditions_requested": 0, "errors": []},
@@ -1151,7 +1168,10 @@ async def _sync_tournament_results(
     # that also carries whatever else is on that week. `is None`, not `or`, for
     # the reason given on the price rail: an explicit `[]` means nothing to sync
     # and has to be able to say so.
-    targets = DEFAULT_RESULT_TARGETS if tournaments is None else tournaments
+    targets = (
+        [t for t in DEFAULT_RESULT_TARGETS if in_season(t[0])]
+        if tournaments is None else tournaments
+    )
 
     stats: dict[str, Any] = {"tournaments": 0, "written": 0, "errors": []}
     if not targets:
