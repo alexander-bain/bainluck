@@ -552,28 +552,47 @@ async def _load_awards_markets_from_db(
         .limit(200)
     )
     res = await db.execute(stmt)
-    rows = res.scalars().all()
+    if not hasattr(res, "scalars") or not callable(res.scalars):
+        return {}
+    scalars_obj = res.scalars()
+    if not hasattr(scalars_obj, "all") or not callable(scalars_obj.all):
+        return {}
+    rows = list(scalars_obj.all())
     out: dict[int, dict[str, Any]] = {}
     for fm in rows:
-        mid = int(fm.id)
+        if isinstance(fm, Mapping):
+            raw_id = fm.get("id")
+            if isinstance(raw_id, int) and not isinstance(raw_id, bool) and raw_id > 0:
+                entry = dict(fm)
+                entry["id"] = int(raw_id)
+                out[int(raw_id)] = entry
+            continue
+        raw_mid = getattr(fm, "id", None)
+        if not isinstance(raw_mid, int) or isinstance(raw_mid, bool) or raw_mid <= 0:
+            continue
+        mid = int(raw_mid)
         out[mid] = {
             "id": mid,
-            "name": fm.name,
-            "status": fm.status,
-            "source": fm.source,
-            "resolution_date": fm.resolution_date,
-            "updated_at": fm.updated_at,
-            "mutually_exclusive": True,
+            "name": getattr(fm, "name", None),
+            "status": getattr(fm, "status", None),
+            "source": getattr(fm, "source", None),
+            "resolution_date": getattr(fm, "resolution_date", None),
+            "updated_at": getattr(fm, "updated_at", None),
+            "mutually_exclusive": getattr(fm, "mutually_exclusive", True),
             "outcomes": [
                 {
-                    "id": o.id,
-                    "name": o.name,
-                    "probability": o.current_probability,
-                    "is_winner": o.is_winner,
-                    "resolution_source": o.resolution_source,
-                    "last_updated": o.last_updated,
+                    "id": getattr(o, "id", None),
+                    "name": getattr(o, "name", None),
+                    "probability": getattr(o, "current_probability", None),
+                    "is_winner": getattr(o, "is_winner", None),
+                    "resolution_source": getattr(o, "resolution_source", None),
+                    "observed_at": (
+                        o.last_updated.isoformat()
+                        if hasattr(getattr(o, "last_updated", None), "isoformat")
+                        else getattr(o, "last_updated", None)
+                    ),
                 }
-                for o in (fm.outcomes or [])
+                for o in (getattr(fm, "outcomes", None) or [])
             ],
         }
     return out
