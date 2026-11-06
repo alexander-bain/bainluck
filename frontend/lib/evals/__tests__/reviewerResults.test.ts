@@ -3,14 +3,17 @@
  *
  * `reviewer-results-2026-11-06.json` is kept by hand, so every number in it is
  * held to Builder B's own posts, quoted word for word in the test-only receipts
- * file: the plan's size, the latest count, and each result's case, try and
- * outcome. The loader's refusals each have a case here, and the tally is
- * checked against the study record's own count of planted mistakes and
- * harmless changes.
+ * file: the plan's size, the latest count and its tallies, and each result's
+ * case, try and verdict. Builder B numbers the harmless changes differently
+ * from the study record; each such result names Builder B's id, and the
+ * mapping to ours is held to the study record's own receipt for that case. The
+ * loader's refusals each have a case here, and the tally is checked against
+ * the study record's own count of planted mistakes and harmless changes.
  */
 
 import RESULTS from "@/lib/evals/data/reviewer-results-2026-11-06.json";
 import RECEIPTS from "@/lib/evals/data/reviewer-results-2026-11-06.receipts.json";
+import STUDY_RECEIPTS from "@/lib/evals/data/reviewer-study-2026-11-05.receipts.json";
 import { loadReviewerResults, resultsProblem, reviewerTally } from "@/lib/evals/reviewerResults";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { caseMarks } from "@/lib/evals/topScreen";
@@ -33,7 +36,7 @@ describe("the committed results", () => {
   });
 
   it("the count is the latest post's: as many results as it says are recorded, out of the same plan", () => {
-    const m = /(\d+)\/(\d+) recorded/.exec(RECEIPTS.count.quote);
+    const m = /(\d+)\/(\d+) (?:real reviews )?recorded/.exec(RECEIPTS.count.quote);
     expect(m).not.toBeNull();
     expect(RESULTS.results.length).toBe(Number(m?.[1]));
     expect(RESULTS.planned).toBe(Number(m?.[2]));
@@ -41,23 +44,54 @@ describe("the committed results", () => {
     expect(RESULTS.as_of).toBe(RECEIPTS.count.posted_at);
   });
 
-  it("each result is the one its post names: case, try and outcome, at the post's time", () => {
+  it("each result is the one its post names: case, try and verdict, at the post's time", () => {
+    // The review's own verdict, by what was planted: a planted mistake is caught
+    // when changes are requested and missed when approved; a harmless change is
+    // let through when approved and a false alarm when changes are requested. A
+    // new kind of outcome needs its words added here, on purpose.
+    const VERDICT: Record<string, string> = {
+      caught: "CHANGES_REQUESTED",
+      missed: "APPROVED",
+      passed: "APPROVED",
+      flagged: "CHANGES_REQUESTED",
+    };
     const WORD: Record<string, string> = { caught: "CAUGHT", missed: "MISSED" };
     expect(RESULTS.results.length).toBe(RECEIPTS.results.length);
     RESULTS.results.forEach((r, i) => {
-      const receipt = RECEIPTS.results[i];
+      const receipt = RECEIPTS.results[i] as { href: string; posted_at: string; quote: string; builder_case?: string };
       expect(r.receipt.href).toBe(receipt.href);
       expect(r.at).toBe(receipt.posted_at);
-      // A new kind of outcome needs its post's word added here, on purpose.
-      expect(WORD[r.outcome]).toBeDefined();
-      expect(receipt.quote).toContain(`${r.case}/pass${r.pass}: ${WORD[r.outcome]}`);
+      expect(VERDICT[r.outcome]).toBeDefined();
+      const id = receipt.builder_case ?? r.case;
+      const named = [`${id}/pass${r.pass}: ${WORD[r.outcome]}`, `${id}/P${r.pass} | ${VERDICT[r.outcome]}`];
+      expect(named.some((n) => receipt.quote.includes(n))).toBe(true);
+      expect(receipt.quote).toContain(VERDICT[r.outcome]);
     });
   });
 
-  it("no harmless change is counted while the latest post says none has been reviewed", () => {
-    expect(RECEIPTS.count.controls_quote).toMatch(/all \d+ control reviews are still UNKNOWN/);
+  it("a result posted under another id maps to our case through the study record's own words for it", () => {
+    const ids = RECEIPTS.study_ids as unknown as Record<string, { maps_to: string; study_quote: string }>;
+    const cases = STUDY_RECEIPTS.cases as Record<string, { quote: string }>;
+    const remapped = RESULTS.results.filter((_, i) => (RECEIPTS.results[i] as { builder_case?: string }).builder_case);
+    expect(remapped.length).toBeGreaterThan(0);
+    RESULTS.results.forEach((r, i) => {
+      const builderCase = (RECEIPTS.results[i] as { builder_case?: string }).builder_case;
+      if (!builderCase) return;
+      expect(ids[builderCase].maps_to).toBe(r.case);
+      expect(cases[r.case].quote).toBe(ids[builderCase].study_quote);
+    });
+    // Two of Builder B's ids never map to one case.
+    const targets = Object.entries(ids).filter(([k]) => !k.startsWith("_")).map(([, v]) => v.maps_to);
+    expect(new Set(targets).size).toBe(targets.length);
+  });
+
+  it("the tally is the latest post's own: mistakes caught of those reviewed, and false alarms among the harmless changes", () => {
+    const defects = /Observed defects: \*\*(\d+)\/(\d+) caught\*\*/.exec(RECEIPTS.count.defects_quote);
+    const controls = /Observed controls: \*\*(\d+)\/(\d+) false alarms\*\*/.exec(RECEIPTS.count.controls_quote);
+    expect(defects && controls).toBeTruthy();
     const tally = reviewerTally(loadReviewerResults(STUDY)!, STUDY!);
-    expect(tally.harmless.reviewed).toBe(0);
+    expect([tally.mistakes.right, tally.mistakes.reviewed]).toEqual([Number(defects?.[1]), Number(defects?.[2])]);
+    expect([tally.harmless.wrong, tally.harmless.reviewed]).toEqual([Number(controls?.[1]), Number(controls?.[2])]);
   });
 });
 
@@ -85,7 +119,9 @@ describe("the tally and the blocks", () => {
     STUDY!.cases
       .filter((c) => c.kind === "defect")
       .forEach((c, i) => expect(bugs[i] === "not_yet").toBe(!tried.has(c.id)));
-    expect(decoys.every((m) => m === "not_yet")).toBe(true);
+    STUDY!.cases
+      .filter((c) => c.kind === "control")
+      .forEach((c, i) => expect(decoys[i] === "not_yet").toBe(!tried.has(c.id)));
   });
 
   it("a mistake caught on one try and missed on another is marked wrong, never right", () => {
@@ -126,7 +162,7 @@ describe("an unreadable list is refused, never repaired", () => {
   it("a case the study does not have, a try the plan does not have, or the same try twice", () => {
     refuse((raw) => (raw.results[0].case = "r99"));
     refuse((raw) => (raw.results[0].pass = 4));
-    refuse((raw) => raw.results.push({ ...raw.results[0] }));
+    refuse((raw) => raw.results.push({ ...raw.results[raw.results.length - 1] }));
   });
 
   it("a plan that does not split evenly across the cases, or no plan", () => {
@@ -135,9 +171,9 @@ describe("an unreadable list is refused, never repaired", () => {
   });
 
   it("a result recorded after the count it belongs to, or out of time order", () => {
-    refuse((raw) => (raw.results[0].at = "2026-11-07T00:00:00Z"));
+    refuse((raw) => (raw.results[raw.results.length - 1].at = "2026-11-07T00:00:00Z"));
     refuse((raw) =>
-      raw.results.unshift({ ...raw.results[0], case: "r01", at: "2026-11-06T08:00:00Z" })
+      raw.results.unshift({ ...raw.results[0], case: "r05", at: "2026-11-06T08:00:00Z" })
     );
   });
 
