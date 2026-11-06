@@ -2489,6 +2489,8 @@ export interface ChamberControl {
   gop: number;
   dem: number;
   market_id: number;
+  source?: string;
+  winner?: string;
 }
 
 export interface PoliticsThemeCongressional {
