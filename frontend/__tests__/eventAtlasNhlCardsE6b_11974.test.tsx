@@ -446,7 +446,7 @@ describe("#11974 Step E6b — NHL story cards behind ?atlas=1", () => {
       <EventCardView
         card={totalsCard!}
         teams={TEAMS}
-        selection={{ total: 3 }}
+        selection={{ total: "o:goals:7.5" }}
         onSelect={() => {}}
         atlasMode
         onDetails={() => {}}
