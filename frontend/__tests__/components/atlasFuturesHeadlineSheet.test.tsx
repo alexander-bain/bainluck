@@ -66,8 +66,20 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       expect(formatAtlasAttribution('kalshi')).toBe('Kalshi');
       expect(formatAtlasAttribution('polymarket')).toBe('Polymarket');
       expect(formatAtlasAttribution('kalshi', { sourceCount: 2 })).toBe(
-        'Both Kalshi and Polymarket',
+        '2 sources',
       );
+      expect(
+        formatAtlasAttribution('datagolf', {
+          sourceCount: 2,
+          sourceLabels: [],
+        }),
+      ).toBe('2 sources');
+      expect(
+        formatAtlasAttribution('odds_api', {
+          sourceCount: 3,
+          sourceLabels: ['  '],
+        }),
+      ).toBe('3 sources');
       expect(
         formatAtlasAttribution('kalshi', {
           sourceLabels: ['Kalshi', 'Polymarket'],
@@ -227,8 +239,6 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
           source="kalshi"
           sourceCount={1}
           externalId="KXDEMSWINGSTATEGOVSWEEP-26NOV03"
-          marketId={109918}
-          outcomeId={1601726}
           rulesText="If Democrats win the governorships of ALL of the following states, the market resolves to Yes."
         />,
       );
@@ -246,8 +256,6 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
       expect(html).toContain('If Democrats win the governorships');
       expect(html).not.toContain('data-testid="atlas-details-settled-at"');
       expect(html).not.toContain('data-testid="atlas-details-last-observation"');
-      expect(html).not.toContain('109918');
-      expect(html).not.toContain('1601726');
     });
 
     it('withholds opening chance silently when the market is multi-venue and omits original-market row for numeric external IDs', () => {
@@ -262,21 +270,19 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
           source="polymarket"
           sourceCount={2}
           externalId="65536371"
-          marketId={109085}
-          outcomeId={4001}
         />,
       );
 
       expect(html).not.toContain('data-testid="atlas-details-opening"');
-      expect(html).toContain('Both Kalshi and Polymarket');
+      expect(html).toContain('2 sources');
+      expect(html).not.toContain('Both Kalshi and Polymarket');
       expect(html).toContain('data-testid="atlas-details-last-observation"');
       expect(html).toContain('>97%<');
       expect(html).not.toContain('data-testid="atlas-details-original-market"');
       expect(html).not.toContain('65536371');
-      expect(html).not.toContain('109085');
     });
 
-    it('opens on one tap from FuturesHero and closes on Close button click', async () => {
+    it('opens on one tap from FuturesHero, locks body scroll while open, and closes on Close button click', async () => {
       function Harness() {
         const [open, setOpen] = useState(false);
         return (
@@ -313,6 +319,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
           root.render(<Harness />);
         });
         expect(container.querySelector('[data-testid="atlas-details-sheet"]')).toBeNull();
+        expect(document.body.style.overflow).toBe('');
 
         const trigger = container.querySelector(
           '[data-testid="atlas-details-trigger"]',
@@ -323,6 +330,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
           trigger.click();
         });
         expect(container.querySelector('[data-testid="atlas-details-sheet"]')).not.toBeNull();
+        expect(document.body.style.overflow).toBe('hidden');
 
         const closeBtn = container.querySelector(
           '[data-testid="atlas-details-close"]',
@@ -333,6 +341,7 @@ describe('Step F1 — Atlas futures headline, result, and shared details sheet (
           closeBtn.click();
         });
         expect(container.querySelector('[data-testid="atlas-details-sheet"]')).toBeNull();
+        expect(document.body.style.overflow).toBe('');
       } finally {
         await act(async () => {
           root.unmount();
