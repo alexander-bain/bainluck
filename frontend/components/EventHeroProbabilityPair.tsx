@@ -484,9 +484,13 @@ export default function EventHeroProbabilityPair({
               data-testid="event-atlas-state-label"
               className="text-lg font-semibold text-text-muted leading-none"
             >
-              <span data-testid="atlas-no-recent-probability">
-                {ATLAS_STATE_COPY.noRecentPrice}
-              </span>
+              {started ? (
+                <span data-testid="atlas-no-recent-probability">
+                  {ATLAS_STATE_COPY.noRecentPrice}
+                </span>
+              ) : (
+                "No price yet"
+              )}
             </span>
           ) : null
         ) : (
