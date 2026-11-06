@@ -4214,13 +4214,13 @@ async def get_feed(
             else ("session" if feed_session_id else "anonymous")
         )
     )
-    _opening_log_shape = {
-        "mode": mode,
-        "event_pct": event_pct,
-        "limit": limit,
-        "offset": offset,
-        "edition_requested": bool(_edition_request),
-    }
+    _opening_log_shape = _declared_opening_request_shape(
+        mode=mode,
+        event_pct=event_pct,
+        limit=limit,
+        offset=offset,
+        edition_requested=bool(_edition_request),
+    )
 
     async def _serve_shared_last_good(base_key, reason, *, singleflight, **finalize):
         """#11259: the base's durable copy, served as THIS page, or ``None``.
@@ -7591,6 +7591,80 @@ def _should_log_opening_offender(
     return True
 
 
+_OPENING_LOG_MODES: tuple[str, ...] = ("discover", "sports", "trending", "for_you")
+_OPENING_LOG_LIMITS: tuple[int, ...] = (
+    1,
+    2,
+    3,
+    5,
+    10,
+    12,
+    15,
+    20,
+    24,
+    25,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+)
+_OPENING_LOG_OFFSETS: tuple[int, ...] = (0, 10, 20, 30, 40, 50, 60, 80, 100)
+_OPENING_LOG_PCTS: tuple[float, ...] = (
+    0.0,
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3,
+    0.5,
+    1.0,
+)
+
+
+def _declared_opening_request_shape(
+    *,
+    mode: str | None = None,
+    event_pct: float | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+    edition_requested: bool = False,
+) -> dict[str, Any]:
+    """Return an untainted request-shape dict for §5 opening outcome logs.
+
+    Query parameters are user-provided taint sources (`py/log-injection`).
+    Every value in the returned dict is chosen from module-constant literal
+    tuples by equality comparison (`showcase_futures._declared_slug` pattern),
+    so no request-derived value reaches a log sink.
+    """
+    mode_norm = (mode or "discover").strip().lower() if isinstance(mode, str) else "discover"
+    declared_mode = next((m for m in _OPENING_LOG_MODES if m == mode_norm), "other")
+    declared_pct = (
+        next((p for p in _OPENING_LOG_PCTS if p == event_pct), -1.0)
+        if isinstance(event_pct, (int, float))
+        else None
+    )
+    declared_limit = (
+        next((n for n in _OPENING_LOG_LIMITS if n == limit), -1)
+        if isinstance(limit, int)
+        else None
+    )
+    declared_offset = (
+        next((n for n in _OPENING_LOG_OFFSETS if n == offset), -1)
+        if isinstance(offset, int)
+        else None
+    )
+    return {
+        "mode": declared_mode,
+        "event_pct": declared_pct,
+        "limit": declared_limit,
+        "offset": declared_offset,
+        "edition_requested": True if edition_requested else False,
+    }
+
+
 def _log_opening_outcome(
     outcome: Any,
     *,
@@ -7711,11 +7785,30 @@ def _log_opening_outcome(
         detail_trunc = str(off.get("detail") or getattr(outcome, "detail", "") or "")[
             :500
         ]
+        safe_shape = _declared_opening_request_shape(
+            mode=request_shape.get("mode") if isinstance(request_shape, dict) else None,
+            event_pct=(
+                request_shape.get("event_pct")
+                if isinstance(request_shape, dict)
+                else None
+            ),
+            limit=(
+                request_shape.get("limit") if isinstance(request_shape, dict) else None
+            ),
+            offset=(
+                request_shape.get("offset") if isinstance(request_shape, dict) else None
+            ),
+            edition_requested=bool(
+                request_shape.get("edition_requested")
+                if isinstance(request_shape, dict)
+                else False
+            ),
+        )
         record = {
             "reason": reason_tok,
             "path": path,
             "deck_kind": deck_kind,
-            "request_shape": dict(request_shape),
+            "request_shape": safe_shape,
             "reader_kind": reader_kind,
             "refusal_class": off.get("refusal_class") or "unsupported",
             "offender_identity": ident,
