@@ -95,7 +95,7 @@ async def read_packets(
     )
     packets, spent, statements = [], seconds_used, 0
 
-    async def read(conn, sql, params):
+    async def read(conn, sql, params, *, collect_rows=True):
         nonlocal spent, statements
         if in_busy_window():
             raise ValueError("read window closed during export")
@@ -106,21 +106,24 @@ async def read_packets(
         started = time.monotonic()
         try:
             async with asyncio.timeout(timeout / 1000):
+                statements += 1
                 await conn.execute(text(f"SET LOCAL statement_timeout = {timeout}"))
+                statements += 1
                 result = await conn.execute(text(sql), params)
-                rows = [dict(r) for r in result.mappings()]
+                rows = [dict(r) for r in result.mappings()] if collect_rows else []
             if len(rows) > MAX_ROWS_PER_EVENT_TABLE:
                 raise ValueError("per-event row cap exceeded; no truncated packet")
             return json_value(rows)
         finally:
             spent += time.monotonic() - started
-            statements += 1
 
     try:
         async with engine.connect() as conn:
             for entry in manifest:
                 async with conn.begin():
-                    await conn.execute(text("SET TRANSACTION READ ONLY"))
+                    await read(
+                        conn, "SET TRANSACTION READ ONLY", {}, collect_rows=False
+                    )
                     # Event primary key and its sport primary key, no population scan.
                     events = await read(
                         conn,
@@ -139,7 +142,7 @@ async def read_packets(
                     home, away = event.pop("home_score"), event.pop("away_score")
                     event["outcome"] = (
                         int(home > away)
-                        if event["status"] in {"completed", "closed"}
+                        if event["status"] == "completed"
                         and home is not None
                         and away is not None
                         else None
