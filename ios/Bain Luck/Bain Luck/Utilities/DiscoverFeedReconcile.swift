@@ -60,9 +60,9 @@ enum DiscoverFeedReconcile {
     ///   whose ordering we cannot vouch for, so we defer to the one we can.
     static func decision(
         paintedCount: Int,
+        mayReorder: Bool = true,
         paintedEdition: String?,
-        incomingEdition: String?,
-        mayReorder: Bool = true
+        incomingEdition: String?
     ) -> Decision {
         if paintedCount == 0 { return .repaint }
         guard mayReorder else { return .reconcile }

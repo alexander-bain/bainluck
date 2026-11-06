@@ -205,23 +205,23 @@ final class DiscoverFeedReconcileTests: XCTestCase {
         XCTAssertEqual(
             DiscoverFeedReconcile.decision(
                 paintedCount: 20,
+                mayReorder: false,
                 paintedEdition: "9f2c1ab740de55c3",
-                incomingEdition: "5c7ef69d20eff005",
-                mayReorder: false),
+                incomingEdition: "5c7ef69d20eff005"),
             .reconcile)
         XCTAssertEqual(
             DiscoverFeedReconcile.decision(
                 paintedCount: 20,
+                mayReorder: false,
                 paintedEdition: nil,
-                incomingEdition: "5c7ef69d20eff005",
-                mayReorder: false),
+                incomingEdition: "5c7ef69d20eff005"),
             .reconcile)
         XCTAssertEqual(
             DiscoverFeedReconcile.decision(
                 paintedCount: 0,
+                mayReorder: false,
                 paintedEdition: nil,
-                incomingEdition: "5c7ef69d20eff005",
-                mayReorder: false),
+                incomingEdition: "5c7ef69d20eff005"),
             .repaint,
             "an empty screen still paints the initial deck")
     }

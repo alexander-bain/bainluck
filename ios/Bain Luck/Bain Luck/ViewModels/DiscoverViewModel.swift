@@ -1140,19 +1140,18 @@ final class DiscoverViewModel: ObservableObject {
                 let allowReorder = mayReorder || !hasPublishedNetworkFeed
                 switch DiscoverFeedReconcile.decision(
                     paintedCount: items.count,
+                    mayReorder: allowReorder,
                     paintedEdition: paintedEdition,
-                    incomingEdition: staged.edition,
-                    mayReorder: allowReorder
+                    incomingEdition: staged.edition
                 ) {
                 case .repaint:
                     items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)
-                    paintedEdition = staged.edition
                 case .reconcile:
                     items = DiscoverPriceRefresh.retainingPrices(DiscoverFeedReconcile.merge(
                         painted: items, incoming: renderable, preservePainted: !allowReorder, key: Self.itemKey), accepted: &acceptedPriceCards, fences: &priceFences)
-                    if allowReorder {
-                        paintedEdition = staged.edition
-                    }
+                }
+                if allowReorder {
+                    paintedEdition = staged.edition
                 }
                 // First paint provenance: only stamp network when the cache seed
                 // did NOT already produce first paint this load — a background
