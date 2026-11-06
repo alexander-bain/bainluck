@@ -72,20 +72,32 @@ __all__ = [
     "MIN_SHARED_TOKENS",
     "MAX_SUBJECT_RATIO",
     "PRODUCER_KIND_SIBLING_FAMILY",
+    "RT_SCORES_THIS_WEEK_DEFINITION",
+    "RT_SCORES_THIS_WEEK_DEFINITION_PATH",
+    "RT_SCORES_THIS_WEEK_ID",
+    "RT_SCORES_THIS_WEEK_PRODUCER",
+    "RT_SCORES_THIS_WEEK_SLUG",
     "SNOW_FIRST_FLAKES_2026_DEFINITION",
     "SNOW_FIRST_FLAKES_2026_DEFINITION_PATH",
     "SNOW_FIRST_FLAKES_2026_ID",
     "SNOW_FIRST_FLAKES_2026_PRODUCER",
     "SNOW_FIRST_FLAKES_2026_SLUG",
+    "WHO_ANNOUNCES_BEFORE_2027_DEFINITION",
+    "WHO_ANNOUNCES_BEFORE_2027_DEFINITION_PATH",
+    "WHO_ANNOUNCES_BEFORE_2027_ID",
+    "WHO_ANNOUNCES_BEFORE_2027_PRODUCER",
+    "WHO_ANNOUNCES_BEFORE_2027_SLUG",
     "build_sibling_family_producer",
     "detect_sibling_template_pair",
     "fold_template_key",
     "gta_vi_album_features",
     "load_sibling_family_definition",
     "produce_sibling_family",
+    "rt_scores_this_week",
     "select_sibling_family",
     "sibling_family_enabled",
     "snow_first_flakes_2026",
+    "who_announces_before_2027",
 ]
 
 PRODUCER_KIND_SIBLING_FAMILY = "sibling_family"
@@ -110,6 +122,24 @@ GTA_VI_ALBUM_FEATURES_DEFINITION_PATH = (
     / "data"
     / "containers"
     / f"{GTA_VI_ALBUM_FEATURES_SLUG}.json"
+)
+
+RT_SCORES_THIS_WEEK_SLUG = "rt-scores-this-week"
+RT_SCORES_THIS_WEEK_ID = "roundup:rt-scores-this-week"
+RT_SCORES_THIS_WEEK_DEFINITION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "containers"
+    / f"{RT_SCORES_THIS_WEEK_SLUG}.json"
+)
+
+WHO_ANNOUNCES_BEFORE_2027_SLUG = "who-announces-before-2027"
+WHO_ANNOUNCES_BEFORE_2027_ID = "roundup:who-announces-before-2027"
+WHO_ANNOUNCES_BEFORE_2027_DEFINITION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "containers"
+    / f"{WHO_ANNOUNCES_BEFORE_2027_SLUG}.json"
 )
 
 _ET_ZONE = ZoneInfo("America/New_York")
@@ -923,6 +953,8 @@ def select_sibling_family(
     subject_unit: str = "",
     strip_state_suffix: bool = False,
     outcome_name: str = "Yes",
+    shared_rung_band: Optional[tuple[float, float]] = None,
+    strict_rungs_only: bool = False,
     lead_rule: str = "nearest_open_deadline",
     min_numbered_members: int = 3,
     card_rows: int = 5,
@@ -1069,6 +1101,99 @@ def select_sibling_family(
     matched_subjects = family_groups[chosen_key]
     by_id = {int(m["id"]): m for m in candidate_markets}
     target_outcome_folded = str(outcome_name or "Yes").strip().casefold()
+
+    if strict_rungs_only or target_outcome_folded == "auto_shared_rung":
+        from app.utils.ladder_monotonicity import DEC, parse_plus_bracket, parse_threshold
+
+        _NON_STRICT_RUNG_RE = re.compile(
+            r"(?:\bat\s+least\b|\bat\s+most\b|\bor\s+more\b|\bor\s+less\b|\bor\s+fewer\b|\bor\s+higher\b|\bor\s+lower\b|>=|<=|≥|≤)",
+            re.IGNORECASE,
+        )
+
+        def _is_non_strict_rung_label(label: str) -> bool:
+            if parse_plus_bracket(label) is not None:
+                return True
+            return bool(_NON_STRICT_RUNG_RE.search(label))
+
+        # Check strict_rungs_only across matched candidate markets.
+        if strict_rungs_only:
+            for mid in matched_subjects:
+                m = by_id[mid]
+                raw_outs = m.get("outcomes") or m.get("top_outcomes") or ()
+                for o in raw_outs:
+                    if not isinstance(o, Mapping):
+                        continue
+                    oname = str(o.get("name") or o.get("label") or "").strip()
+                    if not oname:
+                        continue
+                    if _is_non_strict_rung_label(oname):
+                        return RoundupRefusal((("family", f"non_strict_rung:{mid}"),))
+
+        if target_outcome_folded == "auto_shared_rung":
+            band_low, band_high = (
+                (float(shared_rung_band[0]), float(shared_rung_band[1]))
+                if shared_rung_band is not None and len(shared_rung_band) == 2
+                else (0.05, 0.95)
+            )
+            open_member_rungs: list[dict[str, tuple[float, float]]] = []
+            for mid in matched_subjects:
+                m = by_id[mid]
+                if str(m.get("status") or "open").strip().lower() != "open":
+                    continue
+                raw_outs = m.get("outcomes") or m.get("top_outcomes") or ()
+                rung_map: dict[str, tuple[float, float]] = {}
+                for o in raw_outs:
+                    if not isinstance(o, Mapping):
+                        continue
+                    if leg_is_graded(o.get("is_winner"), o.get("resolution_source")):
+                        continue
+                    oname = str(o.get("name") or o.get("label") or "").strip()
+                    pt = parse_threshold(oname)
+                    if (
+                        pt is None
+                        or pt[2] != DEC
+                        or (strict_rungs_only and _is_non_strict_rung_label(oname))
+                    ):
+                        continue
+                    p_raw = (
+                        o.get("probability")
+                        if "probability" in o
+                        else o.get("current_probability")
+                    )
+                    if p_raw is None or isinstance(p_raw, bool):
+                        continue
+                    try:
+                        p_val = float(p_raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if math.isfinite(p_val) and 0.0 < p_val < 1.0:
+                        rung_map[oname.casefold()] = (pt[1], p_val)
+                if rung_map:
+                    open_member_rungs.append(rung_map)
+
+            if len(open_member_rungs) < min_numbered_members:
+                return RoundupRefusal((("family", "too_few_numbered_members"),))
+
+            shared_keys = set(open_member_rungs[0].keys())
+            for rm in open_member_rungs[1:]:
+                shared_keys &= set(rm.keys())
+
+            qualifying_rungs: list[tuple[float, str]] = []
+            for r_key in shared_keys:
+                in_band = sum(
+                    1
+                    for rm in open_member_rungs
+                    if band_low <= rm[r_key][1] <= band_high
+                )
+                if in_band >= min_numbered_members:
+                    thresh_val = open_member_rungs[0][r_key][0]
+                    qualifying_rungs.append((thresh_val, r_key))
+
+            if not qualifying_rungs:
+                return RoundupRefusal((("family", "no_shared_rung_in_band"),))
+
+            qualifying_rungs.sort(key=lambda pair: (pair[0], pair[1]))
+            target_outcome_folded = qualifying_rungs[-1][1]
 
     # Build _SiblingMember objects and validate outcomes & resolution dates.
     parsed_members: list[_SiblingMember] = []
@@ -1385,6 +1510,8 @@ async def _load_markets_from_db(
     *,
     group_id: Optional[str] = None,
     candidate_ids: Sequence[int] = (),
+    title_ilike: Optional[str] = None,
+    expected_source: Optional[str] = None,
 ) -> tuple[dict[int, dict[str, Any]], dict[int, set[int]]]:
     """Load candidate ``FuturesMarket`` rows and their withheld outcome IDs in constant queries.
 
@@ -1395,7 +1522,7 @@ async def _load_markets_from_db(
     if not hasattr(db, "execute") or not callable(db.execute):
         return {}, {}
 
-    from sqlalchemy import or_, select
+    from sqlalchemy import and_, or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import selectinload
 
@@ -1403,6 +1530,8 @@ async def _load_markets_from_db(
     from app.routes.futures import withheld_price_outcome_ids_for_markets
 
     clean_group_id = str(group_id).strip() if group_id else None
+    clean_title_ilike = str(title_ilike).strip() if title_ilike else None
+    clean_expected_source = str(expected_source).strip().lower() if expected_source else None
     clean_candidate_ids = [
         int(x)
         for x in candidate_ids
@@ -1415,6 +1544,16 @@ async def _load_markets_from_db(
         filters.append(FuturesMarket.group_id == clean_group_id)
     if clean_candidate_ids:
         filters.append(FuturesMarket.id.in_(clean_candidate_ids))
+    if clean_title_ilike:
+        if clean_expected_source:
+            filters.append(
+                and_(
+                    FuturesMarket.source == clean_expected_source,
+                    FuturesMarket.name.ilike(clean_title_ilike),
+                )
+            )
+        else:
+            filters.append(FuturesMarket.name.ilike(clean_title_ilike))
     if not filters:
         return {}, {}
 
@@ -1462,7 +1601,8 @@ async def _load_markets_from_db(
             mid = int(raw_id)
             row_gid = str(m.get("group_id") or "").strip() or None
             if (
-                (clean_group_id or candidate_id_set)
+                not clean_title_ilike
+                and (clean_group_id or candidate_id_set)
                 and row_gid != clean_group_id
                 and mid not in candidate_id_set
             ):
@@ -1478,7 +1618,8 @@ async def _load_markets_from_db(
         mid = int(raw_mid)
         row_gid = str(getattr(m, "group_id", None) or "").strip() or None
         if (
-            (clean_group_id or candidate_id_set)
+            not clean_title_ilike
+            and (clean_group_id or candidate_id_set)
             and row_gid != clean_group_id
             and mid not in candidate_id_set
         ):
@@ -1604,6 +1745,7 @@ async def produce_sibling_family(
 
     expected_source = str(rule.get("source") or "").strip().lower() or None
     group_id = str(rule.get("group_id") or "").strip() or None
+    title_ilike = str(rule.get("title_ilike") or "").strip() or None
     template = str(rule.get("template") or "").strip() or None
     title_template = (
         str(rule.get("title_template") or definition.get("name") or "").strip() or None
@@ -1612,6 +1754,13 @@ async def produce_sibling_family(
     subject_unit = str(rule.get("subject_unit") or "").strip()
     strip_state_suffix = bool(rule.get("strip_state_suffix", False))
     outcome_name = str(rule.get("outcome_name") or "Yes").strip()
+    raw_band = rule.get("shared_rung_band")
+    shared_rung_band: Optional[tuple[float, float]] = (
+        (float(raw_band[0]), float(raw_band[1]))
+        if isinstance(raw_band, (list, tuple)) and len(raw_band) == 2
+        else None
+    )
+    strict_rungs_only = bool(rule.get("strict_rungs_only", False))
     lead_rule = str(rule.get("lead_rule") or "nearest_open_deadline").strip()
     min_numbered_members = int(rule.get("min_numbered_members", 3))
     card_rows = int(rule.get("card_rows", 5))
@@ -1655,6 +1804,8 @@ async def produce_sibling_family(
             db,
             group_id=group_id,
             candidate_ids=candidate_ids,
+            title_ilike=title_ilike,
+            expected_source=expected_source,
         )
 
     return select_sibling_family(
@@ -1666,6 +1817,8 @@ async def produce_sibling_family(
         subject_unit=subject_unit,
         strip_state_suffix=strip_state_suffix,
         outcome_name=outcome_name,
+        shared_rung_band=shared_rung_band,
+        strict_rungs_only=strict_rungs_only,
         lead_rule=lead_rule,
         min_numbered_members=min_numbered_members,
         card_rows=card_rows,
@@ -1760,6 +1913,14 @@ GTA_VI_ALBUM_FEATURES_DEFINITION: dict[str, Any] = load_sibling_family_definitio
     GTA_VI_ALBUM_FEATURES_DEFINITION_PATH
 )
 
+RT_SCORES_THIS_WEEK_DEFINITION: dict[str, Any] = load_sibling_family_definition(
+    RT_SCORES_THIS_WEEK_DEFINITION_PATH
+)
+
+WHO_ANNOUNCES_BEFORE_2027_DEFINITION: dict[str, Any] = load_sibling_family_definition(
+    WHO_ANNOUNCES_BEFORE_2027_DEFINITION_PATH
+)
+
 
 async def snow_first_flakes_2026(
     db: Any, *, now: Optional[datetime] = None
@@ -1779,6 +1940,24 @@ async def gta_vi_album_features(
     )
 
 
+async def rt_scores_this_week(
+    db: Any, *, now: Optional[datetime] = None
+) -> Any:
+    """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``rt-scores-this-week``."""
+    return await produce_sibling_family(
+        db, RT_SCORES_THIS_WEEK_DEFINITION, now=now
+    )
+
+
+async def who_announces_before_2027(
+    db: Any, *, now: Optional[datetime] = None
+) -> Any:
+    """Produce ``RoundupMembers`` (or ``RoundupRefusal``) for ``who-announces-before-2027``."""
+    return await produce_sibling_family(
+        db, WHO_ANNOUNCES_BEFORE_2027_DEFINITION, now=now
+    )
+
+
 SNOW_FIRST_FLAKES_2026_PRODUCER = build_sibling_family_producer(
     SNOW_FIRST_FLAKES_2026_DEFINITION
 )
@@ -1786,3 +1965,18 @@ SNOW_FIRST_FLAKES_2026_PRODUCER = build_sibling_family_producer(
 GTA_VI_ALBUM_FEATURES_PRODUCER = build_sibling_family_producer(
     GTA_VI_ALBUM_FEATURES_DEFINITION
 )
+
+RT_SCORES_THIS_WEEK_PRODUCER = build_sibling_family_producer(
+    RT_SCORES_THIS_WEEK_DEFINITION
+)
+
+WHO_ANNOUNCES_BEFORE_2027_PRODUCER = build_sibling_family_producer(
+    WHO_ANNOUNCES_BEFORE_2027_DEFINITION
+)
+for _sf_p in (
+    SNOW_FIRST_FLAKES_2026_PRODUCER,
+    GTA_VI_ALBUM_FEATURES_PRODUCER,
+    RT_SCORES_THIS_WEEK_PRODUCER,
+    WHO_ANNOUNCES_BEFORE_2027_PRODUCER,
+):
+    _rc().register_roundup_producer(_sf_p)
