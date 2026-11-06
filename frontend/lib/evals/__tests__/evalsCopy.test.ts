@@ -4,18 +4,19 @@
  * The plan's acceptance for S1: `copy.ts` passes `ALL_COPY_BANS` plus
  * `SUPPLIER_PROSE_BANS`. This suite reads every string the page's data modules
  * export — copy, gap rows, source labels, chip words — and adds the page's own
- * rules (`EVALS_COPY_RULES`: no "question", no future tense). The words a render
+ * rules (`copyRules.ts`: no "question", no future tense). The words a render
  * assembles are checked again by the page test, and the shipped bundle by
  * `shippedCopyBans.test.ts`.
  */
 
 import { ALL_COPY_BANS, SUPPLIER_PROSE_BANS, findBannedCopy, type CopyBan } from "@/lib/copyBans";
 import * as copy from "@/lib/evals/copy";
+import { EVALS_COPY_RULES } from "@/lib/evals/copyRules";
 import { GAPS } from "@/lib/evals/gaps";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import { RESULT_WORD, ageLabel } from "@/lib/evals/truth";
 
-const BANS: CopyBan[] = [...ALL_COPY_BANS, ...SUPPLIER_PROSE_BANS, ...copy.EVALS_COPY_RULES];
+const BANS: CopyBan[] = [...ALL_COPY_BANS, ...SUPPLIER_PROSE_BANS, ...EVALS_COPY_RULES];
 
 /** Every string inside a value, at any depth. Keys are identifiers and are skipped. */
 function stringsIn(value: unknown): string[] {
@@ -25,11 +26,10 @@ function stringsIn(value: unknown): string[] {
   return [];
 }
 
-/** All reader-facing strings. The rule list itself is not copy: its `why` names the words it bans. */
+/** All reader-facing strings. (The page's rules live in `copyRules.ts`, not here: their reasons name the words they ban.) */
 function readerStrings(): string[] {
-  const { EVALS_COPY_RULES: _rules, ...readerCopy } = copy;
   return [
-    ...stringsIn(readerCopy),
+    ...stringsIn(copy),
     ...GAPS.flatMap((g) => [g.text, g.planned?.waitingOn ?? ""]),
     ...EVALS_SOURCES.map((s) => s.label),
     ...Object.values(RESULT_WORD),
@@ -71,9 +71,21 @@ describe("/evals copy passes the bans", () => {
   });
 });
 
+describe("the rules stay out of the reader's bundle", () => {
+  it("copy.ts, which the page imports, does not carry the rule list", () => {
+    expect(Object.keys(copy)).not.toContain("EVALS_COPY_RULES");
+  });
+});
+
 describe("the page says what Decide 43 ruled", () => {
   it("J1: the hero says plainly that AI agents write most of the code", () => {
     expect(copy.HERO_COPY.detail).toMatch(/AI agents write most of the code/);
+  });
+
+  it("the hero names every label the page can show, LAST REVIEWED included", () => {
+    for (const label of ["LIVE", "LAST RUN", "PLANNED", "LAST REVIEWED"]) {
+      expect(copy.HERO_COPY.detail).toContain(label);
+    }
   });
 
   it("the combined number is called the combined probability", () => {

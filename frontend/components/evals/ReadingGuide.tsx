@@ -55,7 +55,7 @@ export default function ReadingGuide() {
         <div className="mt-2 divide-y divide-surface-border border-y border-surface-border">
           {TERMS.map(({ term, meaning }) => (
             <details key={term} className="group py-2" data-term={term}>
-              <summary className="cursor-pointer list-none text-caption-strong text-text-primary flex items-center justify-between">
+              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden text-caption-strong text-text-primary flex items-center justify-between">
                 {term}
                 <span aria-hidden="true" className="text-text-muted transition-transform group-open:rotate-90">
                   ›

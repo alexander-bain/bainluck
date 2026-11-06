@@ -1,4 +1,4 @@
-import { SOURCES_COPY } from "@/lib/evals/copy";
+import { CHIP_COPY, SOURCES_COPY } from "@/lib/evals/copy";
 import type { EvalsSource } from "@/lib/evals/sources";
 import { pacificDayLabel } from "@/lib/evals/truth";
 
@@ -24,7 +24,7 @@ export default function SourceList({
           </a>
           <span className="text-text-secondary">
             {" · "}
-            <time dateTime={source.date}>{pacificDayLabel(source.date)}</time>
+            <time dateTime={source.date}>{pacificDayLabel(source.date) ?? CHIP_COPY.dateUnreadable}</time>
             {" · "}
             {SOURCES_COPY.usedByPrefix}{" "}
             {source.usedBy.map((id) => `“${sectionTitles[id] ?? id}”`).join(", ")}

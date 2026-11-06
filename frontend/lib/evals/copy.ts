@@ -3,7 +3,8 @@
  *
  * One file so one test can hold all of it to the bans: `ALL_COPY_BANS` plus
  * `SUPPLIER_PROSE_BANS` from `lib/copyBans.ts`, plus the page's own rules in
- * `EVALS_COPY_RULES` below. The built bundle is scanned again by
+ * `lib/evals/copyRules.ts` (kept out of this module, because their reasons
+ * name the very words they ban and this module ships to the browser). The built bundle is scanned again by
  * `shippedCopyBans.test.ts`, which is the check that proves what shipped.
  *
  * The voice follows `docs/design-system.md`: declarative, "we", sentence case,
@@ -39,7 +40,7 @@ export const HERO_COPY = {
     "Every probability on this site has to pass tests. Some tests run by themselves every few hours, some are done by people, and some are exams for the site's AI helpers.",
   // Decide 43-J1 (Alex, Nov 5): say plainly that AI agents write most of the code.
   detail:
-    "AI agents write most of the code and most of the tests on this site, and other AI agents and Alex, who builds Bain Luck, check their work. That is why the tests matter. Every number here is marked LIVE, LAST RUN with its date, or PLANNED, and links to where it came from.",
+    "AI agents write most of the code and most of the tests on this site, and other AI agents and Alex, who builds Bain Luck, check their work. That is why the tests matter. Every number here is marked LIVE, LAST RUN with its date, or PLANNED, and links to where it came from; a list we keep by hand is marked LAST REVIEWED with its date.",
 } as const;
 
 export const GAPS_COPY = {
@@ -72,6 +73,8 @@ export const CHIP_COPY = {
   waitingOn: "waiting on",
   /** The legend shows the chip's shape with this word where a run's date goes. */
   sampleDate: "date",
+  /** What prints where a date cannot be read — never a wrong date. */
+  dateUnreadable: "date unreadable",
   issue: "issue",
   pull: "pull request",
 } as const;
@@ -127,30 +130,5 @@ export const TERMS: readonly { term: string; meaning: string }[] = [
   {
     term: "Receipt",
     meaning: "The public record a number comes from: a pull request, a test run or a posted comment.",
-  },
-];
-
-/**
- * The page's own rules, on top of the site-wide bans.
- *
- * Narrower than a site-wide rule could be, because every string here is ours:
- * no venue writes /evals copy, so there is no market title for a broad pattern
- * to misfire on (the reason `FUTURE_PROMISE_BANS` cannot ban the bare word).
- */
-export const EVALS_COPY_RULES: { id: string; pattern: RegExp; why: string }[] = [
-  {
-    id: "evals-question",
-    pattern: /\bquestions?\b/i,
-    why: 'the product\'s noun is "market"; "question" is reserved for an actual interrogative sentence',
-  },
-  {
-    id: "evals-will",
-    pattern: /\bwill\b/i,
-    why: "no future tense in our voice: a section states what it is, not what it will be (ruling 142)",
-  },
-  {
-    id: "evals-soon",
-    pattern: /\b(soon|upcoming|later)\b/i,
-    why: "a promise about later, not a statement about now (ruling 142)",
   },
 ];

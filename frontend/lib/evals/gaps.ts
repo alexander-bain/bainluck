@@ -9,7 +9,8 @@
  * ═══ RULES FOR A ROW ═══
  *
  *   • Words only. A row that needs a measured figure gets it through `Figure`
- *     from the section whose record holds it, never typed here.
+ *     from the section whose record holds it, never typed here; a date is a
+ *     `{placeholder}` that renders as a `<time>`.
  *   • Each row links the issue or pull request that owns the gap.
  *   • A row whose fix is being built carries a PLANNED chip that names what it
  *     waits on — present tense, no promise of a date (ruling 142).
@@ -23,7 +24,13 @@ export const GAPS_REVIEWED_AT = "2026-11-05";
 
 export interface Gap {
   id: string;
+  /**
+   * Words only. A date goes in as `{name}` with its value in `dates`, so it
+   * renders as a `<time>` the page test can tell from a typed number.
+   */
   text: string;
+  /** `YYYY-MM` or `YYYY-MM-DD` per `{name}` in `text`. */
+  dates?: Record<string, string>;
   ref: RepoRef;
   /** Present only when the fix is being built; names what it waits on. */
   planned?: { waitingOn: string; ref: RepoRef };
@@ -58,7 +65,8 @@ export const GAPS: readonly Gap[] = [
   },
   {
     id: "matching-audit",
-    text: "Our four-layer matching audit has no dated result since July.",
+    text: "Our four-layer matching audit has no dated result since {since}.",
+    dates: { since: "2026-07" },
     ref: issueRef(2693),
   },
   {

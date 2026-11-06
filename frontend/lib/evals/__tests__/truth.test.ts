@@ -10,6 +10,7 @@
 import { TRUTH_CHIP_MEANING } from "@/lib/evals/copy";
 import {
   AGE_AMBER_DAYS,
+  calendarMonthLabel,
   ageInDays,
   ageLabel,
   asOfCalendarDate,
@@ -36,6 +37,20 @@ describe("a run's date prints as the Pacific calendar day", () => {
   it("an offset timestamp is read at its instant, not its wall clock", () => {
     expect(pacificDayLabel("2026-11-05T23:30:00-05:00")).toBe("Nov 5");
     expect(pacificClockLabel("2026-11-05T23:30:00-05:00")).toBe("8:30 PM PT");
+  });
+
+  it("a date in the right shape that does not exist is unreadable, not a wrong date", () => {
+    // Fable's finding on #12114: "2026-13-01" passed the shape check and printed "UNDEFINED 1".
+    expect(pacificDayLabel("2026-13-01")).toBeNull();
+    expect(pacificDayLabel("2026-02-30")).toBeNull();
+    expect(asOfCalendarDate("2026-00-10")).toBeNull();
+    expect(truthChipLabel({ kind: "last_run", asOf: "2026-13-01", source: SOURCE })).toBe(
+      "LAST RUN · DATE UNREADABLE"
+    );
+    expect(truthChipLabel({ kind: "reviewed", asOf: "2026-02-30" })).toBe("LAST REVIEWED · DATE UNREADABLE");
+    expect(ageInDays("2026-13-01", new Date("2026-11-06T07:30:00Z"))).toBeNull();
+    // A real leap day still reads.
+    expect(pacificDayLabel("2028-02-29")).toBe("Feb 29");
   });
 
   it("a bare date has no clock, and an unreadable date prints nothing rather than a wrong one", () => {
@@ -101,5 +116,13 @@ describe("the legend says the amber bar in words, and the words match the consta
     const words: Record<number, string> = { 7: "one week", 14: "two weeks", 21: "three weeks" };
     expect(words[AGE_AMBER_DAYS]).toBeDefined();
     expect(TRUTH_CHIP_MEANING.last_run).toContain(`after ${words[AGE_AMBER_DAYS]}`);
+  });
+});
+
+describe("a month in a gap row prints with its year", () => {
+  it("2026-07 is July 2026; month 13 is unreadable", () => {
+    expect(calendarMonthLabel("2026-07")).toBe("July 2026");
+    expect(calendarMonthLabel("2026-13")).toBeNull();
+    expect(calendarMonthLabel("July")).toBeNull();
   });
 });

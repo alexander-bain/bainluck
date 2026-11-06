@@ -1,11 +1,29 @@
+import { Fragment } from "react";
+
 import { PlannedItem } from "@/components/evals/Figure";
 import RepoRefLink from "@/components/evals/RepoRefLink";
+import { CHIP_COPY } from "@/lib/evals/copy";
 import type { Gap } from "@/lib/evals/gaps";
+import { calendarMonthLabel, pacificDayLabel } from "@/lib/evals/truth";
+
+/** A `{name}` in a row's text, rendered as the `<time>` its `dates` entry names. */
+function GapDate({ value }: { value: string | undefined }) {
+  const label = value ? calendarMonthLabel(value) ?? pacificDayLabel(value) : null;
+  return <time dateTime={value}>{label ?? CHIP_COPY.dateUnreadable}</time>;
+}
 
 function GapText({ gap }: { gap: Gap }) {
+  const pieces = gap.text.split(/\{(\w+)\}/);
   return (
     <p className="text-body text-text-primary">
-      {gap.text} <RepoRefLink repoRef={gap.ref} />
+      {pieces.map((piece, i) =>
+        i % 2 === 1 ? (
+          <GapDate key={i} value={gap.dates?.[piece]} />
+        ) : (
+          <Fragment key={i}>{piece}</Fragment>
+        )
+      )}{" "}
+      <RepoRefLink repoRef={gap.ref} />
     </p>
   );
 }

@@ -11,6 +11,9 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import Figure, { PlannedItem, figureProblem } from "@/components/evals/Figure";
+import GapList from "@/components/evals/GapList";
+import SourceList from "@/components/evals/SourceList";
+import { issueRef } from "@/lib/evals/truth";
 import TruthChip from "@/components/evals/TruthChip";
 import type { MeasuredTruth } from "@/lib/evals/truth";
 
@@ -70,6 +73,27 @@ describe("Figure", () => {
     ).toThrow(/a PLANNED item renders no figure/);
   });
 
+  it("in production a refused figure is dropped rather than shown unlabelled, and nothing throws", () => {
+    const env = process.env as Record<string, string | undefined>;
+    const was = env.NODE_ENV;
+    env.NODE_ENV = "production";
+    try {
+      const planned = renderToStaticMarkup(
+        <PlannedItem waitingOn="the exam data">
+          <Figure truth={RECORD}>24 of 25</Figure>
+        </PlannedItem>
+      );
+      expect(planned).toContain("PLANNED");
+      expect(planned).not.toContain("24 of 25");
+      expect(planned).not.toContain("data-evals-figure");
+      expect(renderToStaticMarkup(<Figure truth={{ ...RECORD, asOf: "" }}>24 of 25</Figure>)).toBe("");
+      // A figure with its label still renders in production.
+      expect(renderToStaticMarkup(<Figure truth={RECORD}>24 of 25</Figure>)).toContain("24 of 25");
+    } finally {
+      env.NODE_ENV = was;
+    }
+  });
+
   it("a PLANNED item with words only renders, with its chip and what it waits on", () => {
     const html = renderToStaticMarkup(
       <PlannedItem waitingOn="the exam data">
@@ -100,5 +124,32 @@ describe("TruthChip, as the server renders it", () => {
     );
     expect(html).toContain(">LIVE<");
     expect(html).toContain("as of 4:19 PM PT");
+  });
+});
+
+describe("SourceList", () => {
+  it("an unreadable source date says so instead of leaving a gap in the line", () => {
+    const html = renderToStaticMarkup(
+      <SourceList
+        sources={[{ id: "x", label: "A receipt", date: "2026-13-01", href: "https://example.com/r", usedBy: ["gaps"] }]}
+        sectionTitles={{ gaps: "What we have not tested yet" }}
+      />
+    );
+    expect(html).toContain('<time dateTime="2026-13-01">date unreadable</time>');
+  });
+});
+
+describe("GapList", () => {
+  it("a date in a row renders as a <time>, and a missing one says so", () => {
+    const html = renderToStaticMarkup(
+      <GapList
+        gaps={[
+          { id: "a", text: "No result since {since}.", dates: { since: "2026-07" }, ref: issueRef(2693) },
+          { id: "b", text: "No result since {since}.", ref: issueRef(2693) },
+        ]}
+      />
+    );
+    expect(html).toContain('No result since <time dateTime="2026-07">July 2026</time>.');
+    expect(html).toContain("No result since <time>date unreadable</time>.");
   });
 });

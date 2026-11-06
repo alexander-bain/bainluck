@@ -38,12 +38,11 @@ const SECTION_TITLES: Record<EvalsSectionId, string> = {
 };
 
 export default function EvalsPage() {
-  // `page_type` is a closed union in lib/analytics/types.ts, outside this
-  // page's files until S10 makes the page public; "about" is the nearest group
-  // (an explanatory page), and every view still carries its own path.
-  usePageTracking({ pageType: "about", pageTitle: EVALS_PAGE_TITLE });
-  useScrollDepth({ pageType: "about" });
-  useEngagementTime({ pageType: "about" });
+  // Its own page type (Fable, 42-A, on PR #12114), so /evals views, scroll
+  // depth and engagement never count toward /about's.
+  usePageTracking({ pageType: "evals", pageTitle: EVALS_PAGE_TITLE });
+  useScrollDepth({ pageType: "evals" });
+  useEngagementTime({ pageType: "evals" });
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-12" data-testid="evals-page">

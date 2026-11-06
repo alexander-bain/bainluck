@@ -25,6 +25,8 @@
  * reader's browser runs wherever the reader is.
  */
 
+import { CHIP_COPY } from "@/lib/evals/copy";
+
 export const PACIFIC_TIME_ZONE = "America/Los_Angeles";
 
 /**
@@ -112,11 +114,24 @@ export function pacificCalendarDate(instant: Date): string {
 }
 
 /**
+ * Is `YYYY-MM-DD` a day that exists? The shape alone lets "2026-13-01" through,
+ * and that would print "UNDEFINED 1" — a wrong date rather than an unreadable
+ * one. Round-tripping through `Date.UTC` rejects month 13 and February 30.
+ */
+function isRealCalendarDate(ymd: string): boolean {
+  const m = CALENDAR_DATE.exec(ymd);
+  if (!m) return false;
+  const [y, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const t = new Date(Date.UTC(y, month - 1, day));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === month - 1 && t.getUTCDate() === day;
+}
+
+/**
  * The Pacific calendar date an `asOf` names, as `YYYY-MM-DD`, or null when the
- * string is not a date at all. A bare date is taken as already Pacific.
+ * string is not a real date. A bare date is taken as already Pacific.
  */
 export function asOfCalendarDate(asOf: string): string | null {
-  if (CALENDAR_DATE.test(asOf)) return asOf;
+  if (CALENDAR_DATE.test(asOf)) return isRealCalendarDate(asOf) ? asOf : null;
   const instant = new Date(asOf);
   if (Number.isNaN(instant.getTime())) return null;
   return pacificCalendarDate(instant);
@@ -129,6 +144,20 @@ export function pacificDayLabel(asOf: string): string | null {
   const m = CALENDAR_DATE.exec(day);
   if (!m) return null;
   return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`;
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** "July 2026" for a `YYYY-MM`; null when it is not a real month. */
+export function calendarMonthLabel(ym: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  if (!m) return null;
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  return `${MONTH_NAMES[month - 1]} ${m[1]}`;
 }
 
 /** "4:19 PM PT" for a full timestamp; null for a bare date or an unreadable one. */
@@ -155,9 +184,9 @@ export function truthChipLabel(truth: Truth): string {
     case "planned":
       return "PLANNED";
     case "last_run":
-      return `LAST RUN · ${(pacificDayLabel(truth.asOf) ?? "date unreadable").toUpperCase()}`;
+      return `LAST RUN · ${(pacificDayLabel(truth.asOf) ?? CHIP_COPY.dateUnreadable).toUpperCase()}`;
     case "reviewed":
-      return `LAST REVIEWED · ${(pacificDayLabel(truth.asOf) ?? "date unreadable").toUpperCase()}`;
+      return `LAST REVIEWED · ${(pacificDayLabel(truth.asOf) ?? CHIP_COPY.dateUnreadable).toUpperCase()}`;
   }
 }
 
