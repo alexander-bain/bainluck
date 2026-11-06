@@ -53,19 +53,23 @@ export default function GameLineBrowser({
       ) {
         return [];
       }
-      // During play a price last observed before the game moved on is not
-      // today's chance: print nothing rather than a pregame number.
-      const stale = live && sourceIsStale(row.observed_at, now);
       // over_probability is normalized to the OVER proposition even on a
       // source row named Under. Never attach it to that opposite outcome or
       // invent its complement. A direct outcome quote, when present, wins.
-      const probability = stale
-        ? null
-        : "probability" in row
+      const rawProbability =
+        "probability" in row
           ? row.probability
           : isOver(row.outcome_name)
             ? row.over_probability
             : null;
+      // During play a price last observed before the game moved on is not
+      // today's chance: print nothing rather than a pregame number.
+      const stale =
+        live &&
+        typeof rawProbability === "number" &&
+        Number.isFinite(rawProbability) &&
+        sourceIsStale(row.observed_at, now);
+      const probability = stale ? null : rawProbability;
       // #10590 — A SETTLED LINE PRINTS ITS RESULT, NOT ITS LEFTOVER QUOTE.
       // The verdict comes from the one settled-state rule (`outcomeRowVerdict`,
       // #4788), never from a 0%/100% price. A row priced on the OVER axis
@@ -121,7 +125,7 @@ export default function GameLineBrowser({
                     {formatProbabilityPercent(probability)}
                   </strong>
                 )}
-                {verdict == null && probability == null && atlasMode && !settled && (
+                {verdict == null && probability == null && stale && atlasMode && !settled && (
                   <span
                     className="text-xs text-text-secondary whitespace-nowrap"
                     data-testid="atlas-no-recent-probability"

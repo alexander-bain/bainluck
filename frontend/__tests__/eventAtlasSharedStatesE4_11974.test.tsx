@@ -181,10 +181,9 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
         atlasMode
       />,
     );
-    expect(noRecentPregameHtml).toContain('data-testid="atlas-no-recent-probability"');
-    expect(noRecentPregameHtml).toContain(ATLAS_STATE_COPY.noRecentPrice);
-    expect(noRecentPregameHtml).toContain("No recent probability");
-    expect(noRecentPregameHtml).not.toContain("No price yet");
+    expect(noRecentPregameHtml).toContain("No price yet");
+    expect(noRecentPregameHtml).not.toContain('data-testid="atlas-no-recent-probability"');
+    expect(noRecentPregameHtml).not.toContain(ATLAS_STATE_COPY.noRecentPrice);
 
     const noRecentLiveHtml = renderToStaticMarkup(
       <EventHeroProbabilityPair
@@ -243,6 +242,48 @@ describe("Event-page Atlas Step E4 — shared state language (#11974)", () => {
     );
     expect(browserHtml).toContain('data-testid="atlas-no-recent-probability"');
     expect(browserHtml).toContain(ATLAS_STATE_COPY.noRecentPrice);
+
+    // Closed period markets and unpaired Under rows (no Over twin) are null by
+    // design, not because of freshness — neither may claim "No recent probability".
+    const nonStaleNullData: GameMarketsResponse = {
+      ...EMPTY_GAME_MARKETS,
+      closed_period_markets: [
+        {
+          market_type: "period_total",
+          market_name: "1st Quarter Total Points",
+          outcome_name: "Over 54.5",
+          threshold: 54.5,
+          probability: null,
+          over_probability: 0.52,
+          source: "DraftKings",
+          period: "1Q",
+          window_closed: true,
+        },
+      ],
+      team_totals: [
+        {
+          market_type: "team_total",
+          market_name: "Team Total Points",
+          outcome_name: "Under 112.5",
+          threshold: 112.5,
+          over_probability: 0.52,
+          movement: null,
+          source: "DraftKings",
+          observed_at: staleStamp,
+        },
+      ],
+    };
+    const nonStaleCatalogHtml = renderToStaticMarkup(
+      <QuestionCatalog data={nonStaleNullData} status="live" atlasMode />,
+    );
+    expect(nonStaleCatalogHtml).not.toContain('data-testid="atlas-no-recent-probability"');
+    expect(nonStaleCatalogHtml).not.toContain(ATLAS_STATE_COPY.noRecentPrice);
+
+    const nonStaleBrowserHtml = renderToStaticMarkup(
+      <GameLineBrowser data={nonStaleNullData} status="live" atlasMode />,
+    );
+    expect(nonStaleBrowserHtml).not.toContain('data-testid="atlas-no-recent-probability"');
+    expect(nonStaleBrowserHtml).not.toContain(ATLAS_STATE_COPY.noRecentPrice);
 
     const settledData: GameMarketsResponse = {
       ...EMPTY_GAME_MARKETS,
