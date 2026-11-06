@@ -29,12 +29,25 @@ Why not the card's ``movement`` field: on the live deck of Nov 5 it was set on
 bank (``dated_movement_basis``) covered 1 of the 25 — ordering on it would never
 move anything.
 
+SETTLED MARKETS DO NOT MOVE. A settled market's last reading jumps to 0 or 100,
+which is settlement, not movement, so its legs are skipped: a resolved status,
+or any leg already graded (``is_winner`` set) — Kalshi's settled markets stay
+``status='open'`` in our table (gotcha #33), so the status alone is not enough.
+
 COST. One Redis read per build. The SQL — two index seeks per leg on
 ``(outcome_id, captured_at)`` and ``(outcome_id, bookmaker, captured_at DESC)`` —
 measured 229 ms for all 419 legs of the 25 bundle members on production (Nov 5);
-the printed legs are fewer. It runs at most once per :data:`CACHE_TTL_S` across
-all dynos (or when the cached legs stop covering the deck's), under a
-:data:`READ_BUDGET_S` deadline. Every failure keeps the current order.
+the printed legs are fewer. One answer serves every dyno for
+:data:`CACHE_TTL_S` (refreshed sooner when the cached legs stop covering the
+deck's), and one builder at a time refreshes it (a Redis ``SET NX`` lock); a
+builder that misses the lock uses the stale answer or the current order.
+
+THE READ NEVER TOUCHES THE REQUEST'S SESSION. It runs on its own short-lived
+session with a database statement timeout, as a task the stage stops waiting
+for at :data:`READ_BUDGET_S` — it is never awaited after that, so a slow
+cancel or close cannot hold the build (a cancelled asyncpg query leaves its
+connection waiting for the query to land; #10530). Every failure keeps the
+cached or current order.
 
 Dark: with ``DISCOVER_CONCEPT_MOVEMENT`` off the stage is never entered.
 """
@@ -65,10 +78,15 @@ CACHE_KEEP_S = 3600
 #: Below this share of the deck's legs covered, the cached answer is refreshed.
 MIN_COVERAGE = 0.9
 READ_BUDGET_S = 1.0
+#: The database's own bound on the read, past the stage's budget.
+STATEMENT_TIMEOUT_MS = 3000
+LOCK_KEY = "discover:concept_moves:refresh_lock"
+LOCK_TTL_S = 30
 
 MOVE_SQL = """
 SELECT o.id AS outcome_id, cur.probability - old.probability AS move
 FROM futures_outcomes o
+JOIN futures_markets m ON m.id = o.market_id
 JOIN LATERAL (
   SELECT s.bookmaker, s.probability FROM futures_odds_snapshots s
   WHERE s.outcome_id = o.id
@@ -81,6 +99,11 @@ JOIN LATERAL (
   ORDER BY s.captured_at DESC LIMIT 1
 ) old ON true
 WHERE o.id IN :ids
+  AND lower(coalesce(m.status, '')) NOT IN ('resolved', 'closed', 'settled', 'finalized')
+  AND NOT EXISTS (
+    SELECT 1 FROM futures_outcomes w
+    WHERE w.market_id = o.market_id AND w.is_winner IS NOT NULL
+  )
 """
 
 
@@ -182,9 +205,41 @@ def cache_serves(cached: Optional[dict], wanted: list[int], now_s: float) -> boo
 async def read_leg_moves(db: Any, leg_ids: list[int], now: datetime) -> dict[int, float]:
     from sqlalchemy import bindparam, text
 
+    await db.execute(text(f"SET LOCAL statement_timeout = {int(STATEMENT_TIMEOUT_MS)}"))
     stmt = text(MOVE_SQL).bindparams(bindparam("ids", expanding=True))
     rows = (await db.execute(stmt, {"ids": list(leg_ids), "now": now})).all()
     return {int(r[0]): float(r[1]) for r in rows if r[1] is not None}
+
+
+async def _read_on_own_session(session_factory: Any, leg_ids: list[int], now: datetime) -> dict[int, float]:
+    async with session_factory() as session:
+        return await read_leg_moves(session, leg_ids, now)
+
+
+def _forget(task: "asyncio.Task") -> None:
+    """Let an abandoned read finish (or fail) on its own, quietly."""
+
+    def _done(t: "asyncio.Task") -> None:
+        if not t.cancelled() and t.exception() is not None:
+            logger.warning("concept movement: abandoned leg read ended: %s", str(t.exception())[:200])
+
+    task.add_done_callback(_done)
+    task.cancel()
+
+
+async def _bounded_read(session_factory: Any, leg_ids: list[int], now: datetime, budget_s: float):
+    """The leg moves, or ``None`` past ``budget_s`` or on any failure. Returns
+    within ``budget_s``: a slow read is cancelled and NOT awaited."""
+    task = asyncio.ensure_future(_read_on_own_session(session_factory, leg_ids, now))
+    done, _ = await asyncio.wait({task}, timeout=max(budget_s, 0.05))
+    if task not in done:
+        _forget(task)
+        logger.warning("concept movement: leg read over its %.2f s budget; keeping the cached or current order", budget_s)
+        return None
+    if task.exception() is not None:
+        logger.warning("concept movement: leg read failed: %s", str(task.exception())[:200])
+        return None
+    return task.result()
 
 
 async def _redis_call(redis: Any, factory) -> Any:
@@ -194,12 +249,24 @@ async def _redis_call(redis: Any, factory) -> Any:
     return res.value if res.is_ok else None
 
 
+def _default_session_factory() -> Any:
+    from app.services.database import async_session_maker
+
+    return async_session_maker
+
+
 async def load_leg_moves(
-    db: Any, wanted: list[int], *, now: datetime, redis: Any = None, budget_s: float = READ_BUDGET_S
+    wanted: list[int],
+    *,
+    now: datetime,
+    redis: Any = None,
+    session_factory: Any = None,
+    budget_s: float = READ_BUDGET_S,
 ) -> dict[int, float]:
     """Leg moves for ``wanted``: the shared cached answer while it serves, else
-    one bounded read (then cached). A failed read falls back to a stale answer,
-    then to ``{}`` — which orders nothing."""
+    one bounded read by the builder holding the refresh lock (then cached). A
+    failed read, or a missed lock, falls back to a stale answer, then to ``{}``
+    — which orders nothing."""
     if redis is None:
         try:
             from app.utils.request_cache import get_shared_async_redis
@@ -213,18 +280,14 @@ async def load_leg_moves(
     now_s = now.timestamp()
     if cache_serves(cached, wanted, now_s):
         return cached["moves"]
-    try:
-        moves = await asyncio.wait_for(read_leg_moves(db, wanted, now), timeout=max(budget_s, 0.05))
-    except Exception:  # noqa: BLE001 — every failure keeps the current order
-        if hasattr(db, "rollback") and callable(db.rollback):
-            try:
-                await db.rollback()
-            except Exception:  # noqa: BLE001
-                pass
-        logger.warning("concept movement: leg read failed; keeping the cached or current order", exc_info=True)
-        if cached and now_s - cached["at"] <= CACHE_KEEP_S:
-            return cached["moves"]
-        return {}
+    stale = cached["moves"] if cached and now_s - cached["at"] <= CACHE_KEEP_S else {}
+    if redis is not None:
+        locked = await _redis_call(redis, lambda: redis.set(LOCK_KEY, "1", nx=True, ex=LOCK_TTL_S))
+        if not locked:
+            return stale
+    moves = await _bounded_read(session_factory or _default_session_factory(), wanted, now, budget_s)
+    if moves is None:
+        return stale
     if redis is not None:
         blob = json.dumps({"at": now_s, "moves": {str(k): v for k, v in moves.items()}, "legs": wanted})
         await _redis_call(redis, lambda: redis.set(CACHE_KEY, blob, ex=CACHE_KEEP_S))
@@ -232,14 +295,15 @@ async def load_leg_moves(
 
 
 async def apply_concept_movement(
-    db: Any,
     items: list,
     *,
     now: Optional[datetime] = None,
     redis: Any = None,
+    session_factory: Any = None,
     budget_s: float = READ_BUDGET_S,
 ) -> list:
-    """The get_feed stage: ``items`` itself unless a bundle changes seat."""
+    """The get_feed stage: ``items`` itself unless a bundle changes seat. It
+    takes no request session — the read opens its own."""
     if not concept_movement_enabled():
         return items
     wanted = wanted_leg_ids(items)
@@ -247,7 +311,11 @@ async def apply_concept_movement(
         return items
     started = time.monotonic()
     moves = await load_leg_moves(
-        db, wanted, now=now or datetime.now(timezone.utc), redis=redis, budget_s=budget_s
+        wanted,
+        now=now or datetime.now(timezone.utc),
+        redis=redis,
+        session_factory=session_factory,
+        budget_s=budget_s,
     )
     out = order_concepts_by_movement(items, moves)
     if out is not items:

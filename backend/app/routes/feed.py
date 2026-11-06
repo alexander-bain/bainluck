@@ -6302,8 +6302,9 @@ async def get_feed(
             include_futures=include_futures,
         ):
             _before_concepts = feed_items
+            # No `db`: the read runs on its own session, so a slow read can
+            # never leave this request's session dirty (#10530).
             feed_items = await apply_concept_movement(
-                db,
                 feed_items,
                 now=now,
                 budget_s=min(1.0, _feed_budget_remaining_s()),

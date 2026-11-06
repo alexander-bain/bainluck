@@ -9,10 +9,12 @@ Pinned here:
   stays on the page in the seat that one left;
 * a move under the card floor, or no reading at all, is "not moved";
 * nothing changes → the very same list (the capture-abandon check reads `is`);
-* the reading: cached answer while it serves (no SQL), one bounded read
-  otherwise, a failed read falls back to the stale answer and then to no
-  order change; switch off → nothing is read;
-* the SQL compares one venue to itself at the price in force 24 h ago;
+* the reading: cached answer while it serves (no SQL), otherwise one read by
+  the lock holder on its OWN session with a statement timeout, abandoned (not
+  awaited) past its budget; a failure or a missed lock falls back to the stale
+  answer and then to no order change; switch off → nothing is read;
+* the SQL compares one venue to itself at the price in force 24 h ago and
+  skips settled markets (a resolved status or any graded leg);
 * get_feed runs the stage on the Discover deck after the display chain and
   before collections, round-ups and the opening seating.
 """
@@ -23,6 +25,7 @@ import ast
 import asyncio
 import inspect
 import json
+import time
 from datetime import datetime, timezone
 
 
@@ -97,22 +100,32 @@ class TestOrder:
 
 
 class FakeRedis:
-    def __init__(self, raw=None):
-        self.raw, self.sets = raw, []
+    def __init__(self, raw=None, lock_ok=True):
+        self.raw, self.lock_ok, self.sets, self.locks = raw, lock_ok, [], []
 
     async def get(self, key):
         return self.raw
 
-    async def set(self, key, value, ex=None):
+    async def set(self, key, value, ex=None, nx=False):
+        if nx:
+            self.locks.append((key, ex))
+            return self.lock_ok
         self.sets.append((key, json.loads(value), ex))
+        return True
 
 
 class FakeDB:
-    def __init__(self, rows=(), fail=False):
-        self.rows, self.fail, self.calls, self.rolled_back = list(rows), fail, 0, False
+    def __init__(self, rows=(), fail=False, delay=0.0):
+        self.rows, self.fail, self.delay = list(rows), fail, delay
+        self.reads, self.statements, self.closed = 0, [], False
 
     async def execute(self, stmt, params=None):
-        self.calls += 1
+        self.statements.append(str(stmt))
+        if params is None:  # SET LOCAL statement_timeout
+            return None
+        self.reads += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
         if self.fail:
             raise RuntimeError("statement timeout")
         self.params = params
@@ -126,67 +139,111 @@ class FakeDB:
 
         return R(self.rows)
 
-    async def rollback(self):
-        self.rolled_back = True
+
+def factory(db):
+    class Session:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *exc):
+            db.closed = True
+            return False
+
+    return lambda: Session()
 
 
 def cache_blob(at, moves, legs):
     return json.dumps({"at": at, "moves": {str(k): v for k, v in moves.items()}, "legs": legs})
 
 
+def load(db, wanted, redis, budget_s=cm.READ_BUDGET_S):
+    return asyncio.run(
+        cm.load_leg_moves(wanted, now=NOW, redis=redis, session_factory=factory(db), budget_s=budget_s)
+    )
+
+
 class TestReading:
     def test_a_fresh_covering_cache_serves_without_sql(self):
         redis = FakeRedis(cache_blob(NOW.timestamp() - 60, {1: 0.1}, [1, 2]))
         db = FakeDB()
-        out = asyncio.run(cm.load_leg_moves(db, [1, 2], now=NOW, redis=redis))
-        assert out == {1: 0.1} and db.calls == 0 and redis.sets == []
+        assert load(db, [1, 2], redis) == {1: 0.1}
+        assert db.reads == 0 and redis.sets == [] and redis.locks == []
 
-    def test_stale_or_thin_cache_reads_once_and_caches(self):
+    def test_stale_or_thin_cache_reads_once_on_its_own_session_and_caches(self):
         for raw in (
             cache_blob(NOW.timestamp() - cm.CACHE_TTL_S - 1, {1: 0.1}, [1, 2]),
             cache_blob(NOW.timestamp() - 60, {1: 0.1}, [1]),  # covers 1 of 2
             None,
         ):
             redis, db = FakeRedis(raw), FakeDB(rows=[(1, 0.2), (2, None)])
-            out = asyncio.run(cm.load_leg_moves(db, [1, 2], now=NOW, redis=redis))
-            assert out == {1: 0.2} and db.calls == 1
-            assert db.params == {"ids": [1, 2], "now": NOW}
+            assert load(db, [1, 2], redis) == {1: 0.2}
+            assert db.reads == 1 and db.params == {"ids": [1, 2], "now": NOW}
+            assert db.statements[0] == f"SET LOCAL statement_timeout = {cm.STATEMENT_TIMEOUT_MS}"
+            assert db.closed  # its own session, opened and closed by the read
+            assert redis.locks == [(cm.LOCK_KEY, cm.LOCK_TTL_S)]
             key, doc, ex = redis.sets[0]
             assert key == cm.CACHE_KEY and doc["legs"] == [1, 2] and ex == cm.CACHE_KEEP_S
 
+    def test_a_builder_that_misses_the_lock_reads_nothing(self):
+        stale = cache_blob(NOW.timestamp() - 1200, {1: 0.3}, [1])
+        db = FakeDB(rows=[(1, 0.5)])
+        assert load(db, [1], FakeRedis(stale, lock_ok=False)) == {1: 0.3}
+        assert load(db, [1], FakeRedis(None, lock_ok=False)) == {}
+        assert db.reads == 0
+
     def test_a_failed_read_keeps_the_stale_answer_then_nothing(self):
         stale = cache_blob(NOW.timestamp() - 1200, {1: 0.3}, [1])
-        db = FakeDB(fail=True)
-        assert asyncio.run(cm.load_leg_moves(db, [1], now=NOW, redis=FakeRedis(stale))) == {1: 0.3}
-        assert db.rolled_back
+        assert load(FakeDB(fail=True), [1], FakeRedis(stale)) == {1: 0.3}
         too_old = cache_blob(NOW.timestamp() - cm.CACHE_KEEP_S - 1, {1: 0.3}, [1])
-        assert asyncio.run(cm.load_leg_moves(FakeDB(fail=True), [1], now=NOW, redis=FakeRedis(too_old))) == {}
-        assert asyncio.run(cm.load_leg_moves(FakeDB(fail=True), [1], now=NOW, redis=FakeRedis("junk"))) == {}
+        assert load(FakeDB(fail=True), [1], FakeRedis(too_old)) == {}
+        assert load(FakeDB(fail=True), [1], FakeRedis("junk")) == {}
+
+    def test_a_read_over_budget_returns_within_the_budget_and_is_not_awaited(self, monkeypatch):
+        monkeypatch.setenv(cm.CONCEPT_MOVEMENT_ENV, "true")
+        slow = FakeDB(rows=[(2, 0.4)], delay=5.0)
+        deck = [bundle("A", 1), card("x"), bundle("B", 2)]
+
+        async def run():
+            started = time.monotonic()
+            out = await cm.apply_concept_movement(
+                deck, now=NOW, redis=FakeRedis(), session_factory=factory(slow), budget_s=0.2
+            )
+            return out, time.monotonic() - started
+
+        out, took = asyncio.run(run())
+        assert out is deck  # no answer → the current order
+        assert took < 1.0, took  # the budget (0.2 s) plus scheduling, never the 5 s read
+        # The stage takes no request session at all: nothing get_feed holds
+        # can be left mid-query.
+        assert "db" not in inspect.signature(cm.apply_concept_movement).parameters
 
     def test_switch_off_reads_nothing(self, monkeypatch):
         monkeypatch.delenv(cm.CONCEPT_MOVEMENT_ENV, raising=False)
-
-        class Boom:
-            async def execute(self, *a, **k):
-                raise AssertionError("read while off")
-
+        boom = FakeDB(fail=True)
         deck = [bundle("A", 1), bundle("B", 2)]
-        assert asyncio.run(cm.apply_concept_movement(Boom(), deck, now=NOW, redis=FakeRedis())) is deck
+        assert asyncio.run(
+            cm.apply_concept_movement(deck, now=NOW, redis=FakeRedis(), session_factory=factory(boom))
+        ) is deck
+        assert boom.reads == 0
 
     def test_switch_on_reorders(self, monkeypatch):
         monkeypatch.setenv(cm.CONCEPT_MOVEMENT_ENV, "true")
         deck = [bundle("A", 1), card("x"), bundle("B", 2)]
         out = asyncio.run(
-            cm.apply_concept_movement(FakeDB(rows=[(1, 0.0), (2, 0.07)]), deck, now=NOW, redis=FakeRedis())
+            cm.apply_concept_movement(
+                deck, now=NOW, redis=FakeRedis(), session_factory=factory(FakeDB(rows=[(1, 0.0), (2, 0.07)]))
+            )
         )
         assert titles(out) == ["B", "x", "A"]
 
-    def test_the_sql_reads_one_venue_against_itself_24h_ago(self):
+    def test_the_sql_reads_one_venue_against_itself_24h_ago_and_skips_settled_markets(self):
         sql = " ".join(cm.MOVE_SQL.split())
         assert "s.bookmaker = cur.bookmaker" in sql
         assert "s.captured_at <= CAST(:now AS timestamptz) - INTERVAL '24 hours'" in sql
         assert sql.count("ORDER BY s.captured_at DESC LIMIT 1") == 2
         assert "WHERE o.id IN :ids" in sql
+        assert "NOT IN ('resolved', 'closed', 'settled', 'finalized')" in sql
+        assert "w.market_id = o.market_id AND w.is_winner IS NOT NULL" in sql
 
 
 class TestWiring:
