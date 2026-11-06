@@ -331,4 +331,48 @@ describe("#11974 Step E6b — NHL story cards behind ?atlas=1", () => {
     expect(contribCard?.player).toBe("David Pastrnak");
     expect(contribCard?.actual).toBe(2);
   });
+
+  it("withholds unblended pregame percentage when multiple unblended sources price a goalscorer and clears hit when sources disagree", () => {
+    const scoringCard = buildNhlScoringCard({
+      playerProps: [
+        {
+          market_name: "Sidney Crosby: 1+ goals",
+          outcome_name: "Sidney Crosby",
+          threshold: 1,
+          over_probability: 1,
+          pregame_mark: 0.31,
+          actual: 1,
+          hit: true,
+          player_team: "home",
+          source: "kalshi",
+        },
+        {
+          market_name: "Sidney Crosby: 1+ goals",
+          outcome_name: "Sidney Crosby",
+          threshold: 1,
+          over_probability: 1,
+          pregame_mark: 0.39,
+          actual: 1,
+          hit: false,
+          player_team: "home",
+          source: "polymarket",
+        },
+      ],
+      status: "completed",
+      commenceTime: "2026-11-05T00:08:00Z",
+      homeTeam: TEAMS.homeName,
+      awayTeam: TEAMS.awayName,
+      nowMs: NOW_MS,
+    });
+
+    expect(scoringCard).not.toBeNull();
+    expect(scoringCard?.entries).toHaveLength(1);
+    expect(scoringCard?.entries[0]).toMatchObject({
+      player: "Sidney Crosby",
+      pregameChance: null,
+      actualGoals: 1,
+      hit: null,
+      sourceCount: 2,
+    });
+  });
 });
