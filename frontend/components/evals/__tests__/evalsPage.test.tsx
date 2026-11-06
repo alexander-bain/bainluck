@@ -336,6 +336,25 @@ describe("S2: the twin exam and its gates", () => {
     expect(twinPass1.sort()).toEqual(["0/35", "24/25"]);
   });
 
+  it("the lead says most gates are on unseen pairs, each gate names what it counts, and spanning cells say they span (Fable on #12154)", async () => {
+    const page = await mountPage();
+    const section = page.querySelector('[data-evals-section="exam"]');
+    const text = section?.textContent?.replace(/\s+/g, " ") ?? "";
+    expect(text).toContain("it has to pass every gate. Most are scored on pairs it has never seen.");
+    expect(text).not.toContain("every gate on pairs it has never seen");
+    const scopeOf = (id: string) =>
+      section?.querySelector(`[data-gate="${id}"] th details span`)?.textContent?.replace(/\s+/g, " ") ?? "";
+    for (const g of rawGates.filter((x) => (x as { scope?: string }).scope === "test")) {
+      expect(scopeOf(g.id)).toMatch(/Held-out pairs\.$/);
+    }
+    expect(scopeOf("three_pass_stability")).toMatch(/Every pair, development pairs included\.$/);
+    for (const id of ["unreadable_outputs", "truncated_outputs", "nonverbatim_quotes"]) expect(scopeOf(id)).toMatch(/Every reply\.$/);
+    const across = Array.from(section?.querySelectorAll('[data-gate-cell="across"]') ?? []);
+    expect(across).toHaveLength(rawGates.filter((g) => !g.by_pass).length);
+    for (const cell of across) expect(cell.querySelector("[data-across-passes]")?.textContent).toBe("Across all three passes");
+    expect(section?.querySelectorAll('[data-gate-cell="pass"] [data-across-passes]')).toHaveLength(0);
+  });
+
   it("licenses read HELD, FAIL and NOT ELIGIBLE as stored", async () => {
     const page = await mountPage();
     const chips = Object.fromEntries(

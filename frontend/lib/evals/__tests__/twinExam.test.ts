@@ -164,6 +164,14 @@ describe("a record that cannot be read leaves both exam sections absent", () => 
     ["an unknown licence", (b) => void ((b.licences as Record<string, string>).twin = "GRANTED?"), /licence for twin/],
     ["more found than exist", (b) => void (b.per_pass["1"].test.per_relation.twin.recall.k = 26), /unreadable counts/],
     ["a missing split", (b) => void delete (b.per_pass["2"] as Partial<Raw["per_pass"]["2"]>).dev, /pass 2, dev/],
+    [
+      "a gate cell with one malformed named count (refused, never repaired by dropping it)",
+      (b) => void ((b.gate_results[0] as { by_pass: Record<string, Record<string, { k: number; n: number }>> }).by_pass["1"].false_twins.k = 36),
+      /twin_detection: pass 1 is unreadable/,
+    ],
+    ["a gate cell whose own count is more than its total", (b) => void ((b.gate_results[1] as { by_pass: Record<string, { k: number }> }).by_pass["2"].k = 13), /pass 2 is unreadable/],
+    ["a misspelled scope", (b) => void ((b.gate_results[5] as { scope: string }).scope = "al"), /scope is not test or all/],
+    ["a missing scope", (b) => void delete (b.gate_results[0] as { scope?: string }).scope, /scope is not test or all/],
   ])("%s", (_label, breakIt, why) => {
     const broken = clone();
     breakIt(broken);

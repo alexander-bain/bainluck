@@ -57,7 +57,11 @@ export const RELATION_WORDS: Record<Relation, string> = {
  * off, unreadable, not word for word) is a count of failures, as the record's
  * identifiers say.
  */
-export const GATE_WORDS: Record<string, { name: string; checks: string; units: Record<string, string> }> = {
+/**
+ * Plain words for each gate. `scope` names what a gate measured across the
+ * passes counts, when "every reply" would be wrong for it.
+ */
+export const GATE_WORDS: Record<string, { name: string; checks: string; units: Record<string, string>; scope?: string }> = {
   twin_detection: {
     name: "Finds twins",
     checks: "On held-out pairs, it finds the twins and calls nothing else a twin.",
@@ -97,6 +101,7 @@ export const GATE_WORDS: Record<string, { name: string; checks: string; units: R
     name: "Same label every pass",
     checks: "Asked three times, it gives each pair the same label every time.",
     units: { count: "with the same label in all three passes" },
+    scope: "Every pair, development pairs included",
   },
   nonverbatim_quotes: {
     name: "Word-for-word quotes",
@@ -167,19 +172,25 @@ function countProblem(c: unknown): boolean {
   return !(Array.isArray(o.wilson95) && o.wilson95.length === 2 && o.wilson95.every((x) => typeof x === "number"));
 }
 
-/** The counts inside one gate cell: either the cell's own k/n, or each named k/n inside it. */
-function cellCounts(cell: Record<string, unknown>): { key: string; k: number; n: number }[] {
-  if (isCount(cell.k) && isCount(cell.n)) return [{ key: "count", k: cell.k as number, n: cell.n as number }];
-  return Object.entries(cell)
-    .filter(([key, v]) => key !== "result" && v && typeof v === "object" && !countProblem(v))
-    .map(([key, v]) => ({ key, k: (v as Count).k, n: (v as Count).n }));
+/**
+ * The counts inside one gate cell: either the cell's own k/n, or each named k/n
+ * inside it. Null when any count is malformed: a cell is refused, never repaired
+ * by dropping the count that failed (Fable on #12154).
+ */
+function cellCounts(cell: Record<string, unknown>): { key: string; k: number; n: number }[] | null {
+  if ("k" in cell || "n" in cell) {
+    return countProblem(cell) ? null : [{ key: "count", k: cell.k as number, n: cell.n as number }];
+  }
+  const named = Object.entries(cell).filter(([key]) => key !== "result");
+  if (named.length === 0 || named.some(([, v]) => !v || typeof v !== "object" || countProblem(v))) return null;
+  return named.map(([key, v]) => ({ key, k: (v as Count).k, n: (v as Count).n }));
 }
 
 function cellOf(raw: unknown): GateCell | null {
   const cell = raw as Record<string, unknown> | undefined;
   if (!cell || (cell.result !== "PASS" && cell.result !== "FAIL")) return null;
   const counts = cellCounts(cell);
-  if (counts.length === 0) return null;
+  if (!counts) return null;
   return { result: cell.result === "PASS" ? "pass" : "fail", counts };
 }
 
@@ -196,6 +207,7 @@ export function examProblem(raw: unknown): string | null {
   if (!Array.isArray(gates) || gates.length === 0) return "no gates";
   for (const g of gates as Record<string, unknown>[]) {
     if (typeof g?.id !== "string") return "a gate has no id";
+    if (g.scope !== "test" && g.scope !== "all") return `${g.id}: scope is not test or all`;
     if (g.by_pass) {
       for (const p of PASSES) {
         if (!cellOf((g.by_pass as Record<string, unknown>)[p])) return `${g.id}: pass ${p} is unreadable`;

@@ -34,6 +34,11 @@ function Cell({ gate, cell, truth, span }: { gate: Gate; cell: GateCell; truth: 
       }`}
     >
       <ResultChip result={cell.result} />
+      {span && (
+        <span className="mt-1 block text-text-tertiary" data-across-passes="">
+          {COPY.acrossPasses}
+        </span>
+      )}
       {orderedCounts(gate, cell).map((c) => (
         <span key={c.key} className="mt-1 block">
           <Figure truth={truth} value={`${c.k}/${c.n}`} className="text-text-primary">
@@ -83,7 +88,7 @@ function GateGrid({ exam, truth }: { exam: TwinExam; truth: MeasuredTruth }) {
                       {words?.name ?? gate.id}
                     </summary>
                     <span className="mt-1 block text-micro text-text-secondary">
-                      {words?.checks} {gate.scope === "test" ? COPY.heldOutScope : COPY.allScope}.
+                      {words?.checks} {words?.scope ?? (gate.scope === "test" ? COPY.heldOutScope : COPY.allScope)}.
                     </span>
                   </details>
                   <span className="mt-0.5 block text-micro text-text-tertiary" data-gate-units="">

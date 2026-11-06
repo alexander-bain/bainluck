@@ -64,7 +64,7 @@ export const HERO_TILE_COPY = {
 
 export const EXAM_COPY = {
   title: "The twin exam and its gates",
-  leadBefore: "Before the AI judge may file matches on its own, it has to pass every gate on pairs it has never seen. It passed",
+  leadBefore: "Before the AI judge may file matches on its own, it has to pass every gate. Most are scored on pairs it has never seen. It passed",
   leadMiddle: "and failed",
   leadAfter: ", so a person still checks its work.",
   detail:
@@ -87,7 +87,7 @@ export const CONFUSION_COPY = {
   title: "Where the judge gets confused",
   lead: "It is very good at spotting twins and bad at saying when it cannot tell.",
   detail:
-    "For each kind of pair: how many of them it found, and how often it was right when it used that label, each with its likely range. Rare kinds get wide ranges, and the page draws them.",
+    "For each kind of pair: how many of them it found, and how often it was right when it used that label, each with its likely range, which holds the true rate nineteen times in twenty. Rare kinds get wide ranges, and the page draws them.",
   views: { test: "Held-out", dev: "Development", all: "All pairs" },
   passes: ["First pass", "Second pass", "Third pass"],
   viewLabel: "Which pairs",
