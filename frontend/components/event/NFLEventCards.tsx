@@ -40,6 +40,14 @@ import {
   type LadderPoint,
   type OptionDetail,
 } from "@/lib/nbaEventCards";
+import {
+  mlbHomeRunHeadline,
+  mlbHomeRunReason,
+  mlbVenueResultLabel,
+  type MlbExtraInningsCard,
+  type MlbHomeRunCard,
+  type MlbSeriesCard,
+} from "@/lib/mlbEventCards";
 
 /** Selected original row per milestone card, keyed by card id. */
 export type CardSelection = Record<string, string>;
@@ -845,13 +853,13 @@ export function LadderCardView({
           {actualText && (
             <div className="flex flex-col">
               <span className="text-[11px] text-text-secondary">{card.phase === "after" ? "Actual final" : "So far"}</span>
-              <strong className="text-lg font-bold tabular-nums text-text-primary">{actualText}{!margin ? " points" : ""}</strong>
+              <strong className="text-lg font-bold tabular-nums text-text-primary">{actualText}{!margin ? ` ${card.unit ?? "points"}` : ""}</strong>
             </div>
           )}
           {forecastText && (
             <div className="flex flex-col">
               <span className="text-[11px] text-text-secondary">Pregame projection</span>
-              <strong className="text-lg font-bold tabular-nums text-text-primary">{forecastText}{!margin ? " points" : ""}</strong>
+              <strong className="text-lg font-bold tabular-nums text-text-primary">{forecastText}{!margin ? ` ${card.unit ?? "points"}` : ""}</strong>
             </div>
           )}
         </div>
@@ -923,6 +931,342 @@ export function LadderCardView({
   );
 }
 
+// ─── MLB story card views (#11974 Step E6a) ────────────────────────────────
+
+export function MlbHomeRunCardView({
+  card,
+  teams,
+  onDetails,
+}: {
+  card: MlbHomeRunCard;
+  teams: CardTeams;
+  onDetails?: (rowId: string) => void;
+}) {
+  const [boxRef, box] = usePlotBox();
+  const W = box.width;
+  const font = box.font;
+  const left = 10;
+  const right = 14;
+  const plotW = Math.max(120, W - left - right);
+  const x = (v: number) => left + (Math.min(Math.max(v, 0), card.scaleCeiling) / card.scaleCeiling) * plotW;
+  const step = card.scaleCeiling <= 0.25 ? 0.05 : card.scaleCeiling <= 0.5 ? 0.1 : 0.25;
+  const ticks: number[] = [];
+  for (let t = 0; t <= card.scaleCeiling + 1e-9; t += step) {
+    ticks.push(Math.round(t * 100) / 100);
+  }
+  const firstEntry = card.entries[0];
+
+  return (
+    <div className="flex flex-col gap-2.5" data-card-kind="mlb-home-runs" data-testid="mlb-home-run-card">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">
+          Home runs · chance of at least one
+        </p>
+        {onDetails && firstEntry && (
+          <button
+            type="button"
+            onClick={() => onDetails(firstEntry.id)}
+            aria-label="Details for Home runs"
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+      <h3 className="text-lg font-bold text-text-primary leading-snug">{mlbHomeRunHeadline(card)}</h3>
+      <p className="text-xs text-text-secondary">{mlbHomeRunReason(card)}</p>
+      <div
+        data-testid="atlas-story-card-mark-key"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary"
+      >
+        <span className="inline-flex items-center gap-1">
+          <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-secondary bg-surface-card" />
+          <span>Pregame chance</span>
+        </span>
+        {card.phase === "after" && (
+          <span className="inline-flex items-center gap-1">
+            <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+            <span>/</span>
+            <span className="font-semibold text-text-secondary">Official final</span>
+          </span>
+        )}
+      </div>
+      <div ref={boxRef} className="flex flex-col gap-2 w-full max-w-[720px]">
+        {card.entries.map((entry, idx) => {
+          const isLast = idx === card.entries.length - 1;
+          const rawColor =
+            entry.side === "home" ? teams.homeColor : entry.side === "away" ? teams.awayColor : null;
+          const ink = inkColor(rawColor);
+          const txt = textColor(rawColor);
+          const svgH = isLast ? 42 : 24;
+          const cy = 12;
+          const finalText =
+            entry.finalCount !== null
+              ? `${entry.finalCount} HR · Final`
+              : card.phase === "after"
+                ? "Final unavailable"
+                : "Pregame";
+          const homered = entry.finalCount !== null && entry.finalCount >= 1;
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => onDetails?.(entry.id)}
+              className="flex flex-col gap-1 rounded-md p-1.5 -mx-1.5 text-left hover:bg-surface-elevated"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="text-sm font-semibold truncate" style={{ color: txt }}>
+                    {entry.player}
+                  </span>
+                  <span className="text-xs font-semibold tabular-nums" style={{ color: txt }}>
+                    {formatProbability(entry.saved)} pregame
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {homered && (
+                    <span className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent-live">
+                      {ATLAS_STATE_COPY.wonWithCheck}
+                    </span>
+                  )}
+                  <span className="text-xs font-bold tabular-nums text-text-primary">{finalText}</span>
+                </div>
+              </div>
+              <svg viewBox={`0 0 ${W} ${svgH}`} width={W} height={svgH} className="block max-w-full" aria-hidden="true">
+                {ticks.map((t) => (
+                  <line
+                    key={t}
+                    x1={x(t)}
+                    x2={x(t)}
+                    y1={2}
+                    y2={22}
+                    stroke="rgba(0,0,0,0.08)"
+                  />
+                ))}
+                <line
+                  x1={x(0)}
+                  x2={x(entry.saved)}
+                  y1={cy}
+                  y2={cy}
+                  stroke={ink}
+                  strokeOpacity={0.35}
+                  strokeWidth={3}
+                />
+                <circle
+                  cx={x(entry.saved)}
+                  cy={cy}
+                  r={5.5}
+                  fill="#FFFFFF"
+                  stroke={ink}
+                  strokeWidth={2}
+                  data-mark="pregame"
+                />
+                {isLast &&
+                  ticks.map((t) => (
+                    <text
+                      key={t}
+                      x={x(t)}
+                      y={24 + font * 1.25}
+                      fontSize={font}
+                      textAnchor="middle"
+                      fill="#4B5563"
+                    >
+                      {Math.round(t * 100)}%
+                    </text>
+                  ))}
+              </svg>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function MlbExtraInningsCardView({
+  card,
+  onDetails,
+}: {
+  card: MlbExtraInningsCard;
+  onDetails?: (rowId: string) => void;
+}) {
+  const firstOutcome = card.outcomes[0];
+  const hasPregame = card.outcomes.some((o) => o.pregameChance !== null);
+  return (
+    <div className="flex flex-col gap-2.5" data-card-kind="mlb-extra-innings" data-testid="mlb-extra-innings-card">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">
+          Extra innings · venue market
+        </p>
+        {onDetails && firstOutcome && (
+          <button
+            type="button"
+            onClick={() => onDetails(firstOutcome.id)}
+            aria-label="Details for Extra innings"
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+      <h3 className="text-lg font-bold text-text-primary leading-snug">Extra innings</h3>
+      <p className="text-xs text-text-secondary">
+        {hasPregame ? "Chance before first pitch and venue settlement" : "Pregame chance unavailable for this market"}
+      </p>
+      <div className="flex flex-col divide-y divide-surface-border">
+        {card.outcomes.map((outcome) => (
+          <button
+            key={outcome.id}
+            type="button"
+            onClick={() => onDetails?.(outcome.id)}
+            className="flex items-center justify-between gap-2 py-2.5 text-left hover:bg-surface-elevated rounded-md px-1.5 -mx-1.5"
+          >
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold text-text-primary">{outcome.label}</span>
+              {outcome.venue && (
+                <span className="text-[11px] text-text-secondary">{outcome.venue}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {outcome.pregameChance !== null && (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold tabular-nums text-text-secondary">
+                  <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full border-2 border-text-secondary bg-surface-card" />
+                  <span>{formatProbability(outcome.pregameChance)} pregame</span>
+                </span>
+              )}
+              {outcome.venueResult === "won" && (
+                <span className="inline-flex items-center rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent-live">
+                  {ATLAS_STATE_COPY.wonWithCheck}
+                </span>
+              )}
+              <span className="text-xs font-semibold text-text-secondary">
+                Venue result: {mlbVenueResultLabel(outcome.venueResult)}
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function MlbSeriesCardView({
+  card,
+  teams,
+  selection,
+  onSelect,
+  onDetails,
+}: {
+  card: MlbSeriesCard;
+  teams: CardTeams;
+  selection: CardSelection;
+  onSelect: (cardId: string, rowId: string) => void;
+  onDetails?: (rowId: string) => void;
+}) {
+  const selectedKey = selection[card.id];
+  const activeQuestion =
+    card.questions.find((q) => q.questionKey === selectedKey || q.options.some((o) => o.optionKey === selectedKey)) ??
+    card.questions[0] ??
+    null;
+  const firstOption = activeQuestion?.options[0];
+  const optionCount = card.questions.reduce((sum, q) => sum + q.options.length, 0);
+  const accent = textColor(teams.homeColor);
+
+  return (
+    <div className="flex flex-col gap-2.5" data-card-kind="mlb-series" data-testid="mlb-series-card">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">
+          Series · separate from this game
+        </p>
+        {onDetails && firstOption && (
+          <button
+            type="button"
+            onClick={() => onDetails(firstOption.optionKey)}
+            aria-label="Details for The series"
+            data-testid="atlas-story-card-details-button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            i
+          </button>
+        )}
+      </div>
+      <h3 className="text-lg font-bold text-text-primary leading-snug">
+        {activeQuestion?.label ?? "The series"}
+      </h3>
+      <p className="text-xs text-text-secondary">Separate series markets</p>
+      {card.questions.length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {card.questions.map((q) => {
+            const isSelected = q.questionKey === activeQuestion?.questionKey;
+            return (
+              <button
+                key={q.questionKey}
+                type="button"
+                onClick={() => onSelect(card.id, q.questionKey)}
+                aria-pressed={isSelected}
+                className={`shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold ${
+                  isSelected
+                    ? "bg-text-primary text-surface-card"
+                    : "bg-surface-elevated text-text-primary hover:bg-surface-border"
+                }`}
+              >
+                {q.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {activeQuestion && (
+        <div className="grid grid-cols-2 gap-2">
+          {activeQuestion.options.map((opt) => {
+            const isSelected = opt.optionKey === selectedKey;
+            return (
+              <button
+                key={opt.optionKey}
+                type="button"
+                onClick={() => {
+                  onSelect(card.id, opt.optionKey);
+                  onDetails?.(opt.optionKey);
+                }}
+                className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left ${
+                  isSelected
+                    ? "border-text-primary bg-surface-elevated"
+                    : "border-surface-border bg-surface-card hover:bg-surface-elevated"
+                }`}
+              >
+                <span className="text-xs font-bold text-text-primary line-clamp-2">{opt.label}</span>
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-text-secondary">Chance before this game</span>
+                  <span
+                    className="text-sm font-bold tabular-nums"
+                    style={{ color: opt.pregame !== null ? accent : undefined }}
+                  >
+                    {opt.pregame !== null ? formatProbability(opt.pregame) : "Unavailable"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 text-[11px] text-text-secondary">
+                  {opt.result === "won" && (
+                    <span className="font-semibold text-accent-live">{ATLAS_STATE_COPY.wonWithCheck}</span>
+                  )}
+                  {opt.result === "lost" && (
+                    <span className="font-semibold text-text-secondary">{ATLAS_STATE_COPY.lostWithCross}</span>
+                  )}
+                  <span>Venue result: {mlbVenueResultLabel(opt.result)}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11px] text-text-secondary">
+        {optionCount} series {optionCount === 1 ? "outcome" : "outcomes"} · all in the Series section
+      </p>
+    </div>
+  );
+}
+
 // ─── Shared Atlas details-sheet adapter (#11974 Step E3) ───────────────────
 
 export function buildStoryCardDetailsSheetProps(opts: {
@@ -934,6 +1278,79 @@ export function buildStoryCardDetailsSheetProps(opts: {
   teams: CardTeams;
 }): Omit<AtlasDetailsSheetProps, "open" | "onClose"> | null {
   const { card, rowId, row, lead, rows, teams } = opts;
+  if (card?.kind === "mlb-home-runs") {
+    const entry = card.entries.find((e) => e.id === rowId) ?? card.entries[0] ?? null;
+    if (!entry) return null;
+    const isSettled = entry.finalState === "final" && entry.finalCount !== null;
+    const settledResult =
+      isSettled && entry.finalCount !== null ? (entry.finalCount >= 1 ? "won" : "lost") : null;
+    const rulesLines = [
+      `Official final: ${
+        entry.finalCount !== null
+          ? `${entry.finalCount} home ${entry.finalCount === 1 ? "run" : "runs"}`
+          : entry.finalState === "pending"
+            ? "Pending"
+            : "Unavailable"
+      }`,
+      `Venue settlement: ${mlbVenueResultLabel(entry.venueResult)}`,
+    ];
+    if (entry.finalSourceLabel && entry.finalCount !== null) {
+      rulesLines.push(`Final source: ${entry.finalSourceLabel}`);
+    }
+    return {
+      subjectName: entry.player,
+      marketTitle: entry.marketTitle,
+      isSettled,
+      settledResult,
+      openingProbability: entry.saved,
+      openingObservedAt: entry.observedAt,
+      lastObservedAt: entry.observedAt,
+      source: entry.venue ?? "sportsbooks",
+      sourceCount: 1,
+      rulesText: rulesLines.join("\n"),
+    };
+  }
+
+  if (card?.kind === "mlb-extra-innings") {
+    const outcome = card.outcomes.find((o) => o.id === rowId) ?? card.outcomes[0] ?? null;
+    if (!outcome) return null;
+    const isSettled = outcome.venueResult === "won" || outcome.venueResult === "lost";
+    const settledResult =
+      outcome.venueResult === "won" ? "won" : outcome.venueResult === "lost" ? "lost" : null;
+    return {
+      subjectName: outcome.label,
+      marketTitle: outcome.marketName,
+      isSettled,
+      settledResult,
+      openingProbability: outcome.pregameChance,
+      openingObservedAt: outcome.observedAt,
+      lastObservedAt: outcome.observedAt,
+      source: outcome.venue ?? "sportsbooks",
+      sourceCount: 1,
+      rulesText: `Venue result: ${mlbVenueResultLabel(outcome.venueResult)}`,
+    };
+  }
+
+  if (card?.kind === "mlb-series") {
+    const allOptions = card.questions.flatMap((q) => q.options);
+    const opt = allOptions.find((o) => o.optionKey === rowId) ?? allOptions[0] ?? null;
+    if (!opt) return null;
+    const isSettled = opt.result === "won" || opt.result === "lost";
+    const settledResult = opt.result === "won" ? "won" : opt.result === "lost" ? "lost" : null;
+    return {
+      subjectName: opt.label,
+      marketTitle: opt.marketName,
+      isSettled,
+      settledResult,
+      openingProbability: opt.pregame,
+      openingObservedAt: opt.observedAt,
+      lastObservedAt: opt.observedAt,
+      source: opt.venue ?? "sportsbooks",
+      sourceCount: 1,
+      rulesText: `Separate series market · Venue result: ${mlbVenueResultLabel(opt.result)}`,
+    };
+  }
+
   if (card?.kind === "finish" || rowId === "finish") {
     if (card?.kind !== "finish") return null;
     const winnerSide =
@@ -986,10 +1403,11 @@ export function buildStoryCardDetailsSheetProps(opts: {
     const rulesLines: string[] = [];
     if (card?.kind === "ladder") {
       const margin = card.family === "margin";
+      const unitLabel = card.unit ?? "points";
       const actualText =
-        card.actual === null ? null : margin ? marginWords(card, card.actual) : `${card.actual} points`;
+        card.actual === null ? null : margin ? marginWords(card, card.actual) : `${card.actual} ${unitLabel}`;
       const forecastText =
-        card.forecast === null ? null : margin ? marginWords(card, card.forecast) : `${card.forecast} points`;
+        card.forecast === null ? null : margin ? marginWords(card, card.forecast) : `${card.forecast} ${unitLabel}`;
       if (actualText) {
         rulesLines.push(`${card.phase === "after" ? "Actual final" : "So far"}: ${actualText}`);
       }
@@ -1072,6 +1490,23 @@ export function EventCardView({
   expanded?: boolean;
   atlasMode?: boolean;
 }) {
+  if (card.kind === "mlb-home-runs") {
+    return <MlbHomeRunCardView card={card} teams={teams} onDetails={onDetails} />;
+  }
+  if (card.kind === "mlb-extra-innings") {
+    return <MlbExtraInningsCardView card={card} onDetails={onDetails} />;
+  }
+  if (card.kind === "mlb-series") {
+    return (
+      <MlbSeriesCardView
+        card={card}
+        teams={teams}
+        selection={selection}
+        onSelect={onSelect}
+        onDetails={onDetails}
+      />
+    );
+  }
   if (card.kind === "finish") {
     return (
       <FinishCardView
