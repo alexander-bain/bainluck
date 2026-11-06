@@ -24,12 +24,16 @@ Order is ``rev`` (per-row commit order), never ``recorded_at``: insert stamps
 are taken before commit and need not be monotonic in commit order.
 
 Boundary: ``4974-UX-READER-SLICE-1-BOUNDARY.md`` section A.
+
+#12108 PR 1 adds ``select_horizon_rows`` (pure, same rules: order is ``rev``)
+and ``horizon_rows`` (its one database read), the recorded value calibration
+grades at T-24h / T-6h / T-1h / the start.
 """
 
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional, Sequence
 
 SCHEMA_VERSION = 1
@@ -103,4 +107,88 @@ def publications_body(
         "time_basis": TIME_BASIS,
         "truncated": truncated,
         "vertices": vertices,
+    }
+
+
+# ── #12108 PR 1: the recorded value at each grading horizon ──────────────────
+
+#: The horizons calibration grades the served blend at (plan §5 on #11850):
+#: name → how long before the event's start.
+HORIZONS: tuple[tuple[str, timedelta], ...] = (
+    ("t_minus_24h", timedelta(hours=24)),
+    ("t_minus_6h", timedelta(hours=6)),
+    ("t_minus_1h", timedelta(hours=1)),
+    ("start", timedelta(0)),
+)
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def select_horizon_rows(
+    rows: Iterable[Sequence[Any]], start: Optional[datetime]
+) -> dict[str, Optional[dict]]:
+    """Per horizon, the row in force at it: among rows with ``recorded_at`` at
+    or before ``start - offset``, the one with the highest ``rev``.
+
+    Pure. ``rows`` are ``(rev, recorded_at, blend_probability)``. Order is
+    ``rev`` (commit order), never ``recorded_at`` (an insert stamp taken before
+    commit, so two rows may share one). A horizon no row reaches is ``None`` —
+    never a later row. No ``start`` → every horizon ``None``. A row's
+    ``blend_probability`` is served as stored, NULL included (NULL is the
+    recorded "no overall probability" state, not a missing row).
+    """
+    out: dict[str, Optional[dict]] = {name: None for name, _ in HORIZONS}
+    if start is None:
+        return out
+    start = _aware(start)
+    ordered = sorted(rows, key=lambda row: int(row[0]))
+    for name, offset in HORIZONS:
+        cutoff = start - offset
+        best = None
+        for rev, recorded_at, blend_probability in ordered:
+            if _aware(recorded_at) <= cutoff:
+                best = (rev, recorded_at, blend_probability)
+        if best is not None:
+            rev, recorded_at, blend_probability = best
+            out[name] = {
+                "rev": int(rev),
+                "recorded_at": _iso_utc(recorded_at),
+                "blend_probability": _servable_probability(blend_probability),
+            }
+    return out
+
+
+async def horizon_rows(db: Any, event_id: int) -> Optional[dict]:
+    """``{"event_id", "start", "horizons"}`` for one event, or ``None`` when the
+    event does not exist. Two reads: the event's start, then its rows by
+    ``(event_id, rev)`` — the unique index ``uq_probability_publications_event_rev``."""
+    from sqlalchemy import select
+
+    from app.models.models import Event, ProbabilityPublication
+
+    start = (
+        await db.execute(select(Event.commence_time).where(Event.id == event_id))
+    ).scalar_one_or_none()
+    exists = start is not None or (
+        await db.execute(select(Event.id).where(Event.id == event_id))
+    ).scalar_one_or_none() is not None
+    if not exists:
+        return None
+    rows = (
+        await db.execute(
+            select(
+                ProbabilityPublication.rev,
+                ProbabilityPublication.recorded_at,
+                ProbabilityPublication.blend_probability,
+            )
+            .where(ProbabilityPublication.event_id == event_id)
+            .order_by(ProbabilityPublication.rev)
+        )
+    ).all()
+    return {
+        "event_id": int(event_id),
+        "start": _iso_utc(start) if start is not None else None,
+        "horizons": select_horizon_rows(rows, start),
     }

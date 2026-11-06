@@ -242,7 +242,25 @@ def _long_tail(n=12):
 
 
 class TestTeamRouteServesTheLeagueRow:
-    async def test_the_spring_slug_now_serves_the_pennant_race(self, client, mock_db):
+    async def test_the_spring_slug_now_serves_the_pennant_race(
+        self, client, mock_db, monkeypatch
+    ):
+        # #6266 made `_format_team` withhold `record` during a league's
+        # offseason, and `season_windows._LEAGUE_BANDS["mlb"]` ends the MLB
+        # postseason band on November 5. Anchor the season check to this
+        # fixture's 2026-09-11 pennant-race clock (gotcha #44) so the route
+        # assertion does not flip at 2026-11-06 00:00Z.
+        from datetime import datetime, timezone
+
+        from app.utils import season_windows
+
+        pennant_clock = datetime(2026, 9, 11, 22, 20, tzinfo=timezone.utc)
+        monkeypatch.setattr(
+            season_windows,
+            "is_offseason",
+            lambda league, _now=None: season_windows.league_phase(league, pennant_clock)
+            == "offseason",
+        )
         mock_db.execute.side_effect = [
             _scalars_result([_team(**SPRING_ROW)]),          # slug lookup → 853
             _scalars_result([(RED_SOX_PARENT, "baseball_mlb")]),  # siblings on espn_id
