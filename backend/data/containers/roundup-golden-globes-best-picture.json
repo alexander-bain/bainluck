@@ -1,0 +1,21 @@
+{
+  "slug": "roundup-golden-globes-best-picture",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "kicker": "GOLDEN GLOBES",
+  "name": "Best Picture: who's nominated, who wins",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Best Picture",
+  "footer": "Several nominees are nominated; one wins.",
+  "rule": {
+    "producer": "awards_category_roundup",
+    "ceremony": "Golden Globes",
+    "category_name": "Best Motion Picture - Drama",
+    "min_paired_nominees": 3,
+    "card_rows": 3,
+    "require_guard_11995": true,
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}

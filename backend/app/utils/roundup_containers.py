@@ -861,6 +861,16 @@ def _register_builtin_producers() -> None:
     if closest_producer is not None:
         register_roundup_producer(closest_producer)
 
+    import app.utils.awards_category_roundup as _awards_cat
+    import app.utils.register_closest as _register_closest
+
+    for _extra_p in (
+        getattr(_register_closest, "CLOSEST_RACES_PRODUCER", None),
+        getattr(_awards_cat, "GOLDEN_GLOBES_BEST_PICTURE_PRODUCER", None),
+    ):
+        if _extra_p is not None:
+            register_roundup_producer(_extra_p)
+
     cfp_producer = getattr(_field_band, "CFP_PICTURE_PRODUCER", None)
     if cfp_producer is not None:
         register_roundup_producer(cfp_producer)

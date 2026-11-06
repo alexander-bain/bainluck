@@ -43,6 +43,28 @@ export function RoundupRow({ row, nowMs }: { row: RoundupRowModel; nowMs: number
           data-testid="roundup-row-bar"
         />
       </span>
+      {row.secondary ? (
+        <div
+          className="col-start-2 mt-1.5 flex items-center gap-2 text-[12px] leading-none text-text-secondary"
+          data-testid="roundup-row-secondary"
+        >
+          <span className="shrink-0 font-mono tabular-nums" data-testid="roundup-row-secondary-value">
+            {row.secondary.secondaryLabel} {row.secondary.marker}
+            {row.secondary.digits}% · {row.secondary.primaryLabel} {row.marker}
+            {row.digits}%
+          </span>
+          <span
+            className="block h-[5px] flex-1 overflow-hidden rounded-[3px] bg-surface-elevated"
+            aria-hidden="true"
+          >
+            <i
+              className="block h-full min-w-[3px] rounded-r-[3px] bg-text-muted"
+              style={{ width: `${Math.max(0, Math.min(1, row.secondary.fill)) * 100}%` }}
+              data-testid="roundup-row-secondary-bar"
+            />
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

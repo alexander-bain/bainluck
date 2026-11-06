@@ -1,0 +1,20 @@
+{
+  "slug": "roundup-closest-races",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "kicker": "CLOSEST RACES",
+  "name": "The closest races still open",
+  "category": "politics",
+  "tag": "POLITICS",
+  "section_title": "Open races",
+  "footer": "Bain Luck blend · both venues where paired",
+  "rule": {
+    "producer": "register_closest",
+    "register": "midterms-2026",
+    "sections": ["senate_races", "governors"],
+    "min_open_races": 3,
+    "card_rows": 3,
+    "refusal": "all-or-nothing",
+    "materialize": "read-time"
+  }
+}

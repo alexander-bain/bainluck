@@ -2236,6 +2236,14 @@ export type FeedRoundupRow = {
   probability: number;
   /** The server's whole-percent rendering of `probability`, when it sent one. */
   rendered_percent?: number | null;
+  /** Optional second bar probability in [0, 1] for two-bar awards rows (e.g. nomination %). */
+  secondary_probability?: number | null;
+  /** The server's whole-percent rendering of `secondary_probability`, when it sent one. */
+  secondary_rendered_percent?: number | null;
+  /** Optional short label for the primary bar when a second bar is present (e.g. "Wins"). */
+  primary_bar_label?: string | null;
+  /** Optional short label for the secondary bar when present (e.g. "Nominated"). */
+  secondary_bar_label?: string | null;
   /** The OLDEST contributing price behind this row. */
   observed_at?: string | null;
 } & (
