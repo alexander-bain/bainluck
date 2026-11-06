@@ -270,6 +270,31 @@ describe("#6616 · the natural-event rows", () => {
     expect(text).not.toContain(" 100%");
   });
 
+  test("settled natural-event rows print the result word ✓ Won (#12093)", () => {
+    const hurricaneText = visibleText(
+      renderToStaticMarkup(
+        React.createElement(HurricaneTracker, {
+          items: [
+            {
+              ...event("Hurricane Trudy category?", 100, 1.0),
+              leader: "Category 3 or above",
+              settled: true,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(hurricaneText).toContain("Category 3 or above");
+    expect(hurricaneText).toContain("✓ Won");
+    expect(hurricaneText).not.toContain("100%");
+
+    const listText = eventList([
+      { ...event(TORNADOES, 100, 1.0), settled: true },
+    ]);
+    expect(listText).toContain("✓ Won");
+    expect(listText).not.toContain("100%");
+  });
+
   test("a pre-#6616 cached row still prints its integer", () => {
     expect(eventList([event(TORNADOES, 100)])).toContain("100%");
   });
@@ -307,10 +332,12 @@ describe("#6616 · the Monthly rainfall card", () => {
     expect(text).not.toContain(" 100%");
   });
 
-  test("a genuinely settled row would still print 100%", () => {
-    // Not a hypothetical: `settled means settled`. The rule is about values
-    // strictly inside (0, 1), and 1 is not inside it.
-    expect(rain([monthly("Miami", 100, 1)])).toContain("100%");
+  test("a genuinely settled row prints the result word ✓ Won (#12093)", () => {
+    // `settled means settled`: a settled 1.0 row on Monthly rainfall prints
+    // the result word (`✓ Won`), never a bare `100%`.
+    const text = rain([monthly("Miami", 100, 1)]);
+    expect(text).toContain("✓ Won");
+    expect(text).not.toContain("100%");
   });
 
   test("a pre-#6616 cached payload renders exactly as it did before", () => {
