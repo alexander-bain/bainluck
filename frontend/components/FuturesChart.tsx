@@ -40,7 +40,11 @@ import {
   AtlasSeriesReadingMarks,
   type AtlasSelectedReading,
 } from "@/components/atlas/AtlasChartMarks";
-import { formatAtlasTimestampPT } from "@/components/atlas/atlasStateCopy";
+import {
+  ATLAS_STATE_COPY,
+  formatAtlasTimestampPT,
+} from "@/components/atlas/atlasStateCopy";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 // Series palettes live in the shared registry (L2-157, census class E). This
 // kernel is the flagship series surface, so its palette is the canonical one.
@@ -53,7 +57,49 @@ const GREEN_COLORS = SERIES_COLORS_GREEN;
 const FULL_CHART_WIDTH = 800;
 const MINI_CHART_WIDTH = 400;
 const FULL_PADDING = { top: 20, right: 20, bottom: 40, left: 50 };
+const ATLAS_FULL_PADDING = { top: 20, right: 148, bottom: 40, left: 50 };
 const MINI_PADDING = { top: 4, right: 4, bottom: 4, left: 4 };
+
+export interface AtlasEndLabelEntry {
+  outcomeId: number;
+  text: string;
+  y: number;
+  pointX: number;
+  color: string;
+  opacity: number;
+}
+
+export interface PlacedAtlasEndLabel extends AtlasEndLabelEntry {
+  labelY: number;
+}
+
+/**
+ * Spread direct endpoint labels vertically without altering probability
+ * coordinates (`dunhillLabels` pattern from `dunhillReading.ts`, #883 Step F5).
+ */
+export function spreadAtlasEndLabels(
+  entries: readonly AtlasEndLabelEntry[],
+  top: number,
+  bottom: number,
+  gap = 16,
+): PlacedAtlasEndLabel[] {
+  const sorted = [...entries].sort((a, b) => a.y - b.y);
+  const result = sorted.map((r, i) => ({
+    ...r,
+    labelY: Math.max(top + i * gap, r.y),
+  }));
+  for (let i = 1; i < result.length; i += 1) {
+    result[i].labelY = Math.max(result[i].labelY, result[i - 1].labelY + gap);
+  }
+  const overshoot = Math.max(
+    0,
+    (result[result.length - 1]?.labelY ?? bottom) - bottom,
+  );
+  return result.map((r) => ({
+    ...r,
+    labelY: Math.max(top, r.labelY - overshoot),
+  }));
+}
 
 /** #10955 (327): the chart legend's "Lost" at the secondary-text contrast. */
 export const LOST_LEGEND_WORD_CLASS = "[&>span]:text-text-secondary";
@@ -249,6 +295,10 @@ interface FuturesChartProps {
   atlasIncludesOpening?: boolean;
   /** Optional callback fired when a user taps a real reading on the chart under ?atlas=1. */
   onSelectReading?: (reading: AtlasSelectedReading | null) => void;
+  /** #883 Step F5 (Decide 47: E) — optional per-outcome end-label value override
+   *  (e.g. server-normalized current "%" or settled "✓ Won" / "✗ Lost") printed
+   *  beside the series name at the right edge of the journey under ?atlas=1. */
+  outcomeEndLabels?: Map<number, string>;
 }
 
 export function FuturesChart({
@@ -279,8 +329,9 @@ export function FuturesChart({
   atlas = false,
   atlasIncludesOpening = true,
   onSelectReading,
+  outcomeEndLabels,
 }: FuturesChartProps) {
-  const effectiveShowLegend = showLegend ?? !mini;
+  const effectiveShowLegend = showLegend ?? (!mini && !atlas);
   const effectiveShowAxes = showAxes ?? !mini;
   // Default to step lines under ?atlas=1 (NOW #11852 Decision 11-A) while preserving false for non-Atlas callers.
   const effectiveStepInterpolation = stepInterpolation ?? atlas;
@@ -416,11 +467,12 @@ export function FuturesChart({
     // page can hydrate before resolution is known, and a chart that anchored
     // while it still believed itself live must re-anchor when it learns.
     // #9867: and "behind" is wherever its lines moved — see `anchorScrollLeft`.
+    const activePadding = atlas ? ATLAS_FULL_PADDING : FULL_PADDING;
     const movement = settled
       ? seriesMovementMarks(plottedOutcomes, {
           width: FULL_CHART_WIDTH,
-          left: FULL_PADDING.left,
-          right: FULL_PADDING.right,
+          left: activePadding.left,
+          right: activePadding.right,
         })
       : undefined;
     el.scrollLeft = anchorScrollLeft(el, { settled, movement });
@@ -429,7 +481,7 @@ export function FuturesChart({
     // still has plot behind it.
     window.addEventListener("resize", syncEdgeOverflow);
     return () => window.removeEventListener("resize", syncEdgeOverflow);
-  }, [mini, plottedOutcomes, settled, syncEdgeOverflow]);
+  }, [atlas, mini, plottedOutcomes, settled, syncEdgeOverflow]);
 
   // #683: a full read that served nothing to draw and says it held some back
   // falls through to the too-little-to-draw state below, which says so. A
@@ -518,7 +570,7 @@ export function FuturesChart({
 
   const chartWidth = mini ? MINI_CHART_WIDTH : FULL_CHART_WIDTH;
   const effectiveHeight = height ?? (mini ? 80 : 200);
-  const padding = mini ? MINI_PADDING : FULL_PADDING;
+  const padding = mini ? MINI_PADDING : atlas ? ATLAS_FULL_PADDING : FULL_PADDING;
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = effectiveHeight - padding.top - padding.bottom;
 
@@ -599,6 +651,71 @@ export function FuturesChart({
       });
     }
   });
+
+  const resultMarkByOutcomeId = new Map(
+    resultMarkSpecs.map((spec) => [spec.outcome.outcome_id, spec]),
+  );
+  const atlasEndLabelEntries: AtlasEndLabelEntry[] = [];
+  if (atlas && !mini) {
+    displayedOutcomes.forEach((outcome, idx) => {
+      const realPoints = plottedOutcomes[idx].history.filter(
+        (p) => p.probability !== null,
+      );
+      const lastPoint = realPoints[realPoints.length - 1];
+      const resultSpec = resultMarkByOutcomeId.get(outcome.outcome_id);
+      if (!lastPoint && !resultSpec) return;
+
+      const pointX = lastPoint
+        ? xScale(new Date(lastPoint.timestamp).getTime())
+        : resultSpec!.x;
+      const pointY = lastPoint
+        ? yScale(lastPoint.probability!)
+        : resultSpec!.y;
+
+      const overrideValue = outcomeEndLabels?.get(outcome.outcome_id);
+      const settlementResult = settlementResults.get(outcome.outcome_id);
+      const valueText =
+        overrideValue !== undefined
+          ? overrideValue
+          : settlementResult === "won"
+            ? ATLAS_STATE_COPY.wonWithCheck
+            : settlementResult === "lost"
+              ? ATLAS_STATE_COPY.lostWithCross
+              : lastPoint && lastPoint.probability !== null
+                ? formatProbabilityPercent(lastPoint.probability)
+                : "";
+
+      const rawName = seriesLabel(plottedOutcomes[idx].name);
+      const displayName =
+        rawName.length > 22
+          ? `${rawName.slice(0, 21).trimEnd()}…`
+          : rawName;
+      const text = valueText ? `${displayName} ${valueText}` : displayName;
+
+      const isDimmed =
+        highlightedOutcomeId != null &&
+        highlightedOutcomeId !== outcome.outcome_id;
+      const opacity = isDimmed ? 0.35 : outcome.eliminated ? 0.45 : 1;
+
+      atlasEndLabelEntries.push({
+        outcomeId: outcome.outcome_id,
+        text,
+        y: pointY,
+        pointX,
+        color: colorFor(outcome, idx),
+        opacity,
+      });
+    });
+  }
+  const placedAtlasEndLabels =
+    atlas && !mini && atlasEndLabelEntries.length > 0
+      ? spreadAtlasEndLabels(
+          atlasEndLabelEntries,
+          padding.top + 8,
+          padding.top + innerHeight - 4,
+          16,
+        )
+      : [];
 
   // The legend's result word: the product's one settled vocabulary, beside the
   // name it belongs to. This is where the result is READ — the mark in the plot
@@ -1091,6 +1208,47 @@ export function FuturesChart({
                 </g>
               );
             })}
+
+            {/* #883 Step F5 (Decide 47: E) — each drawn series carries its outcome
+                name + current % (or result word) in its series color at the right
+                edge of the journey, so the chart says what it draws without a
+                separate toggle legend. */}
+            {atlas && !mini && placedAtlasEndLabels.length > 0 && (
+              <g data-testid="atlas-chart-end-labels">
+                {placedAtlasEndLabels.map((item) => {
+                  const plotRight = chartWidth - padding.right;
+                  const labelX = plotRight + 10;
+                  const leaderStartX = Math.min(plotRight, item.pointX + 5);
+                  const leaderPath = `M ${leaderStartX} ${item.y} L ${labelX - 6} ${item.labelY} L ${labelX - 2} ${item.labelY}`;
+                  return (
+                    <g
+                      key={`end-label-${item.outcomeId}`}
+                      data-testid="atlas-chart-end-label"
+                      data-outcome-id={item.outcomeId}
+                      data-color={item.color}
+                      opacity={item.opacity}
+                    >
+                      <path
+                        d={leaderPath}
+                        fill="none"
+                        stroke={item.color}
+                        strokeWidth={1}
+                        strokeOpacity={0.55}
+                      />
+                      <text
+                        x={labelX}
+                        y={item.labelY + 3.5}
+                        textAnchor="start"
+                        fill={item.color}
+                        className="text-[10px] font-semibold tabular-nums"
+                      >
+                        {item.text}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            )}
 
             {/* Hover crosshair and dots */}
             {hoverInfo && !mini && (

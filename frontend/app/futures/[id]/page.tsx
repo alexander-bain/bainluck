@@ -58,7 +58,13 @@ import {
   formatAtlasTimestampPT,
   resolveAtlasOptIn,
 } from "@/components/atlas/atlasStateCopy";
-import FuturesShapeBody from "@/components/futures/FuturesShapeBody";
+import FuturesShapeBody, {
+  buildAtlasFieldCohort,
+  resolveAtlasBodyKind,
+  retainContenderColors,
+} from "@/components/futures/FuturesShapeBody";
+import { SERIES_COLORS } from "@/lib/seriesColors";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import QuantityGroup, { buildThresholdRungs } from "@/components/QuantityGroup";
 import ProgressionTable from "@/components/ProgressionTable";
@@ -660,6 +666,127 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // chart's five-line fallback cannot draw withheld rows as the leaders. On the
   // same market the caption's subject must be priced too — a withheld row has
   // no current number to say "up N pts" about.
+  const { listed: pricedOutcomes, folded: unpricedOutcomes } = useMemo(
+    () =>
+      partitionOutcomesByPrice(
+        sortedOutcomes,
+        // #698: a settled row whose result is unknown is listed too — it keeps
+        // its name and "Result unknown" in the table, never a closed fold.
+        (outcome) =>
+          outcomeRowVerdict(outcome, market?.status === "resolved") !== null ||
+          isResultUnknown(outcome, market?.status === "resolved"),
+      ),
+    [sortedOutcomes, market?.status],
+  );
+
+  // #883 Step F5 (Decide 47: E): resolve body kind, 3-leader cohort, retained
+  // per-identity colors, and end labels for the journey under ?atlas=1.
+  const atlasBodyKind = useMemo(
+    () =>
+      market
+        ? resolveAtlasBodyKind({
+            marketShape,
+            outcomeCount: market.outcomes?.length ?? 0,
+            mutuallyExclusive: market.mutually_exclusive,
+            hasThresholdGroups: thresholdEntries.length > 0,
+          })
+        : null,
+    [market, marketShape, thresholdEntries.length],
+  );
+
+  const atlasActiveSubjectOutcome = useMemo(() => {
+    if (!market?.outcomes) return null;
+    const resolved = market.status === "resolved";
+    const champ = gradedWinner(
+      market.outcomes,
+      leader,
+      market.status,
+      market.market_type,
+      market.mutually_exclusive,
+    );
+    const singleLost =
+      resolved &&
+      champ === null &&
+      market.outcomes.length === 1 &&
+      outcomeRowVerdict(market.outcomes[0], true) === "lost"
+        ? market.outcomes[0]
+        : null;
+    const hero =
+      leadOutcome ??
+      pickHeroOutcome(market.outcomes, leader, resolved, market.mutually_exclusive);
+    const selected =
+      atlasSelectedOutcomeId != null
+        ? market.outcomes.find((o) => o.id === atlasSelectedOutcomeId) ?? null
+        : null;
+    return selected ?? champ ?? singleLost ?? hero;
+  }, [market, leader, leadOutcome, atlasSelectedOutcomeId]);
+
+  const atlasChartCohort = useMemo(() => {
+    if (!atlasEnabled || (atlasBodyKind !== "field" && atlasBodyKind !== "qualifier")) {
+      return [];
+    }
+    const pool = pricedOutcomes.length > 0 ? pricedOutcomes : sortedOutcomes;
+    return buildAtlasFieldCohort(pool, atlasSelectedOutcomeId, 3);
+  }, [atlasEnabled, atlasBodyKind, pricedOutcomes, sortedOutcomes, atlasSelectedOutcomeId]);
+
+  const atlasColorSlotsRef = useRef<Record<string, number>>({});
+  const atlasOutcomeColors = useMemo(() => {
+    if (!atlasEnabled || (atlasBodyKind !== "field" && atlasBodyKind !== "qualifier")) {
+      return undefined;
+    }
+    const cohortIds = atlasChartCohort.map((o) => String(o.id));
+    const slots = retainContenderColors(atlasColorSlotsRef.current, cohortIds, 3);
+    atlasColorSlotsRef.current = slots;
+    const colorMap = new Map<number, string>();
+    for (const outcome of atlasChartCohort) {
+      const slot = slots[String(outcome.id)] ?? 0;
+      colorMap.set(outcome.id, SERIES_COLORS[slot % SERIES_COLORS.length]);
+    }
+    return colorMap;
+  }, [atlasEnabled, atlasBodyKind, atlasChartCohort]);
+
+  const effectiveSelectedOutcomes = useMemo(() => {
+    if (!atlasEnabled) return selectedOutcomes;
+    if (atlasBodyKind === "field" || atlasBodyKind === "qualifier") {
+      return new Set(atlasChartCohort.map((o) => o.id));
+    }
+    if (atlasBodyKind === "duel" || atlasBodyKind === "one-leg") {
+      return atlasActiveSubjectOutcome
+        ? new Set([atlasActiveSubjectOutcome.id])
+        : selectedOutcomes;
+    }
+    return selectedOutcomes;
+  }, [
+    atlasEnabled,
+    atlasBodyKind,
+    atlasChartCohort,
+    atlasActiveSubjectOutcome,
+    selectedOutcomes,
+  ]);
+
+  const atlasOutcomeEndLabels = useMemo(() => {
+    if (!atlasEnabled || !market?.outcomes) return undefined;
+    const resolved = market.status === "resolved";
+    const map = new Map<number, string>();
+    for (const outcome of market.outcomes) {
+      const verdict = outcomeRowVerdict(outcome, resolved);
+      if (verdict === "won") {
+        map.set(outcome.id, ATLAS_STATE_COPY.wonWithCheck);
+      } else if (verdict === "lost") {
+        map.set(outcome.id, ATLAS_STATE_COPY.lostWithCross);
+      } else if (!resolved && hasCurrentPrice(outcome) && outcome.probability != null) {
+        const rendered = renderedById.get(outcome.id)?.current;
+        map.set(
+          outcome.id,
+          formatProbabilityPercent(outcome.probability, {
+            rendered: rendered ?? undefined,
+          }),
+        );
+      }
+    }
+    return map;
+  }, [atlasEnabled, market?.outcomes, market?.status, renderedById]);
+
   const pricedIds = useMemo(
     () =>
       market?.status === "resolved"
@@ -668,12 +795,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     [market?.outcomes, market?.status],
   );
   const chartHistory = useMemo(
-    () => chartHistoryForSelection(historyOutcomes, selectedOutcomes, pricedIds),
-    [historyOutcomes, selectedOutcomes, pricedIds],
+    () => chartHistoryForSelection(historyOutcomes, effectiveSelectedOutcomes, pricedIds),
+    [historyOutcomes, effectiveSelectedOutcomes, pricedIds],
   );
   const drawnChartOutcomes = useMemo(
-    () => visibleChartOutcomes(chartHistory, selectedOutcomes),
-    [chartHistory, selectedOutcomes],
+    () => visibleChartOutcomes(chartHistory, effectiveSelectedOutcomes),
+    [chartHistory, effectiveSelectedOutcomes],
   );
   const captionSubject = useMemo(() => {
     const drawnIds = new Set(drawnChartOutcomes.map((o) => o.outcome_id));
@@ -732,32 +859,6 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         ),
       ),
     [historyOutcomes]
-  );
-
-  // D102 / #4568 — the rows that print a number, and the numberless ones folded
-  // behind a disclosure. The reasoning, the four measured payloads and why the
-  // predicate is the render's own live in `partitionOutcomesByPrice`.
-  //
-  // Everything downstream counts `pricedOutcomes`, never `sortedOutcomes`: the
-  // 25-cap, the "Show all N" label and the "Show N more" button are all claims
-  // about the list a reader is looking at, and folding rows out of that list
-  // without moving its counters is how a "Show all 19" button comes to reveal
-  // fourteen rows.
-  //
-  // #10066: a graded row prints `Won`/`Lost · 100%`/`0%` with no price at all, so
-  // it is listed by the row's own verdict test, never folded under "No current
-  // prices" on a settled board.
-  const { listed: pricedOutcomes, folded: unpricedOutcomes } = useMemo(
-    () =>
-      partitionOutcomesByPrice(
-        sortedOutcomes,
-        // #698: a settled row whose result is unknown is listed too — it keeps
-        // its name and "Result unknown" in the table, never a closed fold.
-        (outcome) =>
-          outcomeRowVerdict(outcome, market?.status === "resolved") !== null ||
-          isResultUnknown(outcome, market?.status === "resolved"),
-      ),
-    [sortedOutcomes, market?.status],
   );
 
   // Limit displayed outcomes unless "show all" is enabled
@@ -1494,8 +1595,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             <div className={heldRangeNote != null && heldRangeState === "loading" ? "opacity-60 transition-opacity" : "transition-opacity"}>
               <FuturesChart
                 historyData={chartHistory}
-                selectedOutcomes={selectedOutcomes}
-                onToggleOutcome={toggleOutcomeSelection}
+                selectedOutcomes={effectiveSelectedOutcomes}
+                onToggleOutcome={atlasEnabled ? undefined : toggleOutcomeSelection}
                 stepInterpolation={historyData.sparse}
                 fixedYAxis
                 fieldCeiling
@@ -1504,11 +1605,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 cadenceNoteShown={trendCadenceNote != null}
                 seriesOrder={chartSeriesOrder}
                 historyWithheld={servedPartialHistory(historyData)}
+                outcomeColors={atlasOutcomeColors}
+                highlightedOutcomeId={
+                  atlasEnabled &&
+                  (atlasBodyKind === "field" || atlasBodyKind === "qualifier")
+                    ? atlasSelectedOutcomeId
+                    : undefined
+                }
                 atlas={atlasEnabled}
                 atlasIncludesOpening={
                   (shownHistory.current?.range ?? effectiveRange) === "all" &&
                   !servedPartialHistory(historyData)
                 }
+                outcomeEndLabels={atlasOutcomeEndLabels}
               />
             </div>
           )}
@@ -1605,10 +1714,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           hasThresholdGroups={thresholdEntries.length > 0}
           independenceNote={independenceNote}
           selectedOutcomeId={atlasSubjectOutcome?.id ?? null}
+          outcomeColors={atlasOutcomeColors}
           onSelectOutcome={(outcomeId) => {
             setAtlasSelectedOutcomeId(outcomeId);
             didInitSelection.current = true;
-            setSelectedOutcomes(new Set([outcomeId]));
+            if (atlasBodyKind === "duel" || atlasBodyKind === "one-leg") {
+              setSelectedOutcomes(new Set([outcomeId]));
+            }
           }}
           onOpenDetails={() => setDetailsSheetOpen(true)}
         />
@@ -1762,10 +1874,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           surface to expose. Users see ONE clean number. */}
 
       {/* All Outcomes Table — suppressed when the quantity ladder above already
-          rendered these same outcomes. Two renders of one outcome set is how the
-          ladder reads as "extra" instead of as the answer, and the ranked table is
-          the wrong one: it prints rank badges and initial avatars over rungs. */}
-      {!hasOwnLadder && (
+          rendered these same outcomes, and under ?atlas=1 when FuturesShapeBody
+          (two-sided dial or named-leaders block + "N more" sheet) owns the body
+          slot (#883 Step F5, Decide 47: E). */}
+      {!hasOwnLadder &&
+        !(
+          atlasEnabled &&
+          (atlasBodyKind === "one-leg" ||
+            atlasBodyKind === "duel" ||
+            atlasBodyKind === "field" ||
+            atlasBodyKind === "qualifier")
+        ) && (
       <div
         data-testid={
           atlasEnabled && marketShape === SHAPE_QUANTITY && market?.ladder_treatment_refused
