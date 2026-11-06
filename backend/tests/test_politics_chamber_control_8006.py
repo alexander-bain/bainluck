@@ -376,4 +376,110 @@ class TestSettled2026ChamberControlAndFinishedMidterms12093:
             "At least 3",
         ]
 
+    def test_open_chamber_control_omits_winner_and_ungraded_resolved_is_skipped(self):
+        from app.routes.politics import (
+            _REGISTERED_CHAMBER_CONTROL_IDS,
+            _extract_control_probs,
+            _find_chamber_control,
+        )
+
+        assert _REGISTERED_CHAMBER_CONTROL_IDS == (108620, 108621, 112902, 112903)
+        open_probs = _extract_control_probs(_senate_control_kalshi())
+        assert open_probs is not None
+        assert "winner" not in open_probs
+
+        resolved_without_winner = SimpleNamespace(
+            id=108620,
+            name="Which party will win the U.S. Senate?",
+            external_id="CONTROLS-2026",
+            source="kalshi",
+            status="resolved",
+            mutually_exclusive=True,
+            outcomes=[
+                SimpleNamespace(
+                    name="Democratic Party",
+                    current_probability=0.60,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+                SimpleNamespace(
+                    name="Republican Party",
+                    current_probability=0.40,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+            ],
+        )
+        ungraded_winner_resolved = SimpleNamespace(
+            id=108620,
+            name="Which party will win the U.S. Senate?",
+            external_id="CONTROLS-2026",
+            source="kalshi",
+            status="open",
+            mutually_exclusive=True,
+            outcomes=[
+                SimpleNamespace(
+                    name="Democratic Party",
+                    current_probability=0.01,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+                SimpleNamespace(
+                    name="Republican Party",
+                    current_probability=0.01,
+                    is_winner=None,
+                    resolution_source=None,
+                ),
+            ],
+        )
+        assert _find_chamber_control([resolved_without_winner, ungraded_winner_resolved])["senate"] is None
+
+    def test_non_2026_midterms_markets_survive_finished_midterms_filter(self):
+        from datetime import datetime, timezone
+        from app.routes.politics import _finished_midterms_market
+
+        now = datetime(2026, 11, 5, 18, 0, tzinfo=timezone.utc)
+        midterms_2030_titled = SimpleNamespace(
+            id=700001,
+            name="2030 Midterms: How many Senate seats will Republicans win?",
+            external_id="KXRSENATEWON-30NOV05",
+            source="kalshi",
+            status="open",
+            mutually_exclusive=False,
+            resolution_date=datetime(2030, 11, 5, tzinfo=timezone.utc),
+            outcomes=[
+                SimpleNamespace(
+                    id=1,
+                    name="At least 51",
+                    current_probability=0.45,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+            ],
+        )
+        assert _finished_midterms_market(midterms_2030_titled, now) is False
+
+        generic_future_midterms = SimpleNamespace(
+            id=700002,
+            name="How many Senate seats will Independents win in the Midterms?",
+            external_id="KXISENATEWON-30NOV05",
+            source="kalshi",
+            status="open",
+            mutually_exclusive=False,
+            resolution_date=None,
+            outcomes=[
+                SimpleNamespace(
+                    id=2,
+                    name="At least 1",
+                    current_probability=0.15,
+                    is_winner=None,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+            ],
+        )
+        assert _finished_midterms_market(generic_future_midterms, now) is False
+
+
 

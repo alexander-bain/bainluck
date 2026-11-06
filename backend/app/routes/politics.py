@@ -549,6 +549,7 @@ def _normalize_outcome_probs(
                 o[key] = round(o[key] / prob_sum * 100, decimals)
 
 
+# Leading \d guards against matching a bare comma; \d[\d,]* matches integer part.
 _LADDER_TIE_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
@@ -1009,6 +1010,7 @@ def _last_priced_before_the_venue_forgets(
 _MIDTERMS_2026_PASSED_UTC = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
 _MIDTERMS_TITLE_RE = re.compile(r"\bmidterms?\b", re.I)
 _NOV03_2026_TICKER_RE = re.compile(r"-26NOV03(?:-|$)", re.I)
+_CYCLE_2026_TICKER_RE = re.compile(r"-(?:2026|26)(?:[A-Z]{3}\d{0,2})?(?:-|$)", re.I)
 
 
 def _finished_midterms_market(market: FuturesMarket, now: datetime) -> bool:
@@ -1025,20 +1027,34 @@ def _finished_midterms_market(market: FuturesMarket, now: datetime) -> bool:
     """
     if getattr(market, "mutually_exclusive", None) is not False:
         return False
-    is_2026_midterms = bool(
-        _MIDTERMS_TITLE_RE.search(market.name or "")
-        or _NOV03_2026_TICKER_RE.search(market.external_id or "")
-    )
-    if not is_2026_midterms:
+    name = market.name or ""
+    ext_id = getattr(market, "external_id", None) or ""
+    title_years = [int(m.group(1)) for m in re.finditer(r"\b(20\d\d)\b", name)]
+    if any(y != 2026 for y in title_years):
+        return False
+    res_date = getattr(market, "resolution_date", None)
+    if res_date is not None and getattr(res_date, "year", None) not in (2026, 2027):
         return False
     outcomes = getattr(market, "outcomes", None) or []
-    if any(
+    has_graded_leg = any(
         leg_is_graded(
             getattr(o, "is_winner", None),
             getattr(o, "resolution_source", None),
         )
         for o in outcomes
-    ):
+    )
+    has_2026_evidence = bool(
+        2026 in title_years
+        or _NOV03_2026_TICKER_RE.search(ext_id)
+        or _CYCLE_2026_TICKER_RE.search(ext_id)
+        or (res_date is not None and getattr(res_date, "year", None) in (2026, 2027))
+        or has_graded_leg
+    )
+    if not has_2026_evidence:
+        return False
+    if not (_MIDTERMS_TITLE_RE.search(name) or _NOV03_2026_TICKER_RE.search(ext_id)):
+        return False
+    if has_graded_leg:
         return True
     return now >= _MIDTERMS_2026_PASSED_UTC
 
@@ -1582,11 +1598,30 @@ def _extract_control_probs(market: FuturesMarket) -> dict | None:
     return out
 
 
-_REGISTERED_CHAMBER_CONTROL_IDS: tuple[int, ...] = (
-    108620,
-    112902,
-    108621,
-    112903,
+def _load_registered_chamber_control() -> tuple[tuple[int, ...], int]:
+    """Read chamber-control market IDs and cycle year from the midterms manifest & twin register."""
+    from app.utils.midterms_collection import MANIFEST, MIDTERMS_TWIN_REGISTER
+
+    primary_ids = {
+        int(mid)
+        for section in MANIFEST.get("sections", ())
+        if section.get("key") == "congress_control"
+        for mid in section.get("market_ids", ())
+    }
+    ids: list[int] = sorted(primary_ids)
+    for entry in MIDTERMS_TWIN_REGISTER:
+        if (
+            entry.kalshi_market_id in primary_ids
+            and entry.polymarket_market_id is not None
+        ):
+            ids.append(int(entry.polymarket_market_id))
+    slug_match = re.search(r"(20\d\d)", str(MANIFEST.get("slug") or ""))
+    cycle_year = int(slug_match.group(1)) if slug_match else 2026
+    return tuple(ids), cycle_year
+
+
+_REGISTERED_CHAMBER_CONTROL_IDS, _REGISTERED_CHAMBER_CYCLE_YEAR = (
+    _load_registered_chamber_control()
 )
 _CONTROL_CYCLE_YEAR_RE = re.compile(r"\b(20\d\d)\b")
 _CONTROL_TICKER_YEAR_RE = re.compile(r"-(20\d\d|\d{2})(?:-|$)")
@@ -1602,7 +1637,7 @@ def _control_cycle_year(market: FuturesMarket) -> int | None:
         raw = t.group(1)
         return int(raw) if len(raw) == 4 else 2000 + int(raw)
     if getattr(market, "id", None) in _REGISTERED_CHAMBER_CONTROL_IDS:
-        return 2026
+        return _REGISTERED_CHAMBER_CYCLE_YEAR
     return None
 
 
@@ -1618,7 +1653,9 @@ def _control_candidates(
         probs = _extract_control_probs(m)
         if not probs:
             continue
-        if _is_resolved(m) and not probs.get("winner"):
+        if (
+            _is_resolved(m) or getattr(m, "status", "open") != "open"
+        ) and not probs.get("winner"):
             continue
         staged.append((_control_cycle_year(m), probs))
     years = [y for y, _ in staged if y is not None]
