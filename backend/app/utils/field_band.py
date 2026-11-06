@@ -256,7 +256,7 @@ def _build_section_market_card(
     category: str,
     shown_outcomes: Sequence[_PricedOutcome],
     board_outcomes: Sequence[_PricedOutcome],
-    total_outcome_count: int,
+    field_outcome_count: int,
     mutually_exclusive: bool,
 ) -> dict[str, Any]:
     """Build the container member card for one section of a ``field_band`` container.
@@ -266,7 +266,7 @@ def _build_section_market_card(
     (such as the 12-winner CFP qualifiers spine), probabilities are preserved verbatim
     without ever normalizing to 100, and ``discover_card.field_is_a_race`` is ``False``.
     """
-    total_count = max(len(board_outcomes), int(total_outcome_count))
+    total_count = max(len(board_outcomes), int(field_outcome_count))
     remaining_count = max(0, total_count - len(board_outcomes))
     prices_updated_at = _newest_stamp(
         shown_outcomes,
@@ -456,7 +456,7 @@ def select_field_band(
         category=category,
         shown_outcomes=band_outcomes,
         board_outcomes=band_outcomes[:4],
-        total_outcome_count=len(band_outcomes),
+        field_outcome_count=len(band_outcomes),
         mutually_exclusive=bool(normalize),
     )
     bubble_member = {
@@ -531,7 +531,7 @@ def select_field_band(
             category=category,
             shown_outcomes=sec_sorted[:5],
             board_outcomes=sec_sorted[:4],
-            total_outcome_count=len(sec_sorted),
+            field_outcome_count=len(sec_sorted),
             mutually_exclusive=sec_mutually_exclusive,
         )
         sec_member = {
