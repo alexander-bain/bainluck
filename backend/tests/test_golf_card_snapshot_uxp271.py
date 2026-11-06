@@ -408,3 +408,24 @@ class TestNormalizedCardDisplayIsPinned:
             card_win_map(payload["tournaments"][0]),
             {},
         )
+
+
+def test_allocated_snapshot_carries_rows_below_the_fifteen_golfer_preview():
+    rows = [
+        {
+            "name": f"Player {i}",
+            "probability": 0.05,
+            "rendered_percent": 5,
+            "movement_is_dated": True,
+            "movement_24h": 0,
+        }
+        for i in range(20)
+    ]
+    entry = {"name": TOURNAMENT, "golfers": rows[:15], "_all_golfers": rows}
+    writes = stamp_card_payload({"tournaments": [entry]})
+    wins, display = resolve_card_snapshot(
+        writes[0][1], entry[CARD_RECEIPT_FIELD], TOURNAMENT
+    )
+    assert len(wins) == len(display) == 20
+    assert wins[progression_name_key("Player 19")] == 0.05
+    assert display[progression_name_key("Player 19")]["rendered_percent"] == 5

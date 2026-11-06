@@ -1452,6 +1452,10 @@ def normalized_field_comparisons(
     return result
 
 
+# A priced subset is not proof of a whole specialty field (#8334 / #12084).
+SPECIALTY_FIELD_MASS_MIN = 0.9
+
+
 def normalize_blended_field(
     rows: list[dict],
     members: Sequence[Sequence[tuple[Any, Any]]],
@@ -1473,6 +1477,21 @@ def normalize_blended_field(
     from app.utils.field_opening_coherence import field_openings_publishable
     from app.utils.outcome_display import normalize_display_probs
 
+    def probability(value):
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) and 0 <= value <= 1 else None
+
+    current = [probability(row.get("probability")) for row in rows]
+    field_complete = (
+        field_complete
+        and all(p is not None for p in current)
+        and (sum(p for p in current if p is not None) >= SPECIALTY_FIELD_MASS_MIN)
+    )
     changed = normalize_display_probs(
         rows, mutually_exclusive=mutually_exclusive, field_complete=field_complete
     )
@@ -1483,15 +1502,6 @@ def normalize_blended_field(
     reference_now = now or datetime.now(timezone.utc)
     if reference_now.tzinfo is None:
         reference_now = reference_now.replace(tzinfo=timezone.utc)
-
-    def probability(value):
-        if value is None or isinstance(value, bool):
-            return None
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            return None
-        return value if math.isfinite(value) and 0 <= value <= 1 else None
 
     def reference(*, opening: bool) -> list[float] | None:
         if not allocated:
@@ -1544,7 +1554,7 @@ def normalize_blended_field(
                 instants.add(at)
                 column.append(value)
             values.append(sum(column) / len(column))
-        if len(instants) != 1:
+        if len(instants) != 1 or sum(values) < SPECIALTY_FIELD_MASS_MIN:
             return None
         field = [
             {"name": row["name"], "probability": value}

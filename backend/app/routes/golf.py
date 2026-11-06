@@ -5093,13 +5093,16 @@ def _allocate_live_win_field(
 ) -> None:
     """Use the shared full-field allocation, with an independently scaled day."""
     from app.utils.outcome_display import normalize_display_probs
+    from app.utils.futures_market_snapshot import SPECIALTY_FIELD_MASS_MIN
 
     names = [p.player_name.lower() for p in players]
     rows = [{"name": p.player_name, "probability": p.win} for p in players]
     normalize_display_probs(
         rows,
         field_complete=len(set(names)) == len(names)
-        and all(p.win is not None for p in players),
+        and all(p.win is not None for p in players)
+        and sum(p.win for p in players if type(p.win) in (int, float))
+        >= SPECIALTY_FIELD_MASS_MIN,
     )
     if (
         len(rows) != len(players)
@@ -5119,7 +5122,15 @@ def _allocate_live_win_field(
                     "probability": value / 100 if type(value) in (int, float) else None,
                 }
             )
-        normalize_display_probs(reference)
+        normalize_display_probs(
+            reference,
+            field_complete=sum(
+                r["probability"]
+                for r in reference
+                if type(r["probability"]) in (int, float)
+            )
+            >= SPECIALTY_FIELD_MASS_MIN,
+        )
         if len(reference) != len(players) or any(
             "rendered_percent" not in row for row in reference
         ):

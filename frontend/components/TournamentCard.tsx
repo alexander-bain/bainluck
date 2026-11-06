@@ -257,6 +257,8 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
   const wonB = !!champion && normalizeCupSideName(teamB.name) === champion;
   const probA = teamA.probability * 100;
   const probB = teamB.probability * 100;
+  const partsA = teamA.rendered_percent != null ? probabilityParts(teamA.probability, { rendered: teamA.rendered_percent }) : null;
+  const partsB = teamB.rendered_percent != null ? probabilityParts(teamB.probability, { rendered: teamB.rendered_percent }) : null;
 
   // #8028 — the two sides' colours, resolved TOGETHER so the bar's two segments
   // can never paint the same value. The map used to be keyed on the raw
@@ -308,7 +310,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                 {wonA && <span className="ml-1.5 bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">Won</span>}
               </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
-                {teamA.rendered_percent ?? probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
+                {partsA?.marker}{partsA?.digits ?? probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
             </div>
 
@@ -322,7 +324,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                 {teamB.name}
               </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
-                {teamB.rendered_percent ?? probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
+                {partsB?.marker}{partsB?.digits ?? probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
             </div>
           </div>

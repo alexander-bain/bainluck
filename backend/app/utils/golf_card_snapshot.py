@@ -141,7 +141,9 @@ def card_win_map(tournament_entry: Any) -> dict[str, float]:
     published: dict[str, float] = {}
     if not isinstance(tournament_entry, dict):
         return published
-    for golfer in tournament_entry.get("golfers") or []:
+    for golfer in (
+        tournament_entry.get("_all_golfers", tournament_entry.get("golfers")) or []
+    ):
         if not isinstance(golfer, dict):
             continue
         prob = golfer.get("probability")
@@ -157,7 +159,9 @@ def card_win_display_map(tournament_entry: Any) -> dict[str, dict]:
     if not isinstance(tournament_entry, dict):
         return {}
     display = {}
-    for golfer in tournament_entry.get("golfers") or []:
+    for golfer in (
+        tournament_entry.get("_all_golfers", tournament_entry.get("golfers")) or []
+    ):
         if not isinstance(golfer, dict) or not golfer.get("name"):
             continue
         rendered = golfer.get("rendered_percent")

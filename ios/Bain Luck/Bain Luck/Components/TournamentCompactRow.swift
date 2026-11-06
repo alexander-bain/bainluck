@@ -58,7 +58,7 @@ nonisolated struct TournamentCompactRow: View {
                     Text(TeamShortName.short(leader.name, sportKey: "golf"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(leader.renderedPercent.map { "\($0)%" } ?? String(format: "%.1f%%", leader.probability * 100))
+                    Text(leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", leader.probability * 100))
                         .font(.caption)
                         .fontWeight(.semibold)
                         .monospacedDigit()

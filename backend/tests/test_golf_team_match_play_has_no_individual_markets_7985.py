@@ -490,8 +490,8 @@ class TestTheCardSurvivesOnItsTeamMarket:
 
         assert card is not None
         assert [g["name"] for g in card["golfers"]][:1] == ["Ludvig Aberg"]
-        assert card["golfers"][0]["probability"] == pytest.approx(0.105 / (0.105 + 0.079 + 0.078), abs=1e-8)
-        assert sum(g["rendered_percent"] for g in card["golfers"]) == 100
+        assert card["golfers"][0]["probability"] == pytest.approx(0.105)
+        assert all("rendered_percent" not in g for g in card["golfers"])
 
 
 # ──────────────────────────────────────────────────────────────────────────────

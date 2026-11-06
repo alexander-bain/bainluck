@@ -53,7 +53,7 @@ async def awards_body(monkeypatch, rows, *, exclusive=True):
 @pytest.mark.asyncio
 async def test_oscars_cap_cannot_become_its_own_denominator(monkeypatch):
     rows = [
-        outcome(i, name, 0.28)
+        outcome(i, name, 0.35)
         for i, name in enumerate(["Film Alpha", "Film Beta", "Film Gamma"], 1)
     ]
     category = (await awards_body(monkeypatch, rows))["categories"][0]
@@ -362,8 +362,8 @@ def comparison_fields():
     markets = []
     for index, (source, current, historical, opening) in enumerate(
         [
-            ("kalshi", [0.6, 0.3, 0.2], [0.2, 0.3, 0.3], [0.0, 0.4, 0.4]),
-            ("polymarket", [0.3, 0.25, 0.25], [0.4, 0.4, 0.2], [0.0, 0.2, 0.4]),
+            ("kalshi", [0.6, 0.3, 0.2], [0.2, 0.3, 0.3], [0.0, 0.6, 0.6]),
+            ("polymarket", [0.3, 0.25, 0.25], [0.4, 0.4, 0.2], [0.0, 0.4, 0.6]),
         ]
     ):
         rows = [
@@ -410,7 +410,7 @@ def test_blended_references_each_use_their_own_full_field_after_the_same_blend()
     assert rows[0]["probability"] == pytest.approx(0.45 / 0.95)
     assert rows[0]["movement_24h"] == pytest.approx(0.45 / 0.95 - 0.3 / 0.9)
     assert rows[0]["opening_probability"] == 0.0
-    assert rows[1]["opening_probability"] == pytest.approx(0.3 / 0.7)
+    assert rows[1]["opening_probability"] == pytest.approx(0.5 / 1.1)
     assert all(row["movement_is_dated"] for row in rows)
     assert [m.__dict__ for m in markets] == before
 
@@ -520,3 +520,27 @@ async def test_each_panel_retains_complete_normalized_references(monkeypatch, pa
     assert rows[0]["probability"] == pytest.approx(0.45 / 0.95)
     assert rows[0]["movement_24h"] == pytest.approx(0.45 / 0.95 - 0.3 / 0.9)
     assert rows[0]["opening_probability"] == 0.0
+
+
+def test_partial_specialty_field_never_acquires_a_full_field_divisor():
+    from app.utils.futures_market_snapshot import normalize_blended_field
+
+    rows = [
+        {"name": str(i), "probability": value}
+        for i, value in enumerate([0.032, 0.025, 0.019, 0.019])
+    ]
+    normalize_blended_field(rows, [[] for _ in rows], field_complete=True)
+    assert [row["probability"] for row in rows] == [0.032, 0.025, 0.019, 0.019]
+    assert all("rendered_percent" not in row for row in rows)
+
+
+def test_partial_reference_field_withholds_only_that_reference():
+    from app.utils.futures_market_snapshot import normalize_blended_field
+
+    markets, groups, rows, now = comparison_fields()
+    for m in markets:
+        for o, value in zip(m.outcomes, [0.0, 0.2, 0.2]):
+            o.opening_probability = value
+    normalize_blended_field(rows, groups, now=now)
+    assert all(row["opening_probability"] is None for row in rows)
+    assert rows[0]["movement_24h"] == pytest.approx(0.45 / 0.95 - 0.3 / 0.9)

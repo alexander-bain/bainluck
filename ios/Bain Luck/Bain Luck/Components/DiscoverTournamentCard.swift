@@ -144,7 +144,7 @@ struct NativeTournamentDiscoverCard: View {
                             }
                         } else {
                             HStack(spacing: 8) {
-                                Text(leader.renderedPercent.map { "\($0)%" } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability))
+                                Text(leader.renderedPercent.map { formatProbability(leader.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: leader.probability))
                                     .font(.title.bold())
                                     .foregroundStyle(.white)
 
@@ -184,7 +184,7 @@ struct NativeTournamentDiscoverCard: View {
                         runnerLayout {
                             ForEach(golfers.dropFirst().prefix(3)) { golfer in
                                 HStack(spacing: 3) {
-                                    Text(golfer.renderedPercent.map { "\($0)%" } ?? FeedProbabilityScale.percentLabel(fromFraction: golfer.probability))
+                                    Text(golfer.renderedPercent.map { formatProbability(golfer.probability, renderedPercent: $0) } ?? FeedProbabilityScale.percentLabel(fromFraction: golfer.probability))
                                         .font(.caption.bold())
                                         .foregroundStyle(.white.opacity(0.9))
                                         .lineLimit(1)

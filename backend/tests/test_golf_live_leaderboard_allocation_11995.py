@@ -125,13 +125,14 @@ async def test_actual_route_keeps_its_status_and_completed_rows(
     service.close.assert_awaited_once()
 
 
-def test_healthy_complete_underrrounds_are_normalized_on_each_day():
+def test_partial_live_field_stays_raw_instead_of_scaling_up():
     rows, players = setup_field((0.2, 0.2, 0.2))
     _allocate_live_win_field(
         rows, players, baseline((10, 10, 10)), baseline_is_atomic=True
     )
-    assert sum(r["rendered_percent"] for r in rows) == 100
-    assert [r["win_prob_change"] for r in rows] == [0, 0, 0]
+    assert [r["win_prob"] for r in rows] == [20, 20, 20]
+    assert all("rendered_percent" not in row for row in rows)
+    assert [r["win_prob_change"] for r in rows] == [3, 3, 3]
 
 
 def test_midpoint_cleanup_cannot_shift_an_allocation_to_a_different_player():
