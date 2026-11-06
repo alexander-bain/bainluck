@@ -10,9 +10,13 @@ from pathlib import Path
 
 import pytest
 
-DATA = Path(__file__).resolve().parents[2] / "frontend/lib/evals/data"
-EXAM = json.loads((DATA / "twin-exam-2026-11-05.json").read_bytes())
-CONFUSION = json.loads((DATA / "twin-confusion-2026-11-05.json").read_bytes())
+ROOT = Path(__file__).resolve().parents[2]
+EXAM = json.loads(
+    (ROOT / "frontend/lib/evals/data/twin-exam-2026-11-05.json").read_bytes()
+)
+CONFUSION = json.loads(
+    (ROOT / "frontend/lib/evals/data/twin-confusion-2026-11-05.json").read_bytes()
+)
 DENOMINATORS = {
     "twin": 25,
     "same_number": 12,
