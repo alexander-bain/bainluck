@@ -53,6 +53,8 @@ export interface CatalogOutcome {
   /** The number to print, or null when this row may not print one. */
   probability: number | null;
   observedAt: string | null;
+  /** True only when a live row had a finite quote that aged past the freshness window. */
+  stale?: boolean;
 }
 
 export interface CatalogGroup {
@@ -97,6 +99,22 @@ function finite(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function rawCatalogQuote(row: LooseRow): number | null {
+  if ("probability" in row) return finite(row.probability);
+  return lineSide(row) === "over" ? finite(row.over_probability) : null;
+}
+
+function catalogRowIsStale(
+  row: LooseRow,
+  status: string | null | undefined,
+  now: number,
+  closed = false,
+): boolean {
+  if (closed || isSettledStatus(status) || isPregameStatus(status)) return false;
+  if (rawCatalogQuote(row) === null) return false;
+  return sourceIsStale(row.observed_at ?? null, now);
+}
+
 export function catalogQuote(
   row: LooseRow,
   status: string | null | undefined,
@@ -106,8 +124,7 @@ export function catalogQuote(
   if (closed || isSettledStatus(status)) return null;
   const live = !isPregameStatus(status);
   if (live && sourceIsStale(row.observed_at ?? null, now)) return null;
-  if ("probability" in row) return finite(row.probability);
-  return lineSide(row) === "over" ? finite(row.over_probability) : null;
+  return rawCatalogQuote(row);
 }
 
 export function buildQuestionCatalog(
@@ -122,6 +139,7 @@ export function buildQuestionCatalog(
     row: LooseRow,
     probability: number | null,
     label: string,
+    stale = false,
   ) => {
     const question = (row.market_name ?? "").trim();
     if (!question) return;
@@ -144,6 +162,7 @@ export function buildQuestionCatalog(
       threshold: finite(row.threshold),
       probability,
       observedAt: row.observed_at ?? null,
+      stale,
     });
   };
 
@@ -174,6 +193,7 @@ export function buildQuestionCatalog(
         row,
         catalogQuote(row, status, now, closed),
         (row.outcome_name ?? "").trim() || row.market_name || "",
+        catalogRowIsStale(row, status, now, closed),
       );
     }
   };
@@ -192,7 +212,13 @@ export function buildQuestionCatalog(
         probability: outcome.probability,
         source: matchup.source,
       };
-      add("Matchups", row, catalogQuote(row, status, now), outcome.name);
+      add(
+        "Matchups",
+        row,
+        catalogQuote(row, status, now),
+        outcome.name,
+        catalogRowIsStale(row, status, now),
+      );
     }
   }
   // #1529: the game's winner is served in `other` (it has no section of its
