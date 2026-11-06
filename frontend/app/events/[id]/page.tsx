@@ -2611,6 +2611,10 @@ export default function EventPage({ params }: EventPageProps) {
           homeShort: heroShortNames.home,
         })
       : null;
+  const atlasSettledWinnerSide: "home" | "away" | null =
+    isFinished && !venueVoided && stoppageLabel === null
+      ? (settledOutcome?.winnerSide ?? null)
+      : null;
 
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
@@ -3871,6 +3875,8 @@ export default function EventPage({ params }: EventPageProps) {
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
               tenths={tenthsOptIn}
+              atlasMode={atlasOptIn}
+              settledWinnerSide={atlasSettledWinnerSide}
               /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
               pairedAwayLine={storyCardsOn}
               onActivePointChange={setActiveChartPoint}
@@ -4522,6 +4528,8 @@ export default function EventPage({ params }: EventPageProps) {
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
               tenths={tenthsOptIn}
+              atlasMode={atlasOptIn}
+              settledWinnerSide={atlasSettledWinnerSide}
               pairedAwayLine={storyCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the
                  expanded chart fell back to its own default window: a reader on "All"
