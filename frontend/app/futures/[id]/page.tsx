@@ -1718,7 +1718,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           onSelectOutcome={(outcomeId) => {
             setAtlasSelectedOutcomeId(outcomeId);
             didInitSelection.current = true;
-            if (atlasBodyKind === "duel" || atlasBodyKind === "one-leg") {
+            if (atlasBodyKind !== "field" && atlasBodyKind !== "qualifier") {
               setSelectedOutcomes(new Set([outcomeId]));
             }
           }}

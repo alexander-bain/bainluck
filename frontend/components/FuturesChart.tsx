@@ -854,7 +854,7 @@ export function FuturesChart({
           <svg
             ref={svgRef}
             viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
-            className={mini ? "w-full" : "w-full min-w-[600px]"}
+            className={mini || atlas ? "w-full" : "w-full min-w-[600px]"}
             style={{
               // Honor the caller's requested height (L2-149): the old hard 250px
               // non-mini cap silently shrank taller surfaces (event-concept charts
@@ -1196,17 +1196,21 @@ export function FuturesChart({
                       strokeLinejoin="round"
                     />
                   )}
-                  {atlas && !mini && (
-                    <AtlasResultWordMark
-                      outcomeId={m.outcome.outcome_id}
-                      result={m.result}
-                      x={x}
-                      y={y}
-                      plotLeft={padding.left}
-                      plotRight={chartWidth - padding.right}
-                      opacity={opacity}
-                    />
-                  )}
+                  {atlas &&
+                    !mini &&
+                    !placedAtlasEndLabels.some(
+                      (item) => item.outcomeId === m.outcome.outcome_id,
+                    ) && (
+                      <AtlasResultWordMark
+                        outcomeId={m.outcome.outcome_id}
+                        result={m.result}
+                        x={x}
+                        y={y}
+                        plotLeft={padding.left}
+                        plotRight={chartWidth - padding.right}
+                        opacity={opacity}
+                      />
+                    )}
                 </g>
               );
             })}
@@ -1251,7 +1255,15 @@ export function FuturesChart({
                         style={{ paintOrder: "stroke" }}
                         className="text-[10px] font-semibold tabular-nums"
                       >
-                        {item.text}
+                        {resultMarkSpecs.some(
+                          (m) => m.outcome.outcome_id === item.outcomeId,
+                        ) ? (
+                          <tspan data-testid="atlas-chart-result-word">
+                            {item.text}
+                          </tspan>
+                        ) : (
+                          item.text
+                        )}
                       </text>
                     </g>
                   );
