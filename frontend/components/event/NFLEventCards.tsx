@@ -1485,7 +1485,7 @@ export function buildStoryCardDetailsSheetProps(opts: {
       openingProbability: entry.pregameChance,
       openingObservedAt: entry.observedAt,
       lastObservedAt: entry.observedAt,
-      source: entry.source ?? "blended",
+      source: entry.source,
       sourceCount: entry.sourceCount,
       rulesText: rulesLines.join("\n"),
     };

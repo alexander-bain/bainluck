@@ -373,8 +373,16 @@ describe("#11974 Step E6b — NHL story cards behind ?atlas=1", () => {
       pregameChance: null,
       actualGoals: 1,
       hit: null,
+      source: null,
       sourceCount: 2,
     });
+    const multiSheet = buildStoryCardDetailsSheetProps({
+      card: scoringCard!,
+      rowId: scoringCard!.entries[0].id,
+      teams: TEAMS,
+    });
+    expect(multiSheet?.source).toBeNull();
+    expect(multiSheet?.sourceCount).toBe(2);
   });
 
   it("after the final, reads only admitted pregame_reading on NHL ladders and prints no pregame chance when only comparison.baseline exists (#11125 contract)", () => {
