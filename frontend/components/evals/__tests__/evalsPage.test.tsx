@@ -34,7 +34,7 @@ import { EVALS_COPY_RULES } from "@/lib/evals/copy";
 import { GAPS } from "@/lib/evals/gaps";
 import { EVALS_SOURCES } from "@/lib/evals/sources";
 import type { MeasuredTruth } from "@/lib/evals/truth";
-import { scanEvalsDom } from "@/lib/evals/__tests__/scanEvalsDom";
+import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

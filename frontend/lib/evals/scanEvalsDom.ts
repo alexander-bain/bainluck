@@ -1,10 +1,14 @@
 /**
- * The truth-rule scanner for a rendered /evals tree (#12102). Not a test file:
- * the page tests import it, and its own negative controls live in
+ * The truth-rule scanner for a rendered /evals tree (#12102). The page tests
+ * run it, and its own negative controls live in
  * `components/evals/__tests__/evalsPage.test.tsx`.
  *
  * It reads the DOM, not the source, because a number can reach a reader from a
  * template, a join or a data file, and only the render shows all of them.
+ *
+ * It lives in `lib/evals/` rather than beside the tests because nothing under
+ * app/, components/ or lib/ may import from a `__tests__` path: that edge would
+ * make a test directory a build input (`e2e/contract/vercelIgnoreBuild…`).
  */
 
 /** Labels and identifiers, not figures: dates, ages, issue numbers. */
