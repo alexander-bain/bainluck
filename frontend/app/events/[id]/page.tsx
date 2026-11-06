@@ -249,6 +249,13 @@ import {
 import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
+import AtlasDetailsSheet from "@/components/atlas/AtlasDetailsSheet";
+import { resolveAtlasOptIn } from "@/components/atlas/atlasStateCopy";
+import {
+  EVENT_HEADLINE_PHASE_LABELS,
+  resolveEventHeadlineBaseline,
+  resolveEventHeadlinePhase,
+} from "@/lib/event/eventHeadlinePhase";
 
 interface EventPageProps {
   params: { id: string };
@@ -293,6 +300,12 @@ export default function EventPage({ params }: EventPageProps) {
   const tenthsOptIn = useTenthsOptIn();
   // #10090 — the heartbeat under the headline, `?ekg=1` only while Alex tries it.
   const ekgOptIn = useEkgOptIn();
+  // #11974 — the event-page atlas adoption, behind `?atlas=1` while Alex reviews it.
+  const atlasOptIn = resolveAtlasOptIn(searchParams);
+  const [atlasHeadlineSheetOpen, setAtlasHeadlineSheetOpen] = useState(false);
+  useEffect(() => {
+    setAtlasHeadlineSheetOpen(false);
+  }, [eventId]);
   const [countdown, setCountdown] = useState<number>(0);
   const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
@@ -2563,6 +2576,42 @@ export default function EventPage({ params }: EventPageProps) {
   // The header keeps its age badge only where no chart card carries the status.
   const headerCarriesAge = showsAge && suppressWinProbabilityCard;
 
+  // #11974 Step E1 — game headline phase ("Current win chance" vs
+  // "Last recorded win chance") and pregame baseline beside it during play.
+  const atlasObservedAt =
+    acceptedPriceClock ??
+    freshestSourceStamp ??
+    event.current_odds?.captured_at ??
+    null;
+  const atlasHeadlinePhase = atlasOptIn
+    ? resolveEventHeadlinePhase({
+        status: event.status,
+        commenceTime: event.commence_time,
+        isOpeningLine: probSourceLabel === "Opening line",
+        hasReading:
+          homeProb !== null &&
+          venueSettledSentence === null &&
+          stoppageLabel === null,
+        observedAt: atlasObservedAt,
+        deliveryInterrupted:
+          feedStalled ||
+          liveClaimUnbacked ||
+          connectionTrackerRef.current.interrupted,
+      })
+    : null;
+  const atlasPregameBaseline =
+    atlasOptIn && !isFinished && (isLive || hasStarted || isSuspended)
+      ? resolveEventHeadlineBaseline({
+          prematchOdds: event.prematch_odds,
+          openingHomeProb,
+          openingAwayProb,
+          openingHomePct,
+          openingAwayPct,
+          sport: event.sport,
+          homeShort: heroShortNames.home,
+        })
+      : null;
+
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
   // null (or its "Score data is not available" message) inside a card shell,
@@ -3067,6 +3116,18 @@ export default function EventPage({ params }: EventPageProps) {
                 {formatEventStartLabel(event.commence_time, startClock)}
               </span>
             )}
+            {atlasOptIn && (
+              <button
+                type="button"
+                onClick={() => setAtlasHeadlineSheetOpen(true)}
+                data-testid="event-atlas-headline-info-button"
+                aria-label="About this game's probabilities and result"
+                title="Details"
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[11px] font-semibold text-text-secondary transition-colors hover:border-text-muted hover:text-text-primary"
+              >
+                i
+              </button>
+            )}
           </div>
         </div>
 
@@ -3209,6 +3270,7 @@ export default function EventPage({ params }: EventPageProps) {
                   winnerPregameLabel={settledPregame?.label ?? null}
                   loserPregameProb={settledPregame?.loserProbability ?? null}
                   loserPregamePercent={settledPregame?.loserPercent ?? null}
+                  atlasMode={atlasOptIn}
                 />
               ) : (
               // #2085: the two sides are ONE decision — see
@@ -3216,6 +3278,7 @@ export default function EventPage({ params }: EventPageProps) {
               // to be four spans rounding `homeProb` and `awayProb`
               // independently, which prints 101 whenever `home * 100` lands on
               // a half-percent (8.2% of scheduled/live events, measured).
+              <>
               <EventHeroProbabilityPair
                 homeProb={homeProb}
                 displayIdentity={headlineIdentity}
@@ -3255,6 +3318,40 @@ export default function EventPage({ params }: EventPageProps) {
                 stopped={stoppageLabel !== null}
                 tenths={tenthsOptIn}
               />
+              {atlasOptIn && atlasHeadlinePhase && (
+                <div
+                  className="mt-1 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[11px] text-text-secondary"
+                  data-testid="event-atlas-headline-subline"
+                >
+                  <span
+                    className="font-medium text-text-secondary"
+                    data-testid="event-atlas-phase-label"
+                    data-phase={atlasHeadlinePhase}
+                  >
+                    {EVENT_HEADLINE_PHASE_LABELS[atlasHeadlinePhase]}
+                  </span>
+                  {atlasPregameBaseline && (
+                    <span
+                      className="inline-flex items-center gap-1 text-text-muted tabular-nums"
+                      data-testid="event-atlas-pregame-baseline"
+                      data-prematch-source={atlasPregameBaseline.source}
+                    >
+                      <span
+                        aria-hidden="true"
+                        data-testid="event-atlas-pregame-mark"
+                        className="inline-block h-2 w-2 shrink-0 rounded-full border-[1.5px] border-current bg-surface-card"
+                      />
+                      <span>
+                        {atlasPregameBaseline.text}
+                        {atlasPregameBaseline.label
+                          ? ` · ${atlasPregameBaseline.label}`
+                          : ""}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              )}
+              </>
               )}
               {/* #10090 — the heartbeat, under the pair so it adds height, never
                   width, to a block measured at −0.1px headroom (above). Alex 67:
@@ -3482,7 +3579,7 @@ export default function EventPage({ params }: EventPageProps) {
               })()}
 
               {/* Opening odds (faint) — live/pregame only */}
-              {!isFinished && openingHomeProb !== null && (
+              {!isFinished && !atlasOptIn && openingHomeProb !== null && (
                 <div className="mt-1.5">
                   <span className="text-[11px] text-text-muted">
                     {/* #2085 — same pair, same rule. `opening_odds` derives its
@@ -3507,7 +3604,7 @@ export default function EventPage({ params }: EventPageProps) {
               )}
 
               {/* Source label — live/pregame only */}
-              {!isFinished && probSourceLabel && (
+              {!isFinished && !atlasOptIn && probSourceLabel && (
                 <div className="mt-1 flex items-center gap-1.5 min-w-0">
                   <span className="text-[11px] text-text-muted min-w-0 text-center">
                     {probSourceLabel}
@@ -3621,6 +3718,42 @@ export default function EventPage({ params }: EventPageProps) {
 
 
       </div>
+
+      {atlasOptIn && (
+        <AtlasDetailsSheet
+          open={atlasHeadlineSheetOpen}
+          onClose={() => setAtlasHeadlineSheetOpen(false)}
+          subjectName={
+            isFinished && settledOutcome
+              ? settledOutcome.winnerName
+              : `${heroShortNames.home} vs ${heroShortNames.away}`
+          }
+          marketTitle={`${event.home_team} vs ${event.away_team}`}
+          isSettled={isFinished && settledOutcome !== null}
+          settledResult={isFinished && settledOutcome ? "won" : null}
+          openingProbability={
+            isFinished
+              ? settledPregame?.probability ?? openingHomeProb
+              : atlasPregameBaseline?.homeProbability ?? openingHomeProb
+          }
+          renderedOpening={
+            isFinished
+              ? settledPregame?.percent ?? openingHomePct
+              : atlasPregameBaseline?.homePercent ?? openingHomePct
+          }
+          openingObservedAt={null}
+          lastProbability={!isFinished ? homeProb : null}
+          renderedLast={!isFinished ? homePct : null}
+          lastObservedAt={!isFinished ? atlasObservedAt : null}
+          resolutionDate={event.commence_time}
+          source={
+            isFinished
+              ? settledPregame?.label ?? probSourceLabel ?? "Bain Luck blend"
+              : probSourceLabel || "Bain Luck blend"
+          }
+          sourceCount={1}
+        />
+      )}
 
       </SectionErrorBoundary>
 
