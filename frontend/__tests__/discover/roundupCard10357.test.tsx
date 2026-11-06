@@ -543,4 +543,68 @@ describe("#10357 round-up card render", () => {
     expect(html).not.toContain("aria-expanded");
     expect(html).toContain('data-testid="bundle-action-bar"');
   });
+
+  it("#11949 Order 6: renders two-bar awards rows (Nominated % alongside Wins %) and refuses invalid secondary probabilities", () => {
+    const awardsContract: FeedRoundupContract = {
+      kicker: "GOLDEN GLOBES",
+      tag: "ENTERTAINMENT",
+      footer: "Several nominees are nominated; one wins.",
+      rows: [
+        {
+          market_id: 9100,
+          outcome_id: 91001,
+          label: "One Battle After Another",
+          probability: 0.42,
+          rendered_percent: 42,
+          secondary_probability: 0.88,
+          secondary_rendered_percent: 88,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+        {
+          market_id: 9100,
+          outcome_id: 91002,
+          label: "Sinners",
+          probability: 0.31,
+          rendered_percent: 31,
+          secondary_probability: 0.79,
+          secondary_rendered_percent: 79,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+        {
+          market_id: 9100,
+          outcome_id: 91003,
+          label: "Hamnet",
+          probability: 0.27,
+          rendered_percent: 27,
+          secondary_probability: 0.74,
+          secondary_rendered_percent: 74,
+          primary_bar_label: "Wins",
+          secondary_bar_label: "Nominated",
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const html = render(awardsContract, { title: "Best Picture: who's nominated, who wins" });
+    expect(html).toContain('data-testid="roundup-row-secondary"');
+    expect(html).toContain("Nominated 88% · Wins 42%");
+    expect(html).toContain("Nominated 79% · Wins 31%");
+    expect(html).toContain("Nominated 74% · Wins 27%");
+
+    const invalidAwards: FeedRoundupContract = {
+      ...awardsContract,
+      rows: [
+        awardsContract.rows[0],
+        awardsContract.rows[1],
+        { ...awardsContract.rows[2], secondary_probability: 1.2 },
+      ],
+    };
+    expect(buildRoundupCardModel("Best Picture", invalidAwards, NOW_MS)).toEqual({
+      model: null,
+      refusal: "bad_row",
+    });
+  });
 });
