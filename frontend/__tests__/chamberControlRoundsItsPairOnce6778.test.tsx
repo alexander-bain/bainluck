@@ -206,4 +206,26 @@ describe("/politics chamber control rounds its complement pair once, together", 
     expect(barWidths(markup, SENATE.market_id)).toEqual([41.5, 58.5]);
     expect(barWidths(markup, HOUSE_INDEPENDENT.market_id)).toEqual([30, 55]);
   });
+
+  it("renders Settled - Democratic Party when chamber control carries a settled winner (#12093)", () => {
+    const settledSenate: ChamberControl = {
+      gop: 0,
+      dem: 100,
+      market_id: 108620,
+      source: "kalshi",
+      winner: "Democratic Party",
+    };
+    const settledHouse: ChamberControl = {
+      gop: 0,
+      dem: 100,
+      market_id: 108621,
+      source: "kalshi",
+      winner: "Democratic Party",
+    };
+    const settledMarkup = renderWith(politicsPayload(settledSenate, settledHouse));
+    const [senateText] = cardTexts(settledMarkup, 108620);
+    const [houseText] = cardTexts(settledMarkup, 108621);
+    expect(senateText).toContain("Settled - Democratic Party");
+    expect(houseText).toContain("Settled - Democratic Party");
+  });
 });

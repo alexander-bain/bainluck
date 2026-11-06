@@ -14,12 +14,13 @@ jest.mock("@/components/Analytics", () => ({
 }));
 
 let mockSwrData: unknown = undefined;
+let mockSwrError: unknown = null;
 jest.mock("swr", () => ({
   __esModule: true,
   default: (key: unknown, fetcher?: () => unknown) => {
     if (key == null) return { data: undefined, error: null, isLoading: false, mutate: () => {} };
     if (fetcher) void fetcher();
-    return { data: mockSwrData, error: null, isLoading: false, mutate: () => {} };
+    return { data: mockSwrData, error: mockSwrError, isLoading: false, mutate: () => {} };
   },
 }));
 
@@ -425,5 +426,61 @@ describe("Midterms 2026 candidate headshots & hero history chart (#11877)", () =
     });
     expect(senateTimeline.getAttribute("data-hours")).toBe("24");
     expect(buttons[0].getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("Midterms collection hero keeps timeline visible on settled chambers and shows explicit error state on history fetch failure (#12093)", async () => {
+    mockSwrData = {
+      market_id: 108620,
+      market_name: "Senate control",
+      outcomes: [
+        {
+          outcome_id: 1,
+          outcome_name: "Democratic",
+          current_probability: 1.0,
+          history: [
+            { timestamp: "2026-03-01T00:00:00Z", probability: 0.52 },
+            { timestamp: "2026-11-01T00:00:00Z", probability: 0.585 },
+          ],
+        },
+      ],
+    };
+    mockSwrError = null;
+    jest.spyOn(api, "fetchFuturesHistory").mockResolvedValue(
+      mockSwrData as Awaited<ReturnType<typeof api.fetchFuturesHistory>>,
+    );
+    jest.spyOn(images, "getWikipediaImage").mockResolvedValue(null);
+
+    const raw = midtermsFixture();
+    (raw.sections[0].members[0].card as Record<string, unknown>).status = "resolved";
+    (raw.sections[0].members[0].card as Record<string, unknown>).settled_winner = "Democratic Party";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => raw,
+    })) as unknown as typeof fetch;
+    const hub = parseCollection(raw, raw.slug);
+    settleCollectionRead(hub.slug, { hub });
+
+    await act(async () => {
+      root.render(<CollectionHub slug={hub.slug} />);
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    expect(container.textContent).toContain("Settled - Democratic Party");
+    expect(
+      container.querySelectorAll('[data-testid="two-sided-history-timeline"]'),
+    ).toHaveLength(2);
+
+    // When fetchFuturesHistory fails with no data, explicit error notice renders instead of null
+    mockSwrData = undefined;
+    mockSwrError = new Error("History fetch failed");
+    await act(async () => {
+      root.render(<CollectionHub slug={hub.slug} />);
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(
+      container.querySelectorAll('[data-testid="two-sided-history-timeline-error"]'),
+    ).toHaveLength(2);
+    expect(container.textContent).toContain("Update interrupted");
+    mockSwrError = null;
   });
 });

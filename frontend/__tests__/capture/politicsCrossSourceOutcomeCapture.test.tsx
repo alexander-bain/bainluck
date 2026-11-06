@@ -331,6 +331,23 @@ describe("UX-P187 · the spotlight still has something to show", () => {
       ),
     ).toBe("");
   });
+
+  test("#12093 · CrossSourceCard prints the server-blended merged value when present", () => {
+    const row: CrossSourceMatch = {
+      q: "Who will leave Trump's Cabinet next?",
+      outcome: "Pete Hegseth",
+      kalshi: 70.0,
+      poly: 20.0,
+      merged: 70.0,
+      delta: 50.0,
+      category: "policy",
+      kalshi_market_id: 1,
+      poly_market_id: 2,
+    };
+    const text = visibleText(markup(CrossSourceCard, row));
+    expect(text).toContain("Merged: 70.0%");
+    expect(text).not.toContain("Merged: 45.0%");
+  });
 });
 
 /* ═══ 5 · the call site ════════════════════════════════════════════════ */
