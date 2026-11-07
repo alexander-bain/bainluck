@@ -503,19 +503,25 @@ def family_issue_body(fam: Family, now: datetime) -> str:
     sample = ", ".join(str(m) for m in fam.member_ids[:10])
     return "\n".join(
         [
-            f"**{_KIND_LABEL[fam.kind]}** `{_clean(fam.key, 80)}`: {fam.size} open, priced markets, "
-            f"first stored {fam.first_created_at:%Y-%m-%d}, as of {now:%Y-%m-%d %H:%M} UTC.",
+            (
+                f"**{_KIND_LABEL[fam.kind]}** `{_clean(fam.key, 80)}`: {fam.size} open, priced markets, "
+                f"first stored {fam.first_created_at:%Y-%m-%d}, as of {now:%Y-%m-%d %H:%M} UTC."
+            ),
             f"Example title: {_clean(fam.label, 120)}",
             f"Market ids (first 10): {sample}",
             "",
-            "No member is in a definition (`backend/data/containers/`), a container or theme in the graph, "
-            "the Midterms collection or on an event page, and Discover does not suppress it by ruling. "
-            "Per 72-A this family is five or more open, priced markets alive 48 hours.",
+            (
+                "No member is in a definition (`backend/data/containers/`), a container or theme in the graph, "
+                "the Midterms collection or on an event page, and Discover does not suppress it by ruling. "
+                "Per 72-A this family is five or more open, priced markets alive 48 hours."
+            ),
             "",
-            "**What to do:** write a definition or selector that admits it (`docs/design/grouping-primitives.md`, "
-            "\"How to add a kind\"), or rule it out. A ruling that it should stay ungrouped closes this issue "
-            "when recorded as a suppression or an exclusion the sentinel reads. The sentinel closes this issue "
-            "itself once a grouping covers the family or its markets close.",
+            (
+                "**What to do:** write a definition or selector that admits it (`docs/design/grouping-primitives.md`, "
+                "\"How to add a kind\"). The sentinel closes this issue itself once a grouping covers the family "
+                "or its markets close. It has no exclusion list yet: an issue closed by hand while the family stays "
+                "uncovered is filed again the next week (#12231)."
+            ),
             "",
             _declaration(fam.fingerprint),
             "",
@@ -584,11 +590,16 @@ def file_families(uncovered: list[Family], now: datetime) -> dict:
     }
 
 
-def filing_paused(redis_client: Any) -> bool:
+def filing_paused(redis_client: Any) -> bool | None:
+    """Alex's no-deploy pause switch: any value under ``FILING_PAUSE_KEY`` pauses
+    filing (even ``0``; ``DEL`` resumes). ``None`` when it cannot be read: a run
+    that cannot rule out a pause files nothing that week."""
+    if redis_client is None:
+        return None
     try:
         return bool(redis_client.get(FILING_PAUSE_KEY))
     except Exception:
-        return False
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -763,7 +774,7 @@ def _terminal(stats: Mapping[str, Any]) -> str:
         stats.get("definitions", {}).get("failed")
         or stats.get("memory_state") == "memory_unavailable"
         or (stats.get("filing") or {}).get("failed")
-        or (stats.get("filing") or {}).get("action") == "dedup_unknown_no_op"
+        or (stats.get("filing") or {}).get("action") in ("dedup_unknown_no_op", "pause_unknown_no_op")
     )
     return "partial" if degraded else "complete"
 
@@ -825,7 +836,13 @@ async def _run_grouping_sentinel(
 
     filing: dict[str, Any] | None = None
     if file_issues and now >= FILING_STARTS_AT:
-        if redis_client is not None and filing_paused(redis_client):
+        paused = filing_paused(redis_client)
+        if paused is None:
+            filing = {
+                "action": "pause_unknown_no_op",
+                "summary": f"skipped (`{FILING_PAUSE_KEY}` unreadable, so a pause cannot be ruled out)",
+            }
+        elif paused:
             filing = {"action": "paused", "summary": f"paused (`{FILING_PAUSE_KEY}` is set)"}
         else:
             filing = file_families(counts.uncovered, now)

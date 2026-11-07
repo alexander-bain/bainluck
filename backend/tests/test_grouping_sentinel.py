@@ -436,6 +436,41 @@ async def test_filing_can_be_paused_without_a_deploy(run_env):
     assert stats["filing"]["action"] == "paused"
 
 
+async def test_any_value_pauses_filing_even_zero(run_env):
+    # bool(b"0") is True: Alex resumes with DEL, never with SET 0.
+    run_env["redis"].kv[gs.FILING_PAUSE_KEY] = "0"
+    stats = await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
+    assert run_env["filed"] == [] and stats["filing"]["action"] == "paused"
+
+
+async def test_an_unreadable_pause_switch_files_nothing(run_env):
+    # A run that cannot rule out Alex's pause must not file over it.
+    run_env["redis"].fail = True
+    stats = await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
+    assert run_env["filed"] == []
+    assert stats["filing"]["action"] == "pause_unknown_no_op"
+    assert stats["terminal"] == "partial"
+
+
+async def test_no_redis_at_all_files_nothing(monkeypatch, run_env):
+    import app.tasks.redis_state as redis_state
+
+    def no_client(*a, **k):
+        raise RuntimeError("REDIS_URL unset")
+
+    monkeypatch.setattr(redis_state, "get_redis_client", no_client)
+    stats = await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
+    assert run_env["filed"] == [] and stats["filing"]["action"] == "pause_unknown_no_op"
+
+
+def test_the_issue_body_claims_no_exclusion_list():
+    # The rail has no exclusion register; the body must not promise one.
+    (fam,) = gs.build_families([gs.Atom(1, "kalshi", "KXSNOW-1", "kalshi:KXSNOW-1", "t", None, (), OLD)]).families
+    body = gs.family_issue_body(fam, NOW)
+    assert "exclusion the sentinel reads" not in body
+    assert "no exclusion list yet" in body
+
+
 async def test_a_dry_run_returns_the_body_and_posts_nothing(run_env):
     stats = await gs._run_grouping_sentinel(post=False, now=NOW)
     assert run_env["posts"] == []

@@ -122,8 +122,10 @@ class Grouping:
 
 def family_fingerprint(kind: str, key: str) -> str:
     """The dedupe fingerprint a family will be filed under: kind + key, so Nov 26
-    is a switch, not a rewrite (Fable, 9:28 PM). Same form as the other sentinels
-    (``sha1("<kind>:<key>")[:12]``, e.g. ``grid_sentinel.py``)."""
+    is a switch, not a rewrite (Fable, 9:28 PM). It is
+    ``sha1("grouping:<kind>:<key>")[:12]``, the other sentinels' form with a
+    ``grouping:`` prefix. Never change it once filing starts (Nov 26): every
+    open issue is found by it."""
     return hashlib.sha1(f"grouping:{kind}:{key}".encode("utf-8")).hexdigest()[:12]
 
 
