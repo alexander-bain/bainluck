@@ -15,6 +15,11 @@ the saving is still real.
 A non-matrix job skipped at job level is fine: its single `skipped` context
 satisfies branch protection (`shard-completeness`, `search-recall` on
 `ef81eafb9b`, read 2026-09-23).
+
+#10708 (Alex 77: A) adds a third scope, `native` (a pure-ios/ pull request):
+the legs expand and do no work exactly as for `frontend`, except that each leg
+reports the `native-backend-readers` job's result, so a red native reader is a
+red required context.
 """
 
 from __future__ import annotations
@@ -30,7 +35,9 @@ CI = Path(
     os.environ.get("CI_WORKFLOW_PATH") or REPO_ROOT / ".github" / "workflows" / "ci.yml"
 )
 
-SCOPE_RUNS = "needs.change-scope.outputs.scope != 'frontend'"
+SCOPE_RUNS = (
+    "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native'"
+)
 REUSE = "needs.change-scope.outputs.reuse != 'true'"
 LIVE = "needs.change-scope.outputs.live != 'true'"
 RUNS = f"{SCOPE_RUNS} && {REUSE} && {LIVE}"
@@ -42,6 +49,9 @@ COMPOSE_RECORD = (
 GUARD = "Require this run's change-scope attempt"
 LIVE_ONLY = "needs.change-scope.outputs.live == 'true'"
 MARKER = "needs.change-scope.outputs.scope == 'frontend' || needs.change-scope.outputs.live == 'true'"
+NATIVE = "needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'"
+NATIVE_STEP = "Native candidate — the full shard is replaced by native-backend-readers"
+JOB_IF = "${{ !cancelled() && needs.fast-gate.result == 'success' }}"
 
 
 def _jobs() -> dict:
@@ -60,13 +70,15 @@ def _evaluate(cond: str | None, scope, reuse="", live=False) -> bool:
     if cond.strip() == LIVE_ONLY:
         return live
     if cond.strip() == RUNS:
-        return value != "frontend" and reuse != "true" and not live
+        return value not in ("frontend", "native") and reuse != "true" and not live
     if cond.strip() == REUSED:
         return reuse == "true"
     if cond.strip() == COMPOSE_RECORD:
         return False  # These shape cases model a lane PR, not a compose push.
     if cond.strip() == MARKER:
         return value == "frontend" or live
+    if cond.strip() == NATIVE:
+        return value == "native" and not live
     raise AssertionError(f"unrecognised backend-tests step condition: {cond!r}")
 
 
@@ -79,7 +91,7 @@ def test_no_required_matrix_job_is_skipped_at_job_level_by_change_scope():
         for name, job in _jobs().items()
         if name != "database-integration"
         and (job.get("strategy") or {}).get("matrix")
-        and "change-scope" in str(job.get("if", ""))
+        and ("change-scope" in str(job.get("if", "")) or "scope" in str(job.get("if", "")))
     ]
     assert not offenders, (
         f"{offenders} skip a MATRIX job at job level on change-scope. A job-level skip never "
@@ -141,6 +153,11 @@ def test_every_backend_tests_step_carries_one_of_the_two_scope_conditions():
         if label == GUARD:
             assert step.get("if") == LIVE_ONLY and step.get("working-directory") == "."
             continue
+        if label == NATIVE_STEP:
+            assert step.get("if") == NATIVE and step.get("working-directory") == "."
+            assert "native-backend-readers.result" in str(step.get("env"))
+            assert "exit 1" in step["run"]
+            continue
         assert step.get("if") in (RUNS, MARKER, REUSED, COMPOSE_RECORD), (
             f"backend-tests step {label!r} has condition {step.get('if')!r}. Every step must "
             f"carry `{RUNS}` (real work) or be the frontend marker; an unconditioned step "
@@ -158,7 +175,7 @@ def test_the_marker_step_needs_no_checkout():
     assert "uses" not in marker, marker
 
 
-@pytest.mark.parametrize("scope", ["frontend", "full", "", None])
+@pytest.mark.parametrize("scope", ["frontend", "native", "full", "", None])
 def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything(scope):
     steps = _jobs()["backend-tests"]["steps"]
     ran = [
@@ -167,6 +184,8 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
     real = [s.get("name") or s.get("uses") for s in steps if s.get("if") == RUNS]
     if scope == "frontend":
         assert len(ran) == 1 and ran[0].startswith("Frontend-only or live-path candidate"), ran
+    elif scope == "native":
+        assert ran == [NATIVE_STEP], ran
     else:
         assert ran == real, (scope, ran)
         assert any("Run tests" in r for r in ran)
@@ -183,7 +202,9 @@ def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
             "matrix"
         ), f"{name} became a matrix job; a job-level skip would then drop its required contexts"
         expected = (
-            f"${{{{ !cancelled() && {SCOPE_RUNS} && {LIVE} }}}}" if name == "search-recall" else f"{SCOPE_RUNS} && {LIVE}"
+            f"${{{{ !cancelled() && {SCOPE_RUNS} && {LIVE} }}}}"
+            if name == "search-recall"
+            else f"{SCOPE_RUNS} && {LIVE}"
         )
         assert job.get("if") == expected, (name, job.get("if"))
 
@@ -191,7 +212,10 @@ def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
 @pytest.mark.parametrize("reuse", ["true", "false", "", None])
 def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reuse):
     jobs = _jobs()
-    assert "if" not in jobs["backend-tests"]
+    # #10708: the one job-level condition replaces the implicit success() that a
+    # skipped `native-backend-readers` need would fail; it never reads the scope.
+    assert jobs["backend-tests"]["if"] == JOB_IF
+    assert jobs["backend-tests"]["needs"] == ["change-scope", "fast-gate", "native-backend-readers"]
     for scope in ("full", "", None):
         ran = [
             s
@@ -202,11 +226,11 @@ def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reu
             reuse != "true"
         )
         assert bool(any(s.get("if") == REUSED for s in ran)) == (reuse == "true")
-    assert jobs["frontend-build"]["if"] == LIVE
+    assert jobs["frontend-build"]["if"] == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
     assert jobs["frontend-build"]["needs"] == ["change-scope", "fast-gate"]
     assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 5
 
-@pytest.mark.parametrize("scope", ["frontend", "full", "", None])
+@pytest.mark.parametrize("scope", ["frontend", "native", "full", "", None])
 def test_a_live_candidate_defers_all_full_shard_steps_but_keeps_contexts(scope):
     job = _jobs()["backend-tests"]
     assert "fast-gate" in job["needs"]
