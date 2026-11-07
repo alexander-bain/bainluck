@@ -6,8 +6,10 @@ import SwiftUI
 ///
 /// Key guarantees:
 /// 1. Settled games show `✓ Won` (`✗ Lost` on paired side, `Draw` on ties) with
-///    the hollow pregame mark `○` (`"Upset · X% pregame"` when the winner's
-///    pregame chance was `< 45%`, otherwise `"X% pregame"`).
+///    the hollow pregame mark `○` (`"Upset · X% pregame"` when the winner was
+///    priced below the side it beat on the same reading via
+///    `PrematchReading.winnerWasUnderdog(homeWon:awayWon:pricesADraw:)`, #9490;
+///    otherwise `"X% pregame"`).
 /// 2. Live and upcoming games show the phase label (`"Current win chance"` vs
 ///    `"Last recorded win chance"` on the 30-minute staleness bound,
 ///    interrupted delivery, or started-and-not-live) and the hollow pregame
@@ -71,16 +73,25 @@ nonisolated enum EventAtlasHeadline11666 {
         }
 
         let homeWon = outcome == .home
+        let awayWon = outcome == .away
+        let pricesADraw = DrawPricedWinner.sportPricesADraw(sportKey)
         let duel = TeamShortName.shortPair(away: awayTeam, home: homeTeam, sportKey: sportKey)
         let winnerName = homeWon ? duel.home : duel.away
 
         var pregameMarkText: String?
         var isUpset = false
-        if let pregame, let pair = pregamePair {
-            let winnerProb: Double? = homeWon ? pair.home : pair.away
+        if let pregame {
+            let winnerProb: Double? = homeWon
+                ? pregame.homeProbability
+                : ((pricesADraw && pregame.awayIsComplement) ? nil : pregame.awayProbability)
             if let prob = winnerProb {
-                let pct = Int((prob * 100).rounded())
-                isUpset = pct < 45
+                // #9490 — against the side it beat on the same reading, not a
+                // fixed cut: on a three-way board 39.5% can be the favourite.
+                isUpset = pregame.winnerWasUnderdog(
+                    homeWon: homeWon,
+                    awayWon: awayWon,
+                    pricesADraw: pricesADraw
+                )
                 let formatted = formatProbability(
                     prob,
                     renderedPercent: homeWon ? pregame.percents[1] : pregame.percents[0]
@@ -97,6 +108,27 @@ nonisolated enum EventAtlasHeadline11666 {
             systemImage: "checkmark",
             pregameMarkText: pregameMarkText,
             isUpset: isUpset
+        )
+    }
+
+    /// Resolves the live/scheduled headline phase label against the supplied
+    /// clock (`now`), honouring the 30-minute staleness bound and delivery state.
+    static func resolvePhase(
+        event: EventDetail,
+        observedAt: Date?,
+        liveStatus: LiveUpdateStatus,
+        now: Date = Date()
+    ) -> EventHeadlinePhase9483? {
+        let isOpening = event.currentOdds.map {
+            OpeningLineHero.resolve($0, for: event).isOpeningLine
+        } ?? false
+        return EventHeadlinePhase9483.resolve(
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            isOpeningLine: isOpening,
+            observedAt: observedAt,
+            deliveryInterrupted: liveStatus == .interrupted,
+            now: now
         )
     }
 
@@ -274,20 +306,24 @@ struct EventAtlasHeadlineControlRow11666: View {
     let event: EventDetail
     let observedAt: Date?
     let liveStatus: LiveUpdateStatus
+    var asOf: Date? = nil
 
     @State private var activeSheet: EventAtlasDetailsSheetModel11666?
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+            rowContent(now: asOf ?? context.date)
+        }
+    }
+
+    @ViewBuilder
+    private func rowContent(now: Date) -> some View {
         let isFinished = EventState.isFinished(event.status)
-        let isOpening = event.currentOdds.map {
-            OpeningLineHero.resolve($0, for: event).isOpeningLine
-        } ?? false
-        let phase = EventHeadlinePhase9483.resolve(
-            status: event.status,
-            commenceTime: event.commenceTime?.asDate,
-            isOpeningLine: isOpening,
+        let phase = EventAtlasHeadline11666.resolvePhase(
+            event: event,
             observedAt: observedAt,
-            deliveryInterrupted: liveStatus == .interrupted
+            liveStatus: liveStatus,
+            now: now
         )
         let settledBadge: EventAtlasHeadline11666.SettledBadge? = isFinished
             ? EventAtlasHeadline11666.settledBadge(
