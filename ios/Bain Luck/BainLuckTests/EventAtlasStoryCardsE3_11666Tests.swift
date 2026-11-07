@@ -203,7 +203,7 @@ final class EventAtlasStoryCardsE3_11666Tests: XCTestCase {
         XCTAssertEqual(finishSheet.primaryReadingLabel, "Final score")
         XCTAssertEqual(finishSheet.primaryReadingValue, "Bills 28 – Chiefs 21 · Bills ✓ Won")
         XCTAssertEqual(finishSheet.pregameBaseline, "Bills 21 · Chiefs 24.5")
-        XCTAssertEqual(finishSheet.sourceLabel, "Sportsbooks")
+        XCTAssertNil(finishSheet.sourceLabel)
 
         let prop = GameMarketPlayerProp(
             marketName: "Player Receiving Yards",
