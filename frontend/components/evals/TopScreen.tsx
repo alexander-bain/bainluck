@@ -352,10 +352,11 @@ export default function TopScreen({
   watchers: WatcherList | null;
 }) {
   return (
-    <header data-evals-top="" className="space-y-2">
+    // On a phone the gaps are 6 px, not 8, for the same room as TRUTH_PLOT's height.
+    <header data-evals-top="" className="space-y-1.5 md:space-y-2">
       <h1 className="text-title-3 text-text-primary">{EVALS_PAGE_TITLE}</h1>
       <p className="text-body text-text-primary">{COPY.answer}</p>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-1.5 md:gap-2 md:grid-cols-3">
         <TruthCard state={forward} />
         {results && study && <ReviewerCard results={results} study={study} />}
         {watchers && <WatchersCard list={watchers} />}
