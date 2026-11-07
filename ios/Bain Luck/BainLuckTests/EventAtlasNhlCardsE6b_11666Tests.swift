@@ -239,4 +239,150 @@ final class EventAtlasNhlCardsE6b_11666Tests: XCTestCase {
         XCTAssertEqual(totals.points[0].result, true)
         XCTAssertEqual(totals.actual, 6.0)
     }
+
+    func testScoringScaleCeilingUses35PercentFloorIn5PercentSteps() {
+        let lowEntry = EventAtlasNhlCards11666.ScorerEntry(
+            id: "nhl-scorer:1",
+            rowId: "1",
+            player: "Brad Marchand",
+            pregameChance: 0.22,
+            observedAt: nil,
+            actualGoals: nil,
+            hit: nil,
+            side: .home,
+            source: "kalshi",
+            sourceCount: 1,
+            marketTitle: "Brad Marchand · 1+ goals"
+        )
+        XCTAssertEqual(
+            EventAtlasNhlCards11666.computeScoringScaleCeiling([lowEntry]),
+            0.35,
+            accuracy: 1e-6
+        )
+
+        let highEntry = EventAtlasNhlCards11666.ScorerEntry(
+            id: "nhl-scorer:2",
+            rowId: "2",
+            player: "Auston Matthews",
+            pregameChance: 0.42,
+            observedAt: nil,
+            actualGoals: nil,
+            hit: nil,
+            side: .away,
+            source: "kalshi",
+            sourceCount: 1,
+            marketTitle: "Auston Matthews · 1+ goals"
+        )
+        XCTAssertEqual(
+            EventAtlasNhlCards11666.computeScoringScaleCeiling([lowEntry, highEntry]),
+            0.45,
+            accuracy: 1e-6
+        )
+    }
+
+    @MainActor
+    func testConflictingHitGradesResolveToPendingAndMilestoneCardBuilds() throws {
+        let now = try XCTUnwrap("2026-11-06T04:00:00Z".asDate)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let propsJSON = """
+        [
+            {
+                "market_name": "TOR at BOS: Goals",
+                "outcome_name": "William Nylander: 1+",
+                "threshold": 1.0,
+                "over_probability": 0.38,
+                "pregame_mark": 0.36,
+                "observed_at": "2026-11-05T23:55:00Z",
+                "source": "blended",
+                "player_team": "away",
+                "actual": 1.0,
+                "hit": true
+            },
+            {
+                "market_name": "TOR at BOS: Goals",
+                "outcome_name": "William Nylander: 1+",
+                "threshold": 1.0,
+                "over_probability": 0.38,
+                "pregame_mark": 0.36,
+                "observed_at": "2026-11-05T23:55:00Z",
+                "source": "kalshi",
+                "player_team": "away",
+                "actual": 1.0,
+                "hit": false
+            },
+            {
+                "market_name": "TOR at BOS: Points",
+                "outcome_name": "Mitch Marner: 1+",
+                "threshold": 1.0,
+                "over_probability": 0.72,
+                "pregame_mark": 0.70,
+                "observed_at": "2026-11-05T23:55:00Z",
+                "source": "kalshi",
+                "player_team": "away",
+                "actual": 2.0,
+                "hit": true
+            },
+            {
+                "market_name": "TOR at BOS: Points",
+                "outcome_name": "Mitch Marner: 2+",
+                "threshold": 2.0,
+                "over_probability": 0.38,
+                "pregame_mark": 0.35,
+                "observed_at": "2026-11-05T23:55:00Z",
+                "source": "kalshi",
+                "player_team": "away",
+                "actual": 2.0,
+                "hit": true
+            },
+            {
+                "market_name": "TOR at BOS: Points",
+                "outcome_name": "Mitch Marner: 3+",
+                "threshold": 3.0,
+                "over_probability": 0.14,
+                "pregame_mark": 0.12,
+                "observed_at": "2026-11-05T23:55:00Z",
+                "source": "kalshi",
+                "player_team": "away",
+                "actual": 2.0,
+                "hit": false
+            }
+        ]
+        """
+        let props = try decoder.decode([GameMarketPlayerProp].self, from: Data(propsJSON.utf8))
+        let scoring = try XCTUnwrap(
+            EventAtlasNhlCards11666.buildScoringCard(
+                props: props,
+                status: "completed",
+                commenceTime: "2026-11-06T00:00:00Z".asDate,
+                homeTeam: "Boston Bruins",
+                awayTeam: "Toronto Maple Leafs",
+                now: now
+            )
+        )
+        XCTAssertEqual(scoring.entries.count, 1)
+        let nylander = scoring.entries[0]
+        XCTAssertNil(nylander.hit, "conflicting hit grades never pick a side")
+        XCTAssertTrue(nylander.hasHitConflict)
+
+        let conflictDetails = EventAtlasNhlCards11666.detailsModel(for: nylander, card: scoring)
+        XCTAssertEqual(conflictDetails.primaryReadingLabel, "Result")
+        XCTAssertEqual(conflictDetails.primaryReadingValue, "Pending · 1 goal")
+
+        let milestone = try XCTUnwrap(
+            EventAtlasNhlCards11666.buildContributionMilestoneCard(
+                props: props,
+                status: "completed",
+                commenceTime: "2026-11-06T00:00:00Z".asDate,
+                homeTeam: "Boston Bruins",
+                awayTeam: "Toronto Maple Leafs",
+                now: now
+            )
+        )
+        XCTAssertEqual(milestone.id, "nhl:contributions")
+        XCTAssertEqual(milestone.player, "Mitch Marner")
+        XCTAssertEqual(milestone.rungs.count, 3)
+        XCTAssertEqual(milestone.actual, 2.0)
+    }
 }

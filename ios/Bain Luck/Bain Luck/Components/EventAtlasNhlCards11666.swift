@@ -36,6 +36,7 @@ nonisolated enum EventAtlasNhlCards11666 {
         let observedAt: String?
         let actualGoals: Int?
         let hit: Bool?
+        var hasHitConflict: Bool = false
         let side: PlayerPropsTeam.Side
         let source: String?
         let sourceCount: Int
@@ -80,6 +81,7 @@ nonisolated enum EventAtlasNhlCards11666 {
                     observedAt: entry.observedAt,
                     actualGoals: entry.actualGoals,
                     hit: entry.hit,
+                    hasHitConflict: entry.hasHitConflict,
                     side: entry.side,
                     source: entry.source,
                     sourceCount: entry.sourceCount,
@@ -242,17 +244,22 @@ nonisolated enum EventAtlasNhlCards11666 {
             let actualGoals = actualRow?.actual.map { Int($0.rounded()) }
 
             let hit: Bool?
+            let hasHitConflict: Bool
             if group.hits.contains(true) && group.hits.contains(false) {
                 hit = nil
+                hasHitConflict = true
             } else if group.hits.contains(true) {
                 hit = true
+                hasHitConflict = false
             } else if group.hits.contains(false) {
                 hit = false
+                hasHitConflict = false
             } else {
                 hit = nil
+                hasHitConflict = false
             }
 
-            if pregameChance == nil && (actualGoals == nil || actualGoals == 0) {
+            if pregameChance == nil && (actualGoals == nil || actualGoals == 0) && !hasHitConflict {
                 continue
             }
 
@@ -269,6 +276,7 @@ nonisolated enum EventAtlasNhlCards11666 {
                     observedAt: observedAt,
                     actualGoals: actualGoals,
                     hit: hit,
+                    hasHitConflict: hasHitConflict,
                     side: PlayerPropsTeam.side(for: sideToken),
                     source: singleSource,
                     sourceCount: max(1, group.sources.count),
@@ -639,7 +647,7 @@ nonisolated enum EventAtlasNhlCards11666 {
         if card.entries.contains(where: { $0.actualGoals != nil }) {
             items.append(Item(glyph: .verticalBar, label: "Official final"))
         }
-        if card.entries.contains(where: { $0.hit != nil }) {
+        if card.entries.contains(where: { $0.hit != nil || $0.hasHitConflict }) {
             items.append(Item(glyph: .hitMissVerdict, label: "✓ Won / ✗ Lost"))
         }
         return items
@@ -652,7 +660,14 @@ nonisolated enum EventAtlasNhlCards11666 {
         let pregameText = entry.pregameChance.map { formatProbability($0) }
         let primaryLabel: String
         let primaryValue: String
-        if let hit = entry.hit {
+        if entry.hasHitConflict {
+            primaryLabel = "Result"
+            if let goals = entry.actualGoals {
+                primaryValue = "\(EventAtlasStates11666.pending) · \(goals) \(goals == 1 ? "goal" : "goals")"
+            } else {
+                primaryValue = EventAtlasStates11666.pending
+            }
+        } else if let hit = entry.hit {
             primaryLabel = "Result"
             let badge = hit ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross
             if let goals = entry.actualGoals {
@@ -741,7 +756,11 @@ struct EventAtlasNhlScoringCardView11666: View {
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.primary)
                 }
-                if let hit = entry.hit, card.phase == .after {
+                if entry.hasHitConflict, card.phase == .after {
+                    Text(EventAtlasStates11666.pending)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                } else if let hit = entry.hit, card.phase == .after {
                     Text(hit ? EventAtlasStates11666.wonWithCheck : EventAtlasStates11666.lostWithCross)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(hit ? Color.green : Color.secondary)
