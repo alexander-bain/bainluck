@@ -49,7 +49,7 @@ export const GAPS: readonly Gap[] = [
   },
   {
     id: "code-reviewer",
-    text: "The AI code reviewer has been tried on only a few hidden mistakes so far, too few to say how often it catches one; the study is under way.",
+    text: "The AI code reviewer's study is not finished, so how often it catches a hidden mistake is not known yet.",
     ref: pullRef(11951),
   },
   {

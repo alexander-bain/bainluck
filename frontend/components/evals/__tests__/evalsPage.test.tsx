@@ -504,8 +504,10 @@ describe("S3: the forward record", () => {
     const page = await mountPage();
     const card = page.querySelector('[data-evals-top-card="truth"]');
     expect(card?.getAttribute("data-truth-scope")).toBe("live");
-    const figures = Array.from(card?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.textContent);
-    expect(figures).toContain(about?.errorPp.toFixed(1));
+    // Its footer holds exactly one figure, the section's own average miss; the
+    // traded-outcome count stays with the section (Fable on #12225, Nov 6).
+    const footer = Array.from(card?.querySelectorAll("[data-card-footer] [data-evals-figure]") ?? []).map((f) => f.textContent);
+    expect(footer).toEqual([about?.errorPp.toFixed(1)]);
   });
 
   it("the meter reads the scorecard: 24 of 53 kinds of market within 3 points", async () => {

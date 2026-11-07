@@ -61,7 +61,11 @@ function Card({
         {title}
       </h2>
       {children}
-      {footer && <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-text-secondary">{footer}</div>}
+      {footer && (
+        <div data-card-footer="" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-text-secondary">
+          {footer}
+        </div>
+      )}
     </section>
   );
 }

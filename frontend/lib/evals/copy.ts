@@ -113,7 +113,7 @@ export const STORY_COPY = {
     paragraphs: [
       "The same game shows up on many sites, under slightly different names and start times. Before we can put the numbers together, we have to be sure two listings are the same thing.",
       "For games we match on the teams, the start time and each site's own ID. When we can't be sure, we keep the two listings apart rather than risk mixing up two different games.",
-      "Prediction markets are written as free text, so we tested an AI to pair them up, on examples it had never seen:",
+      "Prediction markets are written as free text, so we tested an AI to pair them up, on examples it had never seen.",
     ],
   },
   combining: {
@@ -313,7 +313,7 @@ export const TESTS_FOR_TESTS_COPY = {
   title: "Tests for the tests",
   lead: "How do we know a test works? We plant a bug on purpose and see whether the test catches it.",
   detail:
-    "A test that misses a planted bug is broken. We plant bugs two ways: small changes to the library's own cases, and real bugs from the site's past, planted again for the AI code reviewer.",
+    "A test that misses a planted bug is broken. Here are real bugs from the site's past, planted again for the AI code reviewer; the small changes we plant in our own test cases are counted under The test library.",
   biteTitle: "Planted changes",
   biteOf: "of",
   biteCaught: "caught",
