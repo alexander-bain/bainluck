@@ -35,6 +35,7 @@ from tests.test_ci_matrix_required_contexts import (
     LIVE,
     REUSE,
     SCOPE_RUNS,
+    SEARCH_RECALL,
     _validate_backend_partition,
 )
 from tests.test_ci_supersede_concurrency import DEPLOY_NEEDS
@@ -295,7 +296,9 @@ def _validate_current_composed_promotion(
     assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
     assert set(aggregate["needs"]) == {"change-scope", "database-integration"}
-    assert aggregate["if"] == f"${{{{ !cancelled() && {SCOPE_RUNS} && {LIVE} }}}}"
+    # 75-A: only the explicitly labelled never-merge study skips this runner.
+    # Keep the ordinary scope/live predicates and every master promotion gate.
+    assert aggregate["if"] == SEARCH_RECALL
     for name in ("frontend-build", "e2e-contract", "release-required", "deploy"):
         _current_checkout(jobs[name])
     assert jobs["frontend-build"].get("if") == LIVE
@@ -349,6 +352,7 @@ def test_actual_workflow_requires_current_composed_source_before_main_promotion(
         "component_push",
         "artifact_substitution",
         "lost_database_aggregate",
+        "widened_eval_ci_skip",
         "conditional_verifier",
     ],
 )
@@ -422,6 +426,10 @@ def test_current_source_guard_rejects_substituted_or_partial_promotion(mutation)
         )
     elif mutation == "lost_database_aggregate":
         jobs["search-recall"]["needs"].remove("database-integration")
+    elif mutation == "widened_eval_ci_skip":
+        jobs["search-recall"]["if"] = jobs["search-recall"]["if"].replace(
+            "'eval-candidate'", "'tier-b'"
+        )
     else:
         jobs["shard-completeness"]["steps"][-1]["if"] = "false"
     with pytest.raises(AssertionError):

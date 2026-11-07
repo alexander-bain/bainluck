@@ -11,6 +11,14 @@
  * The extractor has its own negative control, so a check that stopped reading
  * would fail rather than pass. Each picture is held to its record: one dot per
  * group in the live curve, one block per planned review, one circle per check.
+ *
+ * Below the top screen, the whole story in plain words (Alex, 2:04 PM): one
+ * chapter per step of the stack, each with at most a picture, then the open
+ * gaps, then one "full record" fold holding every section the page carried
+ * before. The jargon check covers the chapters because it reads the whole page
+ * outside every fold, and a second check keeps our internal names (twin,
+ * license, exit exam and the like) off the page entirely, the plain-words
+ * glossary of them excepted.
  */
 
 import React, { act } from "react";
@@ -33,14 +41,18 @@ jest.mock("@/lib/api", () => ({
 }));
 
 import EvalsPage from "@/app/evals/page";
+import TopScreen from "@/components/evals/TopScreen";
 import { fetchCalibration } from "@/lib/api";
-import { TERMS, TOP_COPY } from "@/lib/evals/copy";
+import { STORY_COPY, TERMS, TOPIC_COPY, TOP_COPY } from "@/lib/evals/copy";
+import EXAM_RAW from "@/lib/evals/data/twin-exam-2026-11-05.json";
+import { EXAMPLE_AMERICAN_ODDS, EXAMPLE_CONTRACT_CENTS, americanOddsText, americanToPercent } from "@/lib/evals/example";
 import { calibrationFixture } from "@/lib/evals/fixtures/calibration";
 import { forwardRecordView, type ForwardRecordView } from "@/lib/evals/forwardRecord";
 import { loadReviewerResults, reviewerTally } from "@/lib/evals/reviewerResults";
 import { loadReviewerStudy } from "@/lib/evals/reviewerStudy";
 import { scanEvalsDom } from "@/lib/evals/scanEvalsDom";
 import { truthDots, truthExample, truthReading, wholePercent } from "@/lib/evals/topScreen";
+import { PASSES } from "@/lib/evals/twinExam";
 import { CHART_THIN_FLOOR } from "@/lib/evals/forwardRecord";
 import { loadWatchers, watcherHealth } from "@/lib/evals/watchers";
 
@@ -146,15 +158,170 @@ describe("no jargon above a fold (Alex, Nov 6)", () => {
     expect(hits).toEqual(["gates", "confusion"]);
   });
 
-  it("everything the page carried before sits under the fold, nothing dropped", async () => {
+  it("everything the page carried before sits under the one full-record fold, nothing dropped", async () => {
     const page = await mountPage();
-    const fold = page.querySelector("details[data-evals-fold]");
-    expect(fold).not.toBeNull();
-    expect(fold?.querySelector("summary")?.textContent).toContain(TOP_COPY.fold);
-    for (const id of ["exam", "confusion", "timeline", "forward-record", "test-library", "tests-for-tests", "watchers", "gaps", "how-to-read", "sources"]) {
-      expect(fold?.querySelector(`#${id}`)).not.toBeNull();
+    const record = page.querySelector('[data-evals-record] > details[data-evals-fold="record"]');
+    expect(record?.querySelector("summary")?.textContent).toContain(STORY_COPY.recordSummary);
+    for (const id of ["forward-record", "exam", "confusion", "timeline", "tests-for-tests", "test-library", "watchers", "how-to-read", "sources"]) {
+      expect(record?.querySelector(`#${id}`)).not.toBeNull();
     }
-    expect(fold?.querySelector('[data-testid="evals-hero-tiles"]')).not.toBeNull();
+    // The planted-change meter sits with the library whose cases it grades.
+    expect(page.querySelector('[data-testid="evals-bite"]')?.closest("#test-library")).not.toBeNull();
+    // The gaps stay open: each row is plain words and its issue.
+    expect(page.querySelector("#gaps")?.closest("details")).toBeNull();
+    // And there is no other top-level fold: the story itself hides nothing.
+    const topLevel = Array.from(page.querySelectorAll("details[data-evals-fold]"));
+    expect(topLevel.map((d) => d.getAttribute("data-evals-fold"))).toEqual(["record"]);
+  });
+});
+
+/**
+ * Alex, Nov 6, 2:04 PM: "avoid meaningless jargon like twins, license,
+ * 'Calibration exit exam'". Our records' short names stay off the whole page,
+ * folds included. The one exception is the plain-words list that defines them
+ * for a reader who follows a link into those records.
+ */
+const INTERNAL_NAMES = /\b(twins?|licen[cs]es?|licensed|exit exams?|golden sets?|sentinels?|AI judge|running red|bite audit|usage[- ]rated)\b/gi;
+
+function everywhereButTheGlossary(root: Element): string {
+  const clone = root.cloneNode(true) as Element;
+  clone.querySelectorAll("[data-evals-glossary]").forEach((g) => g.remove());
+  const labels = Array.from(clone.querySelectorAll("[aria-label]")).map((el) => el.getAttribute("aria-label") ?? "");
+  return [clone.textContent ?? "", ...labels].join(" ").replace(/\s+/g, " ");
+}
+
+describe("no internal names anywhere on the page (Alex, Nov 6, 2:04 PM)", () => {
+  it("none in the story, the gaps or the full record; only the plain-words list names them", async () => {
+    const page = await mountPage();
+    expect((everywhereButTheGlossary(page).match(INTERNAL_NAMES) ?? []).map((w) => w.toLowerCase())).toEqual([]);
+    // The list itself is on the page, so a reader can still look one up.
+    expect(page.querySelector("[data-evals-glossary]")?.textContent).toMatch(/Twin/);
+  });
+
+  it("the check can fail: a name outside the list is found, the same name inside it is not", async () => {
+    const page = await mount(
+      <div>
+        <details>
+          <summary>x</summary>
+          <p>The twin exam and the calibration exit exam.</p>
+        </details>
+        <div data-evals-glossary="">
+          <p>Twin: two listings of one market.</p>
+        </div>
+      </div>
+    );
+    expect((everywhereButTheGlossary(page).match(INTERNAL_NAMES) ?? []).map((w) => w.toLowerCase())).toEqual(["twin", "exit exam"]);
+  });
+});
+
+describe("the story below the top screen (Alex, Nov 6, 2:04 PM)", () => {
+  it("tells the whole stack in order: where the numbers come from, matching, combining, coming true, the code, the live site, then the gaps and the full record", async () => {
+    const page = await mountPage();
+    const order = Array.from(page.querySelectorAll("[data-evals-chapter], #gaps, [data-evals-record]")).map(
+      (el) => el.getAttribute("data-evals-chapter") ?? (el.id || "record")
+    );
+    expect(order).toEqual(["sources", "matching", "combining", "coming-true", "code", "live-checks", "gaps", "record"]);
+  });
+
+  it("each chapter is a title and plain sentences, and every picture in it stands outside any fold under its own label", async () => {
+    const page = await mountPage();
+    for (const chapter of Array.from(page.querySelectorAll("[data-evals-chapter]"))) {
+      expect(chapter.querySelector(":scope > h2")?.textContent).toBeTruthy();
+      const words = Array.from(chapter.querySelectorAll(":scope > p")).map((p) => p.textContent ?? "").join(" ");
+      expect(words.length).toBeGreaterThan(80);
+      expect(chapter.querySelector("details")).toBeNull();
+      for (const picture of Array.from(chapter.querySelectorAll("[data-chapter-picture]"))) {
+        if (picture.getAttribute("data-chapter-picture") === "example") continue;
+        expect(picture.getAttribute("data-truth-scope")).toBe(picture.querySelector("[data-truth-chip]")?.getAttribute("data-truth"));
+      }
+    }
+    const pictures = Array.from(page.querySelectorAll("[data-chapter-picture]")).map((p) => [
+      p.closest("[data-evals-chapter]")?.getAttribute("data-evals-chapter"),
+      p.getAttribute("data-chapter-picture"),
+    ]);
+    expect(pictures).toEqual([
+      ["sources", "example"],
+      ["matching", "exam"],
+      ["coming-true", "kinds"],
+      ["code", "breakages"],
+      ["code", "reviewer"],
+      ["live-checks", "checks"],
+    ]);
+  });
+
+  it("the worked example says For example, holds no measured figure, and shows the one chance both sources mean", async () => {
+    const page = await mountPage();
+    const example = page.querySelector("[data-evals-example]");
+    expect(example?.querySelector("figcaption")?.textContent).toBe(STORY_COPY.exampleLabel);
+    expect(example?.querySelector("[data-evals-figure]")).toBeNull();
+    expect(example?.textContent).toContain(americanOddsText(EXAMPLE_AMERICAN_ODDS));
+    expect(example?.textContent).toContain(`${EXAMPLE_CONTRACT_CENTS}¢`);
+    expect(example?.textContent).toContain(`${americanToPercent(EXAMPLE_AMERICAN_ODDS)}%`);
+  });
+
+  it("the matching picture names its three tries, reads 2 or 3 off the record, and says the rule its red bar counts", async () => {
+    const page = await mountPage();
+    const picture = page.querySelector('[data-evals-chapter="matching"] [data-chapter-picture="exam"]');
+    const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    const M = TOPIC_COPY.matching;
+    const tries = PASSES.map((p) => EXAM_RAW.per_pass[p].test);
+    const found = tries.map((t) => t.per_relation.twin.recall.k);
+    const wrong = tries.map((t) => t.wrong_merges);
+    // The copy spells the number of tries in words.
+    expect(PASSES).toHaveLength(3);
+    expect(M.triesAfter).toContain("three separate tries");
+    expect(text(picture?.querySelector("[data-exam-tries]"))).toBe(`${M.triesBefore} ${tries[0].expected} ${M.triesAfter}`);
+    // The tries agree on the green bar and differ on the red one: one number, then "fewest or most".
+    expect(new Set(found).size).toBe(1);
+    expect(text(picture)).toContain(`${M.foundBefore} ${found[0]} ${M.foundOf} ${tries[0].per_relation.twin.recall.n} ${M.foundAfter}`);
+    expect(text(picture)).toContain(`${M.wrongBefore} ${Math.min(...wrong)} ${M.or} ${Math.max(...wrong)} ${M.wrongAfter}`);
+    expect(text(picture)).toContain("joined 2 or 3 pairs it should have kept apart");
+    expect(text(picture?.querySelector("[data-exam-why]"))).toBe(M.why);
+  });
+
+  it("a chapter whose record cannot be read keeps its words and drops only its picture", async () => {
+    // A fresh module registry whose scoreboard cannot be read, with its own React to mount it.
+    let parts: {
+      R: typeof React;
+      client: typeof import("react-dom/client");
+      swr: typeof import("swr");
+      Page: React.ComponentType;
+    } | null = null;
+    jest.isolateModules(() => {
+      jest.doMock("@/lib/evals/scoreboard", () => ({
+        ...jest.requireActual("@/lib/evals/scoreboard"),
+        loadScoreboard: () => null,
+      }));
+      parts = {
+        R: require("react"),
+        client: require("react-dom/client"),
+        swr: require("swr"),
+        Page: require("@/app/evals/page").default,
+      };
+    });
+    jest.dontMock("@/lib/evals/scoreboard");
+    const { R, client, swr, Page } = parts!;
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const isolated = client.createRoot(el);
+    await R.act(async () => {
+      isolated.render(
+        R.createElement(
+          swr.SWRConfig,
+          { value: { provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false } },
+          R.createElement(Page)
+        )
+      );
+    });
+    const chapters = Array.from(el.querySelectorAll("[data-evals-chapter]")).map((c) => c.getAttribute("data-evals-chapter"));
+    expect(chapters).toEqual(["sources", "matching", "combining", "coming-true", "code", "live-checks"]);
+    const code = el.querySelector('[data-evals-chapter="code"]');
+    expect(code?.textContent).toContain(STORY_COPY.code.paragraphs[0]);
+    expect(code?.querySelector('[data-chapter-picture="breakages"]')).toBeNull();
+    expect(el.querySelector("#test-library")).toBeNull();
+    expect(el.querySelector('[data-testid="evals-bite"]')).toBeNull();
+    await R.act(async () => isolated.unmount());
+    el.remove();
   });
 });
 
@@ -283,6 +450,22 @@ describe("each picture is drawn from its record", () => {
     expect(figures.map((f) => f.textContent)).toEqual([wholePercent(example!.said), wholePercent(example!.happened)]);
     expect(figures.map((f) => f.getAttribute("data-value"))).toEqual([String(example!.said), String(example!.happened)]);
     expect(card?.querySelector("[data-truth-example]")).not.toBeNull();
+  });
+
+  it("the reviewer sentence counts tries and the picture counts cases: three caught tries on one mistake read 3 of 3 above one green bug (Fable on #12217)", async () => {
+    const study = loadReviewerStudy()!;
+    const base = loadReviewerResults(study)!;
+    const results = {
+      ...base,
+      results: [1, 2, 3].map((pass) => ({ case: "r01", pass, outcome: "caught" as const, at: base.asOf, receipt: base.receipt })),
+    };
+    const page = await mount(<TopScreen forward={{ status: "loading" }} study={study} results={results} watchers={null} />);
+    const card = page.querySelector('[data-evals-top-card="reviewer"]');
+    const sentence = card?.querySelector('[data-review-kind="mistakes"]');
+    expect(Array.from(sentence?.querySelectorAll("[data-evals-figure]") ?? []).map((f) => f.getAttribute("data-value"))).toEqual(["3", "3"]);
+    expect(sentence?.textContent).toContain(TOP_COPY.reviewerCaughtAfter);
+    expect(TOP_COPY.reviewerCaughtAfter).toMatch(/\btries\b/);
+    expect(card?.querySelectorAll('[data-review-marks="mistakes"] [data-review-mark="right"]')).toHaveLength(1);
   });
 
   it("the checks: one circle per check, and the count of working ones from the list", async () => {

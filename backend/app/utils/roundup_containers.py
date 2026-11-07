@@ -849,6 +849,7 @@ def _register_builtin_producers() -> None:
     import app.utils.field_leaders as _field_leaders
     import app.utils.same_deadline_board as _same_deadline
     import app.utils.sibling_family as _sibling_family
+    import app.utils.week_events as _week_events
     import app.utils.window_events_closest as _window_closest
     import app.utils.yardstick_pair as _yardstick_pair
 
@@ -889,10 +890,15 @@ def _register_builtin_producers() -> None:
         "SNOW_FIRST_FLAKES_2026_PRODUCER",
         "RT_SCORES_THIS_WEEK_PRODUCER",
         "WHO_ANNOUNCES_BEFORE_2027_PRODUCER",
+        "ALCARAZ_SINNER_TWO_MAJORS_2027_PRODUCER",
     ):
         sf_producer = getattr(_sibling_family, attr, None)
         if sf_producer is not None:
             register_roundup_producer(sf_producer)
+
+    golf_week_producer = getattr(_week_events, "GOLF_THIS_WEEK_PRODUCER", None)
+    if golf_week_producer is not None:
+        register_roundup_producer(golf_week_producer)
 
     for attr in (
         "TOMORROWS_HIGHS_PRODUCER",

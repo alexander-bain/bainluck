@@ -435,7 +435,12 @@ class TestThePassSummaryTellsTheTruthAboutWrites:
              patch.object(warmer, "_release_run_lock"), \
              patch.object(warmer, "_warm_head_concurrently", _fake_concurrent), \
              patch.object(warmer, "_record_pass_start"), \
-             patch.object(warmer, "_seconds_since_last_pass", return_value=100.0), \
+             patch.object(
+                 warmer,
+                 "_seconds_since_last_pass",
+                 # Past the floor (55 s past it, as the original 100 s was past 45 s).
+                 return_value=float(warmer.MIN_PASS_PERIOD_SECONDS) + 55.0,
+             ), \
              patch("app.tasks.base.get_task_session", _fake_session_cm):
             out = _run(warmer._warm_search_head(queries=[r["q"] for r in results]))
         # 🔴 ASSERTED, NOT ASSUMED. `_warm_search_head` filters the head to
@@ -530,7 +535,7 @@ def _fake_session_cm(*a, **kw):
 # WHY IT IS A SIMULATION AND WHAT IS REAL IN IT. Everything that decides the
 # outcome is production code: `_needs_rebuild` is imported and called, and the
 # cadence and thresholds come from `effective_pass_period_s()`,
-# `REFRESH_AHEAD_SECONDS` and `SEARCH_RESPONSE_TTL_SECONDS`. What is modelled is
+# `REFRESH_AHEAD_SECONDS` and `SEARCH_HEAD_WARMER_TTL_SECONDS`. What is modelled is
 # only the environment — a clock that advances and a Redis that expires — because
 # a guard that re-implements the predicate it is guarding agrees with it by
 # construction and can never fail.
@@ -551,8 +556,11 @@ class _ExpiringWriteLog:
         self._ttl = ttl_s
         self.writes: list[tuple[float, float]] = []
 
-    def setex(self, written_at: float) -> None:
-        self.writes.append((written_at, written_at + self._ttl))
+    def setex(self, written_at: float, ttl_s: float | None = None) -> None:
+        # `ttl_s` lets a READER's write (180 s) and the WARMER's (600 s since W-1)
+        # share one log; the default is the log's own TTL.
+        life = self._ttl if ttl_s is None else ttl_s
+        self.writes.append((written_at, written_at + life))
 
     def ttl_at(self, t: float) -> int:
         """Redis's three-valued dialect: -2 no key, else whole seconds left."""
@@ -571,9 +579,11 @@ def _simulate_residency(
     refresh_ahead_s,
     rebuild_walls,
     horizon_s,
-    beat_s=20.0,
-    floor_s=45.0,
+    beat_s=None,
+    floor_s=None,
     organic_phase=False,
+    organic_ttl_s=None,
+    first_pass_s=None,
 ):
     """Run pass cycles on a fake clock and report every interval the key was ABSENT.
 
@@ -597,11 +607,19 @@ def _simulate_residency(
 
     Eligibility is production's `_needs_rebuild`; alternative configurations are
     exercised by patching the CONSTANT it reads, never by reimplementing it.
+
+    W-1 (2026-11-06): `beat_s`/`floor_s` default to the MODULE's cadence (they
+    were literal 20/45 defaults); reproductions of past configurations pass
+    `_PRE_W1_CADENCE`. `organic_ttl_s` is the life of the user's seeding write
+    (readers keep 180 s while warmer writes live 600 s), and `first_pass_s` puts
+    the first pass at an arbitrary offset after it instead of at the edge.
     """
     from unittest.mock import patch
 
     from app.tasks import search_head_warmer as warmer
 
+    beat_s = float(warmer.BEAT_PERIOD_SECONDS) if beat_s is None else beat_s
+    floor_s = float(warmer.MIN_PASS_PERIOD_SECONDS) if floor_s is None else floor_s
     log = _ExpiringWriteLog(ttl_s)
 
     def _next_start(last_start, last_end, phase):
@@ -616,9 +634,13 @@ def _simulate_residency(
         if organic_phase:
             # A user's MISS writes at t=0; the first pass therefore lands with
             # exactly `refresh_ahead_s` of life left — the skipped edge.
-            log.setex(0.0)
+            seed_ttl = ttl_s if organic_ttl_s is None else organic_ttl_s
+            log.setex(0.0, seed_ttl)
             watch_from = 0.0
-            start = float(ttl_s - refresh_ahead_s)
+            start = (
+                float(seed_ttl - refresh_ahead_s) if first_pass_s is None
+                else float(first_pass_s)
+            )
             phase = start % beat_s
             last_start, last_end = start - floor_s, 0.0
         else:
@@ -662,6 +684,11 @@ def _simulate_residency(
 # The grader's own measured sequence: a short pass followed by a long one.
 _SHORT_THEN_LONG = [3.3, 23.8, 23.8, 23.8, 23.8, 23.8]
 
+#: The cadence every CERT reproduction below was graded at — beat 20 s, floor
+#: 45 s — pinned so a past configuration does not follow the module when W-1
+#: (2026-11-06) moves the shipped cadence to 60 s / 300 s.
+_PRE_W1_CADENCE = {"beat_s": 20.0, "floor_s": 45.0}
+
 
 def test_the_blocked_constants_leave_the_key_absent_for_the_graders_twenty_seconds():
     """CERT-2068's finding, reproduced. This is the RED half of the regression.
@@ -677,6 +704,7 @@ def test_the_blocked_constants_leave_the_key_absent_for_the_graders_twenty_secon
         refresh_ahead_s=25,
         rebuild_walls=_SHORT_THEN_LONG,
         horizon_s=180.0,
+        **_PRE_W1_CADENCE,
     )
     assert absent, "the blocked constants must reproduce a hole — they measured one"
     widest = max(b - a for a, b in absent)
@@ -692,18 +720,21 @@ def test_the_head_never_disappears_across_two_cycles_at_the_shipped_constants():
     Under D81 = A (TTL 180) with the derived refresh-ahead (150), the 3.3 s pass
     writes an entry that lives to t=183.3, and the 23.8 s pass replaces it at
     t=83.8 — a hundred seconds of margin rather than twenty seconds of hole.
+
+    W-1 (2026-11-06): warmer entries live 600 s on a 300 s floor, so the horizon
+    is 1,800 s — the same "at least five rebuilds" at the slower cadence.
     """
     from app.tasks.search_head_warmer import (
         REFRESH_AHEAD_SECONDS,
         effective_pass_period_s,
     )
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     absent, timeline = _simulate_residency(
-        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
         refresh_ahead_s=REFRESH_AHEAD_SECONDS,
         rebuild_walls=_SHORT_THEN_LONG,
-        horizon_s=600.0,
+        horizon_s=1800.0,
     )
     assert absent == [], (
         f"the served key disappeared at the shipped constants: {absent}\n"
@@ -729,14 +760,14 @@ def test_residency_holds_when_every_rebuild_takes_the_full_declared_budget():
         effective_pass_period_s,
         full_rebuild_budget_s,
     )
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     budget = full_rebuild_budget_s()
     absent, _ = _simulate_residency(
-        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
         refresh_ahead_s=REFRESH_AHEAD_SECONDS,
         rebuild_walls=[budget] * 12,
-        horizon_s=900.0,
+        horizon_s=3600.0,       # W-1: 12 passes at the 300 s floor (was 900 at 45 s)
     )
     assert absent == [], (
         f"at the declared {budget:g}s rebuild budget the head still went cold: {absent}"
@@ -757,6 +788,7 @@ def test_option_four_as_written_on_3539_would_have_shipped_a_hole():
         refresh_ahead_s=90,
         rebuild_walls=[100.0] * 12,
         horizon_s=900.0,
+        **_PRE_W1_CADENCE,
     )
     assert absent, (
         "option 4 as written (180/90) must be shown to leave a hole — if it does "
@@ -795,6 +827,7 @@ def test_the_previous_threshold_holes_when_the_entry_is_seen_at_the_threshold_ed
         rebuild_walls=[100.0] * 12,   # the full declared budget
         horizon_s=600.0,
         organic_phase=True,
+        **_PRE_W1_CADENCE,
     )
     assert absent, f"the blocked threshold must hole on the organic phase; timeline={timeline}"
     assert absent[0] == (180.0, 190.0), (
@@ -803,38 +836,57 @@ def test_the_previous_threshold_holes_when_the_entry_is_seen_at_the_threshold_ed
 
 
 def test_an_organic_entry_seen_at_the_threshold_edge_stays_resident_at_the_shipped_threshold():
-    """The GREEN half. Same seeding, same full-budget rebuilds, shipped constants.
+    """The GREEN half, re-derived for W-1 (2026-11-06; Alex 53: A).
 
-    At 150 the entry is skipped at 150 s and rebuilt one period later with 90 s
-    left, against a 70 s budget — it survives with 20 s to spare, every cycle.
+    A user's MISS writes a READER entry, which lives `SEARCH_RESPONSE_TTL_SECONDS`
+    (180 s), while the warmer's own writes live `SEARCH_HEAD_WARMER_TTL_SECONDS`
+    (600 s) on a 300 s floor. A reader entry is therefore always under the 550 s
+    threshold, so the first pass that sees it rebuilds it — there is no skipped
+    edge any more. What W-1 gives up, stated rather than hidden: a pass can arrive
+    up to one period after the user's write, so a term that has just entered the
+    head can be cold for at most `period + budget - 180` before the warmer's first
+    write lands. From that write on, the head is resident. The first pass offset
+    is swept over the whole period, because that phase is arbitrary.
 
     🔴 THE WALL HERE IS `full_rebuild_budget_s()` AND IT USED TO BE A LITERAL 100.
-    That literal was the budget when this test was written, and it stopped being
-    the budget the moment CERT-2089's repair re-derived the budget off the
-    ENFORCED worker unit (70 s). A hardcoded bound in a test whose whole subject
-    is "the code is measured against what it PERMITS, never against a sample" is
-    the same substitution the four BLOCKs in this chain each found in the module:
-    a number that was true once, kept after the thing it named moved.
+    A hardcoded bound in a test whose whole subject is "the code is measured
+    against what it PERMITS, never against a sample" is the substitution the four
+    BLOCKs in this chain each found in the module.
     """
     from app.tasks.search_head_warmer import (
         REFRESH_AHEAD_SECONDS,
+        effective_pass_period_s,
         full_rebuild_budget_s,
     )
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import (
+        SEARCH_HEAD_WARMER_TTL_SECONDS,
+        SEARCH_RESPONSE_TTL_SECONDS,
+    )
 
-    absent, timeline = _simulate_residency(
-        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
-        refresh_ahead_s=REFRESH_AHEAD_SECONDS,
-        rebuild_walls=[full_rebuild_budget_s()] * 20,
-        horizon_s=1200.0,
-        organic_phase=True,
-    )
-    assert absent == [], (
-        f"the served key disappeared on the organic phase: {absent}\ntimeline={timeline}"
-    )
-    assert sum(1 for kind, *_ in timeline if kind == "write") >= 5, (
-        "a run that never rebuilt would also report no absence"
-    )
+    period, budget = effective_pass_period_s(), full_rebuild_budget_s()
+    transient_bound = period + budget - SEARCH_RESPONSE_TTL_SECONDS
+    for first_pass in range(0, int(period) + 1, 10):
+        absent, timeline = _simulate_residency(
+            ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
+            organic_ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+            refresh_ahead_s=REFRESH_AHEAD_SECONDS,
+            rebuild_walls=[budget] * 20,
+            horizon_s=3000.0,
+            organic_phase=True,
+            first_pass_s=first_pass,
+        )
+        writes = [t for kind, t, _ in timeline if kind == "write"]
+        assert len(writes) >= 5, "a run that never rebuilt would also report no absence"
+        after_first_write = [(a, b) for a, b in absent if b > writes[0]]
+        assert after_first_write == [], (
+            f"first pass at +{first_pass}s: the head went cold AFTER the warmer's first "
+            f"write: {after_first_write}\ntimeline={timeline}"
+        )
+        for a, b in absent:
+            assert b - a <= transient_bound, (
+                f"first pass at +{first_pass}s: a {b - a:g}s cold spell before the first "
+                f"warmer write, over the {transient_bound:g}s W-1 states"
+            )
 
 
 def test_the_organic_phase_is_swept_not_sampled_at_one_lucky_offset():
@@ -857,7 +909,7 @@ def test_the_organic_phase_is_swept_not_sampled_at_one_lucky_offset():
         effective_pass_period_s,
         full_rebuild_budget_s,
     )
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     period, budget = effective_pass_period_s(), full_rebuild_budget_s()
     bad = [
@@ -865,7 +917,7 @@ def test_the_organic_phase_is_swept_not_sampled_at_one_lucky_offset():
         for offset in range(0, int(period) + 1)
         for bad_row in _sweep_one_offset(
             offset=offset,
-            ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+            ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
             refresh_ahead_s=REFRESH_AHEAD_SECONDS,
             period_s=period,
             budget_s=budget,
@@ -879,7 +931,7 @@ def test_the_organic_phase_is_swept_not_sampled_at_one_lucky_offset():
         for offset in range(0, int(period) + 1)
         for row in _sweep_one_offset(
             offset=offset,
-            ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+            ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
             refresh_ahead_s=150,
             period_s=period,
             budget_s=100.0,
@@ -921,7 +973,8 @@ def _sweep_one_offset(*, offset, ttl_s, refresh_ahead_s, period_s, budget_s):
 
 
 def _run_two_pass_reranked(
-    *, ttl_s, per_query_s, head_a, head_b, walls, concurrency=None
+    *, ttl_s, per_query_s, head_a, head_b, walls, concurrency=None,
+    beat_s=None, floor_s=None,
 ):
     """Drive the REAL shared-cursor dispatcher twice, re-ranking between passes.
 
@@ -944,6 +997,8 @@ def _run_two_pass_reranked(
     from app.tasks import search_head_warmer as warmer
 
     width = warmer.WARM_CONCURRENCY if concurrency is None else concurrency
+    beat_s = float(warmer.BEAT_PERIOD_SECONDS) if beat_s is None else beat_s
+    floor_s = float(warmer.MIN_PASS_PERIOD_SECONDS) if floor_s is None else floor_s
     clock = {"t": 0.0}
     log = _ExpiringWriteLog(ttl_s)
     writes_a = []
@@ -979,7 +1034,7 @@ def _run_two_pass_reranked(
         _one_pass(head_a, 0.0)
     )
     # The run lock: pass two cannot start before pass one ends, quantized to the beat.
-    start_2 = 20.0 * math.ceil(max(45.0, end_1) / 20.0)
+    start_2 = beat_s * math.ceil(max(floor_s, end_1) / beat_s)
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
         _one_pass(head_b, start_2)
     )
@@ -1021,6 +1076,7 @@ def test_the_previous_budget_holes_when_a_query_is_written_first_then_last():
         # a reproduction of a past configuration, so it must not follow the module
         # when the module's width changes.
         concurrency=2,
+        **_PRE_W1_CADENCE,
     )
     assert absent, f"the 100s-budget configuration must hole; writes of 'a' = {writes}"
     width = max(b - a for a, b in absent)
@@ -1038,13 +1094,13 @@ def test_a_reranked_query_written_first_then_last_stays_resident_at_the_shipped_
     inside a 180 s life.
     """
     from app.tasks.search_head_warmer import worker_unit_bound_s
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     bound = worker_unit_bound_s()
     walls = {q: [bound] * 4 for q in _HEAD_FIRST}
     walls["a"] = [1.0, bound]
     writes, absent = _run_two_pass_reranked(
-        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
         per_query_s=bound,
         head_a=_HEAD_FIRST,
         head_b=_HEAD_RERANKED,
@@ -1127,6 +1183,7 @@ def test_the_blocked_bound_holes_when_the_route_returns_after_its_cooperative_de
         head_b=_HEAD_RERANKED,
         walls=walls,
         concurrency=2,          # the blocked width, pinned — see CERT-2086's RED half
+        **_PRE_W1_CADENCE,
     )
     assert absent, (
         f"the blocked configuration must hole on a route that overruns its own "
@@ -1147,13 +1204,13 @@ def test_the_head_stays_resident_when_the_route_returns_after_its_cooperative_de
     35 s and the width is 4, so the pass budget is 70 s and the worst same-query
     interval is 150 s inside a 180 s life.
     """
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     unit = _unit_when_the_route_runs_past_its_deadline()
     walls = {q: [unit] * 4 for q in _HEAD_FIRST}
     walls["a"] = [1.0, unit]
     writes, absent = _run_two_pass_reranked(
-        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
         per_query_s=unit,
         head_a=_HEAD_FIRST,
         head_b=_HEAD_RERANKED,
@@ -1178,13 +1235,13 @@ def test_residency_holds_at_the_full_enforced_unit_wall_across_a_rerank():
         max_same_query_write_interval_s,
         worker_unit_bound_s,
     )
-    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+    from app.utils.search_cache import SEARCH_HEAD_WARMER_TTL_SECONDS
 
     unit = worker_unit_bound_s()
     walls = {q: [unit] * 4 for q in _HEAD_FIRST}
     walls["a"] = [1.0, unit]
     writes, absent = _run_two_pass_reranked(
-        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        ttl_s=SEARCH_HEAD_WARMER_TTL_SECONDS,
         per_query_s=unit,
         head_a=_HEAD_FIRST,
         head_b=_HEAD_RERANKED,
@@ -1251,8 +1308,18 @@ def test_every_width_below_the_solution_actually_fails_and_the_next_one_up_passe
 
     solved = minimum_concurrency_for_residency()
 
+    from app.tasks.search_head_warmer import (
+        PASS_SHARE_OF_SOFT_LIMIT,
+        TASK_SOFT_TIME_LIMIT_SECONDS,
+    )
+
+    ceiling = TASK_SOFT_TIME_LIMIT_SECONDS * PASS_SHARE_OF_SOFT_LIMIT
+
     def _holds(conc):
         budget = full_rebuild_budget_s(head_size=DEFAULT_HEAD_SIZE, concurrency=conc)
+        # W-1: the solver's second bar — the pass must fit the task's soft limit.
+        if budget > ceiling:
+            return False, f"a {budget:g}s pass exceeds the {ceiling:g}s soft-limit share"
         return residency_invariant(
             refresh_ahead_s=derive_refresh_ahead_s(budget_s=budget), budget_s=budget
         )
@@ -1265,47 +1332,22 @@ def test_every_width_below_the_solution_actually_fails_and_the_next_one_up_passe
         )
     assert _holds(solved)[0], _holds(solved)[1]
 
-    # 🔴 The 10 seconds that decide it, pinned. Width 4 fails by exactly this much,
-    # and the two constants that would rescue it are named so that anyone tempted
-    # to shave them finds this test first. Shaving a wall to buy a width is the
-    # substitution six BLOCKs in this chain were about.
-    #
-    # CERT-2107 moved WHICH clause refuses width 4 without moving the 10 s: at a
-    # 110 s budget its derived threshold is 190 s against a 180 s TTL, so clause
-    # (3) now fires before clause (4) gets to. Both the size of the miss and the
-    # clause are asserted, because a repair that changed the margin and a repair
-    # that relocated the failure are different events and this test should be able
-    # to say which one happened.
+    # 🔴 W-1 (2026-11-06) moved WHICH bar refuses width 4, and this pins it. At the
+    # pre-W-1 180 s entry life width 4 missed clause (3) by 10 s (a 190 s
+    # threshold against a 180 s TTL), and shaving the rollback and setup walls only
+    # walked the failure to clause (4). At the 600 s warmer entry life width 4 is
+    # residency-sound; what refuses it now is its 110 s pass against the 80 s
+    # share of the 120 s soft limit. Both halves asserted, so a change that
+    # relocates the refusal again is visible as such.
     if solved > 4:
         budget_4 = full_rebuild_budget_s(head_size=DEFAULT_HEAD_SIZE, concurrency=4)
         assert budget_4 == 110.0, budget_4
+        ok_res, why_res = residency_invariant(
+            refresh_ahead_s=derive_refresh_ahead_s(budget_s=budget_4), budget_s=budget_4
+        )
+        assert ok_res, why_res
         _, why4 = _holds(4)
-        assert "NOT A THRESHOLD" in why4, why4
-        assert "190s" in why4, (
-            f"width 4's derived threshold should be 190s against a 180s TTL — a 10s "
-            f"miss, not a comfortable one: {why4}"
-        )
-
-        # ...and the clause it USED to fail is still the one waiting underneath, so
-        # shaving clause (3) into compliance does not seat width 4 either. Driven at
-        # the exact shave the docstring names: rollback 5 -> 2.5, setup 10 -> 5.
-        from app.tasks.search_head_warmer import worker_unit_worst_case_s
-
-        shaved = full_rebuild_budget_s(
-            head_size=DEFAULT_HEAD_SIZE,
-            concurrency=4,
-            setup_s=5.0,
-            per_query_s=worker_unit_worst_case_s(rollback_s=2.5),
-        )
-        assert shaved == 100.0, shaved
-        ok_shaved, why_shaved = residency_invariant(
-            refresh_ahead_s=derive_refresh_ahead_s(budget_s=shaved), budget_s=shaved
-        )
-        assert not ok_shaved, (
-            "shaving the rollback and setup walls seated width 4 — the failure was "
-            "supposed to walk to the next clause, not disappear"
-        )
-        assert "WRITE INTERVAL EXCEEDS THE TTL" in why_shaved, why_shaved
+        assert "soft-limit share" in why4, why4
 
 
 def test_the_wall_sits_strictly_above_every_cooperative_bound_inside_the_unit():
@@ -1358,18 +1400,20 @@ def test_the_pass_must_fit_inside_the_run_lock_that_bounds_its_gap():
     """
     from app.tasks.search_head_warmer import _LOCK_TTL_SECONDS, residency_invariant
 
+    # W-1 (2026-11-06): driven at 1200/1100 rather than 600/560, because at the
+    # 300 s floor clause (2) needs refresh-ahead > 300 + budget before (6) is reached.
     over = residency_invariant(
-        ttl_s=600, refresh_ahead_s=560, budget_s=float(_LOCK_TTL_SECONDS) + 20
+        ttl_s=1200, refresh_ahead_s=1100, budget_s=float(_LOCK_TTL_SECONDS) + 20
     )
     assert not over[0] and "OUTRUNS ITS OWN LOCK" in over[1], over
 
     at = residency_invariant(
-        ttl_s=600, refresh_ahead_s=560, budget_s=float(_LOCK_TTL_SECONDS)
+        ttl_s=1200, refresh_ahead_s=1100, budget_s=float(_LOCK_TTL_SECONDS)
     )
     assert not at[0] and "OUTRUNS ITS OWN LOCK" in at[1], at
 
     under = residency_invariant(
-        ttl_s=600, refresh_ahead_s=560, budget_s=float(_LOCK_TTL_SECONDS) - 10
+        ttl_s=1200, refresh_ahead_s=1100, budget_s=float(_LOCK_TTL_SECONDS) - 10
     )
     assert under[0], under
 
@@ -2421,7 +2465,7 @@ def test_the_pass_budget_fits_inside_the_workers_own_time_limit():
 # on to install a full `_LOCK_TTL_SECONDS` lock AFTER the pass had published
 # `complete` and released. The grader's probe returned in 0.012 s and left the
 # lock standing; every later pass then skipped on `skip_reason="lock"` for long
-# enough that the `SEARCH_RESPONSE_TTL_SECONDS` entry the warmer exists to keep
+# enough that the `SEARCH_HEAD_WARMER_TTL_SECONDS` entry the warmer exists to keep
 # resident expired underneath it. That is the DISCOVER ship, false.
 #
 # The tests below are the three the cert named, plus the two that stop the repair
@@ -2570,7 +2614,7 @@ def test_an_acquire_that_lands_after_its_wall_leaves_no_ghost_lock():
         f"released — and the abandoned worker then installed a "
         f"{warmer._LOCK_TTL_SECONDS}s lock behind it. That is CERT-2114 exactly: "
         f"every later pass skips on `lock` until it expires, which is longer than "
-        f"the {warmer.SEARCH_RESPONSE_TTL_SECONDS}s entry it exists to keep warm"
+        f"the {warmer.SEARCH_HEAD_WARMER_TTL_SECONDS}s entry it exists to keep warm"
     )
 
     # ...and it is gone because it was UNDONE, not because it was never installed.
@@ -2696,7 +2740,7 @@ def test_a_late_acquire_cannot_suppress_the_next_pass_until_the_entry_expires():
     The two constants are the reason a ghost is fatal rather than untidy, and the
     test states the arithmetic rather than assuming the reader knows it: a residual
     lock lives `_LOCK_TTL_SECONDS` and the entry it protects lives
-    `SEARCH_RESPONSE_TTL_SECONDS`. At 180 and 180 a single ghost spanned the ENTIRE
+    `SEARCH_HEAD_WARMER_TTL_SECONDS`. At 180 and 180 a single ghost spanned the ENTIRE
     life of the entry — every pass inside that window took the `lock` skip, and
     `/search` went cold. This is the `DISCOVER` ship in one assertion.
 
@@ -2717,11 +2761,11 @@ def test_a_late_acquire_cannot_suppress_the_next_pass_until_the_entry_expires():
         residual_lock_recovery_s,
     )
 
-    margin = warmer.SEARCH_RESPONSE_TTL_SECONDS - residual_lock_recovery_s()
+    margin = warmer.SEARCH_HEAD_WARMER_TTL_SECONDS - residual_lock_recovery_s()
     assert 0 < margin < effective_pass_period_s(), (
         f"this test's premise has moved: a ghost lock costs "
         f"{residual_lock_recovery_s()}s against a "
-        f"{warmer.SEARCH_RESPONSE_TTL_SECONDS}s entry, leaving {margin}s of margin. "
+        f"{warmer.SEARCH_HEAD_WARMER_TTL_SECONDS}s entry, leaving {margin}s of margin. "
         f"At or below zero the #3655 hole is back; above a {effective_pass_period_s()}s "
         f"pass period the ghost no longer threatens the entry and the harm needs "
         f"re-deriving before anything here is relaxed"
@@ -2741,7 +2785,7 @@ def test_a_late_acquire_cannot_suppress_the_next_pass_until_the_entry_expires():
     assert second.get("skip_reason") != "lock", (
         f"the next pass was refused by a lock nobody holds: {second}. A ghost that "
         f"suppresses passes for {warmer._LOCK_TTL_SECONDS}s outlasts the "
-        f"{warmer.SEARCH_RESPONSE_TTL_SECONDS}s entry, so `/search` serves cold"
+        f"{warmer.SEARCH_HEAD_WARMER_TTL_SECONDS}s entry, so `/search` serves cold"
     )
     assert second["terminal"] != "skipped", second
     assert second["warmed"] >= 1, (
@@ -2766,8 +2810,10 @@ def test_the_lifetime_safe_acquire_costs_the_budget_nothing():
     the assertions below are what say so.
     """
     assert warmer.LOCK_CONTROL_OPS_PER_PASS == 4, warmer.LOCK_CONTROL_OPS_PER_PASS
+    # W-1 (2026-11-06) moved the threshold 150 -> 430 (period 300 + budget 70 +
+    # beat 60); the budget did not move. The acquire repair moved neither.
     assert warmer.full_rebuild_budget_s() == 70.0, warmer.full_rebuild_budget_s()
-    assert warmer.REFRESH_AHEAD_SECONDS == 150, warmer.REFRESH_AHEAD_SECONDS
+    assert warmer.REFRESH_AHEAD_SECONDS == 430, warmer.REFRESH_AHEAD_SECONDS
     ok, why = warmer.residency_invariant()
     assert ok, why
 

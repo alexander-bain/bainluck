@@ -66,7 +66,7 @@ describe("/evals copy passes the bans", () => {
 
   it("the sweep reads the strings it claims to — nested copy, gap rows and labels included", () => {
     const strings = readerStrings();
-    expect(strings).toContain(copy.HERO_COPY.detail);
+    expect(strings).toContain(copy.STORY_COPY.code.paragraphs[0]);
     expect(strings).toContain(copy.RESULT_CHIP_MEANING.fail);
     expect(strings).toContain(copy.TERMS[0].meaning);
     expect(strings).toContain(GAPS[0].text);
@@ -103,17 +103,18 @@ describe("the rules stay out of the reader's bundle", () => {
 });
 
 describe("the page says what Decide 43 ruled", () => {
-  it("J1: the hero says plainly that AI agents write most of the code", () => {
-    expect(copy.HERO_COPY.detail).toMatch(/AI agents write most of the code/);
+  it("J1: the story's code chapter says plainly that AI agents write most of the code, and who checks the work", () => {
+    expect(copy.STORY_COPY.code.paragraphs[0]).toMatch(/^AI agents write most of this site's code/);
+    expect(copy.STORY_COPY.code.paragraphs[0]).toMatch(/other AI agents and Alex, who builds Bain Luck, check the work/);
   });
 
   it("J1, on the top screen too: its plain answer opens with who writes the code", () => {
     expect(copy.TOP_COPY.answer).toMatch(/^AI agents write most of (the|this site's) code/);
   });
 
-  it("the hero names every label the page can show, LAST REVIEWED included", () => {
+  it("the line above the full record names every label the page can show, LAST REVIEWED included", () => {
     for (const label of ["LIVE", "LAST RUN", "PLANNED", "LAST REVIEWED"]) {
-      expect(copy.HERO_COPY.detail).toContain(label);
+      expect(copy.STORY_COPY.recordLead).toContain(label);
     }
   });
 

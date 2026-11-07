@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# #12126 / #12128 / #11949 — normalize a mutually-exclusive field only when it
+# holds at least 90% of the probability mass and has no blank outcome labels.
+SPECIALTY_FIELD_MASS_MIN = 0.9
+
 
 async def _read_weather_cache(sub_key: str):
     """Try to read a cached weather sub-endpoint response from Redis."""
@@ -802,7 +806,10 @@ def _normalize_q(q: str) -> str:
 
 def _cross_source_row(market: FuturesMarket) -> dict | None:
     """Build a market row suitable for cross-source comparison."""
-    outcomes = _clean_outcomes(list(market.outcomes))
+    outcomes = [
+        o for o in _clean_outcomes(list(market.outcomes))
+        if (o.name or "").strip()
+    ]
     outcomes = sorted(
         outcomes, key=lambda o: float(o.current_probability or 0), reverse=True
     )
@@ -812,12 +819,12 @@ def _cross_source_row(market: FuturesMarket) -> dict | None:
     return {
         "q": market.name,
         "prob": round(float(outcomes[0].current_probability or 0) * 100, 1),
-        "src": _market_source(market),
+        "src": _market_source(market) or None,
         "market_id": market.id,
         "tag": _derive_tag(market.name or ""),
         "top_outcomes": [
             {
-                "name": o.name,
+                "name": (o.name or "").strip(),
                 "prob": round(float(o.current_probability or 0) * 100, 1),
             }
             for o in top
@@ -1045,7 +1052,7 @@ async def get_featured(db: AsyncSession):
             # indistinguishable from a payload served out of the pre-UX-P186
             # Redis cache, which the hero must also survive.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "tag": _derive_tag(m.name),
             "closes": _format_closes(m.resolution_date),
             "market_id": m.id,
@@ -1112,9 +1119,12 @@ async def get_cities(db: AsyncSession):
         sources.add(_market_source(chosen))
 
         for o in chosen.outcomes:
+            label = (o.name or "").strip()
+            if not label:
+                continue
             raw = float(o.current_probability or 0)
             p = round(raw * 100)
-            sort_key = _extract_sort_temp(o.name)
+            sort_key = _extract_sort_temp(label)
             # `probability` is the raw twin of `prob` (#6616). The tails of a
             # city's ladder are where this matters most: 96 rows across 42
             # cities serve `prob: 0` over live prices — Los Angeles quotes both
@@ -1122,11 +1132,14 @@ async def get_cities(db: AsyncSession):
             # reads as a flat zero draws no bar and offers no tooltip, which
             # tells a reader the outcome is impossible by omission.
             dist.append(
-                {"label": o.name, "prob": p, "probability": raw, "_sort": sort_key}
+                {"label": label, "prob": p, "probability": raw, "_sort": sort_key}
             )
             if float(o.current_probability or 0) > mode_prob:
                 mode_prob = float(o.current_probability or 0)
-                mode_label = o.name
+                mode_label = label
+
+        if not dist:
+            continue
 
         dist.sort(key=lambda d: d["_sort"])
         for d in dist:
@@ -1213,10 +1226,10 @@ async def get_cities(db: AsyncSession):
             "preferredY": info["y"],
             "x": info["x"],
             "y": info["y"],
-            "srcs": sorted(sources),
+            "srcs": sorted(s for s in sources if s),
             # The venue whose ladder this card draws (#9260). `srcs` is every
             # venue quoting the city, sorted, so its first entry is not it.
-            "src": _market_source(chosen),
+            "src": _market_source(chosen) or None,
             "marketId": chosen.id,
             # The day this city's ladder is about, `YYYY-MM-DD`, or None.
             # The map labels its date from this and nothing else (#8046).
@@ -1270,10 +1283,25 @@ async def _squeeze_like_the_market_page(
             exc_info=True,
         )
         return
-    if normalize_display_probs(
-        dist,
-        mutually_exclusive=getattr(market, "mutually_exclusive", True),
-        field_complete=not withheld,
+    venue_exclusive = getattr(market, "mutually_exclusive", None) is True
+    raw_outcomes = list(getattr(market, "outcomes", None) or [])
+    has_blank_outcome = any(
+        not (getattr(o, "name", None) or "").strip() for o in raw_outcomes
+    ) or any(not (d.get("label") or "").strip() for d in dist)
+    raw_mass = sum(float(d.get("probability") or 0) for d in dist)
+    field_complete = (
+        not withheld
+        and not has_blank_outcome
+        and raw_mass + 1e-9 >= SPECIALTY_FIELD_MASS_MIN
+    )
+    if (
+        venue_exclusive
+        and field_complete
+        and normalize_display_probs(
+            dist,
+            mutually_exclusive=True,
+            field_complete=field_complete,
+        )
     ):
         for d in dist:
             d["prob"] = round(float(d["probability"] or 0) * 100)
@@ -1521,7 +1549,7 @@ async def get_rain(db: AsyncSession):
             # OPEN "Above 1 inch" market and all four printed a flat 100%.
             "probability": raw,
             "settled": _get_yes_settled(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "delta24h": delta,
         })
 
@@ -1841,7 +1869,7 @@ async def get_events(db: AsyncSession, now: datetime | None = None):
             # Marie category? — 95%" is 95% of "Category 4 or above", and
             # Category 4 and Category 5 are not the same forecast.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "closes": _format_closes(m.resolution_date),
             # The row's own market (#9478), the same id /featured serves, so a
             # tap opens /futures/{market_id} instead of going nowhere.
@@ -1945,7 +1973,7 @@ async def get_climate(db: AsyncSession):
             # events, wildcards and hero cards; None when the question answers
             # itself.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "closes": _format_closes(m.resolution_date),
             # See get_events (#9478).
             "market_id": m.id,
@@ -2054,7 +2082,7 @@ async def get_wildcards(db: AsyncSession):
             # extent this summer?" led with a bare 16% off a seven-way ladder
             # whose top four sit within 1.2 points of each other.
             "leader": _leader_outcome_name(m),
-            "src": _market_source(m),
+            "src": _market_source(m) or None,
             "closes": _format_closes(m.resolution_date),
             # Membership above is a substring match; `_derive_tag` is
             # word-bounded, so "supervolcano" got in and was labelled

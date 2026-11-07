@@ -21,6 +21,69 @@ import {
 } from "@/lib/marketShape";
 import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import { ATLAS_STATE_COPY } from "@/components/atlas/atlasStateCopy";
+import { SERIES_COLORS } from "@/lib/seriesColors";
+
+/**
+ * Retain each continuing contender's color slot across cohort changes
+ * (#883 Step F5, Decide 47: E — `docs/designs/event-page-atlas-2026-10/src/contenderColors.ts`).
+ */
+export function retainContenderColors(
+  previous: Record<string, number>,
+  ids: readonly string[],
+  capacity = 3,
+): Record<string, number> {
+  const shown = ids.slice(0, capacity);
+  const next: Record<string, number> = {};
+  const used = new Set<number>();
+
+  for (const id of shown) {
+    const prev = previous[id];
+    if (
+      typeof prev === "number" &&
+      prev >= 0 &&
+      prev < capacity &&
+      !used.has(prev)
+    ) {
+      next[id] = prev;
+      used.add(prev);
+    }
+  }
+
+  let free = 0;
+  for (const id of shown) {
+    if (next[id] !== undefined) continue;
+    while (used.has(free) && free < capacity) free += 1;
+    next[id] = free < capacity ? free : 0;
+    used.add(next[id]);
+  }
+
+  return next;
+}
+
+/**
+ * Build the leader cohort (`beforeCohort` pattern from `dunhillBefore.ts`,
+ * #883 Step F5, Decide 47: E): defaults to the top `capacity` leaders; when a
+ * contender outside the top `capacity` is chosen from the "N more" sheet,
+ * pins that contender beside the top `capacity - 1` other leaders.
+ */
+export function buildAtlasFieldCohort<T extends { id: number }>(
+  orderedPool: readonly T[],
+  selectedOutcomeId: number | null | undefined,
+  capacity = 3,
+): T[] {
+  const top = orderedPool.slice(0, capacity);
+  if (selectedOutcomeId == null) return top;
+  const chosen = orderedPool.find((row) => row.id === selectedOutcomeId);
+  if (!chosen || top.some((row) => row.id === chosen.id)) {
+    return top;
+  }
+  return [
+    chosen,
+    ...orderedPool
+      .filter((row) => row.id !== chosen.id)
+      .slice(0, Math.max(0, capacity - 1)),
+  ];
+}
 
 export type AtlasBodyKind =
   | "one-leg"
@@ -148,12 +211,14 @@ function MovementRail({
   recorded,
   renderedOpening,
   renderedCurrent,
+  color,
 }: {
   name: string;
   opening: number | null;
   recorded: number | null;
   renderedOpening?: number | null;
   renderedCurrent?: number | null;
+  color?: string;
 }) {
   const x = (p: number) => 5 + Math.max(0, Math.min(1, p)) * 90;
   const openLabel =
@@ -187,9 +252,9 @@ function MovementRail({
           x2={x(recorded)}
           y1="10"
           y2="10"
-          stroke="currentColor"
+          stroke={color ?? "currentColor"}
           strokeWidth="2"
-          className="text-accent-brand"
+          className={color ? undefined : "text-accent-brand"}
         />
       )}
       {opening != null && (
@@ -197,9 +262,9 @@ function MovementRail({
           cx={x(opening)}
           cy="10"
           r="3.5"
-          stroke="currentColor"
+          stroke={color ?? "currentColor"}
           strokeWidth="1.75"
-          className="fill-surface-card text-text-primary"
+          className={`fill-surface-card ${color ? "" : "text-text-primary"}`}
         />
       )}
       {recorded != null && (
@@ -207,8 +272,8 @@ function MovementRail({
           cx={x(recorded)}
           cy="10"
           r="3.5"
-          fill="currentColor"
-          className="text-accent-brand"
+          fill={color ?? "currentColor"}
+          className={color ? undefined : "text-accent-brand"}
         />
       )}
     </svg>
@@ -228,6 +293,7 @@ export interface FuturesShapeBodyProps {
   hasThresholdGroups?: boolean;
   independenceNote?: string | null;
   selectedOutcomeId?: number | null;
+  outcomeColors?: Map<number, string>;
   onSelectOutcome?: (outcomeId: number) => void;
   onOpenDetails?: () => void;
 }
@@ -245,6 +311,7 @@ export default function FuturesShapeBody({
   hasThresholdGroups = false,
   independenceNote = null,
   selectedOutcomeId = null,
+  outcomeColors,
   onSelectOutcome,
   onOpenDetails,
 }: FuturesShapeBodyProps) {
@@ -268,6 +335,7 @@ export default function FuturesShapeBody({
   const [mounted, setMounted] = useState(false);
   const sheetTitleId = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const colorSlotsRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -622,7 +690,20 @@ export default function FuturesShapeBody({
   const baseLeaderPool =
     pricedOutcomes.length > 0 ? pricedOutcomes : orderedOutcomes;
   const shownCount = isQualifier ? 6 : 3;
-  const leadingRows = baseLeaderPool.slice(0, shownCount);
+  const topLeaderIds = new Set(
+    baseLeaderPool.slice(0, shownCount).map((row) => row.id),
+  );
+  const leadingRows = buildAtlasFieldCohort(
+    baseLeaderPool,
+    activeOutcome?.id ?? null,
+    shownCount,
+  );
+  const retainedSlots = retainContenderColors(
+    colorSlotsRef.current,
+    leadingRows.map((row) => String(row.id)),
+    shownCount,
+  );
+  colorSlotsRef.current = retainedSlots;
   const remainingCount = Math.max(0, outcomes.length - leadingRows.length);
 
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
@@ -713,6 +794,11 @@ export default function FuturesShapeBody({
           const rowRecorded =
             !isResolved && hasCurrentPrice(row) ? row.probability : null;
           const isSelected = row.id === activeOutcome?.id;
+          const colorSlot = retainedSlots[String(row.id)] ?? 0;
+          const rowColor =
+            outcomeColors?.get(row.id) ??
+            SERIES_COLORS[colorSlot % SERIES_COLORS.length];
+          const isPinned = !topLeaderIds.has(row.id);
 
           return (
             <button
@@ -720,6 +806,9 @@ export default function FuturesShapeBody({
               type="button"
               aria-pressed={isSelected}
               data-testid="atlas-field-leader-row"
+              data-outcome-id={row.id}
+              data-color-slot={colorSlot}
+              data-series-color={rowColor}
               onClick={() => handleChooseOutcome(row.id)}
               className={`flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors ${
                 isSelected
@@ -728,10 +817,26 @@ export default function FuturesShapeBody({
               }`}
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-text-primary">
-                  {rowLabel}
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    data-testid="atlas-field-leader-swatch"
+                    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: rowColor }}
+                  />
+                  <span className="truncate text-sm font-semibold text-text-primary">
+                    {rowLabel}
+                  </span>
+                  {isPinned && (
+                    <span
+                      data-testid="atlas-field-pinned-badge"
+                      className="shrink-0 rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-secondary"
+                    >
+                      Pinned
+                    </span>
+                  )}
                 </div>
-                <div className="mt-0.5 text-xs tabular-nums">
+                <div className="mt-0.5 pl-4 text-xs tabular-nums">
                   {rowVerdict === "won" ? (
                     <span className="font-semibold text-accent-live">
                       {ATLAS_STATE_COPY.wonWithCheck}
@@ -758,6 +863,7 @@ export default function FuturesShapeBody({
                 recorded={rowRecorded}
                 renderedOpening={rowRendered?.opening}
                 renderedCurrent={rowRendered?.current}
+                color={rowColor}
               />
             </button>
           );

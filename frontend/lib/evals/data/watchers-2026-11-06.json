@@ -86,7 +86,7 @@
     },
     {
       "id": "flow-sentinel-daily",
-      "name": "Flow sentinel",
+      "name": "Reader-flow check",
       "checks": "That the main things a reader does still work: search, live games, settled results, charts and categories.",
       "group": "night",
       "cron": {
@@ -115,7 +115,7 @@
     },
     {
       "id": "grid-sentinel-daily",
-      "name": "Grid sentinel",
+      "name": "Championship-grid check",
       "checks": "That championship grids have every team and column, and that their numbers add up.",
       "group": "night",
       "cron": {
