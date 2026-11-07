@@ -147,18 +147,18 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
     );
   });
 
-  it("a retarget still schedules a run: `edited` stays a trigger and a base change is never a no-op (#12252)", () => {
-    // #12252 made title/body edits and labels no-op runs. The #1943 retarget is
-    // also an `edited` event, so the trigger stays and the no-op predicate must
-    // exempt `changes.base`, or a retargeted PR is back to no real run.
-    const text = readWorkflow();
-    const pr = nestedBlock(topLevelBlock(text, "on"), "pull_request");
+  it("only events that change the commit run CI: no labeled, unlabeled or edited (#12252)", () => {
+    // A label or an edit created a run on an UNCHANGED commit, and a skipped job is a
+    // passing required check, so such a run could land a skipped result on top of a
+    // real red one. Without the trigger there is no run object at all. The cost is
+    // the #1943 retarget: it needs a commit or a close+reopen (docs/github-workflow.md).
+    const pr = nestedBlock(topLevelBlock(readWorkflow(), "on"), "pull_request");
     const types = pr.find((l) => /^\s+types:/.test(l));
-    assert.ok(types && /\bedited\b/.test(types), `ci.yml's pull_request types no longer include \`edited\`: "${types && types.trim()}".`);
-    assert.ok(!/\bunlabeled\b/.test(types), "`unlabeled` is back in ci.yml's pull_request types; it re-runs an unchanged commit (#12252).");
-    assert.ok(
-      codeOf(text).includes("github.event.action == 'edited' && !github.event.changes.base"),
-      "ci.yml's no-op predicate no longer exempts a base change, so a retarget would run nothing (#1943)."
+    assert.ok(types, "ci.yml's pull_request trigger lost its explicit types list.");
+    assert.equal(
+      types.trim(),
+      "types: [opened, synchronize, reopened]",
+      `ci.yml's pull_request types changed: "${types.trim()}". labeled/unlabeled/edited re-run an unchanged commit (#12252).`
     );
   });
 

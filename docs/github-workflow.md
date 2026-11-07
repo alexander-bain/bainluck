@@ -141,3 +141,7 @@ Good agent handoff prompt:
 - "Before editing files, claim the GitHub issue with `python3 scripts/claim_issue.py ISSUE_NUMBER \"In Progress\" --owner \"<thread name>\"`; check current `In Progress` issues for overlapping files; when done, move the issue to `Review / Verify` or `Done`."
 
 Before parallel agent work, make sure each issue has a narrow scope and distinct write set.
+
+## Pull request CI triggers (#12252)
+
+CI runs on `opened`, `synchronize` and `reopened` only. Adding or removing a label and editing a title or description start nothing. **After retargeting a PR's base, push a commit (or close and reopen the PR) to get a run against the new base**; a retarget alone emits only `edited`, which is not a trigger. The full master run after merge stays the backstop.

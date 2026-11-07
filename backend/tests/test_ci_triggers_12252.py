@@ -1,29 +1,26 @@
-"""#12252 (79-B part A, item 1): CI runs only for events that change what is tested.
+"""#12252 (79-B part A, item 1): CI runs only for events that change the commit.
 
 Nov 6: 169 of 360 PR runs were re-triggers on an UNCHANGED commit. CI fired on
 `labeled`, `unlabeled` and `edited`, so `gh pr create --label` started two runs in
-one second (and the cancelled one blocked the merge), and a description edit
+one second (the cancelled one blocked the merge, #12220) and a description edit
 re-ran the suite and cancelled the run in flight.
 
-Evaluated, not read: the job graph and the concurrency expressions in ci.yml are
-run against each event shape by a small evaluator (the same approach as
-test_eval_candidate_workflow_12235.py). Pinned here:
+Why the events are gone and not filtered (Fable, Nov 7): a run that skips every job
+still creates check runs named `change-scope`, `fast-gate`, `frontend-build`, … with
+conclusion `skipped`, and a skipped job is a PASSING required check. A label or an
+edit after a red real run could land a skipped result on the same commit. With no
+trigger there is no run object at all, so no required context can go green by skip.
 
-* `unlabeled` never triggers; a label other than `eval-candidate`, or an edit
-  that does not change the base, queues NO job and sits in its own concurrency
-  group, so it can never cancel the real run;
-* opened / synchronize / reopened / a base change run everything, superseding
-  the PR's older run as before; an `eval-candidate` label still cancels the
-  full run and queues nothing (#12235);
-* green-by-skip is impossible: in a no-op run `backend-tests` is skipped at the
-  JOB level, so its matrix never expands and the required `backend-tests (N)`
-  contexts can only come from a real run on that commit.
+Evaluated, not read, for the parts that still matter: the job graph and the
+concurrency expressions are run against each remaining event shape by a small
+evaluator (the approach of test_eval_candidate_workflow_12235.py).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -35,7 +32,6 @@ CI = Path(os.environ.get("CI_WORKFLOW_PATH") or ROOT / ".github" / "workflows" /
 FULL = ["change-scope", "fast-gate", "backend-tests", "database-integration", "frontend-build", "search-recall"]
 
 EVALUATOR = r"""
-const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const wf = JSON.parse(fs.readFileSync(0, 'utf8'));
 const jobs = wf.jobs;
@@ -47,13 +43,11 @@ function evaluate(expr, github, needs = {}, parentsPassed = true) {
     `return (${e})`)(github, needs, (list, v) => list.includes(v), (v, p) => String(v).startsWith(p),
       (f, ...a) => f.replace(/\{(\d+)\}/g, (_, i) => a[+i]), () => false, () => true, () => parentsPassed);
 }
-function shape(action, extra = {}) {
-  const labels = (extra.labels || ['tier-b']).map(name => ({name}));
-  const event = {action, pull_request: {number: 777, labels}, ...(extra.changes ? {changes: extra.changes} : {}),
-                 ...(extra.label ? {label: {name: extra.label}} : {})};
-  return extra.push
-    ? {event_name: 'push', ref: 'refs/heads/master', run_id: 42, event: {pull_request: {labels: []}, changes: {}, label: {}}}
-    : {event_name: 'pull_request', ref: 'refs/pull/777/merge', run_id: 42, event};
+function shape(action, labels = ['tier-b']) {
+  return action === 'push'
+    ? {event_name: 'push', ref: 'refs/heads/master', run_id: 42, event: {pull_request: {labels: []}}}
+    : {event_name: 'pull_request', ref: 'refs/pull/777/merge', run_id: 42,
+       event: {action, pull_request: {number: 777, labels: labels.map(name => ({name}))}}};
 }
 function queued(github) {
   const states = {}, selected = [];
@@ -66,23 +60,14 @@ function queued(github) {
     states[name] = enabled ? 'success' : 'skipped';
     if (enabled) selected.push(name);
   }
-  return {selected, states};
+  return selected;
 }
-function slot(github) {
-  return [evaluate(wf.concurrency.group, github), Boolean(evaluate(wf.concurrency['cancel-in-progress'], github))];
-}
-const cases = {
-  opened: shape('opened'), synchronize: shape('synchronize'), reopened: shape('reopened'),
-  base_change: shape('edited', {changes: {base: {ref: {from: 'lane1/q362'}, sha: {from: 'abc'}}}}),
-  body_edit: shape('edited', {changes: {body: {from: 'old'}}}),
-  title_edit: shape('edited', {changes: {title: {from: 'old'}}}),
-  label_tier_b: shape('labeled', {label: 'tier-b'}),
-  label_other: shape('labeled', {label: 'priority:p1', labels: ['tier-b', 'priority:p1']}),
-  label_eval: shape('labeled', {label: 'eval-candidate', labels: ['tier-b', 'eval-candidate']}),
-  push: shape(null, {push: true}),
-};
 const out = {};
-for (const [k, g] of Object.entries(cases)) out[k] = {...queued(g), slot: slot(g)};
+for (const [k, g] of Object.entries({
+  opened: shape('opened'), synchronize: shape('synchronize'), reopened: shape('reopened'),
+  eval_synchronize: shape('synchronize', ['tier-b', 'eval-candidate']), push: shape('push'),
+})) out[k] = {selected: queued(g),
+              slot: [evaluate(wf.concurrency.group, g), Boolean(evaluate(wf.concurrency['cancel-in-progress'], g))]};
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -102,52 +87,32 @@ def _run() -> dict:
     return json.loads(result.stdout)
 
 
-def test_the_triggers_are_the_reviewed_five():
-    assert _workflow()["on"]["pull_request"]["types"] == [
-        "opened",
-        "synchronize",
-        "reopened",
-        "labeled",
-        "edited",
-    ]
+def test_only_events_that_change_the_commit_trigger_a_pull_request_run():
+    assert _workflow()["on"]["pull_request"]["types"] == ["opened", "synchronize", "reopened"]
 
 
-def test_a_label_or_a_title_or_body_edit_queues_nothing_and_cancels_nothing():
+def test_no_condition_is_left_reading_an_event_that_can_no_longer_arrive():
+    """Dead branches for `labeled`/`edited` would read as if those events still ran."""
+    text = CI.read_text()
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    assert not re.search(r"github\.event\.action\s*==\s*'(?:labeled|unlabeled|edited)'", code)
+    assert "github.event.changes" not in code and "github.event.label.name" not in code
+
+
+def test_a_commit_runs_everything_and_supersedes_the_older_run():
     out = _run()
-    for case in ("body_edit", "title_edit", "label_tier_b", "label_other"):
-        assert out[case]["selected"] == [], (case, out[case]["selected"])
-        group, cancel = out[case]["slot"]
-        assert group == "ci-noop-42" and cancel is False, (case, out[case]["slot"])
-
-
-def test_a_commit_or_a_base_change_runs_everything_and_supersedes_the_older_run():
-    out = _run()
-    for case in ("opened", "synchronize", "reopened", "base_change"):
+    for case in ("opened", "synchronize", "reopened"):
         for job in FULL:
             assert job in out[case]["selected"], (case, job)
         assert out[case]["slot"] == ["ci-pr-777", True], (case, out[case]["slot"])
 
 
-def test_an_eval_candidate_label_still_cancels_the_full_run_and_queues_nothing():
+def test_an_eval_candidate_pr_still_queues_nothing_on_its_next_commit():
     out = _run()
-    assert out["label_eval"]["selected"] == []
-    assert out["label_eval"]["slot"] == ["ci-pr-777", True]
+    assert out["eval_synchronize"]["selected"] == []
 
 
 def test_master_pushes_keep_their_release_path_and_group():
     out = _run()
     assert "deploy" in out["push"]["selected"]
     assert out["push"]["slot"] == ["ci-push-refs/heads/master", False]
-
-
-def test_a_no_op_run_can_never_create_the_required_matrix_contexts():
-    """Green-by-skip guard: `backend-tests (1)`..`(8)` are required contexts. In a
-    no-op run the job is skipped at JOB level, which never expands the matrix, so
-    those contexts exist only if a real run created them on the same commit."""
-    wf = _workflow()
-    shards = wf["jobs"]["backend-tests"]["strategy"]["matrix"]["shard"]
-    assert shards, "backend-tests must stay a matrix job"
-    out = _run()
-    for case in ("body_edit", "title_edit", "label_tier_b", "label_other"):
-        assert out[case]["states"]["backend-tests"] == "skipped", case
-        assert out[case]["states"]["change-scope"] == "skipped", case

@@ -7,18 +7,19 @@ on:
   # Compose pushes serve Integrator; they do not replace lane PR validation.
   # Guard: frontend/e2e/contract/ciTriggerCoverage.contract.test.js.
   #
-  # #12252 (79-B part A): a run tests a COMMIT, so only events that change what
-  # is tested run anything. `unlabeled` is gone (nothing here reads a removed
-  # label). `labeled` and `edited` stay as triggers only for the two cases that
-  # matter: an `eval-candidate` label (#12235 skips CI for it, and `gh pr create
-  # --label` adds labels after `opened`) and a BASE change (a retarget emits only
-  # `edited`, #1943). Any other label or a title/body edit is a NO-OP run: its own
-  # concurrency group (it never cancels the real run), every job skipped, no
-  # runner used. Skipped matrix jobs never expand, so `backend-tests (1)`..`(8)`
-  # (required) can only come from a real run: a commit cannot go green by skip.
+  # #12252 (79-B part A): a run tests a COMMIT, so only events that change the
+  # commit run CI. `labeled`, `unlabeled` and `edited` are not triggers: they
+  # created runs on an unchanged commit (169 of 360 PR runs on Nov 6), and a
+  # label or a description edit cancelled the run in flight. They create no run
+  # object at all, so no skipped check run can ever land on a commit after a
+  # real result (a skipped job is a passing required check). Two costs, chosen
+  # (Fable, Nov 7): a RETARGETED PR gets no run until its next commit or a
+  # close+reopen (#1943; AGENTS.md says so), and an `eval-candidate` label added
+  # after `opened` no longer cancels that first run (#12235's skip still holds
+  # for every later event; the Tier-B policy still blocks the merge).
   # Guarded by backend/tests/test_ci_triggers_12252.py.
   pull_request:
-    types: [opened, synchronize, reopened, labeled, edited]
+    types: [opened, synchronize, reopened]
   push:
     branches: [master, 'integrator/compose-**']
 
@@ -32,8 +33,8 @@ on:
 # displaces the newest pending run. The deploy job's `heroku-deploy` group is
 # unchanged. Guarded by backend/tests/test_ci_supersede_concurrency.py.
 concurrency:
-  group: ${{ (github.event_name == 'pull_request' && ((github.event.action == 'edited' && !github.event.changes.base) || (github.event.action == 'labeled' && github.event.label.name != 'eval-candidate'))) && format('ci-noop-{0}', github.run_id) || (github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.ref)) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && !((github.event.action == 'edited' && !github.event.changes.base) || (github.event.action == 'labeled' && github.event.label.name != 'eval-candidate')) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -45,9 +46,7 @@ jobs:
   change-scope:
     # 75-A / #12235: never-merge study inputs use the native reviewer directly.
     # The approval policy always blocks eval-candidate, including after APPROVE.
-    # #12252: a no-op event (a label other than eval-candidate, or an edit that
-    # does not change the base) skips here, and every job below follows.
-    if: github.event_name != 'pull_request' || (!contains(github.event.pull_request.labels.*.name, 'eval-candidate') && !((github.event.action == 'edited' && !github.event.changes.base) || (github.event.action == 'labeled' && github.event.label.name != 'eval-candidate')))
+    if: github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'eval-candidate')
     permissions:
       contents: read
       actions: read
@@ -4874,7 +4873,7 @@ jobs:
         run: "python - <<'SUMMARY'\nimport json\nimport os\nresults = json.loads(os.environ['STEP_RESULTS'])\nfailed = [name for name, result in results.items() if result.get('outcome') == 'failure']\nlines = ['## Database integration \u2014 ' + os.environ['INTEGRATION_GROUP'], '']\nif failed:\n    lines += ['Failed steps:', ''] + ['- `' + name + '`' for name in failed]\nelse:\n    lines += ['No failed steps.']\nwith open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:\n    output.write('\\n'.join(lines) + '\\n')\nSUMMARY\n"
   search-recall:
     needs: [change-scope, database-integration]
-    if: ${{ !cancelled() && needs.change-scope.result != 'skipped' && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Every database integration group passed
