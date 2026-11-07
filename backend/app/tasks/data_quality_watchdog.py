@@ -1130,7 +1130,11 @@ async def _run_data_quality_watchdog() -> dict[str, Any]:
                     try:
                         await session.rollback()
                     except Exception:
-                        pass
+                        # The timed-out statement already ended the transaction; a
+                        # failed rollback must not stop the remaining checks.
+                        logger.debug(
+                            "Watchdog rollback after '%s' timeout failed", check_name, exc_info=True
+                        )
                     continue
                 logger.error("Watchdog check '%s' errored: %s", check_name, exc)
                 stats["errors"].append({"check": check_name, "error": str(exc)[:200]})
