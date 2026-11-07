@@ -288,6 +288,32 @@ def test_flow(clock, rail):
     assert digest(first) == digest(second)
 
 
+def test_horizon_needs_page(clock, rail):
+    hz = importlib.import_module("app.tasks.horizon_sentinel")
+
+    finding = {
+        "slug": "ballon-dor-2026", "name": "Ballon d'Or 2026", "phase": "t_minus_14",
+        "severity": "p1", "start": "2026-11-21", "end": "2026-11-21", "days_to_start": 14,
+        "archetype": "award", "concept_key": "ballon-dor-2026", "domain": "soccer",
+        "marquee": True, "detail": "No page answers at the concept key.",
+    }
+    first, second = twice(clock, rail, lambda: hz.file_horizon_issue(finding, open_issues=[]))
+    assert digest(first) == digest(second)
+
+
+def test_horizon_calendar_exhaustion(clock, rail):
+    hz = importlib.import_module("app.tasks.horizon_sentinel")
+
+    finding = {
+        "competition": "ballon-dor", "name": "Ballon d'Or", "domain": "soccer",
+        "last_edition_slug": "ballon-dor-2026", "last_edition_end": "2026-11-21",
+        "days_left": 14, "severity": "p2",
+        "detail": "`majors_calendar.yaml` has no edition of **ballon-dor** after 2026-11-21.",
+    }
+    first, second = twice(clock, rail, lambda: hz.file_exhaustion_issue(finding, open_issues=[]))
+    assert digest(first) == digest(second)
+
+
 def test_grid(clock, rail):
     gs = importlib.import_module("app.tasks.grid_sentinel")
 
