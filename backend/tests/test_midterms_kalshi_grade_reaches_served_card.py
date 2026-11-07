@@ -191,17 +191,10 @@ def served(monkeypatch):
     from app.routes import containers, futures
     from app.services import get_db
     from app.utils.container_corrections import PublishedRead
-    from app.utils.midterms_collection import midterms_pin
 
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
     monkeypatch.setenv("COLLECTIONS_ENABLED", "true")
     monkeypatch.setenv("CONTAINER_COLLECTIONS_ENABLED", "true")
-    pin_now = datetime(2026, 11, 6, 23, tzinfo=timezone.utc)
-    monkeypatch.setattr(
-        containers,
-        "midterms_pin",
-        lambda payload, now=pin_now: midterms_pin(payload, now=now),
-    )
     members = [
         {"id": mid, "type": "market", "class": s["key"], "source": "human"}
         for s in MANIFEST["sections"]
