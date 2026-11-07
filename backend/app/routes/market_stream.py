@@ -22,10 +22,10 @@ from sqlalchemy import exists, func, select
 
 from app.models import FuturesMarket, FuturesOutcome
 from app.services.database import async_session_maker
+from app.utils.game_market_stream_envelope import stream_admits
 from app.utils.live_push import MAX_FRAME_AGE_S, sse_encode
 from app.utils.market_preview import PREVIEW_FRAME_TYPE, parse_market_preview
-from app.utils.market_quote_push import SOURCES, market_channel, parse_market_frame
-from app.utils.settledness import ASSIGNED_SETTLED_STATUSES
+from app.utils.market_quote_push import market_channel, parse_market_frame
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,9 +74,7 @@ async def _eligible_markets(db, ids: list[int]) -> tuple[list[int], list[int]]:
     ).all()
     existing = {row[0] for row in rows}
     eligible = {
-        mid
-        for mid, source, status, winner in rows
-        if source in SOURCES and status not in ASSIGNED_SETTLED_STATUSES and not winner
+        mid for mid, source, status, winner in rows if stream_admits(source, status, winner)
     }
     return [mid for mid in ids if mid in eligible], [
         mid for mid in ids if mid in existing

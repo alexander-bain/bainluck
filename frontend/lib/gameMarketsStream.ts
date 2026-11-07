@@ -31,6 +31,12 @@ const instant = (value: string | null | undefined): number | null => {
 };
 const finished = (status: string) => ['completed', 'closed', 'final', 'settled'].includes(status);
 
+/** #12283: a finished game whose served body names nothing the stream would admit. It costs
+ * nothing live: no stream, and no `fresh=true` rebuild — its later reads take the cached tier,
+ * which holds a finished game's body for an hour unless it still carries an open winner quote. */
+export const settledGameMarkets = (body: LiveGameMarkets | undefined): boolean =>
+  !!body && finished(body.status) && !body.stream_market_ids?.length;
+
 function rows(body: LiveGameMarkets): Row[] {
   const result: Row[] = [];
   const add = (key: string, row: WireRow, inheritedMarkets: number[] = []) => {
@@ -203,15 +209,15 @@ export function createGameMarketsReconciler() {
 }
 
 /** Fresh path deliberately never claims SSR/boot data or the shared client cache. */
-export async function fetchFreshGameMarkets(eventId: number, signal: AbortSignal): Promise<LiveGameMarkets> {
+export async function fetchFreshGameMarkets(eventId: number, signal: AbortSignal, fresh = true): Promise<LiveGameMarkets> {
   const abort = new AbortController();
   const cancel = () => abort.abort();
   signal.addEventListener('abort', cancel, { once: true });
   if (signal.aborted) cancel();
   const timeout = setTimeout(cancel, 10_000);
   try {
-  const response = await fetch(`${API_URL}/api/events/${eventId}/game-markets?fresh=true`, {
-    cache: 'no-store', signal: abort.signal, headers: { Accept: 'application/json' },
+  const response = await fetch(`${API_URL}/api/events/${eventId}/game-markets${fresh ? '?fresh=true' : ''}`, {
+    cache: fresh ? 'no-store' : 'default', signal: abort.signal, headers: { Accept: 'application/json' },
   });
   if (!response.ok) {
     const error = new Error(`Game markets read failed (${response.status})`) as ApiError;
