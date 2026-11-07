@@ -138,7 +138,7 @@ def test_shape_and_frame_counts_read_every_open_market():
     c = counts(rows, graph_unclassified=4)
     assert (c.open_markets, c.priced_markets) == (3, 2)
     assert (c.unshaped, c.shape_unclassified, c.relation_unknown, c.graph_unclassified) == (1, 1, 1, 4)
-    assert (c.frames_written, c.frames_no_number, c.frames_never) == (1, 1, 1)
+    assert (c.frames_written, c.frames_null, c.frames_never) == (1, 1, 1)
 
 
 def test_new_series_candidates_are_young_uncovered_families_of_three():
@@ -648,3 +648,13 @@ def test_the_task_runs_the_sentinel_under_its_enforced_label(monkeypatch):
     # is the module, not the task (as with the flow and grid sentinels).
     tasks.celery_app.tasks["app.tasks.grouping_sentinel"].run(post=False, file_issues=False)
     assert seen == {"label": "grouping_sentinel", "run": ("run", {"post": False, "file_issues": False})}
+
+
+def test_a_null_frame_is_not_called_a_title_with_no_number():
+    # #12249: the writer stores "frame": null both when the title states no
+    # number and when the model's number failed the title check, so the post
+    # must not claim the first.
+    c = counts([row("KXA-1", frame_type="null")])
+    body = compose(c)
+    assert "1 stored null (no number in the title, or one that failed the title check)" in body
+    assert "titles with no number" not in body
