@@ -27,6 +27,7 @@ from app.utils.container_presentation import MEMBER_MARKET, market_destination
 
 __all__ = [
     "ROUNDUP_CACHE_TTL_S",
+    "ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS",
     "ROUNDUP_PRODUCERS",
     "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_READ_BUDGET_SECONDS",
@@ -53,6 +54,7 @@ logger = logging.getLogger(__name__)
 ROUNDUP_CACHE_TTL_S = 60.0
 ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5
 ROUNDUP_READ_BUDGET_SECONDS = 2.5
+ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
@@ -428,9 +430,16 @@ _TRANSIENT_REFUSAL_TOKENS = (
 def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
     """Return False when a refusal reflects a transient loader/session error rather than data state."""
     for item in reasons:
-        text = repr(item).lower()
-        if any(token in text for token in _TRANSIENT_REFUSAL_TOKENS):
-            return False
+        parts = item if isinstance(item, (tuple, list)) else (item,)
+        for part in parts:
+            if not isinstance(part, str):
+                continue
+            tok = part.strip().lower()
+            if any(
+                tok == transient or tok.startswith(f"{transient}:")
+                for transient in _TRANSIENT_REFUSAL_TOKENS
+            ):
+                return False
     return True
 
 
@@ -476,6 +485,35 @@ async def _store_roundup_cache_entry(
                 slug,
                 exc_info=True,
             )
+
+
+async def _cache_roundup_timeout_refusal(
+    producer: RoundupProducer,
+    db: Any,
+    *,
+    ts: Optional[float] = None,
+) -> None:
+    """Cache a timed-out producer as a refusal ``(None, None)`` for ``ROUNDUP_CACHE_TTL_S``."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
+
+    is_fixture_seq = isinstance(db, (list, tuple))
+    rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
+    no_cache = (
+        rule_cfg.get("cache") == "none"
+        or rule_cfg.get("producer") == "yardstick_pair"
+    )
+    if is_fixture_seq or no_cache or not container_read_cache_enabled():
+        return
+    cache_key = (
+        producer.slug,
+        "live" if isinstance(db, AsyncSession) else id(db),
+    )
+    effective_ts = time.time() if ts is None else float(ts)
+    await _store_roundup_cache_entry(
+        cache_key, producer.slug, effective_ts, None, None, db
+    )
 
 
 async def evaluate_roundup_producer(
@@ -844,6 +882,7 @@ async def add_roundup_feed_items(
     seat_floor: int = ROUNDUP_SEAT_FLOOR,
     page_window: int = 20,
     budget_seconds: float = ROUNDUP_READ_BUDGET_SECONDS,
+    stage_budget_seconds: Optional[float] = None,
     now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover."""
@@ -856,7 +895,12 @@ async def add_roundup_feed_items(
         )
         return items
 
-    stage_budget = min(float(budget_seconds), ROUNDUP_READ_BUDGET_SECONDS)
+    stage_cap = (
+        float(stage_budget_seconds)
+        if stage_budget_seconds is not None
+        else ROUNDUP_READ_BUDGET_SECONDS
+    )
+    stage_budget = min(float(budget_seconds), stage_cap)
     started = time.perf_counter()
     producers = list(ROUNDUP_PRODUCERS.values())
     produced: list[dict[str, Any]] = []
@@ -880,6 +924,20 @@ async def add_roundup_feed_items(
                 evaluate_roundup_producer(producer, db),
                 timeout=per_timeout,
             )
+        except asyncio.TimeoutError:
+            if hasattr(db, "rollback") and callable(db.rollback):
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+            if per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS:
+                await _cache_roundup_timeout_refusal(producer, db)
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards",
+                producer.slug,
+                exc_info=True,
+            )
+            continue
         except Exception:
             if hasattr(db, "rollback") and callable(db.rollback):
                 try:
