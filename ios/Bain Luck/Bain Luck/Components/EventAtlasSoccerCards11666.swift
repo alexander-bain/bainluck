@@ -204,7 +204,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
 
     private static func isDisqualifiedThreeWayMarketName(_ name: String) -> Bool {
         let lower = name.lowercased()
-        if lower.range(of: #"\b(?:1st\s+half|2nd\s+half|first\s+half|second\s+half|halftime|half-time|half\s+time)\b"#, options: .regularExpression) != nil {
+        if lower.range(of: #"\b(?:1st\s+half|2nd\s+half|first\s+half|second\s+half|half[-\s]?time)\b"#, options: .regularExpression) != nil {
             return true
         }
         return lower.range(
@@ -539,7 +539,7 @@ nonisolated enum EventAtlasSoccerCards11666 {
 
     private static func isExactScoreMarketTitle(_ title: String) -> Bool {
         let lower = title.lowercased()
-        if lower.range(of: #"\b(?:1st\s+half|2nd\s+half|first\s+half|second\s+half|halftime)\b"#, options: .regularExpression) != nil {
+        if lower.range(of: #"\b(?:1st\s+half|2nd\s+half|first\s+half|second\s+half|half[-\s]?time)\b"#, options: .regularExpression) != nil {
             return false
         }
         return lower.range(of: #"\b(?:exact\s+score|correct\s+score)\b"#, options: .regularExpression) != nil
