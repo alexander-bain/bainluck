@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import math
 import os
 import re
@@ -36,6 +37,8 @@ from zoneinfo import ZoneInfo
 from app.utils.container_presentation import MEMBER_MARKET, market_destination
 from app.utils.feed_market_quality import is_placeholder_flat_field
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "CONTAINERS_DATA_DIR",
     "DEFAULT_LEVEL",
@@ -46,7 +49,11 @@ __all__ = [
     "GOLF_THIS_WEEK_PRODUCER",
     "GOLF_THIS_WEEK_SLUG",
     "MEMBERSHIP_WEEK_EVENTS",
+    "PLACEHOLDER_HALF_PROBABILITY_THRESHOLD",
+    "PLACEHOLDER_MAX_HALF_CONTENDERS",
+    "PLACEHOLDER_TOP_THREE_MAX_SUM",
     "PRODUCER_KIND_WEEK_EVENTS",
+    "SUPPORTED_LIVE_WEEK_EVENTS_SPORTS",
     "TOURNAMENT_MIN_FIELD_MASS",
     "WEEK_EVENTS_CANDIDATE_SPECS",
     "build_week_events_producer",
@@ -70,6 +77,10 @@ MEMBERSHIP_WEEK_EVENTS = "event-derived"
 DEFAULT_RELATIONS: tuple[str, ...] = ("same_measure", "same_window")
 DEFAULT_LEVEL = "member"
 TOURNAMENT_MIN_FIELD_MASS = 0.50
+PLACEHOLDER_HALF_PROBABILITY_THRESHOLD: float = 0.499
+PLACEHOLDER_MAX_HALF_CONTENDERS: int = 2
+PLACEHOLDER_TOP_THREE_MAX_SUM: float = 1.25
+SUPPORTED_LIVE_WEEK_EVENTS_SPORTS: frozenset[str] = frozenset({"golf"})
 
 CONTAINERS_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "containers"
 
@@ -281,7 +292,7 @@ def _extract_tournament_entries(
         item_sport = str(
             entry.get("sport")
             or entry.get("category")
-            or ("golf" if ("golfers" in entry or "tour" in entry or "tour_label" in entry) else "")
+            or ("golf" if "golfers" in entry else "")
         ).strip().lower()
         if expected_sport and item_sport and item_sport != expected_sport.lower():
             continue
@@ -379,9 +390,14 @@ def _evaluate_single_tournament(
 
     # Also refuse when 2+ contenders in a one-winner tournament field each sit at >= 0.50
     # or the top 3 outcomes alone exceed 1.25 (e.g. 3 x 50.0% = 150.0%).
-    at_or_above_half = sum(1 for p in priced_probs if p >= 0.499)
+    at_or_above_half = sum(
+        1 for p in priced_probs if p >= PLACEHOLDER_HALF_PROBABILITY_THRESHOLD
+    )
     top_three_sum = sum(sorted(priced_probs, reverse=True)[:3])
-    if at_or_above_half >= 2 or top_three_sum > 1.25:
+    if (
+        at_or_above_half >= PLACEHOLDER_MAX_HALF_CONTENDERS
+        or top_three_sum > PLACEHOLDER_TOP_THREE_MAX_SUM
+    ):
         return None, (name, "placeholder_field")
 
     # Sort golfers by probability descending to identify the leader deterministically.
@@ -673,23 +689,34 @@ async def _load_tournaments_from_db(
     *,
     sport: str,
     now: datetime,
-) -> list[Mapping[str, Any]]:
-    """Load current tournaments for ``sport`` from the shared base when ``db`` is an AsyncSession."""
+) -> tuple[list[Mapping[str, Any]], Optional[str]]:
+    """Load current tournaments for ``sport`` from the shared base when ``db`` is an AsyncSession.
+
+    Returns ``(tournaments, error_reason)`` where ``error_reason`` is ``None`` when the
+    live loader succeeded, or a distinct refusal reason (``"unsupported_sport"``,
+    ``"missing_db_session"``, or ``"source_unavailable"``) so database/loader failures
+    and unsupported sports never masquerade as an empty pool.
+    """
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    if sport.lower() not in SUPPORTED_LIVE_WEEK_EVENTS_SPORTS:
+        return [], "unsupported_sport"
     if not isinstance(db, AsyncSession):
-        return []
-    if sport.lower() != "golf":
-        return []
+        return [], "missing_db_session"
     try:
         from app.utils.golf_base import get_golf_base
 
         tournaments, _prov = await get_golf_base(db, now)
         if isinstance(tournaments, Sequence):
-            return [t for t in tournaments if isinstance(t, Mapping)]
+            return [t for t in tournaments if isinstance(t, Mapping)], None
     except Exception:
-        return []
-    return []
+        logger.warning(
+            "week_events: failed to load tournaments from shared base for sport=%s",
+            sport,
+            exc_info=True,
+        )
+        return [], "source_unavailable"
+    return [], None
 
 
 async def produce_week_events(
@@ -732,9 +759,11 @@ async def produce_week_events(
             return RoundupRefusal((("sport", "empty_pool"),))
         tournament_list = extracted
     else:
-        tournament_list = await _load_tournaments_from_db(
+        tournament_list, load_error = await _load_tournaments_from_db(
             db, sport=sport, now=effective_now
         )
+        if load_error is not None:
+            return RoundupRefusal((("sport", load_error),))
 
     return select_week_events(
         tournament_list,

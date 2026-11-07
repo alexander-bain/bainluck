@@ -559,3 +559,67 @@ class TestPrimitivesInvariantsAndFolderLoading:
             GOLF_THIS_WEEK_PRODUCER, tournaments
         )
         assert fi_on is not None and cp_on is not None
+
+    def test_main_import_registers_golf_this_week_and_alcaraz_sinner_in_roundup_producers(
+        self,
+    ) -> None:
+        """Importing app.main and running _register_builtin_producers() registers both producers."""
+        import app.main  # noqa: F401
+        from app.utils.roundup_containers import _register_builtin_producers
+
+        ROUNDUP_PRODUCERS.pop(GOLF_THIS_WEEK_SLUG, None)
+        ROUNDUP_PRODUCERS.pop(ALCARAZ_SINNER_TWO_MAJORS_2027_SLUG, None)
+        _register_builtin_producers()
+        assert GOLF_THIS_WEEK_SLUG in ROUNDUP_PRODUCERS
+        assert ALCARAZ_SINNER_TWO_MAJORS_2027_SLUG in ROUNDUP_PRODUCERS
+
+    @pytest.mark.asyncio
+    async def test_db_loader_failure_and_unsupported_sport_do_not_masquerade_as_empty_pool(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A get_golf_base failure returns source_unavailable (never empty_pool), and non-golf sports return unsupported_sport."""
+        from unittest.mock import MagicMock
+        from sqlalchemy.ext.asyncio import AsyncSession
+        import app.utils.golf_base as golf_base_mod
+        from app.utils.week_events import produce_week_events
+
+        fake_session = MagicMock(spec=AsyncSession)
+
+        async def _boom(db: Any, now: Any) -> Any:
+            raise RuntimeError("golf_base connection timeout")
+
+        monkeypatch.setattr(golf_base_mod, "get_golf_base", _boom)
+
+        res_err = await produce_week_events(
+            fake_session,
+            GOLF_THIS_WEEK_DEFINITION,
+            now=NOW_NOV_6,
+        )
+        assert isinstance(res_err, RoundupRefusal)
+        assert ("sport", "source_unavailable") in res_err.reasons
+        assert ("sport", "empty_pool") not in res_err.reasons
+        assert "failed to load tournaments from shared base" in caplog.text
+
+        tennis_def = {
+            **GOLF_THIS_WEEK_DEFINITION,
+            "slug": "tennis-this-week",
+            "category": "tennis",
+            "rule": {"producer": PRODUCER_KIND_WEEK_EVENTS, "sport": "tennis"},
+        }
+        res_unsupported = await produce_week_events(
+            fake_session,
+            tennis_def,
+            now=NOW_NOV_6,
+        )
+        assert isinstance(res_unsupported, RoundupRefusal)
+        assert ("sport", "unsupported_sport") in res_unsupported.reasons
+
+        res_no_db = await produce_week_events(
+            None,
+            GOLF_THIS_WEEK_DEFINITION,
+            now=NOW_NOV_6,
+        )
+        assert isinstance(res_no_db, RoundupRefusal)
+        assert ("sport", "missing_db_session") in res_no_db.reasons

@@ -2315,6 +2315,3 @@ for _sf_def in load_sibling_family_definitions_from_dir():
         _NAMED_SIBLING_PRODUCERS.get(_sf_slug)
         or build_sibling_family_producer(_sf_def)
     )
-
-# Ensure week_events folder definitions are also registered when sibling_family is imported.
-import app.utils.week_events as _week_events  # noqa: E402,F401
