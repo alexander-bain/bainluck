@@ -52,6 +52,10 @@ struct SpecialEventMarketsView: View {
         /// #9917 / #6595 — is this market the game's own question (a bare
         /// `A vs B`)? See `isGamesOwnQuestion`.
         var gamesOwnQuestion: Bool = false
+        /// #11666 (Step E4) — additional venue settlement grades when multiple
+        /// wire rows share the same outcome label, so `EventAtlasStates11666.verdictDisplay`
+        /// can surface `"Pending"` when venues disagree.
+        var additionalGrades: [(isWinner: Bool?, resolutionSource: String?)] = []
     }
 
     private static let categoryPatterns: [(pattern: String, category: String, subtitle: String)] = [
@@ -233,6 +237,31 @@ struct SpecialEventMarketsView: View {
         )
     }
 
+    /// Resolves the displayed settlement text for a verdict row (#11666 Step E4).
+    /// Under `ReleaseSurfaces.isEventPageAtlasEnabled()`, routes all authoritative
+    /// venue grades for the outcome through `EventAtlasStates11666.verdictDisplay`
+    /// so disagreeing venues print `"Pending"` and agreeing venues print `"✓ Won"` / `"✗ Lost"`.
+    func resolvedVerdictText(
+        for o: OutcomeEntry,
+        verdict v: OutcomeVerdict,
+        atlasEnabled: Bool = ReleaseSurfaces.isEventPageAtlasEnabled()
+    ) -> String {
+        guard atlasEnabled else { return v.label }
+        var allVerdicts: [OutcomeVerdict] = [v]
+        if !(!isGameFinished && o.gamesOwnQuestion) {
+            for grade in o.additionalGrades {
+                if let extra = OutcomeVerdict.verdict(
+                    isWinner: grade.isWinner,
+                    resolutionSource: grade.resolutionSource,
+                    marketResolved: isGameFinished
+                ) {
+                    allVerdicts.append(extra)
+                }
+            }
+        }
+        return EventAtlasStates11666.verdictDisplay(verdicts: allVerdicts, atlasEnabled: true) ?? v.label
+    }
+
     /// Order matters and mirrors web's `OutcomeBar`: a verdict is the strongest
     /// statement, then an unpriced row (true live or settled), then a frozen
     /// quote, then a live bar.
@@ -295,6 +324,7 @@ struct SpecialEventMarketsView: View {
                 let label = m.outcomeName
                 if let oIdx = catMap[cat]!.items[idx].outcomes.firstIndex(where: { $0.label == label }) {
                     catMap[cat]!.items[idx].outcomes[oIdx].sourceCount += 1
+                    catMap[cat]!.items[idx].outcomes[oIdx].additionalGrades.append((m.isWinner, m.resolutionSource))
                 } else {
                     catMap[cat]!.items[idx].outcomes.append(
                         Self.entry(label: label, from: m)
@@ -518,7 +548,7 @@ struct SpecialEventMarketsView: View {
             }
             switch rowTreatment {
             case .verdict(let v):
-                (!ReleaseSurfaces.isEventPageAtlasEnabled() ? Text(v.label) : Text(EventAtlasStates11666.verdictLabel(v)))
+                (!ReleaseSurfaces.isEventPageAtlasEnabled() ? Text(v.label) : Text(resolvedVerdictText(for: o, verdict: v)))
                     .font(.system(size: 11, weight: v == .won ? .bold : .regular, design: .monospaced))
                     .foregroundStyle(v == .won ? DS.emerald : Color.secondary)
             case .noPrice:
